@@ -3,7 +3,7 @@ from fastapi import Depends, HTTPException, status, Request
 
 # Get current user from middleware
 def get_current_user(request: Request):
-    user = getattr(request.state, "user", None)
+    user = getattr(request.state, "customer", None)
 
     if not user:
         raise HTTPException(
