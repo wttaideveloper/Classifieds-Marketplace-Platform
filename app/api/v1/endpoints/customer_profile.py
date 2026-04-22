@@ -1,15 +1,36 @@
-from fastapi import APIRouter, status, Depends
-from app.schemas.customer_schema import UpdateCustomerProfile
-from app.services.customer_service import *
-from app.core.dependencies import get_current_user, get_current_admin
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.orm import Session
 
-router = APIRouter()
+from app.core.dependencies import get_current_user, get_db
+from app.schemas.customer_schema import CustomerProfileUpdate
+from app.services.customer_service import (
+    get_profile_service,
+    update_profile_service
+)
 
-@router.get("/profile")
-def get_profile(current_user: dict = Depends(get_current_user)):
-    return get_customer_profile_service(current_user)
+router = APIRouter(
+    tags=["Customer Profile"]
+)
 
-@router.put("/profile")
-def update_profile(payload: UpdateCustomerProfile,
-                   current_user: dict = Depends(get_current_user)):
-    return update_customer_profile_service(current_user, payload)
+
+#  GET PROFILE
+@router.get("/profile", status_code=status.HTTP_200_OK)
+def get_profile(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return get_profile_service(db, current_user["id"])
+
+
+# UPDATE PROFILE
+@router.put("/profile", status_code=status.HTTP_200_OK)
+def update_profile(
+    payload: CustomerProfileUpdate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return update_profile_service(
+        db,
+        current_user["id"],
+        payload.model_dump(exclude_unset=True)
+    )

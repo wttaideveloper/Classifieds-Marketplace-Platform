@@ -1,62 +1,54 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Literal, Optional, List
+from pydantic import BaseModel, EmailStr
+from typing import Optional, List
 
+# REGISTER
 class CustomerRegister(BaseModel):
     firstName: str
     lastName: str
     email: EmailStr
-    mobileNumber: str = Field(min_length=10, max_length=15)
-    password: str = Field(min_length=6, max_length=72)
+    mobileNumber: str
+    password: str
     confirmPassword: str
     acceptTerms: bool
     acceptPrivacyPolicy: bool
-        
+
+# LOGIN
 class CustomerLogin(BaseModel):
     email: EmailStr
     password: str
 
-# Google login
-class GoogleLogin(BaseModel):
-    googleToken: Optional[str] = None
-    authCode: Optional[str] = None
-
-class CustomerResponse(BaseModel):
-    id: str
-    firstName: str
-    lastName: str
-    email: str
-    mobileNumber: str
-
+# FORGOT PASSWORD
 class ForgotPassword(BaseModel):
     email: EmailStr
 
-class ChangePassword(BaseModel):
-    currentPassword: str
-    newPassword: str
-    confirmPassword: str
 
+#  RESET PASSWORD
 class ResetPassword(BaseModel):
     resetToken: str
     newPassword: str
     confirmPassword: str
 
-class Address(BaseModel):
-    street: str
+
+#  CHANGE PASSWORD
+class ChangePassword(BaseModel):
+    currentPassword: str
+    newPassword: str
+    confirmPassword: str
+
+# PROFILE
+class CustomerProfileUpdate(BaseModel):
+    firstName: Optional[str]
+    lastName: Optional[str]
+    mobileNumber: Optional[str]
+    profileImage: Optional[str]
+    addresses: Optional[str]
+
+# ADDRESS
+class AddressBase(BaseModel):
+    addressLine1: str
+    addressLine2: Optional[str]
     city: str
     state: str
-    pincode: str
-
-class CustomerProfileResponse(BaseModel):
-    email: EmailStr
-    firstName: Optional[str]
-    lastName: Optional[str]
-    mobileNumber: Optional[str]
-    profileImage: Optional[str]
-    addresses: Optional[List[Address]]
-
-class UpdateCustomerProfile(BaseModel):
-    firstName: Optional[str]
-    lastName: Optional[str]
-    mobileNumber: Optional[str]
-    profileImage: Optional[str]
-    addresses: Optional[List[Address]]
+    zipCode: str
+    country: str
+    isDefault: bool = False
