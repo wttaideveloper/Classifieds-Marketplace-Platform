@@ -39,8 +39,6 @@ def startup():
 
 # Routes
 app.include_router(api_router, prefix="/api/v1")
-for r in app.routes:
-    print("path",r.path)
 
 # Health check
 @app.get("/health")

@@ -37,11 +37,11 @@ class ChangePassword(BaseModel):
 
 # PROFILE
 class CustomerProfileUpdate(BaseModel):
-    firstName: Optional[str]
-    lastName: Optional[str]
-    mobileNumber: Optional[str]
-    profileImage: Optional[str]
-    addresses: Optional[str]
+    firstName: Optional[str] = None
+    lastName: Optional[str] = None
+    mobileNumber: Optional[str] = None
+    profileImage: Optional[str] = None
+    addresses: Optional[str] = None
 
 # ADDRESS
 class AddressBase(BaseModel):

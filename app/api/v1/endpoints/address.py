@@ -20,14 +20,14 @@ def get_db():
     finally:
         db.close()
 
-
 @router.post("")
 def add_address(payload: AddressBase, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    return add_address_service(db, current_user["email"], payload.dict())
+    return add_address_service(db, current_user["id"], payload.dict())
+
 
 @router.get("")
 def get_addresses(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    return get_addresses_service(db, current_user["email"])
+    return get_addresses_service(db, current_user["id"])
 
 
 @router.put("/{address_id}")
@@ -37,7 +37,8 @@ def update_address(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    return update_address_service(db, address_id, current_user["email"], payload.dict())
+    return update_address_service(db, address_id, current_user["id"], payload.dict())
+
 
 @router.delete("/{address_id}")
 def delete_address(
@@ -45,62 +46,4 @@ def delete_address(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    return delete_address_service(db, address_id, current_user["email"])
-
-# from fastapi import APIRouter, Depends
-# from sqlalchemy.orm import Session
-
-# from app.core.dependencies import get_current_user, get_db
-# from app.schemas.customer_schema import AddressBase
-# from app.services.address_service import *
-
-# router = APIRouter()
-
-
-# @router.post("")
-# def add_address(
-#     payload: AddressBase,
-#     current_user=Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     return add_address_service(
-#         db,
-#         current_user["id"],
-#         payload.dict()
-#     )
-
-# @router.get("")
-# def get_addresses(
-#     current_user=Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     return get_addresses_service(
-#         db,
-#         current_user["id"]
-#     )
-
-# @router.put("/{address_id}")
-# def update_address(
-#     address_id: str,
-#     payload: AddressBase,
-#     current_user=Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     return update_address_service(
-#         db,
-#         address_id,
-#         current_user["id"],
-#         payload.dict()
-#     )
-
-# @router.delete("/{address_id}")
-# def delete_address(
-#     address_id: str,
-#     current_user=Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     return delete_address_service(
-#         db,
-#         address_id,
-#         current_user["id"]
-#     )
+    return delete_address_service(db, address_id, current_user["id"])
