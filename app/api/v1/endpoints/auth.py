@@ -6,13 +6,16 @@ from app.schemas.customer_schema import (
     ResetPassword,
     ChangePassword
 )
+from app.exceptions.custom_exception import CustomException
 from app.services.customer_service import (
     forgot_password_service,
     reset_password_service,
     change_password_service,
     logout_customer_service
 )
-from app.core.dependencies import get_current_user
+from app.services.merchant_service import forgot_password_merchant_service, reset_password_merchant_service, change_password_merchant_service, logout_merchant_service
+from app.models.merchant_model import Merchant
+from app.models.customer_model import Customer
 from app.db.database import SessionLocal
 
 router = APIRouter()
@@ -25,20 +28,47 @@ def get_db():
         db.close()
 
 # FORGOT PASSWORD
+
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
 def forgot_password(payload: ForgotPassword, db: Session = Depends(get_db)):
-    return forgot_password_service(db, payload.email)
+
+    if payload.role == "customer":
+        return forgot_password_service(db, payload.email)
+
+    elif payload.role == "merchant":
+        return forgot_password_merchant_service(db, payload.email)
+
+    else:
+        raise CustomException(400, "Invalid role")
 
 
 #  RESET PASSWORD
 @router.post("/reset-password", status_code=status.HTTP_200_OK)
 def reset_password(payload: ResetPassword, db: Session = Depends(get_db)):
-    return reset_password_service(
-        db,
-        payload.resetToken,
-        payload.newPassword,
-        payload.confirmPassword
-    )
+
+    # Try customer
+    user = db.query(Customer).filter(Customer.resetToken == payload.resetToken).first()
+
+    if user:
+        return reset_password_service(
+            db,
+            payload.resetToken,
+            payload.newPassword,
+            payload.confirmPassword
+        )
+
+    # Try merchant
+    user = db.query(Merchant).filter(Merchant.resetToken == payload.resetToken).first()
+
+    if user:
+        return reset_password_merchant_service(
+            db,
+            payload.resetToken,
+            payload.newPassword,
+            payload.confirmPassword
+        )
+
+    raise CustomException(400, "Invalid or expired token")
 
 #  CHANGE PASSWORD
 @router.post("/change-password", status_code=status.HTTP_200_OK)
@@ -47,24 +77,57 @@ def change_password(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    # validate passwords early
+    # Early validation
     if payload.newPassword != payload.confirmPassword:
         raise HTTPException(
             status_code=400,
             detail="Passwords do not match"
         )
-    return change_password_service(
-        db,
-        current_user["id"],   
-        payload.currentPassword,
-        payload.newPassword,
-        payload.confirmPassword
-    )
 
-@router.post("/logout")
+    role = current_user.get("role")
+    user_id = current_user.get("id")
+
+    # Route based on role
+    if role == "customer":
+        return change_password_service(
+            db,
+            user_id,
+            payload.currentPassword,
+            payload.newPassword,
+            payload.confirmPassword
+        )
+
+    elif role == "merchant":
+        return change_password_merchant_service(
+            db,
+            user_id,
+            payload.currentPassword,
+            payload.newPassword,
+            payload.confirmPassword
+        )
+
+    else:
+        raise CustomException(403, "Invalid role")
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
 def logout(
     request: Request,
     current_user=Depends(get_current_user)
 ):
-    token = request.headers.get("Authorization").replace("Bearer ", "")
-    return logout_customer_service(token, current_user)
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        raise HTTPException(status_code=401, detail="Authorization header missing")
+
+    token = auth_header.replace("Bearer ", "")
+
+    role = current_user.get("role")
+
+    if role == "customer":
+        return logout_customer_service(token, current_user)
+
+    elif role == "merchant":
+        return logout_merchant_service(token, current_user)
+
+    else:
+        raise HTTPException(status_code=403, detail="Invalid role")
