@@ -6,7 +6,6 @@ from app.core.dependencies import get_current_user
 from app.schemas.merchant_schema import MerchantProfileUpdate
 
 router = APIRouter(
-    prefix="/merchant",
     tags=["Merchant"]
 )
 

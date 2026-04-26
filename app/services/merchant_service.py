@@ -68,28 +68,34 @@ def login_merchant_service(db, email: str, password: str):
 # GOOGLE LOGIN
 def google_login_service(db, google_token: str):
     res = requests.get(GOOGLE_VERIFY_URL, params={"id_token": google_token})
+
     if res.status_code != 200:
         raise CustomException(401, "Invalid Google token")
+
     data = res.json()
     email = data.get("email")
     name = data.get("name", "")
+
     merchant = get_merchant_by_email(db, email)
+
     if not merchant:
         merchant_data = Merchant(
             id=str(uuid4()),
             fullName=name,
             businessEmail=email,
             mobileNumber="",
-            password=hash_password(secrets.token_urlsafe(16)),  # safe placeholder
+            password=hash_password(secrets.token_urlsafe(16)),
             acceptTerms=True,
             acceptPrivacyPolicy=True
         )
-        user = create_merchant(db, merchant_data)
+        merchant = create_merchant(db, merchant_data)
+
     token = create_access_token({
         "sub": merchant.id,
         "email": merchant.businessEmail,
         "role": "merchant"
     })
+
     return {
         "access_token": token,
         "token_type": "bearer"
