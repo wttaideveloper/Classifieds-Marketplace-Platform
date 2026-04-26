@@ -5,7 +5,6 @@ from app.schemas.merchant_schema import MerchantRegister, MerchantLogin
 from app.services.merchant_service import register_merchant_service, login_merchant_service, google_login_service
 
 router = APIRouter(
-    prefix="/auth/merchant",
     tags=["Merchant Auth"]
 )
 

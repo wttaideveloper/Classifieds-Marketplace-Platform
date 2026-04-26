@@ -12,6 +12,7 @@ import secrets
 GOOGLE_VERIFY_URL = "https://oauth2.googleapis.com/tokeninfo"
 
 def register_merchant_service(db, merchant):
+    print(db.bind.url)
 
     #  Check existing email
     existing = get_merchant_by_email(db, merchant.businessEmail)
@@ -73,7 +74,7 @@ def google_login_service(db, google_token: str):
     email = data.get("email")
     name = data.get("name", "")
     merchant = get_merchant_by_email(db, email)
-    if not user:
+    if not merchant:
         merchant_data = Merchant(
             id=str(uuid4()),
             fullName=name,
@@ -97,8 +98,11 @@ def google_login_service(db, google_token: str):
 # FORGOT PASSWORD 
 def forgot_password_merchant_service(db, email: str):
 
+    merchants = db.query(Merchant).all()
+    print("ALL MERCHANTS:", merchants)
     # Check merchant exists
     merchant = get_merchant_by_email(db, email)
+    print("FOUND MERCHANT:", merchant)
     if not merchant:
         raise CustomException(404, "Merchant not found")
 
@@ -173,42 +177,6 @@ def change_password_merchant_service(db, merchant_id, currentPassword, newPasswo
         "message": "Password changed successfully"
     }
 
-# GET PROFILE
-# def get_profile_service(db, cust_id):
-#     user = get_merchant_by_id(db, cust_id)
-#     if not user:
-#         raise CustomException(404, "User not found")
-#     return {
-#         "id": user.id,
-#         "firstName": user.firstName,
-#         "lastName": user.lastName,
-#         "email": user.email,
-#         "mobileNumber": user.mobileNumber
-#     }
-
-# UPDATE PROFILE
-# def update_profile_service(db, cust_id, data):
-#     user = get_customer_by_id(db, cust_id)
-#     if not user:
-#         raise CustomException(404, "User not found")
-#     allowed_fields = {
-#         "firstName",
-#         "lastName",
-#         "mobileNumber",
-#         "profileImage"
-#     }
-#     clean_data = {
-#         k: v for k, v in data.items()
-#         if k in allowed_fields and v is not None
-#     }
-#     for k, v in clean_data.items():
-#         setattr(user, k, v)
-#     db.commit()
-#     db.refresh(user)
-#     return {
-#         "message": "Profile updated successfully"
-#     }
-
 # LOGOUT 
 def logout_merchant_service(token: str, current_user):
 
@@ -217,4 +185,48 @@ def logout_merchant_service(token: str, current_user):
 
     return {
         "message": "Logged out successfully"
+    }
+
+# PROFILE
+def get_merchant_profile_service(db, merchant_id: str):
+
+    merchant = get_merchant_by_id(db, merchant_id)
+
+    if not merchant:
+        raise CustomException(404, "Merchant not found")
+
+    return {
+        "id": merchant.id,
+        "fullName": merchant.fullName,
+        "businessEmail": merchant.businessEmail,
+        "mobileNumber": merchant.mobileNumber,
+        "businessName": merchant.businessName
+    }
+
+def update_merchant_profile_service(db, merchant_id: str, data):
+
+    merchant = get_merchant_by_id(db, merchant_id)
+
+    if not merchant:
+        raise CustomException(404, "Merchant not found")
+
+    # Allowed fields only
+    allowed_fields = {
+        "name",
+        "mobileNumber",
+        "profileImage"
+    }
+
+    # Update only provided fields
+    for field, value in data.items():
+        if field in allowed_fields and value is not None:
+            if field == "name":
+                merchant.fullName = value
+            else:
+                setattr(merchant, field, value)
+
+    update_merchant(db, merchant)
+
+    return {
+        "message": "Profile updated successfully"
     }

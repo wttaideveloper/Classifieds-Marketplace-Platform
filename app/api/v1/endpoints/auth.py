@@ -32,14 +32,19 @@ def get_db():
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
 def forgot_password(payload: ForgotPassword, db: Session = Depends(get_db)):
 
+    print("FORGOT PASSWORD HIT")
+    print("payload", payload)
+    print(payload.role)
+    print(payload.email)
     if payload.role == "customer":
         return forgot_password_service(db, payload.email)
 
     elif payload.role == "merchant":
         return forgot_password_merchant_service(db, payload.email)
-
+    
     else:
         raise CustomException(400, "Invalid role")
+    
 
 
 #  RESET PASSWORD

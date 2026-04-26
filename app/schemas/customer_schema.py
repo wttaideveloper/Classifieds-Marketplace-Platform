@@ -20,6 +20,7 @@ class CustomerLogin(BaseModel):
 # FORGOT PASSWORD
 class ForgotPassword(BaseModel):
     email: EmailStr
+    role: str
 
 
 #  RESET PASSWORD
