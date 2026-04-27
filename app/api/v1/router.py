@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import customer_profile, auth, address, customer, merchant, merchant_profile
+from app.api.v1.endpoints import customer_profile, auth, address, customer, merchant, merchant_profile, admin, admin_profile
 
 api_router = APIRouter()
 
@@ -43,4 +43,18 @@ api_router.include_router(
     merchant_profile.router,
     prefix="/merchant",
     tags=["Merchant Profile"]
+)
+
+# ADMIN AUTH
+api_router.include_router(
+    admin.router,
+    prefix="/auth/admin",
+    tags=["Admin Auth"]
+)
+
+# ADMIN PROFILE
+api_router.include_router(
+    admin_profile.router,
+    prefix="/admin",
+    tags=["Admin Profile"]
 )

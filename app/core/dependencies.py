@@ -30,11 +30,11 @@ def get_current_user(request: Request):
         raise HTTPException(status_code=401, detail="Token expired")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
-    cust_id = payload.get("sub")
-    if not cust_id:
+    user_id = payload.get("id") or payload.get("sub")
+    if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
     return {
-        "id": cust_id,
+        "id": user_id,
         "role": payload.get("role"),
         "email": payload.get("email")
     }
