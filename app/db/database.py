@@ -1,22 +1,19 @@
-from pymongo import MongoClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
 from app.core.config import settings
 
-class MongoDB:
-    client: MongoClient = None
+DATABASE_URL = settings.DATABASE_URL
+print("DATABASE URL:", DATABASE_URL)
 
-db_instance = MongoDB()
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
-def connect_to_mongo():
-    db_instance.client = MongoClient(settings.MONGO_URL)
-    print("Connected to MongoDB")
+Base = declarative_base()
 
-
-def close_mongo_connection():
-    if db_instance.client:
-        db_instance.client.close()
-        print("MongoDB connection closed")
-
-
-def get_database():
-    return db_instance.client[settings.DATABASE_NAME]
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

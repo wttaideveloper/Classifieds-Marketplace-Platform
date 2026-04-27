@@ -2,14 +2,14 @@ from sqlalchemy import Column, String, Boolean, DateTime
 from datetime import datetime
 from app.db.database import Base
 
-class Customer(Base):
-    __tablename__ = "customers"
+class Merchant(Base):
+    __tablename__ = "merchants"
 
     id = Column(String, primary_key=True, index=True)
-    firstName = Column(String)
-    lastName = Column(String)
-    email = Column(String, unique=True, index=True)
+    fullName = Column(String)
+    businessEmail = Column(String, unique=True, index=True)
     mobileNumber = Column(String)
+    businessName = Column(String)
     password = Column(String)
     acceptTerms = Column(Boolean)
     acceptPrivacyPolicy = Column(Boolean)

@@ -1,19 +1,19 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from typing import Optional
 
 # REGISTER
-class CustomerRegister(BaseModel):
-    firstName: str
-    lastName: str
-    email: EmailStr
+class MerchantRegister(BaseModel):
+    fullName: str
+    businessEmail: EmailStr
     mobileNumber: str
     password: str
     confirmPassword: str
+    businessName: str
     acceptTerms: bool
     acceptPrivacyPolicy: bool
 
 # LOGIN
-class CustomerLogin(BaseModel):
+class MerchantLogin(BaseModel):
     email: EmailStr
     password: str
 
@@ -37,19 +37,7 @@ class ChangePassword(BaseModel):
     confirmPassword: str
 
 # PROFILE
-class CustomerProfileUpdate(BaseModel):
-    firstName: Optional[str] = None
-    lastName: Optional[str] = None
+class MerchantProfileUpdate(BaseModel):
+    name: Optional[str] = None
     mobileNumber: Optional[str] = None
     profileImage: Optional[str] = None
-    addresses: Optional[str] = None
-
-# ADDRESS
-class AddressBase(BaseModel):
-    addressLine1: str
-    addressLine2: Optional[str]
-    city: str
-    state: str
-    zipCode: str
-    country: str
-    isDefault: bool = False

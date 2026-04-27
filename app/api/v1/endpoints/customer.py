@@ -1,22 +1,33 @@
-from fastapi import APIRouter, status, Depends
-from app.schemas.customer_schema import CustomerRegister, CustomerLogin, GoogleLogin
-from app.services.customer_service import *
-from app.core.dependencies import get_current_user, get_current_admin
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.orm import Session
+from app.db.database import SessionLocal
+from app.schemas.customer_schema import CustomerRegister, CustomerLogin
+from app.services.customer_service import (
+    register_customer_service,
+    login_customer_service,
+    google_login_service
+)
 
 router = APIRouter()
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+#  REGISTER
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def register_customer(user: CustomerRegister):
-    return register_customer_service(user)
+def register(user: CustomerRegister, db: Session = Depends(get_db)):
+    return register_customer_service(db, user)
 
-@router.post("/login", status_code=status.HTTP_200_OK)
-def login_customer(user: CustomerLogin):
-    return login_customer_service(user)
+# LOGIN
+@router.post("/login")
+def login(user: CustomerLogin, db: Session = Depends(get_db)):
+    return login_customer_service(db, user.email, user.password)
 
+# GOOGLE LOGIN
 @router.post("/google")
-def google_login(data: GoogleLogin):
-    return google_login_service(data)
-
-@router.get("/admin")
-def admin_panel(user=Depends(get_current_admin)):
-    return {"message": "Welcome Admin"}
+def google_login(payload: dict, db: Session = Depends(get_db)):
+    return google_login_service(db, payload.get("googleToken"))
