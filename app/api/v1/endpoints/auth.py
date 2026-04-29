@@ -7,30 +7,29 @@ from app.schemas.customer_schema import (
     ResetPassword,
     ChangePassword
 )
-
+from app.schemas.common_schema import RefreshTokenSchema, ResendVerificationSchema
 from app.exceptions.custom_exception import CustomException
-
+from app.schemas.common_schema import VerifyEmailSchema
+from app.services.common_service import verify_email_service
 from app.services.customer_service import (
     forgot_password_service,
     reset_password_service,
     change_password_service,
     logout_customer_service
 )
-
 from app.services.merchant_service import (
     forgot_password_merchant_service,
     reset_password_merchant_service,
     change_password_merchant_service,
     logout_merchant_service
 )
-
 from app.services.admin_service import (
     forgot_password_admin_service,
     reset_password_admin_service,
     change_password_admin_service,
     logout_admin_service
 )
-
+from app.services.common_service import refresh_token_service, get_current_user_service, resend_verification_service
 from app.models.customer_model import Customer
 from app.models.merchant_model import Merchant
 from app.models.admin_model import Admin
@@ -178,3 +177,35 @@ def logout(
 
     else:
         raise HTTPException(403, "Invalid role")
+
+# REFRESH TOKEN
+@router.post("/refresh-token", status_code=status.HTTP_200_OK)
+def refresh_token(payload: RefreshTokenSchema):
+    return refresh_token_service(payload)
+
+# Current Logged-in user
+@router.get("/me", status_code=status.HTTP_200_OK)
+def get_logged_in_user(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    return get_current_user_service(db, current_user)
+
+# Verify email
+@router.post("/verify-email", status_code=status.HTTP_200_OK)
+def verify_email(
+    payload: VerifyEmailSchema,
+    db: Session = Depends(get_db)
+):
+    return verify_email_service(db, payload)
+
+# Resend verification email
+@router.post(
+    "/resend-verification",
+    status_code=status.HTTP_200_OK
+)
+def resend_verification(
+    payload: ResendVerificationSchema,
+    db: Session = Depends(get_db)
+):
+    return resend_verification_service(db, payload)

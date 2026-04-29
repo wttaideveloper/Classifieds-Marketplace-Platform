@@ -53,3 +53,4 @@ class AddressBase(BaseModel):
     zipCode: str
     country: str
     isDefault: bool = False
+

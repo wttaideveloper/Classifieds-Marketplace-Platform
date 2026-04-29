@@ -9,7 +9,7 @@ existing = db.query(Admin).filter(Admin.email == "admin@example.com").first()
 if not existing:
     admin = Admin(
         name="Super Admin",
-        email="neweja8408@pertok.com",
+        email="rs5804@srmist.edu.in",
         password=hash_password("admin123")
     )
     db.add(admin)

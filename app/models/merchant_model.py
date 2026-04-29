@@ -17,4 +17,7 @@ class Merchant(Base):
     resetToken = Column(String, nullable=True)
     resetTokenExpiry = Column(DateTime, nullable=True)
 
+    isEmailVerified = Column(Boolean, default=False)
+    verificationToken = Column(String, nullable=True)
+
     createdAt = Column(DateTime, default=datetime.utcnow)

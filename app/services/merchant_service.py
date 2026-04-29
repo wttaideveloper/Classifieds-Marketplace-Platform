@@ -2,7 +2,7 @@ from app.repository.merchant_repo import get_merchant_by_email, create_merchant,
 from app.models.merchant_model import Merchant
 from app.exceptions.custom_exception import CustomException
 from datetime import datetime, timedelta
-from app.core.security import hash_password, verify_password, create_access_token
+from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
 from app.services.email_service import send_email 
 from app.core.token_blacklist import TOKEN_BLACKLIST
 from uuid import uuid4
@@ -44,27 +44,32 @@ def register_merchant_service(db, merchant):
 # LOGIN
 def login_merchant_service(db, email: str, password: str):
 
-    #  Check if merchant exists
+    # Check merchant exists
     merchant = get_merchant_by_email(db, email)
+
     if not merchant:
         raise CustomException(404, "Merchant not found")
 
-    #  Verify password
+    # Verify password
     if not verify_password(password, merchant.password):
         raise CustomException(401, "Invalid credentials")
 
-    #  Generate JWT token
-    token = create_access_token({
-        "sub": merchant.id,
+    token_data = {
+        "sub": str(merchant.id),
         "email": merchant.businessEmail,
         "role": "merchant"
-    })
-
-    return {
-        "access_token": token,
-        "token_type": "bearer"
     }
 
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+
+    return {
+        "success": True,
+        "message": "Merchant login successful",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
 # GOOGLE LOGIN
 def google_login_service(db, google_token: str):
     res = requests.get(GOOGLE_VERIFY_URL, params={"id_token": google_token})

@@ -1,6 +1,6 @@
 # app/models/admin_model.py
 
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from datetime import datetime
 from app.db.database import Base
 
@@ -16,5 +16,8 @@ class Admin(Base):
 
     resetToken = Column(String, nullable=True)
     resetTokenExpiry = Column(DateTime, nullable=True)
+
+    isEmailVerified = Column(Boolean, default=False)
+    verificationToken = Column(String, nullable=True)
 
     createdAt = Column(DateTime, default=datetime.utcnow)

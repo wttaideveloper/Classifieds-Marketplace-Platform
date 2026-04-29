@@ -10,9 +10,8 @@ from app.repository.admin_repo import (
     update_admin
 )
 from app.exceptions.custom_exception import CustomException
-from app.core.security import verify_password, create_access_token, hash_password
+from app.core.security import verify_password, create_access_token, hash_password, create_refresh_token
 
-# LOGIN
 def admin_login_service(db, payload):
 
     admin = get_admin_by_email(db, payload.email)
@@ -23,11 +22,22 @@ def admin_login_service(db, payload):
     if not verify_password(payload.password, admin.password):
         raise CustomException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
 
-    token = create_access_token({
+    token_data = {
         "id": admin.id,
         "email": admin.email,
         "role": "admin"
-    })
+    }
+
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+
+    return {
+        "success": True,
+        "message": "Admin login successful",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
 
     return {
         "success": True,

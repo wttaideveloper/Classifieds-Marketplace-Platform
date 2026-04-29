@@ -1,5 +1,5 @@
 from app.repository.customer_repo import *
-from app.core.security import hash_password, verify_password, create_access_token
+from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
 from app.exceptions.custom_exception import CustomException
 from app.models.customer_model import Customer
 from app.services.email_service import send_email  
@@ -29,17 +29,29 @@ def register_customer_service(db, customer):
 
 # LOGIN
 def login_customer_service(db, email, password):
+
     user = get_customer_by_email(db, email)
+
     if not user:
         raise CustomException(404, "User not found")
+
     if not verify_password(password, user.password):
         raise CustomException(401, "Invalid credentials")
-    token = create_access_token({
-        "sub": user.id,
-        "email": user.email
-    })
+
+    token_data = {
+        "sub": str(user.id),
+        "email": user.email,
+        "role": "customer"
+    }
+
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+
     return {
-        "access_token": token,
+        "success": True,
+        "message": "Login successful",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer"
     }
 
