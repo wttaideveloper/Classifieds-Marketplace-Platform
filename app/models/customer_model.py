@@ -19,5 +19,6 @@ class Customer(Base):
 
     isEmailVerified = Column(Boolean, default=False)
     verificationToken = Column(String, nullable=True)
+    status = Column(String, default="active")
 
     createdAt = Column(DateTime, default=datetime.utcnow)
