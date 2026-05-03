@@ -1,15 +1,31 @@
-from app.repository.merchant_repo import get_merchant_by_email, create_merchant, update_merchant, get_merchant_by_id
-from app.models.merchant_model import Merchant
+from fastapi import UploadFile
+from app.repository.merchant_repo import (
+    get_merchant_by_email, 
+    create_merchant, 
+    update_merchant, 
+    get_merchant_by_id, 
+    create_business_profile, 
+    get_business_profile_by_merchant_id, 
+    create_business_draft, 
+    update_business_profile
+)
+from app.models.merchant_model import Merchant, MerchantProfile, MerchantBusinessDraft
 from app.exceptions.custom_exception import CustomException
 from datetime import datetime, timedelta
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
 from app.services.email_service import send_email 
 from app.core.token_blacklist import TOKEN_BLACKLIST
+from typing import List
+import os
+import uuid
 from uuid import uuid4
 import requests
 import secrets
 
 GOOGLE_VERIFY_URL = "https://oauth2.googleapis.com/tokeninfo"
+LOGO_FOLDER = "uploads/business_logo"
+BANNER_FOLDER = "uploads/business_banner"
+GALLERY_FOLDER = "uploads/business_gallery"
 
 def register_merchant_service(db, merchant):
     print(db.bind.url)
@@ -240,4 +256,519 @@ def update_merchant_profile_service(db, merchant_id: str, data):
 
     return {
         "message": "Profile updated successfully"
+    }
+
+def create_business_profile_service(db, merchant_id: str, payload):
+
+    merchant = get_merchant_by_id(db, merchant_id)
+
+    if not merchant:
+        raise CustomException(404, "Merchant not found")
+
+    existing_profile = get_business_profile_by_merchant_id(db, merchant_id)
+
+    if existing_profile:
+        raise CustomException(400, "Business profile already exists")
+
+    if payload.businessType not in ["physical", "online", "hybrid"]:
+        raise CustomException(400, "Invalid business type")
+
+    data = payload.dict()
+    data["id"] = str(uuid4())
+    data["merchant_id"] = merchant_id
+
+    profile = MerchantProfile(**data)
+
+    return create_business_profile(db, profile)
+
+def save_business_draft_service(db, merchant_id, payload):
+
+    merchant = get_merchant_by_id(db, merchant_id)
+
+    if not merchant:
+        raise CustomException(404, "Merchant not found")
+
+    existing_draft = get_business_draft_by_merchant_id(
+        db,
+        merchant_id
+    )
+
+    data = payload.dict(exclude_unset=True)
+
+    # UPDATE EXISTING DRAFT
+    if existing_draft:
+
+        for field, value in data.items():
+            setattr(existing_draft, field, value)
+
+        update_business_draft(db, existing_draft)
+
+        return {
+            "success": True,
+            "message": "Business draft updated successfully",
+            "data": existing_draft
+        }
+
+    # CREATE NEW DRAFT
+    new_draft = MerchantBusinessDraft(
+        id=str(uuid4()),
+        merchant_id=merchant_id,
+        **data
+    )
+
+    create_business_draft(db, new_draft)
+
+    return {
+        "success": True,
+        "message": "Business draft saved successfully",
+        "data": new_draft
+    }
+
+def get_business_profile_service(
+    db,
+    merchant_id: str
+):
+
+    profile = get_business_profile_by_merchant_id(
+        db,
+        merchant_id
+    )
+
+    if not profile:
+        raise CustomException(
+            404,
+            "Business profile not found"
+        )
+
+    return {
+        "success": True,
+        "message": "Business profile fetched successfully",
+        "data": profile
+    }
+
+def update_business_profile_service(
+    db,
+    merchant_id: str,
+    payload
+):
+
+    profile = get_business_profile_by_merchant_id(
+        db,
+        merchant_id
+    )
+
+    if not profile:
+        raise CustomException(
+            404,
+            "Business profile not found"
+        )
+
+    data = payload.dict(exclude_unset=True)
+
+    restricted_fields = {
+        "businessName",
+        "fullAddress",
+        "city",
+        "state",
+        "zipCode",
+        "country",
+        "latitude",
+        "longitude",
+        "primaryCategory",
+        "subcategory"
+    }
+
+    reapproval_required = False
+
+    for field, value in data.items():
+
+        if hasattr(profile, field):
+            setattr(profile, field, value)
+
+        if field in restricted_fields:
+            reapproval_required = True
+      # If restricted changes made
+    if reapproval_required:
+        profile.status = "pending_approval"
+
+    updated = update_business_profile(
+        db,
+        profile
+    )
+
+    return {
+        "success": True,
+        "message": (
+            "Business updated successfully. "
+            "Re-approval required."
+            if reapproval_required
+            else
+            "Business updated successfully"
+        ),
+        "reapproval_required": reapproval_required,
+        "data": updated
+    }
+
+def submit_business_for_approval_service(
+    db,
+    merchant_id: str
+):
+
+    profile = get_business_profile_by_merchant_id(
+        db,
+        merchant_id
+    )
+
+    if not profile:
+        raise CustomException(
+            404,
+            "Business profile not found"
+        )
+
+    # Already submitted / approved
+    if profile.status == "pending_approval":
+        raise CustomException(
+            400,
+            "Business already submitted for approval"
+        )
+    if profile.status == "approved":
+        raise CustomException(
+            400,
+            "Business already approved"
+        )
+    required_fields = [
+        "businessName",
+        "primaryCategory",
+        "businessEmail",
+        "phoneNumber",
+        "fullAddress",
+        "city",
+        "state",
+        "zipCode",
+        "country",
+        "businessType"
+    ]
+
+    for field in required_fields:
+        if not getattr(profile, field):
+            raise CustomException(
+                400,
+                f"{field} is required before submission"
+            )
+    profile.status = "pending_approval"
+
+    update_business_profile(
+        db,
+        profile
+    )
+
+    return {
+        "success": True,
+        "message": "Business submitted for approval successfully",
+        "status": profile.status
+    }
+
+
+
+
+def upload_business_logo_service(
+    db,
+    merchant_id: str,
+    file: UploadFile
+):
+
+    profile = get_business_profile_by_merchant_id(
+        db,
+        merchant_id
+    )
+
+    if not profile:
+        raise CustomException(
+            404,
+            "Business profile not found"
+        )
+
+    if not file:
+        raise CustomException(
+            400,
+            "File is required"
+        )
+
+    # Validate file type
+    allowed_extensions = [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp"
+    ]
+
+    ext = os.path.splitext(file.filename)[1].lower()
+
+    if ext not in allowed_extensions:
+        raise CustomException(
+            400,
+            "Only jpg, jpeg, png, webp files allowed"
+        )
+
+    # Create upload folder
+    os.makedirs(LOGO_FOLDER, exist_ok=True)
+
+    filename = f"{uuid.uuid4()}{ext}"
+    filepath = os.path.join(
+        LOGO_FOLDER,
+        filename
+    )
+
+    with open(filepath, "wb") as buffer:
+        buffer.write(file.file.read())
+
+    # Save path in DB
+    profile.businessLogo = filepath
+
+    update_business_profile(
+        db,
+        profile
+    )
+
+    return {
+        "success": True,
+        "message": "Business logo uploaded successfully",
+        "logo": filepath
+    }
+
+
+def upload_business_banner_service(
+    db,
+    merchant_id: str,
+    file: UploadFile
+):
+
+    profile = get_business_profile_by_merchant_id(
+        db,
+        merchant_id
+    )
+
+    if not profile:
+        raise CustomException(
+            404,
+            "Business profile not found"
+        )
+
+    if not file:
+        raise CustomException(
+            400,
+            "File is required"
+        )
+
+   
+    # Validate file type
+    allowed_extensions = [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp"
+    ]
+
+    ext = os.path.splitext(file.filename)[1].lower()
+
+    if ext not in allowed_extensions:
+        raise CustomException(
+            400,
+            "Only jpg, jpeg, png, webp files allowed"
+        )
+
+    # Create upload folder
+    os.makedirs(BANNER_FOLDER, exist_ok=True)
+
+    filename = f"{uuid.uuid4()}{ext}"
+    filepath = os.path.join(
+        BANNER_FOLDER,
+        filename
+    )
+
+    with open(filepath, "wb") as buffer:
+        buffer.write(file.file.read())
+
+    # Save path in DB
+    profile.bannerImage = filepath
+
+    update_business_profile(
+        db,
+        profile
+    )
+
+    return {
+        "success": True,
+        "message": "Business banner uploaded successfully",
+        "banner": filepath
+    }
+
+
+
+
+def upload_business_gallery_service(
+    db,
+    merchant_id: str,
+    files: List[UploadFile]
+):
+
+    profile = get_business_profile_by_merchant_id(
+        db,
+        merchant_id
+    )
+
+    if not profile:
+        raise CustomException(
+            404,
+            "Business profile not found"
+        )
+
+    if not files:
+        raise CustomException(
+            400,
+            "Files are required"
+        )
+
+    allowed_extensions = [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp"
+    ]
+
+    os.makedirs(
+        GALLERY_FOLDER,
+        exist_ok=True
+    )
+
+    uploaded_files = []
+
+    for file in files:
+
+        ext = os.path.splitext(
+            file.filename
+        )[1].lower()
+
+        if ext not in allowed_extensions:
+            raise CustomException(
+                400,
+                f"Invalid file type: {file.filename}"
+            )
+
+        filename = f"{uuid.uuid4()}{ext}"
+
+        filepath = os.path.join(
+            GALLERY_FOLDER,
+            filename
+        )
+
+        with open(filepath, "wb") as buffer:
+            buffer.write(file.file.read())
+
+        uploaded_files.append(filepath)
+
+    # Save / append gallery images
+    existing_images = profile.galleryImages or []
+
+    profile.galleryImages = (
+        existing_images + uploaded_files
+    )
+
+    update_business_profile(
+        db,
+        profile
+    )
+
+    return {
+        "success": True,
+        "message": "Gallery images uploaded successfully",
+        "galleryImages": profile.galleryImages
+    }
+
+def delete_business_gallery_image_service(
+    db,
+    merchant_id: str,
+    image_id: str
+):
+
+    profile = get_business_profile_by_merchant_id(
+        db,
+        merchant_id
+    )
+
+    if not profile:
+        raise CustomException(
+            404,
+            "Business profile not found"
+        )
+
+    gallery_images = profile.galleryImages or []
+
+    if not gallery_images:
+        raise CustomException(
+            404,
+            "No gallery images found"
+        )
+
+    # image_id expected as filename
+    # Example: 9e7f3a2b.png
+    image_path = None
+
+    for img in gallery_images:
+        filename = os.path.basename(img)
+
+        if filename == image_id:
+            image_path = img
+            break
+
+    if not image_path:
+        raise CustomException(
+            404,
+            "Image not found"
+        )
+
+    # Remove from filesystem
+    if os.path.exists(image_path):
+        os.remove(image_path)
+
+    # Remove from DB list
+    updated_images = [
+        img for img in gallery_images
+        if os.path.basename(img) != image_id
+    ]
+
+    profile.galleryImages = updated_images
+
+    update_business_profile(
+        db,
+        profile
+    )
+
+    return {
+        "success": True,
+        "message": "Gallery image deleted successfully",
+        "galleryImages": updated_images
+    }
+
+def get_business_status_service(
+    db,
+    merchant_id: str
+):
+
+    profile = get_business_profile_by_merchant_id(
+        db,
+        merchant_id
+    )
+
+    if not profile:
+        raise CustomException(
+            404,
+            "Business profile not found"
+        )
+
+    return {
+        "success": True,
+        "message": "Business status fetched successfully",
+        "businessStatus": profile.status,
+        "businessName": profile.businessName
     }
