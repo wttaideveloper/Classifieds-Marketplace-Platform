@@ -7,7 +7,9 @@ from app.repository.merchant_repo import (
     create_business_profile, 
     get_business_profile_by_merchant_id, 
     create_business_draft, 
-    update_business_profile
+    update_business_profile,
+    update_business_draft,
+    get_business_draft_by_merchant_id
 )
 from app.models.merchant_model import Merchant, MerchantProfile, MerchantBusinessDraft
 from app.exceptions.custom_exception import CustomException
@@ -258,6 +260,7 @@ def update_merchant_profile_service(db, merchant_id: str, data):
         "message": "Profile updated successfully"
     }
 
+# Business Profile
 def create_business_profile_service(db, merchant_id: str, payload):
 
     merchant = get_merchant_by_id(db, merchant_id)

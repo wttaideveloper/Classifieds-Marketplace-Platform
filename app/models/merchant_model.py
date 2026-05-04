@@ -113,6 +113,7 @@ class MerchantProfile(Base):
     additionalContactNumbers = Column(JSON, default=list)
 
     shortTagline = Column(String(255), nullable=True)
+    status = Column(String, default="draft")
 
     createdAt = Column(DateTime, default=datetime.utcnow)
     updatedAt = Column(

@@ -88,16 +88,20 @@ def create_business_draft(
         db.rollback()
         raise
 
-def update_business_profile(
-    db: Session,
-    profile: MerchantProfile
-):
+def get_business_draft_by_merchant_id(db: Session, merchant_id: str):
+    return db.query(MerchantBusinessDraft).filter(
+        MerchantBusinessDraft.merchant_id == merchant_id
+    ).first()
+
+
+def update_business_draft(db: Session, draft: MerchantBusinessDraft):
     try:
-        db.add(profile)
+        db.add(draft)
         db.commit()
-        db.refresh(profile)
-        return profile
+        db.refresh(draft)
+        return draft
     except Exception:
         db.rollback()
         raise
+
 

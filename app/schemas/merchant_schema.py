@@ -139,7 +139,7 @@ class MerchantBusinessProfileResponse(BaseModel):
     shortTagline: Optional[str]
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class BusinessStatusResponse(BaseModel):
     success: bool
