@@ -1,14 +1,22 @@
 # app/services/admin_service.py
-from fastapi import status
+from fastapi import status, HTTPException
 from datetime import datetime, timedelta
 import secrets
+from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.services.email_service import send_email
 from app.repository.admin_repo import (
     get_admin_by_email,
     get_admin_by_reset_token,
     get_admin_by_id,
-    update_admin
+    update_admin,
+    get_all_businesses,
+    get_business_by_id,
+    approve_business,
+    reject_business,
+    suspend_business,
+    reactivate_business,
+    get_business_with_merchant
 )
 from app.models.customer_model import Customer
 from app.models.merchant_model import Merchant
@@ -397,3 +405,209 @@ def admin_get_merchant_details_service(db, merchant_id):
         "status": merchant.status,
         "createdAt": str(merchant.createdAt)
     }
+
+def fetch_businesses_service(
+    db: Session,
+    search: str,
+    status: str,
+    category: str,
+    page: int,
+    limit: int
+):
+    try:
+        skip = (page - 1) * limit
+
+        total, businesses = get_all_businesses(
+            db=db,
+            search=search,
+            status=status,
+            category=category,
+            skip=skip,
+            limit=limit
+        )
+
+        return {
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "data": businesses
+        }
+
+    except Exception as e:
+        raise Exception(f"Service Error: {str(e)}")
+    
+def fetch_business_detail_service(db: Session, business_id):
+    try:
+        business = get_business_by_id(db, business_id)
+
+        if not business:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Business not found"
+            )
+
+        return business
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Service Error: {str(e)}"
+        )
+    
+def approve_business_service(db: Session, business_id):
+    try:
+        business = get_business_by_id(db, business_id)
+
+        if not business:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Business not found"
+            )
+
+        if business.status == "approved":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Business already approved"
+            )
+
+        updated_business = approve_business(db, business)
+
+        return updated_business
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Service Error: {str(e)}"
+        )
+
+def reject_business_service(db: Session, business_id, reason: str = None):
+    try:
+        business = get_business_by_id(db, business_id)
+
+        if not business:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Business not found"
+            )
+
+        if business.status == "rejected":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Business already rejected"
+            )
+
+        if business.status == "approved":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Approved business cannot be rejected"
+            )
+
+        updated_business = reject_business(db, business, reason)
+
+        return updated_business
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Service Error: {str(e)}"
+        )
+
+def suspend_business_service(db: Session, business_id, reason: str = None):
+    try:
+        business = get_business_by_id(db, business_id)
+
+        if not business:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Business not found"
+            )
+
+        if business.status == "suspended":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Business already suspended"
+            )
+
+        if business.status == "rejected":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Rejected business cannot be suspended"
+            )
+
+        updated_business = suspend_business(db, business, reason)
+
+        return updated_business
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Service Error: {str(e)}"
+        )
+
+def reactivate_business_service(db: Session, business_id):
+    try:
+        business = get_business_by_id(db, business_id)
+
+        if not business:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Business not found"
+            )
+
+        if business.status != "suspended":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only suspended businesses can be reactivated"
+            )
+
+        updated_business = reactivate_business(db, business)
+
+        return updated_business
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Service Error: {str(e)}"
+        )
+    
+def get_associated_merchant_service(db: Session, business_id):
+    try:
+        business = get_business_with_merchant(db, business_id)
+
+        if not business:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Business not found"
+            )
+
+        if not business.merchant:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No merchant associated with this business"
+            )
+
+        return business.merchant
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Service Error: {str(e)}"
+        )
