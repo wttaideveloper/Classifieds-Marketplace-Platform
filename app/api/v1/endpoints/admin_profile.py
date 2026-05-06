@@ -1,14 +1,16 @@
 # app/api/v1/endpoints/admin_profile.py
-from fastapi import APIRouter, Depends, status, HTTPException, Query, status
+
+from fastapi import APIRouter, Depends, status, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
+
 from app.db.database import SessionLocal
-from app.core.dependencies import get_current_user, get_current_admin
+from app.core.dependencies import get_current_admin
 from app.schemas.admin_schema import (
-    AdminProfileUpdate, 
-    UserDetailsResponse, 
-    PaginatedUsers, 
+    AdminProfileUpdate,
+    UserDetailsResponse,
+    PaginatedUsers,
     UpdateUserStatusSchema,
     MerchantListResponse,
     MerchantDetailsResponse,
@@ -40,8 +42,13 @@ from app.services.admin_service import (
 )
 from app.exceptions.custom_exception import CustomException
 
-router = APIRouter(tags=["Admin Profile"])
 
+router = APIRouter(
+    tags=["Admin"]
+)
+
+
+# DB Dependency
 def get_db():
     db = SessionLocal()
     try:
@@ -49,40 +56,30 @@ def get_db():
     finally:
         db.close()
 
-# GET ADMIN PROFILE
+
+#  ADMIN PROFILE 
 @router.get("/profile", status_code=status.HTTP_200_OK)
 def get_profile(
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_admin=Depends(get_current_admin)
 ):
+    return get_admin_profile_service(db, current_admin["id"])
 
-    if current_user.get("role") != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Unauthorized"
-        )
 
-    return get_admin_profile_service(
-        db,
-        current_user.get("id")
-    )
-
-# UPDATE ADMIN PROFILE
 @router.put("/profile", status_code=status.HTTP_200_OK)
 def update_profile(
     payload: AdminProfileUpdate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_admin=Depends(get_current_admin)
 ):
-
-    if current_user.get("role") != "admin":
-        raise Exception("Unauthorized")
-
     return update_admin_profile_service(
         db,
-        current_user.get("id"),
+        current_admin["id"],
         payload
     )
+
+
+#  USERS
 
 @router.get(
     "/users",
@@ -90,23 +87,14 @@ def update_profile(
     status_code=status.HTTP_200_OK
 )
 def get_users(
-    search: str = Query(None),
-    role: str = Query(None),
-    status_filter: str = Query(None, alias="status"),
+    search: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_admin=Depends(get_current_admin)
 ):
-    
-    # Allow only admin
-    if current_user["role"] != "admin":
-        from app.exceptions.custom_exception import CustomException
-        raise CustomException(
-            status.HTTP_403_FORBIDDEN,
-            "Access denied"
-        )
-
     return admin_get_users_service(
         db=db,
         search=search,
@@ -116,72 +104,51 @@ def get_users(
         limit=limit
     )
 
+
 @router.get(
-    "/users/{userId}",
+    "/users/{user_id}",
     response_model=UserDetailsResponse,
     status_code=status.HTTP_200_OK
 )
 def get_user_details(
-    userId: str,
+    user_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_admin=Depends(get_current_admin)
 ):
+    return admin_get_user_details_service(db, user_id)
 
-    # ADMIN ONLY
-    if current_user["role"] != "admin":
-        raise CustomException(
-            status.HTTP_403_FORBIDDEN,
-            "Access denied"
-        )
-
-    return admin_get_user_details_service(db, userId)
 
 @router.patch(
-    "/users/{userId}/status",
+    "/users/{user_id}/status",
     status_code=status.HTTP_200_OK
 )
 def update_user_status(
-    userId: str,
+    user_id: str,
     payload: UpdateUserStatusSchema,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_admin=Depends(get_current_admin)
 ):
-
-    # ADMIN ONLY
-    if current_user["role"] != "admin":
-        raise CustomException(
-            status.HTTP_403_FORBIDDEN,
-            "Access denied"
-        )
-
     return admin_update_user_status_service(
         db,
-        userId,
+        user_id,
         payload
     )
 
-# MERCHANTS
+
+#  MERCHANTS 
 @router.get(
     "/merchants",
     response_model=MerchantListResponse,
     status_code=status.HTTP_200_OK
 )
 def get_merchants(
-    search: str = Query(None),
-    status_filter: str = Query(None, alias="status"),
+    search: Optional[str] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_admin=Depends(get_current_admin)
 ):
-
-    # ADMIN ONLY
-    if current_user["role"] != "admin":
-        raise CustomException(
-            status.HTTP_403_FORBIDDEN,
-            "Access denied"
-        )
-
     return admin_get_merchants_service(
         db=db,
         search=search,
@@ -190,28 +157,24 @@ def get_merchants(
         limit=limit
     )
 
+
 @router.get(
-    "/merchants/{merchantId}",
+    "/merchants/{merchant_id}",
     response_model=MerchantDetailsResponse,
     status_code=status.HTTP_200_OK
 )
 def get_merchant_details(
-    merchantId: str,
+    merchant_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_admin=Depends(get_current_admin)
 ):
-
-    # ADMIN ONLY
-    if current_user["role"] != "admin":
-        raise CustomException(
-            status.HTTP_403_FORBIDDEN,
-            "Access denied"
-        )
-
     return admin_get_merchant_details_service(
         db,
-        merchantId
+        merchant_id
     )
+
+
+# BUSINESSES
 
 @router.get(
     "/businesses",
@@ -223,26 +186,20 @@ def get_all_businesses(
     status_filter: Optional[str] = Query(None, alias="status"),
     category: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: Session = Depends(get_db)
+    limit: int = Query(10, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_admin)
 ):
-    try:
-        result = fetch_businesses_service(
-            db=db,
-            search=search,
-            status=status_filter,
-            category=category,
-            page=page,
-            limit=limit
-        )
+    return fetch_businesses_service(
+        db=db,
+        search=search,
+        status=status_filter,
+        category=category,
+        page=page,
+        limit=limit
+    )
 
-        return result
 
-    except Exception as e:
-        return {
-            "error": str(e)
-        }
-    
 @router.get(
     "/businesses/{business_id}",
     response_model=BusinessDetailResponse,
@@ -250,9 +207,11 @@ def get_all_businesses(
 )
 def get_business_detail(
     business_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_admin)
 ):
     return fetch_business_detail_service(db, business_id)
+
 
 @router.patch(
     "/businesses/{business_id}/approve",
@@ -261,10 +220,11 @@ def get_business_detail(
 )
 def approve_business(
     business_id: UUID,
-    db: Session = Depends(get_db)
-    # current_admin = Depends(get_current_admin)
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_admin)
 ):
     return approve_business_service(db, business_id)
+
 
 @router.patch(
     "/businesses/{business_id}/reject",
@@ -274,13 +234,15 @@ def approve_business(
 def reject_business(
     business_id: UUID,
     payload: BusinessRejectRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_admin)
 ):
     return reject_business_service(
         db=db,
         business_id=business_id,
         reason=payload.reason
     )
+
 
 @router.patch(
     "/businesses/{business_id}/suspend",
@@ -290,13 +252,15 @@ def reject_business(
 def suspend_business(
     business_id: UUID,
     payload: BusinessSuspendRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_admin)
 ):
     return suspend_business_service(
         db=db,
         business_id=business_id,
         reason=payload.reason
     )
+
 
 @router.patch(
     "/businesses/{business_id}/reactivate",
@@ -305,9 +269,11 @@ def suspend_business(
 )
 def reactivate_business(
     business_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_admin)
 ):
     return reactivate_business_service(db, business_id)
+
 
 @router.get(
     "/businesses/{business_id}/merchant",
@@ -316,6 +282,7 @@ def reactivate_business(
 )
 def get_associated_merchant(
     business_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_admin)
 ):
     return get_associated_merchant_service(db, business_id)

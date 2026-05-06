@@ -10,7 +10,6 @@ from app.schemas.customer_schema import (
 from app.schemas.common_schema import RefreshTokenSchema, ResendVerificationSchema
 from app.exceptions.custom_exception import CustomException
 from app.schemas.common_schema import VerifyEmailSchema
-from app.services.common_service import verify_email_service
 from app.services.customer_service import (
     forgot_password_service,
     reset_password_service,
@@ -29,7 +28,12 @@ from app.services.admin_service import (
     change_password_admin_service,
     logout_admin_service
 )
-from app.services.common_service import refresh_token_service, get_current_user_service, resend_verification_service
+from app.services.common_service import (
+    verify_email_service,
+    refresh_token_service,
+    get_current_user_service,
+    resend_verification_service
+)
 from app.models.customer_model import Customer
 from app.models.merchant_model import Merchant
 from app.models.admin_model import Admin

@@ -12,6 +12,7 @@ from app.repository.merchant_repo import (
     get_business_draft_by_merchant_id
 )
 from app.models.merchant_model import Merchant, MerchantProfile, MerchantBusinessDraft
+from app.models.admin_model import Business
 from app.exceptions.custom_exception import CustomException
 from datetime import datetime, timedelta
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
@@ -412,33 +413,20 @@ def update_business_profile_service(
         "data": updated
     }
 
-def submit_business_for_approval_service(
-    db,
-    merchant_id: str
-):
+def submit_business_for_approval_service(db, merchant_id: str):
 
-    profile = get_business_profile_by_merchant_id(
-        db,
-        merchant_id
-    )
+    profile = get_business_profile_by_merchant_id(db, merchant_id)
 
     if not profile:
-        raise CustomException(
-            404,
-            "Business profile not found"
-        )
+        raise CustomException(404, "Business profile not found")
 
-    # Already submitted / approved
     if profile.status == "pending_approval":
-        raise CustomException(
-            400,
-            "Business already submitted for approval"
-        )
+        raise CustomException(400, "Business already submitted")
+
     if profile.status == "approved":
-        raise CustomException(
-            400,
-            "Business already approved"
-        )
+        raise CustomException(400, "Business already approved")
+
+    # Validate required fields
     required_fields = [
         "businessName",
         "primaryCategory",
@@ -454,21 +442,29 @@ def submit_business_for_approval_service(
 
     for field in required_fields:
         if not getattr(profile, field):
-            raise CustomException(
-                400,
-                f"{field} is required before submission"
-            )
-    profile.status = "pending_approval"
+            raise CustomException(400, f"{field} is required")
 
-    update_business_profile(
-        db,
-        profile
+    # STEP 1: Update profile status
+    profile.status = "pending_approval"
+    update_business_profile(db, profile)
+
+    # STEP 2: CREATE BUSINESS (THIS WAS MISSING)
+    new_business = Business(
+        name=profile.businessName,
+        category=profile.primaryCategory,
+        merchant_id=merchant_id,
+        status="pending"
     )
+
+    db.add(new_business)
+    db.commit()
+    db.refresh(new_business)
 
     return {
         "success": True,
-        "message": "Business submitted for approval successfully",
-        "status": profile.status
+        "message": "Business submitted for approval",
+        "business_id": str(new_business.id),
+        "status": new_business.status
     }
 
 

@@ -1,5 +1,5 @@
 # app/services/admin_service.py
-from fastapi import status, HTTPException
+from fastapi import status as http_status, HTTPException
 from datetime import datetime, timedelta
 import secrets
 from sqlalchemy.orm import Session
@@ -25,15 +25,16 @@ from app.repository.customer_repo import get_all_users
 from app.exceptions.custom_exception import CustomException
 from app.core.security import verify_password, create_access_token, hash_password, create_refresh_token
 
+# ADMIN LOGIN
 def admin_login_service(db, payload):
 
     admin = get_admin_by_email(db, payload.email)
 
     if not admin:
-        raise CustomException(status.HTTP_404_NOT_FOUND, "Admin not found")
+        raise CustomException(http_status.HTTP_404_NOT_FOUND, "Admin not found")
 
     if not verify_password(payload.password, admin.password):
-        raise CustomException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
+        raise CustomException(http_status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
 
     token_data = {
         "id": admin.id,
@@ -50,12 +51,6 @@ def admin_login_service(db, payload):
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer"
-    }
-
-    return {
-        "success": True,
-        "message": "Admin login successful",
-        "access_token": token
     }
 
 # FORGOT PASSWORD
@@ -156,8 +151,8 @@ def get_admin_profile_service(db, admin_id):
 
     if not admin:
         raise CustomException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Admin not found"
+            http_status.HTTP_404_NOT_FOUND,
+            "Admin not found"
         )
 
     return {
@@ -198,7 +193,7 @@ def update_admin_profile_service(db, admin_id, payload):
         }
     }
 
-
+# ADMIN GET USERS
 def admin_get_users_service(db, search, role, status, page, limit):
     total, users = get_all_users(db, search, role, status, page, limit)
     return {
@@ -208,13 +203,10 @@ def admin_get_users_service(db, search, role, status, page, limit):
         'data': users
     }
 
+# ADMIN GET USER DETAILS
 def admin_get_user_details_service(db, user_id):
 
-    # CUSTOMER
-    customer = db.query(Customer).filter(
-        Customer.id == user_id
-    ).first()
-
+    customer = db.query(Customer).filter(Customer.id == user_id).first()
     if customer:
         return {
             "id": customer.id,
@@ -222,14 +214,10 @@ def admin_get_user_details_service(db, user_id):
             "email": customer.email,
             "role": "customer",
             "status": customer.status,
-            "createdAt": customer.createdAt
+            "created_at": customer.createdAt
         }
 
-    # MERCHANT
-    merchant = db.query(Merchant).filter(
-        Merchant.id == user_id
-    ).first()
-
+    merchant = db.query(Merchant).filter(Merchant.id == user_id).first()
     if merchant:
         return {
             "id": merchant.id,
@@ -237,14 +225,10 @@ def admin_get_user_details_service(db, user_id):
             "email": merchant.businessEmail,
             "role": "merchant",
             "status": merchant.status,
-            "createdAt": merchant.createdAt
+            "created_at": merchant.createdAt
         }
 
-    # ADMIN
-    admin = db.query(Admin).filter(
-        Admin.id == user_id
-    ).first()
-
+    admin = db.query(Admin).filter(Admin.id == user_id).first()
     if admin:
         return {
             "id": admin.id,
@@ -252,14 +236,12 @@ def admin_get_user_details_service(db, user_id):
             "email": admin.email,
             "role": "admin",
             "status": admin.status,
-            "createdAt": admin.createdAt
+            "created_at": admin.createdAt
         }
 
-    raise CustomException(
-        status.HTTP_404_NOT_FOUND,
-        "User not found"
-    )
+    raise CustomException(http_status.HTTP_404_NOT_FOUND, "User not found")
 
+# ADMIN UPDATE USER STATUS
 def admin_update_user_status_service(db, user_id, payload):
 
     new_status = payload.status.lower()
@@ -268,7 +250,7 @@ def admin_update_user_status_service(db, user_id, payload):
     customer = db.query(Customer).filter(
         Customer.id == user_id
     ).first()
-
+    
     if customer:
         customer.status = new_status
         db.commit()
@@ -325,11 +307,11 @@ def admin_update_user_status_service(db, user_id, payload):
         }
 
     raise CustomException(
-        status.HTTP_404_NOT_FOUND,
+        http_status.HTTP_404_NOT_FOUND,
         "User not found"
     )
 
-
+# ADMIN GET MERCHANTS
 def admin_get_merchants_service(
     db,
     search=None,
@@ -340,7 +322,6 @@ def admin_get_merchants_service(
 
     query = db.query(Merchant)
 
-    # SEARCH
     if search:
         query = query.filter(
             or_(
@@ -349,16 +330,11 @@ def admin_get_merchants_service(
             )
         )
 
-    # STATUS FILTER
     if status:
-        query = query.filter(
-            Merchant.status == status.lower()
-        )
+        query = query.filter(Merchant.status == status.lower())
 
-    # TOTAL COUNT
     total = query.count()
 
-    # PAGINATION
     merchants = query.order_by(
         Merchant.createdAt.desc()
     ).offset(
@@ -367,13 +343,13 @@ def admin_get_merchants_service(
 
     result = []
 
-    for merchant in merchants:
+    for m in merchants:
         result.append({
-            "id": merchant.id,
-            "name": merchant.businessName,
-            "email": merchant.businessEmail,
-            "status": merchant.status,
-            "createdAt": str(merchant.createdAt)
+            "id": m.id,
+            "full_name": m.businessName,
+            "business_email": m.businessEmail,
+            "status": m.status,
+            "created_at": m.createdAt
         })
 
     return {
@@ -383,8 +359,7 @@ def admin_get_merchants_service(
         "data": result
     }
 
-
-
+# ADMIN GET MERCHANT DETAILS
 def admin_get_merchant_details_service(db, merchant_id):
 
     merchant = db.query(Merchant).filter(
@@ -393,19 +368,20 @@ def admin_get_merchant_details_service(db, merchant_id):
 
     if not merchant:
         raise CustomException(
-            status.HTTP_404_NOT_FOUND,
+            http_status.HTTP_404_NOT_FOUND,
             "Merchant not found"
         )
 
     return {
         "id": merchant.id,
-        "name": merchant.businessName,
-        "email": merchant.businessEmail,
-        "mobileNumber": merchant.mobileNumber,
+        "full_name": merchant.businessName,
+        "business_email": merchant.businessEmail,
+        "mobile_number": merchant.mobileNumber,
         "status": merchant.status,
-        "createdAt": str(merchant.createdAt)
+        "created_at": merchant.createdAt
     }
 
+# FETCH BUSINESSES
 def fetch_businesses_service(
     db: Session,
     search: str,
@@ -426,150 +402,186 @@ def fetch_businesses_service(
             limit=limit
         )
 
+        # normalize response to match schema (BusinessResponse)
+        result = []
+        for b in businesses:
+            result.append({
+                "id": b.id,
+                "name": b.name,
+                "category": b.category,
+                "status": b.status,
+                "created_at": b.created_at
+            })
+
         return {
             "total": total,
             "page": page,
             "limit": limit,
-            "data": businesses
+            "data": result
         }
 
     except Exception as e:
-        raise Exception(f"Service Error: {str(e)}")
-    
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Service Error: {str(e)}"
+        )
+
+# FETCH BUSINESS DETAIL   
 def fetch_business_detail_service(db: Session, business_id):
     try:
         business = get_business_by_id(db, business_id)
 
         if not business:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Business not found"
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Business not found"
             )
 
-        return business
-
-    except HTTPException:
-        raise
+        return {
+            "id": business.id,
+            "name": business.name,
+            "category": business.category,
+            "status": business.status,
+            "created_at": business.created_at
+        }
 
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Service Error: {str(e)}"
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Service Error: {str(e)}"
         )
-    
+
+# APPROVE BUSINESS
 def approve_business_service(db: Session, business_id):
     try:
         business = get_business_by_id(db, business_id)
 
         if not business:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Business not found"
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Business not found"
             )
 
         if business.status == "approved":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Business already approved"
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Business already approved"
             )
 
         updated_business = approve_business(db, business)
 
-        return updated_business
+        return {
+            "id": updated_business.id,
+            "status": updated_business.status,
+            "approved_at": updated_business.approved_at
+        }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Service Error: {str(e)}"
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Service Error: {str(e)}"
         )
 
+# REJECT BUSINESS 
 def reject_business_service(db: Session, business_id, reason: str = None):
     try:
         business = get_business_by_id(db, business_id)
 
         if not business:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Business not found"
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Business not found"
             )
 
         if business.status == "rejected":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Business already rejected"
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Business already rejected"
             )
 
         if business.status == "approved":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Approved business cannot be rejected"
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Approved business cannot be rejected"
             )
 
         updated_business = reject_business(db, business, reason)
 
-        return updated_business
+        return {
+            "id": updated_business.id,
+            "status": updated_business.status,
+            "rejection_reason": updated_business.rejection_reason,
+            "rejected_at": updated_business.rejected_at
+        }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Service Error: {str(e)}"
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Service Error: {str(e)}"
         )
 
+# SUSPEND BUSINESS
 def suspend_business_service(db: Session, business_id, reason: str = None):
     try:
         business = get_business_by_id(db, business_id)
 
         if not business:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Business not found"
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Business not found"
             )
 
         if business.status == "suspended":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Business already suspended"
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Business already suspended"
             )
 
         if business.status == "rejected":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Rejected business cannot be suspended"
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Rejected business cannot be suspended"
             )
 
         updated_business = suspend_business(db, business, reason)
 
-        return updated_business
+        return {
+            "id": updated_business.id,
+            "status": updated_business.status,
+            "suspension_reason": updated_business.suspension_reason,
+            "suspended_at": updated_business.suspended_at
+        }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Service Error: {str(e)}"
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Service Error: {str(e)}"
         )
 
+# REACTIVATE BUSINESS
 def reactivate_business_service(db: Session, business_id):
     try:
         business = get_business_by_id(db, business_id)
 
         if not business:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Business not found"
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Business not found"
             )
 
         if business.status != "suspended":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only suspended businesses can be reactivated"
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Only suspended businesses can be reactivated"
             )
 
         updated_business = reactivate_business(db, business)
@@ -580,34 +592,41 @@ def reactivate_business_service(db: Session, business_id):
         raise
 
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Service Error: {str(e)}"
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Service Error: {str(e)}"
         )
-    
+
+# GET MERCHANT FROM BUSINESS  
 def get_associated_merchant_service(db: Session, business_id):
     try:
         business = get_business_with_merchant(db, business_id)
 
         if not business:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Business not found"
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Business not found"
             )
 
         if not business.merchant:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No merchant associated with this business"
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "No merchant associated with this business"
             )
 
-        return business.merchant
+        merchant = business.merchant
 
-    except HTTPException:
-        raise
+        #  MAP FIELDS CORRECTLY
+        return {
+            "id": merchant.id,
+            "full_name": merchant.businessName,
+            "business_email": merchant.businessEmail,
+            "status": merchant.status,
+            "created_at": merchant.createdAt
+        }
 
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Service Error: {str(e)}"
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Service Error: {str(e)}"
         )

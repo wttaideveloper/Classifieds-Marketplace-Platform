@@ -4,38 +4,71 @@ from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
 
+#  AUTH 
+
 class AdminLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=6)
 
 
 class ForgotPassword(BaseModel):
     email: EmailStr
     role: str
 
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value):
+        allowed = ["admin", "user", "merchant"]
+        if value.lower() not in allowed:
+            raise ValueError("Invalid role")
+        return value.lower()
+
 
 class ResetPassword(BaseModel):
-    resetToken: str
-    newPassword: str
-    confirmPassword: str
+    reset_token: str
+    new_password: str = Field(..., min_length=6)
+    confirm_password: str
+
+    @field_validator("confirm_password")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "new_password" in values and v != values["new_password"]:
+            raise ValueError("Passwords do not match")
+        return v
 
 
 class ChangePassword(BaseModel):
-    currentPassword: str
-    newPassword: str
-    confirmPassword: str
+    current_password: str
+    new_password: str = Field(..., min_length=6)
+    confirm_password: str
+
+    @field_validator("confirm_password")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "new_password" in values and v != values["new_password"]:
+            raise ValueError("Passwords do not match")
+        return v
+
+
+# ADMIN 
 
 class AdminProfileUpdate(BaseModel):
-    name: str
-    email: EmailStr
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+
+#  USERS 
 
 class UserListItem(BaseModel):
-    id: str
-    name: Optional[str]
+    id: UUID
+    name: Optional[str] = None
     email: str
     role: str
     status: str
-    createdAt: datetime
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class PaginatedUsers(BaseModel):
@@ -44,13 +77,18 @@ class PaginatedUsers(BaseModel):
     limit: int
     data: List[UserListItem]
 
+
 class UserDetailsResponse(BaseModel):
-    id: str
-    name: Optional[str]
+    id: UUID
+    name: Optional[str] = None
     email: str
     role: str
     status: str
-    createdAt: datetime
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 
 class UpdateUserStatusSchema(BaseModel):
     status: str
@@ -59,20 +97,22 @@ class UpdateUserStatusSchema(BaseModel):
     @classmethod
     def validate_status(cls, value):
         allowed = ["active", "inactive", "suspended", "pending"]
-
         if value.lower() not in allowed:
-            raise ValueError(
-                "Status must be active, inactive, suspended or pending"
-            )
-
+            raise ValueError("Invalid status")
         return value.lower()
-    
+
+
+#  MERCHANT 
+
 class MerchantListItem(BaseModel):
-    id: str
-    name: Optional[str]
-    email: str
+    id: UUID
+    full_name: Optional[str] = None
+    business_email: str
     status: str
-    createdAt: datetime
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class MerchantListResponse(BaseModel):
@@ -81,18 +121,25 @@ class MerchantListResponse(BaseModel):
     limit: int
     data: List[MerchantListItem]
 
+
 class MerchantDetailsResponse(BaseModel):
-    id: str
-    name: Optional[str]
-    email: str
-    mobileNumber: Optional[str]
+    id: UUID
+    full_name: Optional[str] = None
+    business_email: str
+    mobile_number: Optional[str] = None
     status: str
-    createdAt: datetime
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+#  BUSINESS 
 
 class BusinessResponse(BaseModel):
     id: UUID
     name: str
-    category: Optional[str]
+    category: Optional[str] = None
     status: str
     created_at: datetime
 
@@ -106,23 +153,26 @@ class BusinessListResponse(BaseModel):
     limit: int
     data: List[BusinessResponse]
 
+
 class BusinessDetailResponse(BaseModel):
     id: UUID
     name: str
-    category: Optional[str]
+    category: Optional[str] = None
     status: str
     created_at: datetime
 
     class Config:
         from_attributes = True
 
+
 class BusinessApproveResponse(BaseModel):
     id: UUID
     status: str
-    approved_at: Optional[datetime]
+    approved_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
 
 class BusinessRejectRequest(BaseModel):
     reason: Optional[str] = Field(None, max_length=500)
@@ -131,11 +181,12 @@ class BusinessRejectRequest(BaseModel):
 class BusinessRejectResponse(BaseModel):
     id: UUID
     status: str
-    rejection_reason: Optional[str]
-    rejected_at: Optional[datetime]
+    rejection_reason: Optional[str] = None
+    rejected_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
 
 class BusinessSuspendRequest(BaseModel):
     reason: Optional[str] = Field(None, max_length=500)
@@ -144,25 +195,29 @@ class BusinessSuspendRequest(BaseModel):
 class BusinessSuspendResponse(BaseModel):
     id: UUID
     status: str
-    suspension_reason: Optional[str]
-    suspended_at: Optional[datetime]
+    suspension_reason: Optional[str] = None
+    suspended_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
 
 class BusinessReactivateResponse(BaseModel):
     id: UUID
     status: str
-    suspended_at: Optional[datetime]
+    suspended_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
 
+
+#  RELATION 
+
 class MerchantResponse(BaseModel):
     id: UUID
-    name: str
-    email: str
-    is_active: bool
+    full_name: str
+    business_email: str
+    status: str
     created_at: datetime
 
     class Config:

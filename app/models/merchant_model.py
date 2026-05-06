@@ -8,6 +8,8 @@ from sqlalchemy import (
     JSON
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID
+import uuid
 from datetime import datetime
 from app.db.database import Base
 
@@ -16,7 +18,7 @@ from app.db.database import Base
 class Merchant(Base):
     __tablename__ = "merchants"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     fullName = Column(String(255), nullable=False)
     businessEmail = Column(String(255), unique=True, index=True, nullable=False)
@@ -58,6 +60,11 @@ class Merchant(Base):
         uselist=False,
         cascade="all, delete-orphan"
     )
+    businesses = relationship(
+        "Business",
+        back_populates="merchant",
+        cascade="all, delete-orphan"
+    )
 
 # MERCHANT BUSINESS PROFILE 
 
@@ -67,7 +74,7 @@ class MerchantProfile(Base):
     id = Column(String, primary_key=True, index=True)
 
     merchant_id = Column(
-        String,
+        UUID(as_uuid=True),
         ForeignKey("merchants.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
@@ -135,7 +142,7 @@ class MerchantBusinessDraft(Base):
     id = Column(String, primary_key=True, index=True)
 
     merchant_id = Column(
-        String,
+        UUID(as_uuid=True),
         ForeignKey("merchants.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
