@@ -144,3 +144,4 @@ def get_all_users(
     paginated_users = users[start:end]
 
     return total, paginated_users
+

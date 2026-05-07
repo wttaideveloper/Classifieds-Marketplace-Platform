@@ -5,9 +5,13 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Text,
-    JSON
+    JSON,
+    Float,
+    ARRAY,
+    Integer
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 from datetime import datetime
@@ -200,4 +204,53 @@ class MerchantBusinessDraft(Base):
     merchant = relationship(
         "Merchant",
         back_populates="business_draft"
+    )
+
+class MerchantListing(Base):
+    __tablename__ = "merchant_listings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Common Fields
+    businessId = Column(UUID(as_uuid=True), nullable=False)
+    listingType = Column(String, nullable=False)  # product | service | event | training | program
+
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=False)
+
+    categoryId = Column(UUID(as_uuid=True), nullable=False)
+    subcategoryId = Column(UUID(as_uuid=True), nullable=True)
+
+    price = Column(Float, nullable=False)
+    currency = Column(String, default="INR")
+
+    images = Column(ARRAY(String), default=[])
+
+    status = Column(String, default="draft")  # draft | published
+
+    tags = Column(ARRAY(String), default=[])
+
+    # Product Fields
+    stockQuantity = Column(Integer, nullable=True)
+    sku = Column(String, nullable=True)
+    weight = Column(Float, nullable=True)
+
+    # Service Fields
+    duration = Column(String, nullable=True)
+    serviceMode = Column(String, nullable=True)  # online | offline | hybrid
+    availability = Column(String, nullable=True)
+
+    # Event / Training / Program Fields
+    startDate = Column(DateTime, nullable=True)
+    endDate = Column(DateTime, nullable=True)
+    capacity = Column(Integer, nullable=True)
+    location = Column(String, nullable=True)
+    isOnline = Column(Boolean, default=False)
+    registrationDeadline = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
     )

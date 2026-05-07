@@ -1,6 +1,8 @@
 from sqlalchemy import Column, String, Boolean, DateTime
 from datetime import datetime
 from app.db.database import Base
+import uuid
+from sqlalchemy.dialects.postgresql import UUID
 
 class Customer(Base):
     __tablename__ = "customers"
@@ -22,3 +24,4 @@ class Customer(Base):
     status = Column(String, default="active")
 
     createdAt = Column(DateTime, default=datetime.utcnow)
+

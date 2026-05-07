@@ -1,4 +1,4 @@
-from fastapi import UploadFile
+from fastapi import UploadFile, status, HTTPException
 from app.repository.merchant_repo import (
     get_merchant_by_email, 
     create_merchant, 
@@ -9,8 +9,20 @@ from app.repository.merchant_repo import (
     create_business_draft, 
     update_business_profile,
     update_business_draft,
-    get_business_draft_by_merchant_id
+    get_business_draft_by_merchant_id,
+    create_listing_repo,
+    save_listing_draft_repo,
+    get_my_listings_repo,
+    get_listing_details_repo,
+    get_listing_by_id_repo,
+    update_listing_repo,
+    delete_listing_repo,
+    publish_listing_repo,
+    unpublish_listing_repo,
+    upload_listing_images_repo,
+    delete_listing_image_repo
 )
+from sqlalchemy.orm import Session
 from app.models.merchant_model import Merchant, MerchantProfile, MerchantBusinessDraft
 from app.models.admin_model import Business
 from app.exceptions.custom_exception import CustomException
@@ -29,6 +41,7 @@ GOOGLE_VERIFY_URL = "https://oauth2.googleapis.com/tokeninfo"
 LOGO_FOLDER = "uploads/business_logo"
 BANNER_FOLDER = "uploads/business_banner"
 GALLERY_FOLDER = "uploads/business_gallery"
+UPLOAD_DIR = "uploads/listings"
 
 def register_merchant_service(db, merchant):
     print(db.bind.url)
@@ -416,16 +429,12 @@ def update_business_profile_service(
 def submit_business_for_approval_service(db, merchant_id: str):
 
     profile = get_business_profile_by_merchant_id(db, merchant_id)
-
     if not profile:
         raise CustomException(404, "Business profile not found")
-
     if profile.status == "pending_approval":
         raise CustomException(400, "Business already submitted")
-
     if profile.status == "approved":
         raise CustomException(400, "Business already approved")
-
     # Validate required fields
     required_fields = [
         "businessName",
@@ -439,15 +448,12 @@ def submit_business_for_approval_service(db, merchant_id: str):
         "country",
         "businessType"
     ]
-
     for field in required_fields:
         if not getattr(profile, field):
             raise CustomException(400, f"{field} is required")
-
     # STEP 1: Update profile status
     profile.status = "pending_approval"
     update_business_profile(db, profile)
-
     # STEP 2: CREATE BUSINESS (THIS WAS MISSING)
     new_business = Business(
         name=profile.businessName,
@@ -455,20 +461,15 @@ def submit_business_for_approval_service(db, merchant_id: str):
         merchant_id=merchant_id,
         status="pending"
     )
-
     db.add(new_business)
     db.commit()
     db.refresh(new_business)
-
     return {
         "success": True,
         "message": "Business submitted for approval",
         "business_id": str(new_business.id),
         "status": new_business.status
     }
-
-
-
 
 def upload_business_logo_service(
     db,
@@ -771,3 +772,463 @@ def get_business_status_service(
         "businessStatus": profile.status,
         "businessName": profile.businessName
     }
+
+
+
+def create_listing_service(db: Session, payload):
+
+    try:
+
+        # PRODUCT VALIDATION
+        if payload.listingType == "product":
+
+            if payload.stockQuantity is None:
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "stockQuantity is required for product"
+                )
+
+            if payload.sku is None:
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "sku is required for product"
+                )
+
+        # SERVICE VALIDATION
+        elif payload.listingType == "service":
+
+            if payload.duration is None:
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "duration is required for service"
+                )
+
+            if payload.serviceMode is None:
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "serviceMode is required for service"
+                )
+
+        # EVENT / TRAINING / PROGRAM VALIDATION
+        elif payload.listingType in ["event", "training", "program"]:
+
+            required_fields = {
+                "startDate": payload.startDate,
+                "endDate": payload.endDate,
+                "capacity": payload.capacity,
+                "location": payload.location,
+                "registrationDeadline": payload.registrationDeadline
+            }
+
+            for field_name, value in required_fields.items():
+
+                if value is None:
+                    raise CustomException(
+                        status.HTTP_400_BAD_REQUEST,
+                        f"{field_name} is required for {payload.listingType}"
+                    )
+
+        listing = create_listing_repo(db, payload)
+
+        return {
+            "success": True,
+            "message": "Listing created successfully",
+            "data": listing
+        }
+
+    except HTTPException as e:
+        raise e
+
+    except Exception as e:
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+    
+
+def save_listing_draft_service(
+    db: Session,
+    payload
+):
+    try:
+        draft = save_listing_draft_repo(
+            db=db,
+            payload=payload
+        )
+        return {
+            "success": True,
+            "message": "Listing saved as draft successfully",
+            "data": draft
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+def get_my_listings_service(
+    db: Session,
+    businessId,
+    status_filter,
+    listingType,
+    search,
+    page,
+    limit
+):
+    try:
+        skip = (page - 1) * limit
+        total, listings = get_my_listings_repo(
+            db=db,
+            businessId=businessId,
+            status=status_filter,
+            listingType=listingType,
+            search=search,
+            skip=skip,
+            limit=limit
+        )
+        return {
+            "success": True,
+            "message": "Listings fetched successfully",
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "data": listings
+        }
+    except Exception as e:
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+    
+def get_listing_details_service(
+    db: Session,
+    listingId
+):
+    try:
+        listing = get_listing_details_repo(
+            db=db,
+            listingId=listingId
+        )
+        # LISTING NOT FOUND
+        if not listing:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+        return {
+            "success": True,
+            "message": "Listing details fetched successfully",
+            "data": listing
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+def update_listing_service(
+    db: Session,
+    listingId,
+    payload
+):
+    try:
+        # CHECK LISTING EXISTS
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+        if not listing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Listing not found"
+            )
+        # UPDATE LISTING
+        updated_listing = update_listing_repo(
+            db=db,
+            listing=listing,
+            payload=payload
+        )
+        return {
+            "success": True,
+            "message": "Listing updated successfully",
+            "data": updated_listing
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+    
+def delete_listing_service(
+    db: Session,
+    listingId
+):
+    try:
+        # CHECK LISTING EXISTS
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+        if not listing:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+        # DELETE LISTING
+        delete_listing_repo(
+            db=db,
+            listing=listing
+        )
+        return {
+            "success": True,
+            "message": "Listing deleted successfully",
+            "deletedListingId": listingId
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+def publish_listing_service(
+    db: Session,
+    listingId
+):
+    try:
+        # CHECK LISTING EXISTS
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+        if not listing:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+        # CHECK IF ALREADY PUBLISHED
+        if listing.status == "published":
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                "Listing already published"
+            )
+        # VALIDATE REQUIRED FIELDS BEFORE PUBLISH
+        required_fields = {
+            "title": listing.title,
+            "description": listing.description,
+            "listingType": listing.listingType,
+            "price": listing.price
+        }
+        for field_name, value in required_fields.items():
+            if value is None or value == "":
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{field_name} is required to publish listing"
+                )
+        # PUBLISH LISTING
+        updated_listing = publish_listing_repo(
+            db=db,
+            listing=listing
+        )
+        return {
+            "success": True,
+            "message": "Listing published successfully",
+            "data": {
+                "id": updated_listing.id,
+                "status": updated_listing.status,
+                "updated_at": updated_listing.updated_at
+            }
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+def unpublish_listing_service(
+    db: Session,
+    listingId
+):
+    try:
+        # CHECK LISTING EXISTS
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+        if not listing:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+        # CHECK IF ALREADY UNPUBLISHED
+        if listing.status == "draft":
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                "Listing already unpublished"
+            )
+        # UNPUBLISH LISTING
+        updated_listing = unpublish_listing_repo(
+            db=db,
+            listing=listing
+        )
+        return {
+            "success": True,
+            "message": "Listing unpublished successfully",
+            "data": {
+                "id": updated_listing.id,
+                "status": updated_listing.status,
+                "updated_at": updated_listing.updated_at
+            }
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+    
+import os
+import uuid
+
+from fastapi import (
+    HTTPException,
+    UploadFile,
+    status
+)
+
+def upload_listing_images_service(
+    db: Session,
+    listingId,
+    files
+):
+    try:
+        # CHECK LISTING EXISTS
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+        if not listing:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+        # CREATE UPLOAD DIRECTORY
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        uploaded_images = []
+        # SAVE FILES
+        for file in files:
+            # VALIDATE IMAGE TYPE
+            if not file.content_type.startswith("image/"):
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{file.filename} is not a valid image"
+                )
+            # GENERATE UNIQUE FILE NAME
+            file_extension = file.filename.split(".")[-1]
+            unique_filename = (
+                f"{uuid.uuid4()}.{file_extension}"
+            )
+            file_path = os.path.join(
+                UPLOAD_DIR,
+                unique_filename
+            )
+            # SAVE FILE
+            with open(file_path, "wb") as image:
+                image.write(file.file.read())
+            uploaded_images.append(unique_filename)
+        # UPDATE DATABASE
+        updated_listing = upload_listing_images_repo(
+            db=db,
+            listing=listing,
+            uploaded_images=uploaded_images
+        )
+        return {
+            "success": True,
+            "message": "Listing images uploaded successfully",
+            "data": {
+                "listingId": updated_listing.id,
+                "images": updated_listing.images
+            }
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+def delete_listing_image_service(
+    db: Session,
+    listingId,
+    imageId
+):
+    try:
+        # CHECK LISTING EXISTS
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+        if not listing:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+        images = listing.images or []
+        # CHECK IMAGE EXISTS
+        if imageId not in images:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Image not found in listing"
+            )
+        # REMOVE IMAGE FROM ARRAY
+        updated_images = [
+            image for image in images
+            if image != imageId
+        ]
+        # DELETE IMAGE FILE
+        image_path = os.path.join(
+            UPLOAD_DIR,
+            imageId
+        )
+        if os.path.exists(image_path):
+            os.remove(image_path)
+        # UPDATE DATABASE
+        updated_listing = delete_listing_image_repo(
+            db=db,
+            listing=listing,
+            updated_images=updated_images
+        )
+        return {
+            "success": True,
+            "message": "Listing image deleted successfully",
+            "data": {
+                "listingId": updated_listing.id,
+                "deletedImage": imageId,
+                "remainingImages": updated_listing.images
+            }
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )

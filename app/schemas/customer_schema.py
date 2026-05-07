@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
+from uuid import UUID
 
 # REGISTER
 class CustomerRegister(BaseModel):

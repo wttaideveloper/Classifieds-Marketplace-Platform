@@ -1,5 +1,7 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict
+from datetime import datetime
+from uuid import UUID
 
 # REGISTER
 class MerchantRegister(BaseModel):
@@ -195,3 +197,235 @@ class UpdateBusinessProfile(BaseModel):
     # Category
     primaryCategory: Optional[str] = None
     subcategory: Optional[str] = None
+
+class MerchantListingBase(BaseModel):
+
+    # Common Fields
+    businessId: UUID
+    listingType: str = Field(..., pattern="^(product|service|event|training|program)$")
+    title: str
+    description: str
+    categoryId: UUID
+    subcategoryId: Optional[UUID] = None
+    price: float
+    currency: str = "INR"
+    images: Optional[List[str]] = []
+    status: str = Field(default="draft", pattern="^(draft|published)$")
+    tags: Optional[List[str]] = []
+    # Product Fields
+    stockQuantity: Optional[int] = None
+    sku: Optional[str] = None
+    weight: Optional[float] = None
+    # Service Fields
+    duration: Optional[str] = None
+    serviceMode: Optional[str] = Field(
+        default=None,
+        pattern="^(online|offline|hybrid)$"
+    )
+    availability: Optional[str] = None
+    # Event / Training / Program Fields
+    startDate: Optional[datetime] = None
+    endDate: Optional[datetime] = None
+    capacity: Optional[int] = None
+    location: Optional[str] = None
+    isOnline: Optional[bool] = False
+    registrationDeadline: Optional[datetime] = None
+
+class MerchantListingCreate(MerchantListingBase):
+    pass
+
+class MerchantListingResponse(MerchantListingBase):
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class MerchantDraftCreate(BaseModel):
+
+    # Common Fields
+    businessId: Optional[UUID] = None
+    listingType: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    categoryId: Optional[UUID] = None
+    subcategoryId: Optional[UUID] = None
+    price: Optional[float] = None
+    currency: Optional[str] = "INR"
+    images: Optional[List[str]] = []
+    tags: Optional[List[str]] = []
+    # Product Fields
+    stockQuantity: Optional[int] = None
+    sku: Optional[str] = None
+    weight: Optional[float] = None
+    # Service Fields
+    duration: Optional[str] = None
+    serviceMode: Optional[str] = None
+    availability: Optional[str] = None
+    # Event / Training / Program Fields
+    startDate: Optional[datetime] = None
+    endDate: Optional[datetime] = None
+    capacity: Optional[int] = None
+    location: Optional[str] = None
+    isOnline: Optional[bool] = False
+    registrationDeadline: Optional[datetime] = None
+
+class MerchantDraftResponse(BaseModel):
+
+    id: UUID
+    businessId: Optional[UUID]
+    listingType: Optional[str]
+    title: Optional[str]
+    description: Optional[str]
+    status: str
+
+    class Config:
+        from_attributes = True
+
+class MerchantListingResponse(BaseModel):
+
+    id: UUID
+    businessId: UUID
+    listingType: str
+    title: str
+    description: Optional[str]
+    price: Optional[float]
+    currency: Optional[str]
+    images: Optional[List[str]]
+    status: str
+    tags: Optional[List[str]]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class MerchantListingPaginationResponse(BaseModel):
+
+    success: bool
+    message: str
+    total: int
+    page: int
+    limit: int
+    data: List[MerchantListingResponse]
+
+class MerchantListingDetailsResponse(BaseModel):
+
+    id: UUID
+    businessId: UUID
+    listingType: str
+    title: str
+    description: Optional[str]
+    categoryId: Optional[UUID]
+    subcategoryId: Optional[UUID]
+    price: Optional[float]
+    currency: Optional[str]
+    images: Optional[List[str]]
+    status: str
+    tags: Optional[List[str]]
+    # Product Fields
+    stockQuantity: Optional[int]
+    sku: Optional[str]
+    weight: Optional[float]
+    # Service Fields
+    duration: Optional[str]
+    serviceMode: Optional[str]
+    availability: Optional[str]
+    # Event / Training / Program Fields
+    startDate: Optional[datetime]
+    endDate: Optional[datetime]
+    capacity: Optional[int]
+    location: Optional[str]
+    isOnline: Optional[bool]
+    registrationDeadline: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class UpdateMerchantListing(BaseModel):
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[float] = None
+    images: Optional[List[str]] = None
+    availability: Optional[str] = None
+    schedule: Optional[str] = None
+    capacity: Optional[int] = None
+
+
+class MerchantListingUpdateResponse(BaseModel):
+
+    id: UUID
+    title: Optional[str]
+    description: Optional[str]
+    price: Optional[float]
+    images: Optional[List[str]]
+    availability: Optional[str]
+    schedule: Optional[str]
+    capacity: Optional[int]
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class DeleteMerchantListingResponse(BaseModel):
+
+    success: bool
+    message: str
+    deletedListingId: UUID
+
+class PublishListingResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: dict
+
+class PublishListingData(BaseModel):
+
+    id: UUID
+    status: str
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class UnpublishListingResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: dict
+
+class UnpublishListingData(BaseModel):
+    id: UUID
+    status: str
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class UploadListingImagesResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: dict
+
+
+class UploadListingImagesData(BaseModel):
+
+    listingId: UUID
+    images: List[str]
+
+class DeleteListingImageResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: dict
+
+
+class DeleteListingImageData(BaseModel):
+
+    listingId: UUID
+    deletedImage: str
+    remainingImages: List[str]
