@@ -2,6 +2,8 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict
 from datetime import datetime
 from uuid import UUID
+from enum import Enum
+
 
 # REGISTER
 class MerchantRegister(BaseModel):
@@ -198,43 +200,84 @@ class UpdateBusinessProfile(BaseModel):
     primaryCategory: Optional[str] = None
     subcategory: Optional[str] = None
 
+# ENUMS
+class ListingType(str, Enum):
+    product = "product"
+    service = "service"
+    event = "event"
+    training = "training"
+    program = "program"
+
+
+class ListingStatus(str, Enum):
+    draft = "draft"
+    published = "published"
+
+
+class ServiceMode(str, Enum):
+    online = "online"
+    offline = "offline"
+    hybrid = "hybrid"
+
 class MerchantListingBase(BaseModel):
 
-    # Common Fields
     businessId: UUID
-    listingType: str = Field(..., pattern="^(product|service|event|training|program)$")
+
+    listingType: ListingType
+
     title: str
+
     description: str
+
     categoryId: UUID
+
     subcategoryId: Optional[UUID] = None
+
     price: float
+
     currency: str = "INR"
-    images: Optional[List[str]] = []
-    status: str = Field(default="draft", pattern="^(draft|published)$")
-    tags: Optional[List[str]] = []
-    # Product Fields
+
+    images: List[str] = Field(default_factory=list)
+
+    status: ListingStatus = ListingStatus.draft
+
+    tags: List[str] = Field(default_factory=list)
+
+    # PRODUCT
     stockQuantity: Optional[int] = None
+
     sku: Optional[str] = None
+
     weight: Optional[float] = None
-    # Service Fields
+
+    # SERVICE
     duration: Optional[str] = None
-    serviceMode: Optional[str] = Field(
-        default=None,
-        pattern="^(online|offline|hybrid)$"
-    )
+
+    serviceMode: Optional[ServiceMode] = None
+
     availability: Optional[str] = None
-    # Event / Training / Program Fields
+
+    schedule: Optional[str] = None
+
+    # EVENT / TRAINING / PROGRAM
     startDate: Optional[datetime] = None
+
     endDate: Optional[datetime] = None
+
     capacity: Optional[int] = None
+
     location: Optional[str] = None
-    isOnline: Optional[bool] = False
+
+    isOnline: bool = False
+
     registrationDeadline: Optional[datetime] = None
+
 
 class MerchantListingCreate(MerchantListingBase):
     pass
 
-class MerchantListingResponse(MerchantListingBase):
+class MerchantListingCreateResponse(MerchantListingBase):
+
     id: UUID
     created_at: datetime
     updated_at: datetime
@@ -242,63 +285,84 @@ class MerchantListingResponse(MerchantListingBase):
     class Config:
         from_attributes = True
 
+
 class MerchantDraftCreate(BaseModel):
 
-    # Common Fields
     businessId: Optional[UUID] = None
-    listingType: Optional[str] = None
+
+    listingType: Optional[ListingType] = None
+
     title: Optional[str] = None
+
     description: Optional[str] = None
+
     categoryId: Optional[UUID] = None
+
     subcategoryId: Optional[UUID] = None
+
     price: Optional[float] = None
-    currency: Optional[str] = "INR"
-    images: Optional[List[str]] = []
-    tags: Optional[List[str]] = []
-    # Product Fields
+
+    currency: str = "INR"
+
+    images: List[str] = Field(default_factory=list)
+
+    tags: List[str] = Field(default_factory=list)
+
     stockQuantity: Optional[int] = None
+
     sku: Optional[str] = None
+
     weight: Optional[float] = None
-    # Service Fields
+
     duration: Optional[str] = None
-    serviceMode: Optional[str] = None
+
+    serviceMode: Optional[ServiceMode] = None
+
     availability: Optional[str] = None
-    # Event / Training / Program Fields
+
+    schedule: Optional[str] = None
+
     startDate: Optional[datetime] = None
+
     endDate: Optional[datetime] = None
+
     capacity: Optional[int] = None
+
     location: Optional[str] = None
-    isOnline: Optional[bool] = False
+
+    isOnline: bool = False
+
     registrationDeadline: Optional[datetime] = None
 
 class MerchantDraftResponse(BaseModel):
 
     id: UUID
     businessId: Optional[UUID]
-    listingType: Optional[str]
+    listingType: Optional[ListingType]
     title: Optional[str]
     description: Optional[str]
-    status: str
+    status: ListingStatus
 
     class Config:
         from_attributes = True
 
-class MerchantListingResponse(BaseModel):
+class MerchantListingListResponse(BaseModel):
 
     id: UUID
     businessId: UUID
-    listingType: str
+    listingType: ListingType
     title: str
     description: Optional[str]
     price: Optional[float]
     currency: Optional[str]
-    images: Optional[List[str]]
-    status: str
-    tags: Optional[List[str]]
+    images: List[str]
+    status: ListingStatus
+    tags: List[str]
     created_at: datetime
 
     class Config:
         from_attributes = True
+
 
 class MerchantListingPaginationResponse(BaseModel):
 
@@ -307,42 +371,68 @@ class MerchantListingPaginationResponse(BaseModel):
     total: int
     page: int
     limit: int
-    data: List[MerchantListingResponse]
+    data: List[MerchantListingListResponse]
+
 
 class MerchantListingDetailsResponse(BaseModel):
 
     id: UUID
+
     businessId: UUID
-    listingType: str
+
+    listingType: ListingType
+
     title: str
+
     description: Optional[str]
+
     categoryId: Optional[UUID]
+
     subcategoryId: Optional[UUID]
+
     price: Optional[float]
+
     currency: Optional[str]
-    images: Optional[List[str]]
-    status: str
-    tags: Optional[List[str]]
-    # Product Fields
+
+    images: List[str]
+
+    status: ListingStatus
+
+    tags: List[str]
+
     stockQuantity: Optional[int]
+
     sku: Optional[str]
+
     weight: Optional[float]
-    # Service Fields
+
     duration: Optional[str]
-    serviceMode: Optional[str]
+
+    serviceMode: Optional[ServiceMode]
+
     availability: Optional[str]
-    # Event / Training / Program Fields
+
+    schedule: Optional[str]
+
     startDate: Optional[datetime]
+
     endDate: Optional[datetime]
+
     capacity: Optional[int]
+
     location: Optional[str]
-    isOnline: Optional[bool]
+
+    isOnline: bool
+
     registrationDeadline: Optional[datetime]
+
     created_at: datetime
+
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
 
 class UpdateMerchantListing(BaseModel):
 
@@ -355,16 +445,25 @@ class UpdateMerchantListing(BaseModel):
     capacity: Optional[int] = None
 
 
+
 class MerchantListingUpdateResponse(BaseModel):
 
     id: UUID
+
     title: Optional[str]
+
     description: Optional[str]
+
     price: Optional[float]
+
     images: Optional[List[str]]
+
     availability: Optional[str]
+
     schedule: Optional[str]
+
     capacity: Optional[int]
+
     updated_at: datetime
 
     class Config:

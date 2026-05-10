@@ -1102,15 +1102,6 @@ def unpublish_listing_service(
             str(e)
         )
     
-import os
-import uuid
-
-from fastapi import (
-    HTTPException,
-    UploadFile,
-    status
-)
-
 def upload_listing_images_service(
     db: Session,
     listingId,

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, status, UploadFile, File, Query
-from typing import List
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.db.database import SessionLocal
 from app.services.merchant_service import (
@@ -211,7 +211,7 @@ def get_business_status(
 
 # CREATE LISTING
 @router.post(
-    "/merchant/listings",
+    "/listings",
     status_code=status.HTTP_201_CREATED
 )
 def create_listing(
@@ -222,7 +222,7 @@ def create_listing(
 
 # SAVE LISTING AS DRAFT
 @router.post(
-    "/merchant/listings/draft",
+    "/listings/draft",
     status_code=status.HTTP_201_CREATED
 )
 def save_listing_as_draft(
@@ -236,11 +236,11 @@ def save_listing_as_draft(
 
 # GET MY LISTINGS
 @router.get(
-    "/merchant/listings",
+    "/listings",
     status_code=status.HTTP_200_OK
 )
 def get_my_listings(
-    businessId: str,
+    businessId: Optional[str] = None,
     status_filter: str = Query(
         default=None,
         alias="status"
@@ -263,7 +263,7 @@ def get_my_listings(
 
 # GET LISTING DETAILS
 @router.get(
-    "/merchant/listings/{listingId}",
+    "/listings/{listingId}",
     status_code=status.HTTP_200_OK
 )
 def get_listing_details(
@@ -277,7 +277,7 @@ def get_listing_details(
 
 # UPDATE LISTING
 @router.put(
-    "/merchant/listings/{listingId}",
+    "/listings/{listingId}",
     status_code=status.HTTP_200_OK
 )
 def update_listing(
@@ -293,7 +293,7 @@ def update_listing(
 
 # DELETE LISTING
 @router.delete(
-    "/merchant/listings/{listingId}",
+    "/listings/{listingId}",
     status_code=status.HTTP_200_OK
 )
 def delete_listing(
@@ -307,7 +307,7 @@ def delete_listing(
 
 # PUBLISH LISTING
 @router.patch(
-    "/merchant/listings/{listingId}/publish",
+    "/listings/{listingId}/publish",
     status_code=status.HTTP_200_OK
 )
 def publish_listing(
@@ -321,7 +321,7 @@ def publish_listing(
 
 # UNPUBLISH LISTING
 @router.patch(
-    "/merchant/listings/{listingId}/unpublish",
+    "/listings/{listingId}/unpublish",
     status_code=status.HTTP_200_OK
 )
 def unpublish_listing(
@@ -335,7 +335,7 @@ def unpublish_listing(
 
 # UPLOAD LISTING IMAGES
 @router.post(
-    "/merchant/listings/{listingId}/images",
+    "/listings/{listingId}/images",
     status_code=status.HTTP_200_OK
 )
 def upload_listing_images(
@@ -352,7 +352,7 @@ def upload_listing_images(
 
 # DELETE LISTING IMAGE
 @router.delete(
-    "/merchant/listings/{listingId}/images/{imageId}",
+    "/listings/{listingId}/images/{imageId}",
     status_code=status.HTTP_200_OK
 )
 def delete_listing_image(

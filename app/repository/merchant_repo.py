@@ -207,9 +207,16 @@ def get_my_listings_repo(
     limit
 ):
 
-    query = db.query(MerchantListing).filter(
-        MerchantListing.businessId == businessId
-    )
+    # query = db.query(MerchantListing).filter(
+    #     MerchantListing.businessId == businessId
+    # )
+    query = db.query(MerchantListing)
+
+    # FILTER BY BUSINESS ID
+    if businessId:
+        query = query.filter(
+            MerchantListing.businessId == businessId
+        )
 
     # FILTER BY STATUS
     if status:
