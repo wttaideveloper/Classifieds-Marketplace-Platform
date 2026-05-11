@@ -1,5 +1,5 @@
 from jose import jwt, JWTError, ExpiredSignatureError
-from fastapi import status
+from fastapi import status, HTTPException
 from app.core.config import settings
 from app.exceptions.custom_exception import CustomException
 from app.core.security import create_access_token
@@ -212,3 +212,32 @@ def resend_verification_service(db, payload):
         "message": f"Verification email sent successfully to {role}",
         "verificationToken": verification_token
     }
+
+class CustomException(HTTPException):
+
+    def __init__(
+        self,
+        status_code: int,
+        detail: str
+    ):
+        super().__init__(
+            status_code=status_code,
+            detail=detail
+        )
+
+def validate_role(role: str):
+
+    allowed_roles = [
+        "customer",
+        "merchant",
+        "admin"
+    ]
+
+    if role.lower() not in allowed_roles:
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid role"
+        )
+
+    return True

@@ -4,7 +4,7 @@ from sqlalchemy import or_
 from typing import Optional, Tuple, List
 from uuid import UUID
 from datetime import datetime
-
+from app.models.customer_model import PublicListing, Category
 from app.models.admin_model import Admin, Business
 
 
@@ -161,3 +161,101 @@ def _commit(db: Session, instance):
     except SQLAlchemyError as e:
         db.rollback()
         raise Exception(f"Database Error: {str(e)}")
+    
+def get_all_listings_repo(
+    db: Session
+):
+
+    listings = db.query(PublicListing).order_by(
+        PublicListing.created_at.desc()
+    ).all()
+
+    total = len(listings)
+
+    return total, listings
+
+# GET LISTING BY ID
+def get_listing_by_id_repo(
+    db: Session,
+    listingId
+):
+
+    return db.query(PublicListing).filter(
+        PublicListing.id == listingId
+    ).first()
+
+# APPROVE LISTING
+def approve_listing_repo(
+    db: Session,
+    listing
+):
+    listing.status = "approved"
+    db.commit()
+    db.refresh(listing)
+    return listing
+
+
+# REJECT LISTING
+def reject_listing_repo(
+    db: Session,
+    listing,
+    reason
+):
+    listing.status = "rejected"
+    listing.rejectionReason = reason
+    db.commit()
+    db.refresh(listing)
+    return listing
+
+def suspend_listing_repo(
+    db,
+    listing,
+    reason
+):
+    listing.status = "suspended"
+    listing.suspendedAt = datetime.utcnow()
+    listing.suspensionReason = reason
+    db.commit()
+    db.refresh(listing)
+    return listing
+
+def reactivate_listing_repo(
+    db,
+    listing
+):
+    listing.status = "approved"
+    listing.suspendedAt = None
+    listing.suspensionReason = None
+    db.commit()
+    db.refresh(listing)
+    return listing
+
+# GET CATEGORY BY ID
+def get_category_by_id_repo(
+    db: Session,
+    categoryId
+):
+
+    return db.query(Category).filter(
+        Category.id == categoryId,
+        Category.isDeleted == False
+    ).first()
+
+# CREATE CATEGORY
+def create_category_repo(
+    db: Session,
+    payload
+):
+
+    category = Category(
+        name=payload.name,
+        description=payload.description,
+        icon=payload.icon,
+        isActive=payload.isActive
+    )
+
+    db.add(category)
+    db.commit()
+    db.refresh(category)
+
+    return category

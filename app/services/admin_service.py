@@ -16,7 +16,15 @@ from app.repository.admin_repo import (
     reject_business,
     suspend_business,
     reactivate_business,
-    get_business_with_merchant
+    get_business_with_merchant,
+    get_all_listings_repo,
+    get_listing_by_id_repo,
+    approve_listing_repo,
+    reject_listing_repo,
+    suspend_listing_repo,
+    reactivate_listing_repo,
+    create_category_repo,
+    get_category_by_id_repo
 )
 from app.models.customer_model import Customer
 from app.models.merchant_model import Merchant
@@ -629,4 +637,220 @@ def get_associated_merchant_service(db: Session, business_id):
         raise CustomException(
             http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             f"Service Error: {str(e)}"
+        )
+    
+def get_all_listings_service(
+    db: Session
+):
+
+    try:
+
+        total, listings = get_all_listings_repo(
+            db=db
+        )
+
+        return {
+            "success": True,
+            "message": "All listings fetched successfully",
+            "total": total,
+            "data": listings
+        }
+
+    except Exception as e:
+
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+def approve_listing_service(
+    db: Session,
+    listingId
+):
+
+    try:
+
+        # CHECK LISTING EXISTS
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+
+        if not listing:
+
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+
+        # APPROVE LISTING
+        approved_listing = approve_listing_repo(
+            db=db,
+            listing=listing
+        )
+
+        return {
+            "success": True,
+            "message": "Listing approved successfully",
+            "data": approved_listing
+        }
+
+    except HTTPException as e:
+        raise e
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+def reject_listing_service(
+    db: Session,
+    listingId,
+    payload
+):
+    try:
+        # CHECK LISTING EXISTS
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+        if not listing:
+
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+        # REJECT LISTING
+        rejected_listing = reject_listing_repo(
+            db=db,
+            listing=listing,
+            reason=payload.reason
+        )
+        return {
+            "success": True,
+            "message": "Listing rejected successfully",
+            "data": rejected_listing
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+def suspend_listing_service(
+    db,
+    listingId,
+    payload
+):
+    try:
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+        if not listing:
+            raise HTTPException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+        updated_listing = suspend_listing_repo(
+            db=db,
+            listing=listing,
+            reason=payload.reason
+        )
+        return {
+            "success": True,
+            "message": "Listing suspended successfully",
+            "data": updated_listing
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+    
+def reactivate_listing_service(
+    db,
+    listingId
+):
+    try:
+        listing = get_listing_by_id_repo(
+            db=db,
+            listingId=listingId
+        )
+        if not listing:
+            raise HTTPException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+        updated_listing = reactivate_listing_repo(
+            db=db,
+            listing=listing
+        )
+        return {
+            "success": True,
+            "message": "Listing reactivated successfully",
+            "data": updated_listing
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+# CREATE CATEGORY
+def create_category_service(
+    db,
+    payload
+):
+
+    try:
+
+        # CHECK CATEGORY EXISTS
+        existing_category = get_category_by_id_repo(
+            db=db,
+            id=payload.categoryId
+        )
+
+        if existing_category:
+
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Category already exists"
+            )
+
+        # CREATE CATEGORY
+        category = create_category_repo(
+            db=db,
+            payload=payload
+        )
+
+        return {
+            "success": True,
+            "message": "Category created successfully",
+            "data": category
+        }
+
+    except CustomException as e:
+        raise e
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
         )

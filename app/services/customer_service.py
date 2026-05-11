@@ -1,3 +1,4 @@
+from fastapi import status
 from app.repository.customer_repo import *
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
 from app.exceptions.custom_exception import CustomException
@@ -8,6 +9,9 @@ from datetime import datetime, timedelta
 import requests
 import secrets
 from app.core.token_blacklist import TOKEN_BLACKLIST
+from app.services.common_service import (
+    CustomException
+)
 
 GOOGLE_VERIFY_URL = "https://oauth2.googleapis.com/tokeninfo"
 
@@ -178,3 +182,165 @@ def logout_customer_service(token: str, current_user):
         "message": "Logged out successfully"
     }
 
+def get_public_listings_service(
+    db: Session,
+    search,
+    category,
+    listingType,
+    city,
+    priceMin,
+    priceMax,
+    page,
+    limit,
+    sortBy
+):
+
+    try:
+
+        skip = (page - 1) * limit
+
+        total, listings = get_public_listings_repo(
+            db=db,
+            search=search,
+            category=category,
+            listingType=listingType,
+            city=city,
+            priceMin=priceMin,
+            priceMax=priceMax,
+            skip=skip,
+            limit=limit,
+            sortBy=sortBy
+        )
+
+        return {
+            "success": True,
+            "message": "Public listings fetched successfully",
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "data": listings
+        }
+
+    except Exception as e:
+
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+    
+def get_public_listing_details_service(
+    db: Session,
+    listingId
+):
+
+    try:
+
+        listing = get_public_listing_details_repo(
+            db=db,
+            listingId=listingId
+        )
+
+        if not listing:
+
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+
+        return {
+            "success": True,
+            "message": "Listing details fetched successfully",
+            "data": listing
+        }
+
+    except Exception as e:
+        raise e
+
+    except Exception as e:
+
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+    
+def search_listings_service(
+    db: Session,
+    keyword,
+    category,
+    listingType,
+    location,
+    rating,
+    sort
+):
+
+    try:
+
+        total, listings = search_listings_repo(
+            db=db,
+            keyword=keyword,
+            category=category,
+            listingType=listingType,
+            location=location,
+            rating=rating,
+            sort=sort
+        )
+
+        return {
+            "success": True,
+            "message": "Listings fetched successfully",
+            "total": total,
+            "data": listings
+        }
+
+    except Exception as e:
+
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+    
+def get_categories_service(db):
+
+    try:
+
+        total, categories = get_categories_repo(db)
+
+        return {
+            "success": True,
+            "message": "Categories fetched successfully",
+            "total": total,
+            "data": categories
+        }
+
+    except Exception as e:
+
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+    
+# GET SUBCATEGORIES
+def get_subcategories_service(
+    db,
+    categoryId
+):
+
+    try:
+
+        subcategories = get_subcategories_repo(
+            db=db,
+            categoryId=categoryId
+        )
+
+        return {
+            "success": True,
+            "message": "Subcategories fetched successfully",
+            "data": subcategories
+        }
+
+    except Exception as e:
+
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )

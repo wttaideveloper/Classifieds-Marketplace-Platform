@@ -2,7 +2,7 @@ from app.models.customer_model import Customer
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from app.models.customer_model import Customer
+from app.models.customer_model import Customer, PublicListing, Category
 from app.models.merchant_model import Merchant
 from app.models.admin_model import Admin
 
@@ -145,3 +145,186 @@ def get_all_users(
 
     return total, paginated_users
 
+# GET PUBLIC LISTINGS
+def get_public_listings_repo(
+    db: Session,
+    search,
+    category,
+    listingType,
+    city,
+    priceMin,
+    priceMax,
+    skip,
+    limit,
+    sortBy
+):
+
+    query = db.query(PublicListing).filter(
+        PublicListing.status == "published"
+    )
+
+    # SEARCH
+    if search:
+        query = query.filter(
+            or_(
+                PublicListing.title.ilike(f"%{search}%"),
+                PublicListing.description.ilike(f"%{search}%")
+            )
+        )
+
+    # CATEGORY FILTER
+    # category query param will contain categoryId
+    if category:
+        query = query.filter(
+            PublicListing.categoryId == category
+        )
+
+    # LISTING TYPE
+    if listingType:
+        query = query.filter(
+            PublicListing.listingType == listingType
+        )
+
+    # CITY
+    if city:
+        query = query.filter(
+            PublicListing.location.ilike(f"%{city}%")
+        )
+
+    # PRICE MIN
+    if priceMin is not None:
+        query = query.filter(
+            PublicListing.price >= priceMin
+        )
+
+    # PRICE MAX
+    if priceMax is not None:
+        query = query.filter(
+            PublicListing.price <= priceMax
+        )
+
+    # SORTING
+    if sortBy == "priceLowToHigh":
+
+        query = query.order_by(
+            PublicListing.price.asc()
+        )
+
+    elif sortBy == "priceHighToLow":
+
+        query = query.order_by(
+            PublicListing.price.desc()
+        )
+
+    else:
+
+        query = query.order_by(
+            PublicListing.created_at.desc()
+        )
+
+    total = query.count()
+
+    listings = query.offset(skip).limit(limit).all()
+
+    return total, listings
+
+def get_public_listing_details_repo(
+    db: Session,
+    listingId
+):
+
+    listing = db.query(PublicListing).filter(
+        PublicListing.id == listingId,
+        PublicListing.status == "published"
+    ).first()
+
+    return listing
+
+def search_listings_repo(
+    db: Session,
+    keyword,
+    category,
+    listingType,
+    location,
+    rating,
+    sort
+):
+
+    query = db.query(PublicListing).filter(
+        PublicListing.status == "published"
+    )
+
+    # KEYWORD SEARCH
+    if keyword:
+        query = query.filter(
+            or_(
+                PublicListing.title.ilike(f"%{keyword}%"),
+                PublicListing.description.ilike(f"%{keyword}%")
+            )
+        )
+
+    # CATEGORY
+    if category:
+        query = query.filter(
+            PublicListing.categoryId == category
+        )
+
+    # LISTING TYPE
+    if listingType:
+        query = query.filter(
+            PublicListing.listingType == listingType
+        )
+
+    # LOCATION
+    if location:
+        query = query.filter(
+            PublicListing.location.ilike(f"%{location}%")
+        )
+
+    # SORTING
+    if sort == "priceLowToHigh":
+
+        query = query.order_by(
+            PublicListing.price.asc()
+        )
+
+    elif sort == "priceHighToLow":
+
+        query = query.order_by(
+            PublicListing.price.desc()
+        )
+
+    else:
+
+        query = query.order_by(
+            PublicListing.created_at.desc()
+        )
+
+    total = query.count()
+
+    listings = query.all()
+
+    return total, listings
+
+def get_categories_repo(db):
+
+    categories = db.query(Category).filter(
+        Category.status == "active",
+        Category.isDeleted == False
+    ).order_by(Category.createdAt.desc()).all()
+
+    total = len(categories)
+
+    return total, categories
+
+# GET SUBCATEGORIES
+def get_subcategories_repo(
+    db: Session,
+    categoryId
+):
+
+    return db.query(Category).filter(
+        Category.parentCategoryId == categoryId,
+        Category.isDeleted == False,
+        Category.status == "active"
+    ).all()

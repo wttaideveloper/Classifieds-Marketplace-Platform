@@ -1,5 +1,4 @@
 # app/api/v1/endpoints/admin_profile.py
-
 from fastapi import APIRouter, Depends, status, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -22,7 +21,13 @@ from app.schemas.admin_schema import (
     BusinessSuspendResponse,
     BusinessSuspendRequest,
     BusinessReactivateResponse,
-    MerchantResponse
+    MerchantResponse,
+    RejectListingRequest,
+    SuspendListingRequest,
+    SuspendListingResponse,
+    ReactivateListingResponse,
+    CreateCategorySchema,
+    CreateCategoryResponse
 )
 from app.services.admin_service import (
     get_admin_profile_service,
@@ -38,7 +43,13 @@ from app.services.admin_service import (
     reject_business_service,
     suspend_business_service,
     reactivate_business_service,
-    get_associated_merchant_service
+    get_associated_merchant_service,
+    get_all_listings_service,
+    approve_listing_service,
+    reject_listing_service,
+    suspend_listing_service,
+    reactivate_listing_service,
+    create_category_service
 )
 from app.exceptions.custom_exception import CustomException
 
@@ -65,7 +76,6 @@ def get_profile(
 ):
     return get_admin_profile_service(db, current_admin["id"])
 
-
 @router.put("/profile", status_code=status.HTTP_200_OK)
 def update_profile(
     payload: AdminProfileUpdate,
@@ -78,9 +88,7 @@ def update_profile(
         payload
     )
 
-
 #  USERS
-
 @router.get(
     "/users",
     response_model=PaginatedUsers,
@@ -103,7 +111,6 @@ def get_users(
         page=page,
         limit=limit
     )
-
 
 @router.get(
     "/users/{user_id}",
@@ -134,7 +141,6 @@ def update_user_status(
         payload
     )
 
-
 #  MERCHANTS 
 @router.get(
     "/merchants",
@@ -157,7 +163,6 @@ def get_merchants(
         limit=limit
     )
 
-
 @router.get(
     "/merchants/{merchant_id}",
     response_model=MerchantDetailsResponse,
@@ -173,9 +178,7 @@ def get_merchant_details(
         merchant_id
     )
 
-
 # BUSINESSES
-
 @router.get(
     "/businesses",
     response_model=BusinessListResponse,
@@ -286,3 +289,98 @@ def get_associated_merchant(
     current_admin=Depends(get_current_admin)
 ):
     return get_associated_merchant_service(db, business_id)
+
+# GET ALL LISTINGS
+@router.get(
+    "/listings",
+    status_code=status.HTTP_200_OK
+)
+def get_all_listings(
+    db: Session = Depends(get_db)
+):
+
+    return get_all_listings_service(
+        db=db
+    )
+
+# APPROVE LISTING
+@router.patch(
+    "/listings/{listingId}/approve",
+    status_code=status.HTTP_200_OK
+)
+def approve_listing(
+    listingId: str,
+    db: Session = Depends(get_db)
+):
+
+    return approve_listing_service(
+        db=db,
+        listingId=listingId
+    )
+
+# REJECT LISTING
+@router.patch(
+    "/listings/{listingId}/reject",
+    status_code=status.HTTP_200_OK
+)
+def reject_listing(
+    listingId: str,
+    payload: RejectListingRequest,
+    db: Session = Depends(get_db)
+):
+
+    return reject_listing_service(
+        db=db,
+        listingId=listingId,
+        payload=payload
+    )
+
+# SUSPEND LISTING
+@router.patch(
+    "/listings/{listingId}/suspend",
+    response_model=SuspendListingResponse,
+    status_code=status.HTTP_200_OK
+)
+def suspend_listing(
+    listingId: str,
+    payload: SuspendListingRequest,
+    db: Session = Depends(get_db)
+):
+
+    return suspend_listing_service(
+        db=db,
+        listingId=listingId,
+        payload=payload
+    )
+
+# REACTIVATE LISTING
+@router.patch(
+    "/listings/{listingId}/reactivate",
+    response_model=ReactivateListingResponse,
+    status_code=status.HTTP_200_OK
+)
+def reactivate_listing(
+    listingId: str,
+    db: Session = Depends(get_db)
+):
+
+    return reactivate_listing_service(
+        db=db,
+        listingId=listingId
+    )
+
+# CREATE CATEGORY
+@router.post(
+    "/categories",
+    response_model=CreateCategoryResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_category(
+    payload: CreateCategorySchema,
+    db: Session = Depends(get_db)
+):
+
+    return create_category_service(
+        db=db,
+        payload=payload
+    )

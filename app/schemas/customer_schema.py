@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from uuid import UUID
+from datetime import datetime
 
 # REGISTER
 class CustomerRegister(BaseModel):
@@ -55,3 +56,60 @@ class AddressBase(BaseModel):
     country: str
     isDefault: bool = False
 
+class PublicListingQuerySchema(BaseModel):
+
+    search: Optional[str] = None
+    category: Optional[str] = None
+    listingType: Optional[str] = None
+    city: Optional[str] = None
+    priceMin: Optional[float] = None
+    priceMax: Optional[float] = None
+    page: int = 1
+    limit: int = 10
+    sortBy: Optional[str] = "latest"
+
+class GetListingDetailsSchema(BaseModel):
+
+    listingId: UUID
+
+class SearchListingsResponseData(BaseModel):
+
+    id: UUID
+
+    businessId: UUID
+
+    listingType: str
+
+    title: str
+
+    description: Optional[str]
+
+    categoryId: Optional[UUID]
+
+    subcategoryId: Optional[UUID]
+
+    price: Optional[float]
+
+    currency: Optional[str]
+
+    images: List[str]
+
+    tags: List[str]
+
+    location: Optional[str]
+
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class SearchListingsResponse(BaseModel):
+
+    success: bool
+
+    message: str
+
+    total: int
+
+    data: List[SearchListingsResponseData]

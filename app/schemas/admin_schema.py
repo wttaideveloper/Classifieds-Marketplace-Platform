@@ -222,3 +222,165 @@ class MerchantResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# admin_schema.py
+
+from pydantic import BaseModel
+from typing import Optional, List
+from uuid import UUID
+from datetime import datetime
+
+
+class AdminListingData(BaseModel):
+
+    id: UUID
+
+    businessId: UUID
+
+    listingType: str
+
+    title: str
+
+    description: Optional[str]
+
+    categoryId: Optional[UUID]
+
+    subcategoryId: Optional[UUID]
+
+    price: Optional[float]
+
+    currency: Optional[str]
+
+    images: List[str]
+
+    status: str
+
+    tags: List[str]
+
+    location: Optional[str]
+
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class AdminGetAllListingsResponse(BaseModel):
+
+    success: bool
+    message: str
+    total: int
+    data: List[AdminListingData]
+
+class ApproveListingData(BaseModel):
+
+    id: UUID
+    businessId: UUID
+    listingType: str
+    title: str
+    status: str
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+class ApproveListingResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: ApproveListingData
+
+class RejectListingRequest(BaseModel):
+
+    reason: str
+
+class RejectListingData(BaseModel):
+
+    id: UUID
+
+    businessId: UUID
+
+    listingType: str
+
+    title: str
+
+    status: str
+
+    rejectionReason: Optional[str]
+
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+class RejectListingResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: RejectListingData
+
+class SuspendListingRequest(BaseModel):
+
+    reason: Optional[str] = None
+
+class SuspendListingData(BaseModel):
+
+    id: UUID
+    status: str
+    suspendedAt: Optional[datetime]
+    suspensionReason: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+class SuspendListingResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: SuspendListingData
+
+class ReactivateListingData(BaseModel):
+
+    id: UUID
+    status: str
+    suspendedAt: Optional[datetime]
+    suspensionReason: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+class ReactivateListingResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: ReactivateListingData
+
+# CREATE CATEGORY
+class CreateCategorySchema(BaseModel):
+
+    name: str
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    isActive: bool = True
+
+
+# CATEGORY RESPONSE
+class CategoryResponse(BaseModel):
+
+    id: UUID
+    name: str
+    description: Optional[str]
+    icon: Optional[str]
+    isActive: bool
+    createdAt: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# MAIN RESPONSE
+class CreateCategoryResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: CategoryResponse
