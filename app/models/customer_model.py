@@ -28,7 +28,7 @@ class Customer(Base):
 
 class PublicListing(Base):
 
-    __tablename__ = "merchant_listings"
+    __tablename__ = "customer_listings"
 
     id = Column(
         UUID(as_uuid=True),
