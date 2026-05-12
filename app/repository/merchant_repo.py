@@ -4,7 +4,8 @@ from app.models.merchant_model import (
     Merchant,
     MerchantProfile,
     MerchantBusinessDraft,
-    MerchantListing
+    MerchantListing,
+    MerchantListingDraft
 )
 
 # MERCHANT 
@@ -152,7 +153,7 @@ def save_listing_draft_repo(
     payload
 ):
 
-    draft = MerchantListing(
+    draft = MerchantListingDraft(
 
         businessId=payload.businessId,
         listingType=payload.listingType,
@@ -207,11 +208,10 @@ def get_my_listings_repo(
     limit
 ):
 
-    # query = db.query(MerchantListing).filter(
-    #     MerchantListing.businessId == businessId
-    # )
-    query = db.query(MerchantListing)
-
+    query = db.query(MerchantListing).filter(
+        MerchantListing.businessId == businessId
+    )
+    
     # FILTER BY BUSINESS ID
     if businessId:
         query = query.filter(
@@ -268,7 +268,7 @@ def update_listing_repo(
     listing,
     payload
 ):
-    update_data = payload.dict(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(listing, key, value)
     db.commit()

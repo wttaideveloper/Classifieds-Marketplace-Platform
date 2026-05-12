@@ -99,6 +99,10 @@ class Merchant(Base):
         back_populates="merchant",
         cascade="all, delete-orphan"
     )
+    # category = relationship(
+    #     "Category",
+    #     foreign_keys=[categoryId]
+    # )
 
 # MERCHANT PROFILE
 class MerchantProfile(Base):
@@ -167,12 +171,12 @@ class MerchantProfile(Base):
 
     status = Column(String, default="draft")
 
-    createdAt = Column(
+    created_at = Column(
         DateTime,
         default=datetime.utcnow
     )
 
-    updatedAt = Column(
+    updated_at = Column(
         DateTime,
         default=datetime.utcnow,
         onupdate=datetime.utcnow
@@ -254,12 +258,12 @@ class MerchantBusinessDraft(Base):
         nullable=False
     )
 
-    createdAt = Column(
+    created_at = Column(
         DateTime,
         default=datetime.utcnow
     )
 
-    updatedAt = Column(
+    updated_at = Column(
         DateTime,
         default=datetime.utcnow,
         onupdate=datetime.utcnow
@@ -283,6 +287,7 @@ class MerchantListing(Base):
 
     businessId = Column(
         UUID(as_uuid=True),
+        ForeignKey("businesses.id"),
         nullable=False
     )
 
@@ -303,11 +308,13 @@ class MerchantListing(Base):
 
     categoryId = Column(
         UUID(as_uuid=True),
+        ForeignKey("categories.id"),
         nullable=True
     )
 
     subcategoryId = Column(
         UUID(as_uuid=True),
+        ForeignKey("categories.id"),
         nullable=True
     )
 
@@ -368,6 +375,16 @@ class MerchantListing(Base):
         nullable=True
     )
 
+    rejectionReason = Column(Text, nullable=True)
+
+    rejectedAt = Column(DateTime, nullable=True)
+
+    suspensionReason = Column(Text, nullable=True)
+
+    suspendedAt = Column(DateTime, nullable=True)
+
+    approvedAt = Column(DateTime, nullable=True)
+
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now()
@@ -377,6 +394,16 @@ class MerchantListing(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now()
+    )
+
+    category = relationship(
+        "Category",
+        foreign_keys=[categoryId]
+    )
+
+    subcategory = relationship(
+        "Category",
+        foreign_keys=[subcategoryId]
     )
 
 # MERCHANT LISTING DRAFT
@@ -392,7 +419,8 @@ class MerchantListingDraft(Base):
 
     businessId = Column(
         UUID(as_uuid=True),
-        nullable=True
+        ForeignKey("businesses.id"),
+        nullable=False
     )
 
     listingType = Column(
@@ -412,11 +440,13 @@ class MerchantListingDraft(Base):
 
     categoryId = Column(
         UUID(as_uuid=True),
+        ForeignKey("categories.id"),
         nullable=True
     )
 
     subcategoryId = Column(
         UUID(as_uuid=True),
+        ForeignKey("categories.id"),
         nullable=True
     )
 
@@ -483,4 +513,14 @@ class MerchantListingDraft(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now()
+    )
+
+    category = relationship(
+        "Category",
+        foreign_keys=[categoryId]
+    )
+
+    subcategory = relationship(
+        "Category",
+        foreign_keys=[subcategoryId]
     )

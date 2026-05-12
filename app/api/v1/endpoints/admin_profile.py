@@ -5,7 +5,6 @@ from typing import Optional
 from uuid import UUID
 
 from app.db.database import SessionLocal
-from app.core.dependencies import get_current_admin
 from app.schemas.admin_schema import (
     AdminProfileUpdate,
     UserDetailsResponse,
@@ -72,19 +71,16 @@ def get_db():
 @router.get("/profile", status_code=status.HTTP_200_OK)
 def get_profile(
     db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
 ):
-    return get_admin_profile_service(db, current_admin["id"])
+    return get_admin_profile_service(db)
 
 @router.put("/profile", status_code=status.HTTP_200_OK)
 def update_profile(
     payload: AdminProfileUpdate,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return update_admin_profile_service(
         db,
-        current_admin["id"],
         payload
     )
 
@@ -101,7 +97,6 @@ def get_users(
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
 ):
     return admin_get_users_service(
         db=db,
@@ -119,8 +114,7 @@ def get_users(
 )
 def get_user_details(
     user_id: str,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return admin_get_user_details_service(db, user_id)
 
@@ -132,8 +126,7 @@ def get_user_details(
 def update_user_status(
     user_id: str,
     payload: UpdateUserStatusSchema,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return admin_update_user_status_service(
         db,
@@ -153,7 +146,6 @@ def get_merchants(
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
 ):
     return admin_get_merchants_service(
         db=db,
@@ -170,8 +162,7 @@ def get_merchants(
 )
 def get_merchant_details(
     merchant_id: str,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return admin_get_merchant_details_service(
         db,
@@ -190,8 +181,7 @@ def get_all_businesses(
     category: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return fetch_businesses_service(
         db=db,
@@ -210,8 +200,7 @@ def get_all_businesses(
 )
 def get_business_detail(
     business_id: UUID,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return fetch_business_detail_service(db, business_id)
 
@@ -223,8 +212,7 @@ def get_business_detail(
 )
 def approve_business(
     business_id: UUID,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return approve_business_service(db, business_id)
 
@@ -237,8 +225,7 @@ def approve_business(
 def reject_business(
     business_id: UUID,
     payload: BusinessRejectRequest,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return reject_business_service(
         db=db,
@@ -255,8 +242,7 @@ def reject_business(
 def suspend_business(
     business_id: UUID,
     payload: BusinessSuspendRequest,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return suspend_business_service(
         db=db,
@@ -272,8 +258,7 @@ def suspend_business(
 )
 def reactivate_business(
     business_id: UUID,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return reactivate_business_service(db, business_id)
 
@@ -285,8 +270,7 @@ def reactivate_business(
 )
 def get_associated_merchant(
     business_id: UUID,
-    db: Session = Depends(get_db),
-    current_admin=Depends(get_current_admin)
+    db: Session = Depends(get_db)
 ):
     return get_associated_merchant_service(db, business_id)
 
@@ -312,7 +296,6 @@ def approve_listing(
     listingId: str,
     db: Session = Depends(get_db)
 ):
-
     return approve_listing_service(
         db=db,
         listingId=listingId

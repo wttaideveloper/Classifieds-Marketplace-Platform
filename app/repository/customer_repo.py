@@ -1,10 +1,10 @@
-from app.models.customer_model import Customer
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from app.models.customer_model import Customer, PublicListing, Category
-from app.models.merchant_model import Merchant
+from app.models.customer_model import Customer
+from app.models.merchant_model import Merchant, MerchantListing
 from app.models.admin_model import Admin
+from app.models.category_model import Category
 
 def get_customer_by_email(db: Session, email: str):
     return db.query(Customer).filter(Customer.email == email).first()
@@ -159,16 +159,16 @@ def get_public_listings_repo(
     sortBy
 ):
 
-    query = db.query(PublicListing).filter(
-        PublicListing.status == "published"
+    query = db.query(MerchantListing).filter(
+        MerchantListing.status == "published"
     )
 
     # SEARCH
     if search:
         query = query.filter(
             or_(
-                PublicListing.title.ilike(f"%{search}%"),
-                PublicListing.description.ilike(f"%{search}%")
+                MerchantListing.title.ilike(f"%{search}%"),
+                MerchantListing.description.ilike(f"%{search}%")
             )
         )
 
@@ -176,50 +176,50 @@ def get_public_listings_repo(
     # category query param will contain categoryId
     if category:
         query = query.filter(
-            PublicListing.categoryId == category
+            MerchantListing.categoryId == category
         )
 
     # LISTING TYPE
     if listingType:
         query = query.filter(
-            PublicListing.listingType == listingType
+            MerchantListing.listingType == listingType
         )
 
     # CITY
     if city:
         query = query.filter(
-            PublicListing.location.ilike(f"%{city}%")
+            MerchantListing.location.ilike(f"%{city}%")
         )
 
     # PRICE MIN
     if priceMin is not None:
         query = query.filter(
-            PublicListing.price >= priceMin
+            MerchantListing.price >= priceMin
         )
 
     # PRICE MAX
     if priceMax is not None:
         query = query.filter(
-            PublicListing.price <= priceMax
+            MerchantListing.price <= priceMax
         )
 
     # SORTING
     if sortBy == "priceLowToHigh":
 
         query = query.order_by(
-            PublicListing.price.asc()
+            MerchantListing.price.asc()
         )
 
     elif sortBy == "priceHighToLow":
 
         query = query.order_by(
-            PublicListing.price.desc()
+            MerchantListing.price.desc()
         )
 
     else:
 
         query = query.order_by(
-            PublicListing.created_at.desc()
+            MerchantListing.created_at.desc()
         )
 
     total = query.count()
@@ -233,9 +233,9 @@ def get_public_listing_details_repo(
     listingId
 ):
 
-    listing = db.query(PublicListing).filter(
-        PublicListing.id == listingId,
-        PublicListing.status == "published"
+    listing = db.query(MerchantListing).filter(
+        MerchantListing.id == listingId,
+        MerchantListing.status == "published"
     ).first()
 
     return listing
@@ -250,54 +250,54 @@ def search_listings_repo(
     sort
 ):
 
-    query = db.query(PublicListing).filter(
-        PublicListing.status == "published"
+    query = db.query(MerchantListing).filter(
+        MerchantListing.status == "published"
     )
 
     # KEYWORD SEARCH
     if keyword:
         query = query.filter(
             or_(
-                PublicListing.title.ilike(f"%{keyword}%"),
-                PublicListing.description.ilike(f"%{keyword}%")
+                MerchantListing.title.ilike(f"%{keyword}%"),
+                MerchantListing.description.ilike(f"%{keyword}%")
             )
         )
 
     # CATEGORY
     if category:
         query = query.filter(
-            PublicListing.categoryId == category
+            MerchantListing.categoryId == category
         )
 
     # LISTING TYPE
     if listingType:
         query = query.filter(
-            PublicListing.listingType == listingType
+            MerchantListing.listingType == listingType
         )
 
     # LOCATION
     if location:
         query = query.filter(
-            PublicListing.location.ilike(f"%{location}%")
+            MerchantListing.location.ilike(f"%{location}%")
         )
 
     # SORTING
     if sort == "priceLowToHigh":
 
         query = query.order_by(
-            PublicListing.price.asc()
+            MerchantListing.price.asc()
         )
 
     elif sort == "priceHighToLow":
 
         query = query.order_by(
-            PublicListing.price.desc()
+            MerchantListing.price.desc()
         )
 
     else:
 
         query = query.order_by(
-            PublicListing.created_at.desc()
+            MerchantListing.created_at.desc()
         )
 
     total = query.count()
@@ -309,7 +309,7 @@ def search_listings_repo(
 def get_categories_repo(db):
 
     categories = db.query(Category).filter(
-        Category.status == "active",
+       Category.isActive == True,
         Category.isDeleted == False
     ).order_by(Category.createdAt.desc()).all()
 
@@ -326,5 +326,5 @@ def get_subcategories_repo(
     return db.query(Category).filter(
         Category.parentCategoryId == categoryId,
         Category.isDeleted == False,
-        Category.status == "active"
+        Category.isActive == True
     ).all()

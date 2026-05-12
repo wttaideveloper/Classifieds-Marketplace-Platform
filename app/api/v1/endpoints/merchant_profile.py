@@ -50,33 +50,28 @@ def get_db():
 
 @router.get("/profile", status_code=status.HTTP_200_OK)
 def get_profile(
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
-    return get_merchant_profile_service(db, current_user["id"])
+    return get_merchant_profile_service(db)
 
 # UPDATE PROFILE API
 @router.put("/profile", status_code=status.HTTP_200_OK)
 def update_profile(
     payload: MerchantProfileUpdate,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return update_merchant_profile_service(
         db,
-        current_user["id"],
         payload.dict()
     )
 
 @router.post("/business", status_code=status.HTTP_201_CREATED)
 def create_business_profile(
     payload: MerchantBusinessProfileCreate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return create_business_profile_service(
         db,
-        current_user["id"],
         payload
     )
 
@@ -86,12 +81,10 @@ def create_business_profile(
 )
 def save_business_draft(
     payload: MerchantBusinessDraft,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return save_business_draft_service(
         db,
-        current_user["id"],
         payload
     )
 
@@ -100,12 +93,10 @@ def save_business_draft(
     status_code=status.HTTP_200_OK
 )
 def get_my_business_profile(
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return get_business_profile_service(
-        db,
-        current_user["id"]
+        db
     )
 
 @router.put(
@@ -114,12 +105,10 @@ def get_my_business_profile(
 )
 def update_business_profile(
     payload: UpdateBusinessProfile,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return update_business_profile_service(
         db,
-        current_user["id"],
         payload
     )
 
@@ -128,12 +117,10 @@ def update_business_profile(
     status_code=status.HTTP_200_OK
 )
 def submit_business_for_approval(
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return submit_business_for_approval_service(
-        db,
-        current_user["id"]
+        db
     )
 
 @router.post(
@@ -142,12 +129,10 @@ def submit_business_for_approval(
 )
 def upload_business_logo(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return upload_business_logo_service(
         db,
-        current_user["id"],
         file
     )
 
@@ -157,12 +142,10 @@ def upload_business_logo(
 )
 def upload_business_banner(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return upload_business_banner_service(
         db,
-        current_user["id"],
         file
     )
 
@@ -172,12 +155,10 @@ def upload_business_banner(
 )
 def upload_business_gallery(
     files: List[UploadFile] = File(...),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return upload_business_gallery_service(
         db,
-        current_user["id"],
         files
     )
 
@@ -187,12 +168,10 @@ def upload_business_gallery(
 )
 def delete_business_gallery_image(
     image_id: str,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return delete_business_gallery_image_service(
         db,
-        current_user["id"],
         image_id
     )
 
@@ -201,12 +180,10 @@ def delete_business_gallery_image(
     status_code=status.HTTP_200_OK
 )
 def get_business_status(
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     return get_business_status_service(
-        db,
-        current_user["id"]
+        db
     )
 
 # CREATE LISTING

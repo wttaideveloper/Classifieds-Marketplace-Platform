@@ -1,15 +1,27 @@
+# app/repository/admin_repo.py
+
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import or_
+
 from typing import Optional, Tuple, List
 from uuid import UUID
 from datetime import datetime
-from app.models.customer_model import PublicListing, Category
-from app.models.admin_model import Admin, Business
+
+from app.models.merchant_model import (
+    Merchant,
+    MerchantListing
+)
+
+from app.models.admin_model import (
+    Admin,
+    Business
+)
+
+from app.models.category_model import Category
 
 
 # CONSTANTS
-
 class BusinessStatus:
     PENDING = "pending"
     APPROVED = "approved"
@@ -17,32 +29,48 @@ class BusinessStatus:
     SUSPENDED = "suspended"
 
 # ADMIN QUERIES
+def get_admin_by_id(
+    db: Session,
+    admin_id
+) -> Optional[Admin]:
 
-def get_admin_by_id(db: Session, admin_id: int) -> Optional[Admin]:
-    return db.query(Admin).filter(Admin.id == admin_id).first()
-
-
-def get_admin_by_email(db: Session, email: str) -> Optional[Admin]:
-    return db.query(Admin).filter(Admin.email == email).first()
-
-
-def get_admin_by_reset_token(db: Session, token: str) -> Optional[Admin]:
-    return db.query(Admin).filter(Admin.reset_token == token).first()
+    return db.query(Admin).filter(
+        Admin.id == admin_id
+    ).first()
 
 
-def update_admin(db: Session, admin: Admin) -> Admin:
+def get_admin_by_email(
+    db: Session,
+    email: str
+) -> Optional[Admin]:
+
+    return db.query(Admin).filter(
+        Admin.email == email
+    ).first()
+
+
+def update_admin(
+    db: Session,
+    admin: Admin
+) -> Admin:
+
     try:
+
         db.add(admin)
         db.commit()
         db.refresh(admin)
+
         return admin
+
     except SQLAlchemyError as e:
+
         db.rollback()
-        raise Exception(f"Database error: {str(e)}")
 
-# BUSINESS - LIST
+        raise Exception(
+            f"Database Error: {str(e)}"
+        )
 
-
+# BUSINESS LIST
 def get_all_businesses(
     db: Session,
     search: Optional[str] = None,
@@ -53,11 +81,12 @@ def get_all_businesses(
 ) -> Tuple[int, List[Business]]:
 
     query = db.query(Business).filter(
-        Business.is_deleted.is_(False)
+        Business.isDeleted == False
     )
 
-    # SEARCH (model fields only)
+    # SEARCH
     if search:
+
         query = query.filter(
             or_(
                 Business.name.ilike(f"%{search}%"),
@@ -65,14 +94,16 @@ def get_all_businesses(
             )
         )
 
-    # STATUS FILTER (exact match)
+    # STATUS FILTER
     if status:
+
         query = query.filter(
             Business.status == status.lower()
         )
 
     # CATEGORY FILTER
     if category:
+
         query = query.filter(
             Business.category == category
         )
@@ -80,36 +111,51 @@ def get_all_businesses(
     total = query.count()
 
     businesses = query.order_by(
-        Business.created_at.desc()
+        Business.createdAt.desc()
     ).offset(skip).limit(limit).all()
 
     return total, businesses
 
-# BUSINESS - DETAIL
+# BUSINESS DETAIL
+def get_business_by_id(
+    db: Session,
+    business_id
+) -> Optional[Business]:
 
-def get_business_by_id(db: Session, business_id: UUID) -> Optional[Business]:
     return db.query(Business).filter(
         Business.id == business_id,
-        Business.is_deleted.is_(False)
+        Business.isDeleted == False
     ).first()
 
 
-def get_business_with_merchant(db: Session, business_id: UUID) -> Optional[Business]:
+def get_business_with_merchant(
+    db: Session,
+    business_id
+) -> Optional[Business]:
+
     return db.query(Business).options(
         joinedload(Business.merchant)
     ).filter(
         Business.id == business_id,
-        Business.is_deleted.is_(False)
+        Business.isDeleted == False
     ).first()
 
+
+# =========================================================
 # BUSINESS STATUS ACTIONS
+# =========================================================
+def approve_business(
+    db: Session,
+    business: Business
+) -> Business:
 
-def approve_business(db: Session, business: Business) -> Business:
-    if business.status != BusinessStatus.APPROVED:
-        business.status = BusinessStatus.APPROVED
-        business.approved_at = datetime.utcnow()
+    business.status = BusinessStatus.APPROVED
+    business.approvedAt = datetime.utcnow()
 
-    return _commit(db, business)
+    return _commit(
+        db=db,
+        instance=business
+    )
 
 
 def reject_business(
@@ -119,10 +165,13 @@ def reject_business(
 ) -> Business:
 
     business.status = BusinessStatus.REJECTED
-    business.rejection_reason = reason
-    business.rejected_at = datetime.utcnow()
+    business.rejectionReason = reason
+    business.rejectedAt = datetime.utcnow()
 
-    return _commit(db, business)
+    return _commit(
+        db=db,
+        instance=business
+    )
 
 
 def suspend_business(
@@ -132,103 +181,169 @@ def suspend_business(
 ) -> Business:
 
     business.status = BusinessStatus.SUSPENDED
-    business.suspension_reason = reason
-    business.suspended_at = datetime.utcnow()
+    business.suspensionReason = reason
+    business.suspendedAt = datetime.utcnow()
 
-    return _commit(db, business)
+    return _commit(
+        db=db,
+        instance=business
+    )
 
 
-def reactivate_business(db: Session, business: Business) -> Business:
-
-    if business.status != BusinessStatus.SUSPENDED:
-        raise ValueError("Only suspended businesses can be reactivated")
+def reactivate_business(
+    db: Session,
+    business: Business
+) -> Business:
 
     business.status = BusinessStatus.APPROVED
-    business.suspension_reason = None
-    business.suspended_at = None
+    business.suspensionReason = None
+    business.suspendedAt = None
 
-    return _commit(db, business)
+    return _commit(
+        db=db,
+        instance=business
+    )
 
+
+# =========================================================
 # INTERNAL COMMIT HELPER
+# =========================================================
+def _commit(
+    db: Session,
+    instance
+):
 
-
-def _commit(db: Session, instance):
     try:
+
         db.add(instance)
         db.commit()
         db.refresh(instance)
+
         return instance
+
     except SQLAlchemyError as e:
+
         db.rollback()
-        raise Exception(f"Database Error: {str(e)}")
-    
+
+        raise Exception(
+            f"Database Error: {str(e)}"
+        )
+
+
+# =========================================================
+# GET ALL LISTINGS
+# =========================================================
 def get_all_listings_repo(
     db: Session
 ):
 
-    listings = db.query(PublicListing).order_by(
-        PublicListing.created_at.desc()
+    listings = db.query(MerchantListing).order_by(
+        MerchantListing.createdAt.desc()
     ).all()
 
     total = len(listings)
 
     return total, listings
 
+
+# =========================================================
 # GET LISTING BY ID
+# =========================================================
 def get_listing_by_id_repo(
     db: Session,
     listingId
 ):
 
-    return db.query(PublicListing).filter(
-        PublicListing.id == listingId
+    return db.query(MerchantListing).filter(
+        MerchantListing.id == listingId
     ).first()
 
+
+# =========================================================
 # APPROVE LISTING
+# =========================================================
 def approve_listing_repo(
     db: Session,
     listing
 ):
+
     listing.status = "approved"
+    listing.approvedAt = datetime.utcnow()
+
     db.commit()
     db.refresh(listing)
+
     return listing
 
 
+# =========================================================
 # REJECT LISTING
+# =========================================================
 def reject_listing_repo(
     db: Session,
     listing,
     reason
 ):
+
     listing.status = "rejected"
     listing.rejectionReason = reason
+    listing.rejectedAt = datetime.utcnow()
+
     db.commit()
     db.refresh(listing)
+
     return listing
 
+
+# =========================================================
+# SUSPEND LISTING
+# =========================================================
 def suspend_listing_repo(
-    db,
+    db: Session,
     listing,
     reason
 ):
+
     listing.status = "suspended"
     listing.suspendedAt = datetime.utcnow()
     listing.suspensionReason = reason
+
     db.commit()
     db.refresh(listing)
+
     return listing
 
+
+# =========================================================
+# REACTIVATE LISTING
+# =========================================================
 def reactivate_listing_repo(
-    db,
+    db: Session,
     listing
 ):
+
     listing.status = "approved"
     listing.suspendedAt = None
     listing.suspensionReason = None
+
     db.commit()
     db.refresh(listing)
+
     return listing
+
+
+# =========================================================
+# GET CATEGORY BY NAME
+# =========================================================
+def get_category_by_name_repo(
+    db: Session,
+    name: str
+):
+
+    return db.query(Category).filter(
+        Category.name.ilike(name),
+        Category.isDeleted == False
+    ).first()
 
 # GET CATEGORY BY ID
 def get_category_by_id_repo(

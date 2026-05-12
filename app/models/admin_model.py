@@ -2,7 +2,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from app.models.merchant_model import Merchant
 import uuid
 from datetime import datetime
 from app.db.database import Base
@@ -24,7 +23,7 @@ class Admin(Base):
     verificationToken = Column(String, nullable=True)
     status = Column(String, default="active")
 
-    createdAt = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class Business(Base):
     __tablename__ = "businesses"
@@ -58,56 +57,3 @@ class Business(Base):
     def __repr__(self):
         return f"<Business {self.name} ({self.status})>"
 
-# CATEGORY
-class Category(Base):
-
-    __tablename__ = "categories"
-
-    id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4
-    )
-
-    name = Column(
-        String,
-        nullable=False,
-        unique=True
-    )
-
-    description = Column(
-        String,
-        nullable=True
-    )
-
-    icon = Column(
-        String,
-        nullable=True
-    )
-
-    parentCategoryId = Column(
-        UUID(as_uuid=True),
-        ForeignKey("categories.id"),
-        nullable=True
-    )
-
-    isActive = Column(
-        Boolean,
-        default=True
-    )
-
-    isDeleted = Column(
-        Boolean,
-        default=False
-    )
-
-    createdAt = Column(
-        DateTime,
-        default=datetime.utcnow
-    )
-
-    updatedAt = Column(
-        DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow
-    )

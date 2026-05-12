@@ -1,5 +1,6 @@
 # app/schemas/admin_schema.py
 from pydantic import BaseModel, EmailStr, field_validator, Field
+from pydantic import ValidationInfo
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
@@ -31,9 +32,11 @@ class ResetPassword(BaseModel):
 
     @field_validator("confirm_password")
     @classmethod
-    def passwords_match(cls, v, values):
-        if "new_password" in values and v != values["new_password"]:
+    def passwords_match(cls, v, info: ValidationInfo):
+
+        if v != info.data.get("new_password"):
             raise ValueError("Passwords do not match")
+
         return v
 
 

@@ -13,42 +13,42 @@ from app.repository.admin_repo import get_admin_by_id
 import secrets
 
 
-def refresh_token_service(payload):
+# def refresh_token_service(payload):
 
-    token = payload.refreshToken
+#     token = payload.refreshToken
 
-    try:
-        decoded = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM]
-        )
+#     try:
+#         decoded = jwt.decode(
+#             token,
+#             settings.SECRET_KEY,
+#             algorithms=[settings.ALGORITHM]
+#         )
 
-        if decoded.get("type") != "refresh":
-            raise CustomException(
-                status.HTTP_401_UNAUTHORIZED,
-                "Invalid refresh token"
-            )
+#         if decoded.get("type") != "refresh":
+#             raise CustomException(
+#                 status.HTTP_401_UNAUTHORIZED,
+#                 "Invalid refresh token"
+#             )
 
-        user_data = {
-            "id": decoded.get("id"),
-            "email": decoded.get("email"),
-            "role": decoded.get("role")
-        }
+#         user_data = {
+#             "id": decoded.get("id"),
+#             "email": decoded.get("email"),
+#             "role": decoded.get("role")
+#         }
 
-        access_token = create_access_token(user_data)
+#         access_token = create_access_token(user_data)
 
-        return {
-            "success": True,
-            "message": "Access token refreshed successfully",
-            "access_token": access_token
-        }
+#         return {
+#             "success": True,
+#             "message": "Access token refreshed successfully",
+#             "access_token": access_token
+#         }
 
-    except ExpiredSignatureError:
-        raise CustomException(401, "Refresh token expired")
+#     except ExpiredSignatureError:
+#         raise CustomException(401, "Refresh token expired")
 
-    except JWTError:
-        raise CustomException(401, "Invalid refresh token")
+#     except JWTError:
+#         raise CustomException(401, "Invalid refresh token")
     
 
 def get_current_user_service(db, current_user):
@@ -104,126 +104,114 @@ def get_current_user_service(db, current_user):
         raise CustomException(403, "Invalid role")
 
 
-def verify_email_service(db, payload):
+# def verify_email_service(db, payload):
 
-    token = payload.verificationToken
+#     token = payload.verificationToken
 
-    if not token:
-        raise CustomException(
-            status.HTTP_400_BAD_REQUEST,
-            "Verification token is required"
-        )
+#     if not token:
+#         raise CustomException(
+#             status.HTTP_400_BAD_REQUEST,
+#             "Verification token is required"
+#         )
 
-    user = None
+#     user = None
 
-    # customer
-    user = db.query(Customer).filter(
-        Customer.verificationToken == token
-    ).first()
+#     # customer
+#     user = db.query(Customer).filter(
+#         Customer.verificationToken == token
+#     ).first()
 
-    # merchant
-    if not user:
-        user = db.query(Merchant).filter(
-            Merchant.verificationToken == token
-        ).first()
+#     # merchant
+#     if not user:
+#         user = db.query(Merchant).filter(
+#             Merchant.verificationToken == token
+#         ).first()
 
-    # admin
-    if not user:
-        user = db.query(Admin).filter(
-            Admin.verificationToken == token
-        ).first()
+#     # admin
+#     if not user:
+#         user = db.query(Admin).filter(
+#             Admin.verificationToken == token
+#         ).first()
 
-    if not user:
-        raise CustomException(
-            status.HTTP_404_NOT_FOUND,
-            "Invalid verification token"
-        )
+#     if not user:
+#         raise CustomException(
+#             status.HTTP_404_NOT_FOUND,
+#             "Invalid verification token"
+#         )
 
-    if user.isEmailVerified:
-        raise CustomException(
-            status.HTTP_400_BAD_REQUEST,
-            "Email already verified"
-        )
+#     if user.isEmailVerified:
+#         raise CustomException(
+#             status.HTTP_400_BAD_REQUEST,
+#             "Email already verified"
+#         )
 
-    user.isEmailVerified = True
-    user.verificationToken = None
+#     user.isEmailVerified = True
+#     user.verificationToken = None
 
-    db.commit()
-    db.refresh(user)
+#     db.commit()
+#     db.refresh(user)
 
-    return {
-        "success": True,
-        "message": "Email verified successfully"
-    }
+#     return {
+#         "success": True,
+#         "message": "Email verified successfully"
+#     }
 
-def resend_verification_service(db, payload):
+# def resend_verification_service(db, payload):
 
-    email = payload.email
+#     email = payload.email
 
-    user = None
-    role = None
+#     user = None
+#     role = None
 
-    # CUSTOMER
-    user = db.query(Customer).filter(
-        Customer.email == email
-    ).first()
+#     # CUSTOMER
+#     user = db.query(Customer).filter(
+#         Customer.email == email
+#     ).first()
 
-    if user:
-        role = "customer"
+#     if user:
+#         role = "customer"
 
-    # MERCHANT
-    if not user:
-        user = db.query(Merchant).filter(
-            Merchant.businessEmail == email
-        ).first()
+#     # MERCHANT
+#     if not user:
+#         user = db.query(Merchant).filter(
+#             Merchant.businessEmail == email
+#         ).first()
 
-        if user:
-            role = "merchant"
+#         if user:
+#             role = "merchant"
 
-    # ADMIN
-    if not user:
-        user = db.query(Admin).filter(
-            Admin.email == email
-        ).first()
+#     # ADMIN
+#     if not user:
+#         user = db.query(Admin).filter(
+#             Admin.email == email
+#         ).first()
 
-        if user:
-            role = "admin"
+#         if user:
+#             role = "admin"
 
-    # NOT FOUND
-    if not user:
-        raise CustomException(404, "User not found")
+#     # NOT FOUND
+#     if not user:
+#         raise CustomException(404, "User not found")
 
-    # ALREADY VERIFIED
-    if user.isEmailVerified:
-        raise CustomException(400, "Email already verified")
+#     # ALREADY VERIFIED
+#     if user.isEmailVerified:
+#         raise CustomException(400, "Email already verified")
 
-    # CREATE TOKEN
-    verification_token = secrets.token_urlsafe(32)
+#     # CREATE TOKEN
+#     verification_token = secrets.token_urlsafe(32)
 
-    user.verificationToken = verification_token
+#     user.verificationToken = verification_token
 
-    db.commit()
-    db.refresh(user)
+#     db.commit()
+#     db.refresh(user)
 
-    send_email(email, verification_token)
+#     send_email(email, verification_token)
 
-    return {
-        "success": True,
-        "message": f"Verification email sent successfully to {role}",
-        "verificationToken": verification_token
-    }
-
-class CustomException(HTTPException):
-
-    def __init__(
-        self,
-        status_code: int,
-        detail: str
-    ):
-        super().__init__(
-            status_code=status_code,
-            detail=detail
-        )
+#     return {
+#         "success": True,
+#         "message": f"Verification email sent successfully to {role}",
+#         "verificationToken": verification_token
+#     }
 
 def validate_role(role: str):
 
