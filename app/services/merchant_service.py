@@ -55,6 +55,33 @@ from uuid import uuid4
 
 
 # =========================================================
+# OWNERSHIP HELPERS (no auth in scope)
+# =========================================================
+
+def _assert_business_owned(
+    db: Session,
+    business_id,
+    merchant_id: str
+):
+    business = db.query(Business).filter(
+        Business.id == business_id
+    ).first()
+
+    if not business:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Business not found"
+        )
+
+    if str(business.merchant_id) != str(merchant_id):
+        raise CustomException(
+            status.HTTP_403_FORBIDDEN,
+            "Unauthorized access"
+        )
+
+    return business
+
+# =========================================================
 # CONSTANTS
 # =========================================================
 
@@ -547,6 +574,36 @@ def create_listing_service(
             "Internal server error"
         )
 
+def save_listing_draft_service(
+    db: Session,
+    merchant_id: str,
+    payload
+):
+    try:
+        _assert_business_owned(
+            db=db,
+            business_id=payload.businessId,
+            merchant_id=merchant_id
+        )
+
+        draft = save_listing_draft_repo(
+            db=db,
+            payload=payload
+        )
+
+        return {
+            "success": True,
+            "message": "Listing draft saved successfully",
+            "data": draft
+        }
+
+    except CustomException:
+        raise
+    except Exception:
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Internal server error"
+        )
 
 def get_my_listings_service(
     db: Session,
@@ -609,12 +666,11 @@ def update_listing_service(
             "Listing not found"
         )
 
-    if str(listing.merchant_id) != str(merchant_id):
-
-        raise CustomException(
-            403,
-            "Unauthorized access"
-        )
+    _assert_business_owned(
+        db=db,
+        business_id=listing.businessId,
+        merchant_id=merchant_id
+    )
 
     updated = update_listing_repo(
         db=db,
@@ -647,12 +703,11 @@ def delete_listing_service(
             "Listing not found"
         )
 
-    if str(listing.merchant_id) != str(merchant_id):
-
-        raise CustomException(
-            403,
-            "Unauthorized access"
-        )
+    _assert_business_owned(
+        db=db,
+        business_id=listing.businessId,
+        merchant_id=merchant_id
+    )
 
     delete_listing_repo(
         db=db,
@@ -683,12 +738,11 @@ def publish_listing_service(
             "Listing not found"
         )
 
-    if str(listing.merchant_id) != str(merchant_id):
-
-        raise CustomException(
-            403,
-            "Unauthorized access"
-        )
+    _assert_business_owned(
+        db=db,
+        business_id=listing.businessId,
+        merchant_id=merchant_id
+    )
 
     updated = publish_listing_repo(
         db=db,
@@ -720,12 +774,11 @@ def unpublish_listing_service(
             "Listing not found"
         )
 
-    if str(listing.merchant_id) != str(merchant_id):
-
-        raise CustomException(
-            403,
-            "Unauthorized access"
-        )
+    _assert_business_owned(
+        db=db,
+        business_id=listing.businessId,
+        merchant_id=merchant_id
+    )
 
     updated = unpublish_listing_repo(
         db=db,

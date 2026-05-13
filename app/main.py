@@ -7,7 +7,7 @@ from app.api.v1.router import api_router
 from app.exceptions.custom_exception import CustomException
 
 app = FastAPI(
-    title="User Management API",
+    title="Marketplace API",
     version="1.0.0"
 )
 

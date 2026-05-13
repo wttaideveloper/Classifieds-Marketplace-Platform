@@ -70,17 +70,20 @@ def get_db():
 #  ADMIN PROFILE 
 @router.get("/profile", status_code=status.HTTP_200_OK)
 def get_profile(
+    admin_id: str = Query(..., description="Admin id"),
     db: Session = Depends(get_db),
 ):
-    return get_admin_profile_service(db)
+    return get_admin_profile_service(db, admin_id)
 
 @router.put("/profile", status_code=status.HTTP_200_OK)
 def update_profile(
     payload: AdminProfileUpdate,
+    admin_id: str = Query(..., description="Admin id"),
     db: Session = Depends(get_db)
 ):
     return update_admin_profile_service(
         db,
+        admin_id,
         payload
     )
 

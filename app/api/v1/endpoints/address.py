@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user
 from app.db.database import SessionLocal
 from app.services.address_service import (
     add_address_service,
@@ -20,30 +19,37 @@ def get_db():
     finally:
         db.close()
 
-@router.post("")
-def add_address(payload: AddressBase, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    return add_address_service(db, current_user["id"], payload.dict())
+@router.post("/")
+def add_address(
+    payload: AddressBase,
+    customer_id: str,
+    db: Session = Depends(get_db)
+):
+    return add_address_service(db, customer_id, payload.dict())
 
 
-@router.get("")
-def get_addresses(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    return get_addresses_service(db, current_user["id"])
+@router.get("/")
+def get_addresses(
+    customer_id: str,
+    db: Session = Depends(get_db)
+):
+    return get_addresses_service(db, customer_id)
 
 
 @router.put("/{address_id}")
 def update_address(
     address_id: str,
     payload: AddressBase,
-    current_user=Depends(get_current_user),
+    customer_id: str,
     db: Session = Depends(get_db)
 ):
-    return update_address_service(db, address_id, current_user["id"], payload.dict())
+    return update_address_service(db, address_id, customer_id, payload.dict())
 
 
 @router.delete("/{address_id}")
 def delete_address(
     address_id: str,
-    current_user=Depends(get_current_user),
+    customer_id: str,
     db: Session = Depends(get_db)
 ):
-    return delete_address_service(db, address_id, current_user["id"])
+    return delete_address_service(db, address_id, customer_id)

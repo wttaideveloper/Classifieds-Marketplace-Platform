@@ -12,19 +12,22 @@ router = APIRouter(
 )
 
 #  GET PROFILE
-@router.get("/profile", status_code=status.HTTP_200_OK)
+@router.get("/{customer_id}/profile", status_code=status.HTTP_200_OK)
 def get_profile(
+    customer_id: str,
     db: Session = Depends(get_db)
 ):
-    return get_profile_service(db)
+    return get_profile_service(db, customer_id)
 
 # UPDATE PROFILE
-@router.put("/profile", status_code=status.HTTP_200_OK)
+@router.put("/{customer_id}/profile", status_code=status.HTTP_200_OK)
 def update_profile(
+    customer_id: str,
     payload: CustomerProfileUpdate,
     db: Session = Depends(get_db)
 ):
     return update_profile_service(
         db,
+        customer_id,
         payload.model_dump(exclude_unset=True)
     )
