@@ -209,6 +209,7 @@ def save_listing_draft_repo(
 
 def get_my_listings_repo(
     db: Session,
+    merchant_id,
     businessId,
     status,
     listingType,
@@ -217,10 +218,16 @@ def get_my_listings_repo(
     limit
 ):
 
-    query = db.query(MerchantListing).filter(
-        MerchantListing.businessId == businessId
+    # query = db.query(MerchantListing).filter(
+    #     MerchantListing.businessId == businessId
+    # )
+    query = db.query(MerchantListing).join(
+        Business,
+        MerchantListing.businessId == Business.id
+    ).filter(
+        Business.merchant_id == merchant_id
     )
-    
+
     # FILTER BY BUSINESS ID
     if businessId:
         query = query.filter(
@@ -247,6 +254,7 @@ def get_my_listings_repo(
                 MerchantListing.description.ilike(f"%{search}%")
             )
         )
+       
     total = query.count()
     listings = query.order_by(
         MerchantListing.created_at.desc()

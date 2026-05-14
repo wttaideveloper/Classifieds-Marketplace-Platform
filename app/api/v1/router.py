@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from app.api.v1.endpoints import ( 
+    customer,
     customer_profile, 
     address, 
     merchant,
@@ -9,6 +10,13 @@ from app.api.v1.endpoints import (
 )
 
 api_router = APIRouter()
+
+# CUSTOMER AUTH
+api_router.include_router(
+    customer.router,
+    prefix="/auth/customer",
+    tags=["Customer Auth"]
+)
 
 # CUSTOMER PROFILE
 api_router.include_router(

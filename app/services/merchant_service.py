@@ -532,17 +532,17 @@ def create_business_profile_service(
             "Merchant not found"
         )
 
-    existing_profile = get_business_profile_by_merchant_id(
-        db,
-        merchant_id
-    )
+    # existing_profile = get_business_profile_by_merchant_id(
+    #     db,
+    #     merchant_id
+    # )
 
-    if existing_profile:
+    # if existing_profile:
 
-        raise CustomException(
-            400,
-            "Business profile already exists"
-        )
+    #     raise CustomException(
+    #         400,
+    #         "Business profile already exists"
+    #     )
 
     business_type_allowed = [
         "physical",
@@ -938,6 +938,7 @@ def get_my_listings_service(
 
         return {
             "success": True,
+            "message": "Listings fetched successfully",
             "total": total,
             "page": page,
             "limit": limit,

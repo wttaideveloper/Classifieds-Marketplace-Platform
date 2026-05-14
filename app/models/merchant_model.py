@@ -94,6 +94,8 @@ class Merchant(Base):
         uselist=False,
         cascade="all, delete-orphan"
     )
+
+    # ONE MERCHANT CAN HAVE MULTIPLE BUSINESSES
     businesses = relationship(
         "Business",
         back_populates="merchant",

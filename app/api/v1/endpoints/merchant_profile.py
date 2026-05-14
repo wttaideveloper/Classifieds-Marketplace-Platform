@@ -246,7 +246,7 @@ def save_listing_as_draft(
     status_code=status.HTTP_200_OK
 )
 def get_my_listings(
-    merchantId: str = Query(..., description="Merchant id"),
+    merchant_id: str = Query(..., description="Merchant id"),
     businessId: Optional[str] = None,
     status_filter: str = Query(
         default=None,
@@ -260,7 +260,7 @@ def get_my_listings(
 ):
     return get_my_listings_service(
         db=db,
-        merchant_id=merchantId,
+        merchant_id=merchant_id,
         businessId=businessId,
         status_filter=status_filter,
         listingType=listingType,
@@ -324,12 +324,12 @@ def delete_listing(
 )
 def publish_listing(
     listingId: str,
-    merchantId: str = Query(..., description="Merchant id"),
+    merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return publish_listing_service(
         db=db,
-        merchant_id=merchantId,
+        merchant_id=merchant_id,
         listingId=listingId
     )
 
