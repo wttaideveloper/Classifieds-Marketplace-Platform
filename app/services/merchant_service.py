@@ -9,7 +9,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.repository.merchant_repo import (
-    get_merchant_by_external_auth_id,
+    get_merchant_by_email,
     create_merchant,
     update_merchant,
     get_merchant_by_id,
@@ -53,6 +53,23 @@ import uuid
 
 from uuid import uuid4
 
+# =========================================================
+# CONSTANTS
+# =========================================================
+
+LOGO_FOLDER = "uploads/business_logo"
+BANNER_FOLDER = "uploads/business_banner"
+GALLERY_FOLDER = "uploads/business_gallery"
+UPLOAD_DIR = "uploads/listings"
+
+
+class BusinessStatus:
+    DRAFT = "draft"
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SUSPENDED = "suspended"
+
 
 # =========================================================
 # OWNERSHIP HELPERS (no auth in scope)
@@ -81,22 +98,116 @@ def _assert_business_owned(
 
     return business
 
+
 # =========================================================
-# CONSTANTS
+# REGISTER MERCHANT
 # =========================================================
 
-LOGO_FOLDER = "uploads/business_logo"
-BANNER_FOLDER = "uploads/business_banner"
-GALLERY_FOLDER = "uploads/business_gallery"
-UPLOAD_DIR = "uploads/listings"
+def register_merchant_service(
+    db,
+    payload
+):
+
+    existing_merchant = get_merchant_by_email(
+        db,
+        payload.businessEmail
+    )
+
+    if existing_merchant:
+
+        raise CustomException(
+            status.HTTP_400_BAD_REQUEST,
+            "Merchant already exists"
+        )
+
+    merchant = Merchant(
+        id=str(uuid4()),
+        fullName=payload.fullName,
+        businessName=payload.businessName,
+        businessEmail=payload.businessEmail,
+        mobileNumber=payload.mobileNumber,
+        password=payload.password,  # plain password since auth removed
+        acceptTerms=payload.acceptTerms,
+        acceptPrivacyPolicy=payload.acceptPrivacyPolicy,
+        status="active"
+    )
+
+    created_merchant = create_merchant(
+        db,
+        merchant
+    )
+
+    return {
+        "success": True,
+        "message": "Merchant registered successfully",
+        "data": created_merchant
+    }
 
 
-class BusinessStatus:
-    DRAFT = "draft"
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    SUSPENDED = "suspended"
+# =========================================================
+# LOGIN MERCHANT
+# =========================================================
+
+def login_merchant_service(
+    db,
+    email: str,
+    password: str
+):
+
+    merchant = get_merchant_by_email(
+        db,
+        email
+    )
+
+    if not merchant:
+
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Merchant not found"
+        )
+
+    # Plain password check
+    if merchant.password != password:
+
+        raise CustomException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid password"
+        )
+
+    return {
+        "success": True,
+        "message": "Login successful",
+        "data": {
+            "merchantId": merchant.id,
+            "fullName": merchant.fullName,
+            "businessEmail": merchant.businessEmail,
+            "status": merchant.status
+        }
+    }
+
+
+# =========================================================
+# GOOGLE LOGIN
+# =========================================================
+
+def google_login_service(
+    db,
+    google_token: str
+):
+
+    if not google_token:
+
+        raise CustomException(
+            status.HTTP_400_BAD_REQUEST,
+            "Google token required"
+        )
+
+    # Dummy response since auth removed
+    return {
+        "success": True,
+        "message": "Google login successful",
+        "googleToken": google_token
+    }
 
 
 # =========================================================
@@ -112,22 +223,26 @@ def sync_merchant_service(
     Authentication handled externally.
     """
 
-    external_auth_id = current_user.get("user_id")
+    # This endpoint is out-of-scope for "auth/identity" changes; keep it safe
+    # by keying off business email only and using placeholder credentials.
     email = current_user.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Missing email")
 
-    merchant = get_merchant_by_external_auth_id(
-        db,
-        external_auth_id
-    )
-
+    merchant = get_merchant_by_email(db, email)
     if merchant:
         return merchant
 
     merchant = Merchant(
         id=str(uuid4()),
-        externalAuthUserId=external_auth_id,
+        fullName=current_user.get("fullName") or current_user.get("name") or "Merchant",
         businessEmail=email,
-        status="active"
+        mobileNumber=current_user.get("mobileNumber") or current_user.get("mobile") or "0000000000",
+        businessName=current_user.get("businessName") or "Business",
+        password=current_user.get("password") or "external",
+        acceptTerms=True,
+        acceptPrivacyPolicy=True,
+        status="active",
     )
 
     return create_merchant(db, merchant)
@@ -206,6 +321,193 @@ def update_merchant_profile_service(
         "message": "Profile updated successfully",
         "data": updated
     }
+
+
+# =========================================================
+# MEDIA UPLOADS (logo/banner/gallery) - no auth in scope
+# =========================================================
+
+def _get_merchant_profile_or_404(
+    db: Session,
+    merchant_id: str
+):
+    profile = get_business_profile_by_merchant_id(db, merchant_id)
+    if not profile:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Business profile not found"
+        )
+    return profile
+
+
+def upload_business_logo_service(
+    db: Session,
+    merchant_id: str,
+    file: UploadFile
+):
+    try:
+        if not file.content_type.startswith("image/"):
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                f"{file.filename} is not a valid image"
+            )
+
+        file_extension = (file.filename or "").split(".")[-1] or "img"
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+
+        os.makedirs(LOGO_FOLDER, exist_ok=True)
+        file_path = os.path.join(LOGO_FOLDER, unique_filename)
+
+        with open(file_path, "wb") as image:
+            image.write(file.file.read())
+
+        profile = _get_merchant_profile_or_404(db, merchant_id)
+        profile.businessLogo = unique_filename
+        updated = update_business_profile(db, profile)
+
+        return {
+            "success": True,
+            "message": "Business logo uploaded successfully",
+            "data": updated
+        }
+    except CustomException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+def upload_business_banner_service(
+    db: Session,
+    merchant_id: str,
+    file: UploadFile
+):
+    try:
+        if not file.content_type.startswith("image/"):
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                f"{file.filename} is not a valid image"
+            )
+
+        file_extension = (file.filename or "").split(".")[-1] or "img"
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+
+        os.makedirs(BANNER_FOLDER, exist_ok=True)
+        file_path = os.path.join(BANNER_FOLDER, unique_filename)
+
+        with open(file_path, "wb") as image:
+            image.write(file.file.read())
+
+        profile = _get_merchant_profile_or_404(db, merchant_id)
+        profile.bannerImage = unique_filename
+        updated = update_business_profile(db, profile)
+
+        return {
+            "success": True,
+            "message": "Business banner uploaded successfully",
+            "data": updated
+        }
+    except CustomException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+def upload_business_gallery_service(
+    db: Session,
+    merchant_id: str,
+    files: List[UploadFile]
+):
+    try:
+        os.makedirs(GALLERY_FOLDER, exist_ok=True)
+        uploaded_images = []
+
+        for file in files:
+            if not file.content_type.startswith("image/"):
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{file.filename} is not a valid image"
+                )
+
+            file_extension = (file.filename or "").split(".")[-1] or "img"
+            unique_filename = f"{uuid.uuid4()}.{file_extension}"
+            file_path = os.path.join(GALLERY_FOLDER, unique_filename)
+
+            with open(file_path, "wb") as image:
+                image.write(file.file.read())
+
+            uploaded_images.append(unique_filename)
+
+        profile = _get_merchant_profile_or_404(db, merchant_id)
+        existing = profile.galleryImages or []
+        profile.galleryImages = existing + uploaded_images
+        updated = update_business_profile(db, profile)
+
+        return {
+            "success": True,
+            "message": "Business gallery images uploaded successfully",
+            "data": {
+                "merchantId": merchant_id,
+                "images": updated.galleryImages
+            }
+        }
+    except CustomException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+def delete_business_gallery_image_service(
+    db: Session,
+    merchant_id: str,
+    image_id: str
+):
+    try:
+        profile = _get_merchant_profile_or_404(db, merchant_id)
+        images = profile.galleryImages or []
+
+        if image_id not in images:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Image not found in gallery"
+            )
+
+        updated_images = [img for img in images if img != image_id]
+        profile.galleryImages = updated_images
+        updated = update_business_profile(db, profile)
+
+        image_path = os.path.join(GALLERY_FOLDER, image_id)
+        if os.path.exists(image_path):
+            os.remove(image_path)
+
+        return {
+            "success": True,
+            "message": "Business gallery image deleted successfully",
+            "data": {
+                "merchantId": merchant_id,
+                "deletedImage": image_id,
+                "remainingImages": updated.galleryImages
+            }
+        }
+    except CustomException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
 
 
 # =========================================================
@@ -564,8 +866,11 @@ def create_listing_service(
             "data": listing
         }
 
-    except HTTPException:
-        raise
+    # except HTTPException:
+    #     raise
+    except Exception as e:
+        print(e)
+        raise e
 
     except Exception:
 
@@ -641,6 +946,36 @@ def get_my_listings_service(
 
     except Exception:
 
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Internal server error"
+        )
+
+
+def get_listing_details_service(
+    db: Session,
+    listingId
+):
+    try:
+        listing = get_listing_details_repo(
+            db=db,
+            listingId=listingId
+        )
+
+        if not listing:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+
+        return {
+            "success": True,
+            "message": "Listing details fetched successfully",
+            "data": listing
+        }
+    except CustomException:
+        raise
+    except Exception:
         raise CustomException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "Internal server error"

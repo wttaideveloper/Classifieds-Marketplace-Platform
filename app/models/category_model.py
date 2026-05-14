@@ -17,44 +17,36 @@ class Category(Base):
         primary_key=True,
         default=uuid.uuid4
     )
-
     name = Column(
         String,
         nullable=False,
         unique=True
     )
-
     description = Column(
         String,
         nullable=True
     )
-
     icon = Column(
         String,
         nullable=True
     )
-
     parentCategoryId = Column(
         UUID(as_uuid=True),
         ForeignKey("categories.id"),
         nullable=True
     )
-
     isActive = Column(
         Boolean,
         default=True
     )
-
     isDeleted = Column(
         Boolean,
         default=False
     )
-
     created_at = Column(
         DateTime,
         default=datetime.utcnow
     )
-
     updated_at = Column(
         DateTime,
         default=datetime.utcnow,

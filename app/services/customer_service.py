@@ -331,6 +331,7 @@ def get_subcategories_service(
         return {
             "success": True,
             "message": "Subcategories fetched successfully",
+            "total": len(subcategories),
             "data": subcategories
         }
 

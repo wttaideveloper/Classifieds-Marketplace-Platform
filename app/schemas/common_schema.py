@@ -82,9 +82,9 @@ class CategoryData(BaseModel):
     id: UUID
     name: str
     description: Optional[str]
-    image: Optional[str]
-    status: str
-    createdAt: datetime
+    icon: Optional[str]
+    isActive: bool
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -101,7 +101,7 @@ class CategoryResponse(BaseModel):
     id: UUID
     name: str
     description: Optional[str]
-    image: Optional[str]
+    icon: Optional[str]
 
     class Config:
         from_attributes = True
@@ -112,7 +112,7 @@ class SubcategoryResponse(BaseModel):
     id: UUID
     name: str
     description: Optional[str]
-    image: Optional[str]
+    icon: Optional[str]
     parentCategoryId: Optional[UUID]
 
     class Config:

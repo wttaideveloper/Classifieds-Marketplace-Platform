@@ -1,3 +1,4 @@
+from fastapi import status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.models.merchant_model import (
@@ -7,6 +8,8 @@ from app.models.merchant_model import (
     MerchantListing,
     MerchantListingDraft
 )
+from app.models.admin_model import Business
+import uuid
 
 # MERCHANT 
 
@@ -107,7 +110,13 @@ def update_business_draft(db: Session, draft: MerchantBusinessDraft):
         db.rollback()
         raise
 
-def create_listing_repo(db: Session, payload):
+def create_listing_repo(db: Session, merchant_id: str, payload):
+
+     # CHECK BUSINESS BELONGS TO MERCHANT
+    business = db.query(Business).filter(
+        Business.id == payload.businessId,
+        Business.merchant_id == uuid.UUID(merchant_id)
+    ).first()
 
     listing = MerchantListing(
         businessId=payload.businessId,

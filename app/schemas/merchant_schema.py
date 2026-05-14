@@ -58,8 +58,8 @@ class MerchantBusinessProfileCreate(BaseModel):
     state: str    
     zipCode: str    
     country: str    
-    latitude: str    
-    longitude: str    
+    latitude: float    
+    longitude: float   
     businessLogo: Optional[str] = None    
     bannerImage: Optional[str] = None    
     galleryImages: Optional[List[str]] = []    

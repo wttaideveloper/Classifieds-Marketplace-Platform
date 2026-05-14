@@ -70,12 +70,12 @@ class Merchant(Base):
         nullable=False
     )
 
-    createdAt = Column(
+    created_at = Column(
         DateTime,
         default=datetime.utcnow
     )
 
-    updatedAt = Column(
+    updated_at = Column(
         DateTime,
         default=datetime.utcnow,
         onupdate=datetime.utcnow
@@ -99,10 +99,6 @@ class Merchant(Base):
         back_populates="merchant",
         cascade="all, delete-orphan"
     )
-    # category = relationship(
-    #     "Category",
-    #     foreign_keys=[categoryId]
-    # )
 
 # MERCHANT PROFILE
 class MerchantProfile(Base):

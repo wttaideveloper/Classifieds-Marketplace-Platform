@@ -311,7 +311,7 @@ def get_categories_repo(db):
     categories = db.query(Category).filter(
        Category.isActive == True,
         Category.isDeleted == False
-    ).order_by(Category.createdAt.desc()).all()
+    ).order_by(Category.created_at.desc()).all()
 
     total = len(categories)
 

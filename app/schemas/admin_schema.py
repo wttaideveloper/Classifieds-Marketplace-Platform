@@ -226,13 +226,6 @@ class MerchantResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# admin_schema.py
-
-from pydantic import BaseModel
-from typing import Optional, List
-from uuid import UUID
-from datetime import datetime
-
 
 class AdminListingData(BaseModel):
 
@@ -375,7 +368,7 @@ class CategoryResponse(BaseModel):
     description: Optional[str]
     icon: Optional[str]
     isActive: bool
-    createdAt: datetime
+    created_at: datetime
 
     class Config:
         from_attributes = True

@@ -336,6 +336,121 @@ def admin_update_user_status_service(
             str(e)
         )
 
+# MERCHANT MANAGEMENT (ADMIN)
+
+# GET MERCHANTS LIST
+def admin_get_merchants_service(
+    db: Session,
+    search=None,
+    status=None,
+    page: int = 1,
+    limit: int = 10
+):
+
+    try:
+
+        query = db.query(Merchant)
+
+        # SEARCH
+        if search:
+            query = query.filter(
+                or_(
+                    Merchant.fullName.ilike(f"%{search}%"),
+                    Merchant.businessName.ilike(f"%{search}%"),
+                    Merchant.businessEmail.ilike(f"%{search}%")
+                )
+            )
+
+        # STATUS FILTER
+        if status:
+            query = query.filter(
+                Merchant.status == status
+            )
+
+        total = query.count()
+
+        merchants = query.order_by(
+            Merchant.createdAt.desc()
+        ).offset(
+            (page - 1) * limit
+        ).limit(limit).all()
+
+        result = []
+
+        for merchant in merchants:
+
+            result.append({
+                "id": merchant.id,
+                "fullName": merchant.fullName,
+                "businessName": merchant.businessName,
+                "businessEmail": merchant.businessEmail,
+                "mobileNumber": merchant.mobileNumber,
+                "status": merchant.status,
+                "createdAt": merchant.createdAt
+            })
+
+        return {
+            "success": True,
+            "message": "Merchants fetched successfully",
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "data": result
+        }
+
+    except Exception as e:
+
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+# GET MERCHANT DETAILS
+def admin_get_merchant_details_service(
+    db: Session,
+    merchant_id
+):
+
+    try:
+
+        merchant = db.query(Merchant).filter(
+            Merchant.id == merchant_id
+        ).first()
+
+        if not merchant:
+
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Merchant not found"
+            )
+
+        return {
+            "success": True,
+            "message": "Merchant details fetched successfully",
+            "data": {
+                "id": merchant.id,
+                "fullName": merchant.fullName,
+                "businessName": merchant.businessName,
+                "businessEmail": merchant.businessEmail,
+                "mobileNumber": merchant.mobileNumber,
+                "status": merchant.status,
+                "createdAt": merchant.createdAt
+            }
+        }
+
+    except CustomException as e:
+        raise e
+
+    except Exception as e:
+
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+
 # FETCH BUSINESSES
 def fetch_businesses_service(
     db: Session,
@@ -522,6 +637,172 @@ def reject_business_service(
             str(e)
         )
 
+# SUSPEND BUSINESS
+def suspend_business_service(
+    db: Session,
+    business_id,
+    reason=None
+):
+
+    try:
+
+        business = get_business_by_id(
+            db=db,
+            business_id=business_id
+        )
+
+        if not business:
+
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Business not found"
+            )
+
+        if business.status == "suspended":
+
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Business already suspended"
+            )
+
+        updated_business = suspend_business(
+            db=db,
+            business=business,
+            reason=reason
+        )
+
+        return {
+            "success": True,
+            "message": "Business suspended successfully",
+            "data": {
+                "id": updated_business.id,
+                "status": updated_business.status,
+                "reason": updated_business.suspension_reason,
+                "suspendedAt": updated_business.suspended_at
+            }
+        }
+
+    except CustomException as e:
+        raise e
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+# REACTIVATE BUSINESS
+def reactivate_business_service(
+    db: Session,
+    business_id
+):
+
+    try:
+
+        business = get_business_by_id(
+            db=db,
+            business_id=business_id
+        )
+
+        if not business:
+
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Business not found"
+            )
+
+        if business.status != "suspended":
+
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Only suspended businesses can be reactivated"
+            )
+
+        updated_business = reactivate_business(
+            db=db,
+            business=business
+        )
+
+        return {
+            "success": True,
+            "message": "Business reactivated successfully",
+            "data": {
+                "id": updated_business.id,
+                "status": updated_business.status
+            }
+        }
+
+    except CustomException as e:
+        raise e
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+# GET ASSOCIATED MERCHANT
+# GET /admin/businesses/:businessId/merchant
+def get_associated_merchant_service(
+    db: Session,
+    business_id
+):
+
+    try:
+
+        business = get_business_with_merchant(
+            db=db,
+            business_id=business_id
+        )
+
+        if not business:
+
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Business not found"
+            )
+
+        if not business.merchant:
+
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Associated merchant not found"
+            )
+
+        merchant = business.merchant
+
+        return {
+            "success": True,
+            "message": "Associated merchant fetched successfully",
+            "data": {
+                "id": merchant.id,
+                "fullName": merchant.fullName,
+                "businessName": merchant.businessName,
+                "businessEmail": merchant.businessEmail,
+                "mobileNumber": merchant.mobileNumber,
+                "status": merchant.status,
+                "createdAt": merchant.createdAt
+            }
+        }
+
+    except CustomException as e:
+        raise e
+
+    except Exception as e:
+
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
 # CREATE CATEGORY
 def create_category_service(
     db: Session,
@@ -560,6 +841,181 @@ def create_category_service(
 
         db.rollback()
 
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+# =========================================================
+# LISTING MANAGEMENT (ADMIN)
+# =========================================================
+def get_all_listings_service(
+    db: Session
+):
+    try:
+        total, listings = get_all_listings_repo(db=db)
+        return {
+            "success": True,
+            "message": "Listings fetched successfully",
+            "total": total,
+            "data": listings
+        }
+    except Exception as e:
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+def approve_listing_service(
+    db: Session,
+    listingId
+):
+    try:
+        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+
+        if not listing:
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+
+        if listing.status == "approved":
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Listing already approved"
+            )
+
+        updated = approve_listing_repo(db=db, listing=listing)
+
+        return {
+            "success": True,
+            "message": "Listing approved successfully",
+            "data": updated
+        }
+    except CustomException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+def reject_listing_service(
+    db: Session,
+    listingId,
+    payload
+):
+    try:
+        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+
+        if not listing:
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+
+        if listing.status == "rejected":
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Listing already rejected"
+            )
+
+        updated = reject_listing_repo(
+            db=db,
+            listing=listing,
+            reason=payload.reason
+        )
+
+        return {
+            "success": True,
+            "message": "Listing rejected successfully",
+            "data": updated
+        }
+    except CustomException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+def suspend_listing_service(
+    db: Session,
+    listingId,
+    payload
+):
+    try:
+        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+
+        if not listing:
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+
+        if listing.status == "suspended":
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Listing already suspended"
+            )
+
+        updated = suspend_listing_repo(
+            db=db,
+            listing=listing,
+            reason=payload.reason
+        )
+
+        return {
+            "success": True,
+            "message": "Listing suspended successfully",
+            "data": updated
+        }
+    except CustomException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+
+def reactivate_listing_service(
+    db: Session,
+    listingId
+):
+    try:
+        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+
+        if not listing:
+            raise CustomException(
+                http_status.HTTP_404_NOT_FOUND,
+                "Listing not found"
+            )
+
+        if listing.status != "suspended":
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Only suspended listings can be reactivated"
+            )
+
+        updated = reactivate_listing_repo(db=db, listing=listing)
+
+        return {
+            "success": True,
+            "message": "Listing reactivated successfully",
+            "data": updated
+        }
+    except CustomException:
+        raise
+    except Exception as e:
+        db.rollback()
         raise CustomException(
             http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             str(e)
