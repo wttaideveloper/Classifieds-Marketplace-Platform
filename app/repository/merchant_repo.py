@@ -6,9 +6,12 @@ from app.models.merchant_model import (
     MerchantProfile,
     MerchantBusinessDraft,
     MerchantListing,
-    MerchantListingDraft
+    MerchantListingDraft,
+    MerchantCustomAttribute,
+    BusinessAttributeMapping,
+    ListingAttributeMapping
 )
-from app.models.admin_model import Business
+from app.models.admin_model import Business, Attribute, AttributeOption
 import uuid
 
 # MERCHANT 
@@ -338,3 +341,128 @@ def delete_listing_image_repo(
     db.commit()
     db.refresh(listing)
     return listing
+
+# GET ATTRIBUTE BY ID
+def get_attribute_by_id_repo(
+    db: Session,
+    attribute_id
+):
+
+    return db.query(Attribute).filter(
+        Attribute.id == attribute_id
+    ).first()
+
+
+# CHECK EXISTING CUSTOM ATTRIBUTE
+def check_existing_custom_attribute_repo(
+    db: Session,
+    merchant_id,
+    attribute_id
+):
+
+    return db.query(MerchantCustomAttribute).filter(
+        MerchantCustomAttribute.merchant_id == merchant_id,
+        MerchantCustomAttribute.attribute_id == attribute_id
+    ).first()
+
+
+# CREATE CUSTOM ATTRIBUTE
+def create_custom_attribute_repo(
+    db: Session,
+    payload
+):
+
+    custom_attribute = MerchantCustomAttribute(
+        merchant_id=payload.merchant_id,
+        attribute_id=payload.attribute_id,
+        custom_label=payload.custom_label,
+        custom_placeholder=payload.custom_placeholder,
+        is_required=payload.is_required,
+        default_value=payload.default_value,
+        is_active=payload.is_active
+    )
+    db.add(custom_attribute)
+    db.commit()
+    db.refresh(custom_attribute)
+    return custom_attribute
+
+# GET BUSINESS BY ID
+def get_business_by_id_repo(
+    db: Session,
+    business_id
+):
+    return db.query(Business).filter(
+        Business.id == business_id
+    ).first()
+
+# GET ATTRIBUTE BY ID
+def get_attribute_by_id_repo(
+    db: Session,
+    attribute_id
+):
+    return db.query(Attribute).filter(
+        Attribute.id == attribute_id
+    ).first()
+
+# CHECK EXISTING BUSINESS ATTRIBUTE
+def check_existing_business_attribute_repo(
+    db: Session,
+    business_id,
+    attribute_id
+):
+    return db.query(BusinessAttributeMapping).filter(
+        BusinessAttributeMapping.business_id == business_id,
+        BusinessAttributeMapping.attribute_id == attribute_id
+    ).first()
+
+# CREATE BUSINESS ATTRIBUTE MAPPING
+def create_business_attribute_mapping_repo(
+    db: Session,
+    business_id,
+    payload
+):
+    business_attribute = BusinessAttributeMapping(
+        business_id=business_id,
+        attribute_id=payload.attribute_id,
+        attribute_value=payload.attribute_value
+    )
+    db.add(business_attribute)
+    db.commit()
+    db.refresh(business_attribute)
+    return business_attribute
+
+# GET LISTING BY ID
+def get_listing_by_id_repo(
+    db: Session,
+    listing_id
+):
+    return db.query(MerchantListing).filter(
+        MerchantListing.id == listing_id
+    ).first()
+
+# CHECK EXISTING LISTING ATTRIBUTE
+def check_existing_listing_attribute_repo(
+    db: Session,
+    listing_id,
+    attribute_id
+):
+    return db.query(ListingAttributeMapping).filter(
+        ListingAttributeMapping.listing_id == listing_id,
+        ListingAttributeMapping.attribute_id == attribute_id
+    ).first()
+
+# CREATE LISTING ATTRIBUTE MAPPING
+def create_listing_attribute_mapping_repo(
+    db: Session,
+    listing_id,
+    payload
+):
+    listing_attribute = ListingAttributeMapping(
+        listing_id=listing_id,
+        attribute_id=payload.attribute_id,
+        attribute_value=payload.attribute_value
+    )
+    db.add(listing_attribute)
+    db.commit()
+    db.refresh(listing_attribute)
+    return listing_attribute

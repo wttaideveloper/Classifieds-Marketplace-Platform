@@ -522,9 +522,78 @@ class DeleteListingImageResponse(BaseModel):
     message: str
     data: dict
 
-
 class DeleteListingImageData(BaseModel):
 
     listingId: UUID
     deletedImage: str
     remainingImages: List[str]
+
+# CREATE CUSTOM ATTRIBUTE
+class MerchantCustomAttributeCreate(BaseModel):
+
+    merchant_id: UUID
+    attribute_id: UUID
+    custom_label: Optional[str] = None
+    custom_placeholder: Optional[str] = None
+    is_required: Optional[bool] = False
+    default_value: Optional[str] = None
+    is_active: Optional[bool] = True
+
+
+# RESPONSE SCHEMA
+class MerchantCustomAttributeResponse(BaseModel):
+
+    id: UUID
+    merchant_id: UUID
+    attribute_id: UUID
+    custom_label: Optional[str]
+    custom_placeholder: Optional[str]
+    is_required: bool
+    default_value: Optional[str]
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# MAP ATTRIBUTE TO BUSINESS
+class BusinessAttributeMapCreate(BaseModel):
+
+    attribute_id: UUID
+
+    attribute_value: str
+
+
+# RESPONSE
+class BusinessAttributeMapResponse(BaseModel):
+
+    id: UUID
+
+    business_id: UUID
+
+    attribute_id: UUID
+
+    attribute_value: Optional[str]
+
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# MAP ATTRIBUTE TO LISTING
+class ListingAttributeMapCreate(BaseModel):
+
+    attribute_id: UUID
+    attribute_value: str
+
+# RESPONSE
+class ListingAttributeMapResponse(BaseModel):
+
+    id: UUID
+    listing_id: UUID
+    attribute_id: UUID
+    attribute_value: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

@@ -4,6 +4,7 @@ from pydantic import ValidationInfo
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
+from enum import Enum
 
 #  AUTH 
 
@@ -373,10 +374,73 @@ class CategoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
 # MAIN RESPONSE
 class CreateCategoryResponse(BaseModel):
 
     success: bool
     message: str
     data: CategoryResponse
+
+# FIELD TYPE ENUM
+class AttributeFieldType(str, Enum):
+    text = "text"
+    textarea = "textarea"
+    number = "number"
+    dropdown = "dropdown"
+    checkbox = "checkbox"
+    date = "date"
+
+# ATTRIBUTE OPTION
+class AttributeOptionCreate(BaseModel):
+    option_label: str
+    option_value: str
+
+# CREATE ATTRIBUTE
+class AttributeCreate(BaseModel):
+    name: str
+    display_name: str
+    slug: str
+    field_type: AttributeFieldType
+    placeholder: Optional[str] = None
+    is_required: Optional[bool] = False
+    is_active: Optional[bool] = True
+    is_global: Optional[bool] = True
+    created_by: UUID
+
+    options: Optional[List[AttributeOptionCreate]] = []
+
+# UPDATE ATTRIBUTE
+class AttributeUpdate(BaseModel):
+    name: Optional[str] = None
+    display_name: Optional[str] = None
+    placeholder: Optional[str] = None
+    is_required: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+# RESPONSE OPTION
+class AttributeOptionResponse(BaseModel):
+    id: UUID
+    option_label: str
+    option_value: str
+
+    class Config:
+        from_attributes = True
+
+# RESPONSE ATTRIBUTE
+class AttributeResponse(BaseModel):
+    id: UUID
+    name: str
+    display_name: str
+    slug: str
+    field_type: AttributeFieldType
+    placeholder: Optional[str]
+    is_required: bool
+    is_active: bool
+    is_global: bool
+    created_by: UUID
+    created_at: datetime
+
+    options: List[AttributeOptionResponse] = []
+
+    class Config:
+        from_attributes = True

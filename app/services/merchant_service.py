@@ -5,9 +5,7 @@ from fastapi import (
     status,
     HTTPException
 )
-
 from sqlalchemy.orm import Session
-
 from app.repository.merchant_repo import (
     get_merchant_by_email,
     create_merchant,
@@ -29,28 +27,29 @@ from app.repository.merchant_repo import (
     publish_listing_repo,
     unpublish_listing_repo,
     upload_listing_images_repo,
-    delete_listing_image_repo
+    delete_listing_image_repo,
+    get_attribute_by_id_repo,
+    check_existing_custom_attribute_repo,
+    create_custom_attribute_repo,
+    get_business_by_id_repo,
+    check_existing_business_attribute_repo,
+    create_business_attribute_mapping_repo,
+    check_existing_listing_attribute_repo,
+    create_listing_attribute_mapping_repo
 )
-
 from app.models.merchant_model import (
     Merchant,
     MerchantProfile,
     MerchantBusinessDraft
 )
-
 from app.models.admin_model import Business
-
 from app.exceptions.custom_exception import (
     CustomException
 )
-
 from datetime import datetime, timezone
-
 from typing import List
-
 import os
 import uuid
-
 from uuid import uuid4
 
 # =========================================================
@@ -1248,3 +1247,278 @@ def delete_listing_image_service(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             str(e)
         )
+
+# CREATE CUSTOM ATTRIBUTE SERVICE
+def create_custom_attribute_service(
+    db: Session,
+    payload
+):
+
+    # CHECK ATTRIBUTE EXISTS
+    attribute = get_attribute_by_id_repo(
+        db,
+        payload.attribute_id
+    )
+
+    if not attribute:
+
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Attribute not found"
+        )
+
+    # CHECK DUPLICATE ATTRIBUTE
+    existing_attribute = check_existing_custom_attribute_repo(
+        db,
+        payload.merchant_id,
+        payload.attribute_id
+    )
+
+    if existing_attribute:
+
+        raise CustomException(
+            status.HTTP_400_BAD_REQUEST,
+            "Custom attribute already exists for this merchant"
+        )
+
+    # DROPDOWN VALIDATION
+    if attribute.field_type == "dropdown":
+
+        if payload.default_value:
+
+            option_values = [
+                option.option_value
+                for option in attribute.options
+            ]
+
+            if payload.default_value not in option_values:
+
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "Invalid dropdown option value"
+                )
+
+    return create_custom_attribute_repo(
+        db,
+        payload
+    )
+
+# =========================================================
+# ATTRIBUTE VALUE VALIDATION
+# =========================================================
+
+def validate_attribute_value(
+    attribute,
+    attribute_value
+):
+
+    # REQUIRED VALIDATION
+    if attribute.is_required:
+
+        if (
+            attribute_value is None or
+            str(attribute_value).strip() == ""
+        ):
+
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                f"{attribute.display_name} is required"
+            )
+
+    # TEXT VALIDATION
+    if attribute.field_type == "text":
+
+        if not isinstance(attribute_value, str):
+
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                "Value must be string"
+            )
+
+    # TEXTAREA VALIDATION
+    if attribute.field_type == "textarea":
+
+        if not isinstance(attribute_value, str):
+
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                "Textarea value must be string"
+            )
+
+    # NUMBER VALIDATION
+    if attribute.field_type == "number":
+
+        try:
+            float(attribute_value)
+
+        except Exception:
+
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                "Attribute value must be numeric"
+            )
+
+    # DROPDOWN VALIDATION
+    if attribute.field_type == "dropdown":
+
+        option_values = [
+            option.option_value
+            for option in attribute.options
+        ]
+
+        if attribute_value not in option_values:
+
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                "Invalid dropdown value"
+            )
+
+    # CHECKBOX VALIDATION
+    if attribute.field_type == "checkbox":
+
+        valid_checkbox_values = [
+            "true",
+            "false"
+        ]
+
+        if str(attribute_value).lower() not in valid_checkbox_values:
+
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                "Checkbox value must be true or false"
+            )
+
+    # DATE VALIDATION
+    if attribute.field_type == "date":
+
+        try:
+
+            datetime.strptime(
+                attribute_value,
+                "%Y-%m-%d"
+            )
+
+        except Exception:
+
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                "Invalid date format. Use YYYY-MM-DD"
+            )
+
+# MAP ATTRIBUTE TO BUSINESS
+def map_attribute_to_business_service(
+    db: Session,
+    business_id,
+    payload
+):
+
+    # CHECK BUSINESS EXISTS
+    business = get_business_by_id_repo(
+        db,
+        business_id
+    )
+
+    if not business:
+
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Business not found"
+        )
+
+    # CHECK ATTRIBUTE EXISTS
+    attribute = get_attribute_by_id_repo(
+        db,
+        payload.attribute_id
+    )
+
+    if not attribute:
+
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Attribute not found"
+        )
+
+    # CHECK ATTRIBUTE ALREADY MAPPED
+    existing_mapping = check_existing_business_attribute_repo(
+        db,
+        business_id,
+        payload.attribute_id
+    )
+
+    if existing_mapping:
+
+        raise CustomException(
+            status.HTTP_400_BAD_REQUEST,
+            "Attribute already mapped to business"
+        )
+
+    # VALIDATE ATTRIBUTE VALUE
+    validate_attribute_value(
+        attribute,
+        payload.attribute_value
+    )
+
+    return create_business_attribute_mapping_repo(
+        db,
+        business_id,
+        payload
+    )
+
+# MAP ATTRIBUTE TO LISTING
+def map_attribute_to_listing_service(
+    db: Session,
+    listing_id,
+    payload
+):
+
+    # CHECK LISTING EXISTS
+    listing = get_listing_by_id_repo(
+        db,
+        listing_id
+    )
+
+    if not listing:
+
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Listing not found"
+        )
+
+    # CHECK ATTRIBUTE EXISTS
+    attribute = get_attribute_by_id_repo(
+        db,
+        payload.attribute_id
+    )
+
+    if not attribute:
+
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Attribute not found"
+        )
+
+    # CHECK DUPLICATE ATTRIBUTE MAPPING
+    existing_mapping = check_existing_listing_attribute_repo(
+        db,
+        listing_id,
+        payload.attribute_id
+    )
+
+    if existing_mapping:
+
+        raise CustomException(
+            status.HTTP_400_BAD_REQUEST,
+            "Attribute already mapped to listing"
+        )
+
+    # VALIDATE ATTRIBUTE VALUE
+    validate_attribute_value(
+        attribute,
+        payload.attribute_value
+    )
+
+    return create_listing_attribute_mapping_repo(
+        db,
+        listing_id,
+        payload
+    )

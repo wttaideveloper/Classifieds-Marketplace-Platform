@@ -26,7 +26,10 @@ from app.schemas.admin_schema import (
     SuspendListingResponse,
     ReactivateListingResponse,
     CreateCategorySchema,
-    CreateCategoryResponse
+    CreateCategoryResponse,
+    AttributeCreate,
+    AttributeUpdate,
+    AttributeResponse
 )
 from app.services.admin_service import (
     get_admin_profile_service,
@@ -48,7 +51,12 @@ from app.services.admin_service import (
     reject_listing_service,
     suspend_listing_service,
     reactivate_listing_service,
-    create_category_service
+    create_category_service,
+    create_attribute_service,
+    get_all_attributes_service,
+    get_attribute_by_id_service,
+    update_attribute_service,
+    delete_attribute_service
 )
 from app.exceptions.custom_exception import CustomException
 
@@ -370,3 +378,85 @@ def create_category(
         db=db,
         payload=payload
     )
+
+# CREATE ATTRIBUTE
+@router.post(
+    "/attributes",
+    response_model=AttributeResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_attribute(
+    payload: AttributeCreate,
+    db: Session = Depends(get_db)
+):
+
+    return create_attribute_service(
+        db,
+        payload
+    )
+
+
+# GET ALL ATTRIBUTES
+@router.get(
+    "/attributes",
+    response_model=list[AttributeResponse],
+    status_code=status.HTTP_200_OK
+)
+def get_all_attributes(
+    db: Session = Depends(get_db)
+):
+
+    return get_all_attributes_service(db)
+
+
+# GET ATTRIBUTE BY ID
+@router.get(
+    "/attributes/{attribute_id}",
+    response_model=AttributeResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_attribute_by_id(
+    attribute_id: str,
+    db: Session = Depends(get_db)
+):
+
+    return get_attribute_by_id_service(
+        db,
+        attribute_id
+    )
+
+
+# UPDATE ATTRIBUTE
+@router.put(
+    "/attributes/{attribute_id}",
+    response_model=AttributeResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_attribute(
+    attribute_id: str,
+    payload: AttributeUpdate,
+    db: Session = Depends(get_db)
+):
+
+    return update_attribute_service(
+        db,
+        attribute_id,
+        payload
+    )
+
+
+# DELETE ATTRIBUTE
+@router.delete(
+    "/attributes/{attribute_id}",
+    status_code=status.HTTP_200_OK
+)
+def delete_attribute(
+    attribute_id: str,
+    db: Session = Depends(get_db)
+):
+
+    return delete_attribute_service(
+        db,
+        attribute_id
+    )
+

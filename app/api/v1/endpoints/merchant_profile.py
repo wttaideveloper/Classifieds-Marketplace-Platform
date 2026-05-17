@@ -24,7 +24,10 @@ from app.services.merchant_service import (
     publish_listing_service,
     unpublish_listing_service,
     upload_listing_images_service,
-    delete_listing_image_service
+    delete_listing_image_service,
+    create_custom_attribute_service,
+    map_attribute_to_business_service,
+    map_attribute_to_listing_service
 )
 from app.schemas.merchant_schema import (
     MerchantProfileUpdate, 
@@ -33,7 +36,13 @@ from app.schemas.merchant_schema import (
     UpdateBusinessProfile,
     MerchantListingCreate,
     MerchantDraftCreate,
-    UpdateMerchantListing
+    UpdateMerchantListing, 
+    MerchantCustomAttributeCreate,
+    MerchantCustomAttributeResponse,
+    BusinessAttributeMapCreate,
+    BusinessAttributeMapResponse,
+    ListingAttributeMapCreate,
+    ListingAttributeMapResponse
 )
 
 router = APIRouter(
@@ -380,4 +389,61 @@ def delete_listing_image(
         db=db,
         listingId=listingId,
         imageId=imageId
+    )
+
+# CREATE CUSTOM ATTRIBUTE
+@router.post(
+    "/attributes",
+    response_model=MerchantCustomAttributeResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_custom_attribute(
+    payload: MerchantCustomAttributeCreate,
+    db: Session = Depends(get_db)
+):
+
+    return create_custom_attribute_service(
+        db,
+        payload
+    )
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    status
+)
+
+# MAP ATTRIBUTE TO BUSINESS
+@router.post(
+    "/business/{id}/attributes",
+    response_model=BusinessAttributeMapResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def map_attribute_to_business(
+    id: str,
+    payload: BusinessAttributeMapCreate,
+    db: Session = Depends(get_db)
+):
+
+    return map_attribute_to_business_service(
+        db,
+        id,
+        payload
+    )
+
+# MAP ATTRIBUTE TO LISTING
+@router.post(
+    "/listings/{id}/attributes",
+    response_model=ListingAttributeMapResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def map_attribute_to_listing(
+    id: str,
+    payload: ListingAttributeMapCreate,
+    db: Session = Depends(get_db)
+):
+    return map_attribute_to_listing_service(
+        db,
+        id,
+        payload
     )

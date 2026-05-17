@@ -9,7 +9,8 @@ from sqlalchemy import (
     JSON,
     Float,
     ARRAY,
-    Integer
+    Integer,
+    UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -521,4 +522,151 @@ class MerchantListingDraft(Base):
     subcategory = relationship(
         "Category",
         foreign_keys=[subcategoryId]
+    )
+
+# CUSTOM ATTRIBUTE TABLE
+class MerchantCustomAttribute(Base):
+    __tablename__ = "merchant_custom_attributes"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    merchant_id = Column(
+        UUID(as_uuid=True),
+        nullable=False
+    )
+
+    attribute_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("attributes.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    custom_label = Column(
+        String,
+        nullable=True
+    )
+
+    custom_placeholder = Column(
+        String,
+        nullable=True
+    )
+
+    is_required = Column(
+        Boolean,
+        default=False
+    )
+
+    default_value = Column(
+        Text,
+        nullable=True
+    )
+
+    is_active = Column(
+        Boolean,
+        default=True
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
+
+# BUSINESS ATTRIBUTE MAPPING
+class BusinessAttributeMapping(Base):
+    __tablename__ = "business_attributes"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    business_id = Column(
+        UUID(as_uuid=True),
+        nullable=False
+    )
+
+    attribute_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("attributes.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    attribute_value = Column(
+        Text,
+        nullable=True
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id",
+            "attribute_id",
+            name="uq_business_attribute"
+        ),
+    )
+
+# LISTING ATTRIBUTE MAPPING
+class ListingAttributeMapping(Base):
+    __tablename__ = "listing_attributes"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    listing_id = Column(
+        UUID(as_uuid=True),
+        nullable=False
+    )
+
+    attribute_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("attributes.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    attribute_value = Column(
+        Text,
+        nullable=True
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "listing_id",
+            "attribute_id",
+            name="uq_listing_attribute"
+        ),
     )

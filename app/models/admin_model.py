@@ -1,10 +1,11 @@
 # app/models/admin_model.py
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
 from app.db.database import Base
+import enum
 
 
 class Admin(Base):
@@ -56,4 +57,80 @@ class Business(Base):
 
     def __repr__(self):
         return f"<Business {self.name} ({self.status})>"
+
+
+# FIELD TYPES
+class AttributeFieldType(str, enum.Enum):
+    text = "text"
+    textarea = "textarea"
+    number = "number"
+    dropdown = "dropdown"
+    checkbox = "checkbox"
+    date = "date"
+
+
+# ATTRIBUTE MASTER TABLE
+class Attribute(Base):
+    __tablename__ = "attributes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    name = Column(String, nullable=False)
+
+    display_name = Column(String, nullable=False)
+
+    slug = Column(String, unique=True, nullable=False)
+
+    field_type = Column(
+        Enum(AttributeFieldType),
+        nullable=False
+    )
+
+    placeholder = Column(String, nullable=True)
+
+    is_required = Column(Boolean, default=False)
+
+    is_active = Column(Boolean, default=True)
+
+    is_global = Column(Boolean, default=True)
+
+    created_by = Column(UUID(as_uuid=True), nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
+
+    options = relationship(
+        "AttributeOption",
+        back_populates="attribute",
+        cascade="all, delete"
+    )
+
+
+# ATTRIBUTE OPTIONS TABLE
+class AttributeOption(Base):
+    __tablename__ = "attribute_options"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    attribute_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("attributes.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    option_label = Column(String, nullable=False)
+
+    option_value = Column(String, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    attribute = relationship(
+        "Attribute",
+        back_populates="options"
+    )
 

@@ -22,7 +22,13 @@ from app.repository.admin_repo import (
     suspend_listing_repo,
     reactivate_listing_repo,
     create_category_repo,
-    get_category_by_name_repo
+    get_category_by_name_repo,
+    create_attribute_repo,
+    get_attribute_by_slug_repo,
+    get_all_attributes_repo,
+    get_attribute_by_id_repo,
+    update_attribute_repo,
+    delete_attribute_repo
 )
 
 from app.models.customer_model import Customer
@@ -1020,3 +1026,109 @@ def reactivate_listing_service(
             http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             str(e)
         )
+
+# CREATE ATTRIBUTE
+def create_attribute_service(
+    db: Session,
+    payload
+):
+
+    existing_attribute = get_attribute_by_slug_repo(
+        db,
+        payload.slug
+    )
+
+    if existing_attribute:
+        raise CustomException(
+            http_status.HTTP_400_BAD_REQUEST,
+            "Attribute slug already exists"
+        )
+
+    # DROPDOWN VALIDATION
+    if payload.field_type == "dropdown":
+
+        if not payload.options:
+            raise CustomException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "Dropdown field requires options"
+            )
+
+    return create_attribute_repo(
+        db,
+        payload
+    )
+
+
+# GET ALL ATTRIBUTES
+def get_all_attributes_service(db: Session):
+
+    return get_all_attributes_repo(db)
+
+
+# GET ATTRIBUTE BY ID
+def get_attribute_by_id_service(
+    db: Session,
+    attribute_id
+):
+
+    attribute = get_attribute_by_id_repo(
+        db,
+        attribute_id
+    )
+
+    if not attribute:
+        raise CustomException(
+            http_status.HTTP_404_NOT_FOUND,
+            "Attribute not found"
+        )
+
+    return attribute
+
+
+# UPDATE ATTRIBUTE
+def update_attribute_service(
+    db: Session,
+    attribute_id,
+    payload
+):
+
+    attribute = get_attribute_by_id_repo(
+        db,
+        attribute_id
+    )
+
+    if not attribute:
+        raise CustomException(
+            http_status.HTTP_404_NOT_FOUND,
+            "Attribute not found"
+        )
+
+    return update_attribute_repo(
+        db,
+        attribute,
+        payload
+    )
+
+
+# DELETE ATTRIBUTE
+def delete_attribute_service(
+    db: Session,
+    attribute_id
+):
+    attribute = get_attribute_by_id_repo(
+        db,
+        attribute_id
+    )
+
+    if not attribute:
+        raise CustomException(
+            http_status.HTTP_404_NOT_FOUND,
+            "Attribute not found"
+        )
+    delete_attribute_repo(
+        db,
+        attribute
+    )
+    return {
+        "message": "Attribute deleted successfully"
+    }
