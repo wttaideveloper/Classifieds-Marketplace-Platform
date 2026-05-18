@@ -1,5 +1,6 @@
 from jose import jwt, JWTError, ExpiredSignatureError
-from fastapi import status, HTTPException
+from fastapi import status, HTTPException, UploadFile
+from typing import List
 from app.core.config import settings
 from app.exceptions.custom_exception import CustomException
 from app.core.security import create_access_token
@@ -11,6 +12,22 @@ from app.repository.customer_repo import get_customer_by_id
 from app.repository.merchant_repo import get_merchant_by_id
 from app.repository.admin_repo import get_admin_by_id
 import secrets
+import os
+import uuid
+from app.exceptions.custom_exception import (
+    CustomException
+)
+
+UPLOAD_FOLDER = "uploads/business_images"
+LISTING_UPLOAD_FOLDER = "uploads/listing_images"
+ALLOWED_EXTENSIONS = [
+    "jpg",
+    "jpeg",
+    "png",
+    "webp"
+]
+
+MAX_FILE_SIZE = 5 * 1024 * 1024
 
 
 # def refresh_token_service(payload):
@@ -229,3 +246,167 @@ def validate_role(role: str):
         )
 
     return True
+
+async def upload_business_image_service(
+    files: List[UploadFile]
+):
+
+    try:
+
+        os.makedirs(
+            UPLOAD_FOLDER,
+            exist_ok=True
+        )
+
+        uploaded_files = []
+
+        for file in files:
+
+            # VALIDATE IMAGE TYPE
+            if not file.content_type.startswith("image/"):
+
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{file.filename} is not a valid image"
+                )
+
+            # READ FILE
+            file_content = await file.read()
+
+            # VALIDATE FILE SIZE
+            if len(file_content) > MAX_FILE_SIZE:
+
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{file.filename} exceeds 5MB limit"
+                )
+
+            # VALIDATE EXTENSION
+            extension = (
+                file.filename.split(".")[-1].lower()
+            )
+
+            if extension not in ALLOWED_EXTENSIONS:
+
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{file.filename} format not supported"
+                )
+
+            # GENERATE UNIQUE NAME
+            unique_filename = (
+                f"{uuid.uuid4()}.{extension}"
+            )
+
+            file_path = os.path.join(
+                UPLOAD_FOLDER,
+                unique_filename
+            )
+
+            # SAVE FILE
+            with open(file_path, "wb") as image:
+                image.write(file_content)
+
+            uploaded_files.append({
+                "fileName": unique_filename,
+                "filePath": file_path
+            })
+
+        return {
+            "success": True,
+            "message": "Images uploaded successfully",
+            "data": uploaded_files
+        }
+
+    except CustomException:
+        raise
+
+    except Exception as e:
+
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )
+
+async def upload_listing_images_service(
+    files: List[UploadFile]
+):
+
+    try:
+
+        # CREATE FOLDER
+        os.makedirs(
+            LISTING_UPLOAD_FOLDER,
+            exist_ok=True
+        )
+
+        uploaded_images = []
+
+        for file in files:
+
+            # VALIDATE CONTENT TYPE
+            if not file.content_type.startswith("image/"):
+
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{file.filename} is not a valid image"
+                )
+
+            # READ FILE
+            file_content = await file.read()
+
+            # VALIDATE FILE SIZE
+            if len(file_content) > MAX_FILE_SIZE:
+
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{file.filename} exceeds 5MB limit"
+                )
+
+            # VALIDATE FILE EXTENSION
+            file_extension = (
+                file.filename.split(".")[-1].lower()
+            )
+
+            if file_extension not in ALLOWED_EXTENSIONS:
+
+                raise CustomException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{file.filename} format not supported"
+                )
+
+            # GENERATE UNIQUE FILE NAME
+            unique_filename = (
+                f"{uuid.uuid4()}.{file_extension}"
+            )
+
+            # FILE PATH
+            file_path = os.path.join(
+                LISTING_UPLOAD_FOLDER,
+                unique_filename
+            )
+
+            # SAVE FILE
+            with open(file_path, "wb") as image:
+                image.write(file_content)
+
+            uploaded_images.append({
+                "fileName": unique_filename,
+                "filePath": file_path
+            })
+
+        return {
+            "success": True,
+            "message": "Listing images uploaded successfully",
+            "data": uploaded_images
+        }
+
+    except CustomException:
+        raise
+
+    except Exception as e:
+
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            str(e)
+        )

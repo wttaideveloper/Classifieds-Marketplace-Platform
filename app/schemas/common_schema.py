@@ -124,3 +124,12 @@ class SubCategoryListResponse(BaseModel):
     message: str
     total: int
     data: List[SubcategoryResponse]
+
+class UploadedListingImage(BaseModel):
+    fileName: str
+    filePath: str
+
+class UploadListingImagesResponse(BaseModel):
+    success: bool
+    message: str
+    data: List[UploadedListingImage]

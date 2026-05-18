@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, UploadFile, File
+from typing import List
 from sqlalchemy.orm import Session
 from app.schemas.common_schema import (
     CategoryListResponse,
-    SubCategoryListResponse
+    SubCategoryListResponse,
+    UploadListingImagesResponse
 )
 from app.db.database import SessionLocal
 from app.services.common_service import validate_role
@@ -12,6 +14,10 @@ from app.services.customer_service import (
     search_listings_service,
     get_categories_service,
     get_subcategories_service
+)
+from app.services.common_service import (
+    upload_business_image_service,
+    upload_listing_images_service
 )
 from uuid import UUID
 
@@ -122,4 +128,28 @@ def get_subcategories(
     return get_subcategories_service(
         db=db,
         categoryId=categoryId
+    )
+
+@router.post(
+    "/upload/business-image",
+    status_code=status.HTTP_201_CREATED
+)
+async def upload_business_image(
+    files: List[UploadFile] = File(...)
+):
+    return await upload_business_image_service(
+        files
+    )
+
+@router.post(
+    "/upload/listing-images",
+    response_model=UploadListingImagesResponse,
+    status_code=status.HTTP_201_CREATED
+)
+async def upload_listing_images(
+    files: List[UploadFile] = File(...)
+):
+
+    return await upload_listing_images_service(
+        files
     )
