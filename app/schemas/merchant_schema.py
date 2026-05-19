@@ -7,44 +7,44 @@ from enum import Enum
 
 # REGISTER
 class MerchantRegister(BaseModel):
-    fullName: str
-    businessEmail: EmailStr
-    mobileNumber: str
-    password: str
-    confirmPassword: str
-    businessName: str
-    acceptTerms: bool
-    acceptPrivacyPolicy: bool
+    fullName: str = Field(..., examples=["John Doe"])
+    businessEmail: EmailStr = Field(..., examples=["john@business.com"])
+    mobileNumber: str = Field(..., examples=["+1234567890"])
+    password: str = Field(..., examples=["Password@123"])
+    confirmPassword: str = Field(..., examples=["Password@123"])
+    businessName: str = Field(..., examples=["John's Store"])
+    acceptTerms: bool = Field(..., examples=[True])
+    acceptPrivacyPolicy: bool = Field(..., examples=[True])
 
 # LOGIN
 class MerchantLogin(BaseModel):
-    email: EmailStr
-    password: str
+    email: EmailStr = Field(..., examples=["john@business.com"])
+    password: str = Field(..., examples=["Password@123"])
 
 # FORGOT PASSWORD
 class ForgotPassword(BaseModel):
-    email: EmailStr
-    role: str
+    email: EmailStr = Field(..., examples=["john@business.com"])
+    role: str = Field(..., examples=["merchant"])
 
 
 #  RESET PASSWORD
 class ResetPassword(BaseModel):
-    resetToken: str
-    newPassword: str
-    confirmPassword: str
+    resetToken: str = Field(..., examples=["your-reset-token"])
+    newPassword: str = Field(..., examples=["NewPassword@123"])
+    confirmPassword: str = Field(..., examples=["NewPassword@123"])
 
 
 #  CHANGE PASSWORD
 class ChangePassword(BaseModel):
-    currentPassword: str
-    newPassword: str
-    confirmPassword: str
+    currentPassword: str = Field(..., examples=["OldPassword@123"])
+    newPassword: str = Field(..., examples=["NewPassword@123"])
+    confirmPassword: str = Field(..., examples=["NewPassword@123"])
 
 # PROFILE
 class MerchantProfileUpdate(BaseModel):
-    name: Optional[str] = None
-    mobileNumber: Optional[str] = None
-    profileImage: Optional[str] = None
+    name: Optional[str] = Field(None, examples=[None])
+    mobileNumber: Optional[str] = Field(None, examples=[None])
+    profileImage: Optional[str] = Field(None, examples=[None])
 
 class MerchantBusinessProfileCreate(BaseModel):    
     businessName: str    

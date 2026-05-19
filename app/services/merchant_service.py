@@ -9,6 +9,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.repository.merchant_repo import (
+    get_merchant_by_email,
     get_merchant_by_external_auth_id,
     create_merchant,
     update_merchant,
@@ -44,19 +45,136 @@ from app.exceptions.custom_exception import (
     CustomException
 )
 
-from datetime import datetime, timezone
+from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
+from app.services.email_service import send_email
+from app.core.token_blacklist import TOKEN_BLACKLIST
+
+from datetime import datetime, timezone, timedelta
 
 from typing import List
 
 import os
 import uuid
+import secrets
+import requests
 
 from uuid import uuid4
 
+GOOGLE_VERIFY_URL = "https://oauth2.googleapis.com/tokeninfo"
+
 
 # =========================================================
-# OWNERSHIP HELPERS (no auth in scope)
+# MERCHANT AUTH
 # =========================================================
+
+def register_merchant_service(db: Session, payload):
+    existing = get_merchant_by_email(db, payload.businessEmail)
+    if existing:
+        raise CustomException(400, "Email already registered")
+    if payload.password != payload.confirmPassword:
+        raise CustomException(400, "Passwords do not match")
+    if not payload.acceptTerms or not payload.acceptPrivacyPolicy:
+        raise CustomException(400, "Accept terms and privacy policy")
+    data = payload.dict()
+    data.pop("confirmPassword")
+    data["id"] = uuid4()
+    data["password"] = hash_password(data["password"])
+    merchant = Merchant(**data)
+    create_merchant(db, merchant)
+    return {"success": True, "message": "Registration successful"}
+
+
+def login_merchant_service(db: Session, email: str, password: str):
+    merchant = get_merchant_by_email(db, email)
+    if not merchant:
+        raise CustomException(404, "Merchant not found")
+    if not verify_password(password, merchant.password):
+        raise CustomException(401, "Invalid credentials")
+    token_data = {"id": str(merchant.id), "email": merchant.businessEmail, "role": "merchant"}
+    return {
+        "success": True,
+        "message": "Login successful",
+        "accessToken": create_access_token(token_data),
+        "refreshToken": create_refresh_token(token_data),
+        "tokenType": "bearer"
+    }
+
+
+def google_login_service(db: Session, google_token: str):
+    res = requests.get(GOOGLE_VERIFY_URL, params={"id_token": google_token})
+    if res.status_code != 200:
+        raise CustomException(401, "Invalid Google token")
+    data = res.json()
+    email = data.get("email")
+    name = data.get("name", "")
+    merchant = get_merchant_by_email(db, email)
+    if not merchant:
+        merchant = Merchant(
+            id=uuid4(),
+            fullName=name,
+            businessEmail=email,
+            businessName=name,
+            mobileNumber="",
+            password=hash_password(secrets.token_urlsafe(16)),
+            acceptTerms=True,
+            acceptPrivacyPolicy=True
+        )
+        create_merchant(db, merchant)
+    token_data = {"id": str(merchant.id), "email": merchant.businessEmail, "role": "merchant"}
+    return {
+        "success": True,
+        "accessToken": create_access_token(token_data),
+        "refreshToken": create_refresh_token(token_data),
+        "tokenType": "bearer"
+    }
+
+
+def forgot_password_merchant_service(db: Session, email: str):
+    merchant = get_merchant_by_email(db, email)
+    if not merchant:
+        raise CustomException(404, "Merchant not found")
+    reset_token = secrets.token_urlsafe(32)
+    merchant.resetToken = reset_token
+    merchant.resetTokenExpiry = datetime.utcnow() + timedelta(minutes=15)
+    db.commit()
+    reset_link = f"http://localhost:8000/reset-password?token={reset_token}"
+    if not send_email(merchant.businessEmail, reset_link):
+        raise CustomException(500, "Failed to send email")
+    return {"success": True, "message": "Reset link sent successfully"}
+
+
+def reset_password_merchant_service(db: Session, resetToken: str, newPassword: str, confirmPassword: str):
+    if newPassword != confirmPassword:
+        raise CustomException(400, "Passwords do not match")
+    merchant = db.query(Merchant).filter(Merchant.resetToken == resetToken).first()
+    if not merchant:
+        raise CustomException(400, "Invalid or expired token")
+    if merchant.resetTokenExpiry < datetime.utcnow():
+        raise CustomException(400, "Token expired")
+    merchant.password = hash_password(newPassword)
+    merchant.resetToken = None
+    merchant.resetTokenExpiry = None
+    db.commit()
+    return {"success": True, "message": "Password reset successful"}
+
+
+def change_password_merchant_service(db: Session, merchant_id: str, currentPassword: str, newPassword: str, confirmPassword: str):
+    if newPassword != confirmPassword:
+        raise CustomException(400, "Passwords do not match")
+    merchant = get_merchant_by_id(db, merchant_id)
+    if not merchant:
+        raise CustomException(404, "Merchant not found")
+    if not verify_password(currentPassword, merchant.password):
+        raise CustomException(401, "Incorrect current password")
+    merchant.password = hash_password(newPassword)
+    db.commit()
+    return {"success": True, "message": "Password changed successfully"}
+
+
+def logout_merchant_service(token: str, current_user):
+    TOKEN_BLACKLIST.add(token)
+    return {"success": True, "message": "Logged out successfully"}
+
 
 def _assert_business_owned(
     db: Session,
@@ -543,6 +661,80 @@ def get_business_status_service(
 # =========================================================
 # LISTINGS
 # =========================================================
+
+def get_listing_details_service(
+    db: Session,
+    listingId
+):
+    listing = get_listing_by_id_repo(db=db, listingId=listingId)
+    if not listing:
+        raise CustomException(404, "Listing not found")
+    return {"success": True, "data": listing}
+
+
+def _save_upload(folder: str, file: UploadFile) -> str:
+    os.makedirs(folder, exist_ok=True)
+    ext = file.filename.split(".")[-1]
+    filename = f"{uuid.uuid4()}.{ext}"
+    path = os.path.join(folder, filename)
+    with open(path, "wb") as f:
+        f.write(file.file.read())
+    return filename
+
+
+def upload_business_logo_service(db: Session, merchant_id: str, file: UploadFile):
+    profile = get_business_profile_by_merchant_id(db, merchant_id)
+    if not profile:
+        raise CustomException(404, "Business profile not found")
+    if not file.content_type.startswith("image/"):
+        raise CustomException(400, "Invalid image file")
+    filename = _save_upload(LOGO_FOLDER, file)
+    profile.businessLogo = filename
+    update_business_profile(db, profile)
+    return {"success": True, "message": "Logo uploaded successfully", "businessLogo": filename}
+
+
+def upload_business_banner_service(db: Session, merchant_id: str, file: UploadFile):
+    profile = get_business_profile_by_merchant_id(db, merchant_id)
+    if not profile:
+        raise CustomException(404, "Business profile not found")
+    if not file.content_type.startswith("image/"):
+        raise CustomException(400, "Invalid image file")
+    filename = _save_upload(BANNER_FOLDER, file)
+    profile.bannerImage = filename
+    update_business_profile(db, profile)
+    return {"success": True, "message": "Banner uploaded successfully", "bannerImage": filename}
+
+
+def upload_business_gallery_service(db: Session, merchant_id: str, files: list):
+    profile = get_business_profile_by_merchant_id(db, merchant_id)
+    if not profile:
+        raise CustomException(404, "Business profile not found")
+    uploaded = []
+    for file in files:
+        if not file.content_type.startswith("image/"):
+            raise CustomException(400, f"{file.filename} is not a valid image")
+        uploaded.append(_save_upload(GALLERY_FOLDER, file))
+    existing = profile.galleryImages or []
+    profile.galleryImages = existing + uploaded
+    update_business_profile(db, profile)
+    return {"success": True, "message": "Gallery images uploaded", "galleryImages": profile.galleryImages}
+
+
+def delete_business_gallery_image_service(db: Session, merchant_id: str, image_id: str):
+    profile = get_business_profile_by_merchant_id(db, merchant_id)
+    if not profile:
+        raise CustomException(404, "Business profile not found")
+    images = profile.galleryImages or []
+    if image_id not in images:
+        raise CustomException(404, "Image not found")
+    profile.galleryImages = [img for img in images if img != image_id]
+    image_path = os.path.join(GALLERY_FOLDER, image_id)
+    if os.path.exists(image_path):
+        os.remove(image_path)
+    update_business_profile(db, profile)
+    return {"success": True, "message": "Image deleted successfully"}
+
 
 def create_listing_service(
     db: Session,
