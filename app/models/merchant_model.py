@@ -102,6 +102,10 @@ class Merchant(Base):
         back_populates="merchant",
         cascade="all, delete-orphan"
     )
+    bookings = relationship(
+        "Booking",
+        back_populates="merchant"
+    )
 
 # MERCHANT PROFILE
 class MerchantProfile(Base):
@@ -394,6 +398,10 @@ class MerchantListing(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
+    business = relationship(
+        "Business",
+        back_populates="listings"
+    )
 
     category = relationship(
         "Category",
@@ -403,6 +411,10 @@ class MerchantListing(Base):
     subcategory = relationship(
         "Category",
         foreign_keys=[subcategoryId]
+    )
+    bookings = relationship(
+        "Booking",
+        back_populates="listing"
     )
 
 # MERCHANT LISTING DRAFT
@@ -669,4 +681,43 @@ class ListingAttributeMapping(Base):
             "attribute_id",
             name="uq_listing_attribute"
         ),
+    )
+
+class BookingStatusHistory(Base):
+
+    __tablename__ = "booking_status_history"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+    booking_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("bookings.id"),
+        nullable=False
+    )
+    old_status = Column(
+        String,
+        nullable=False
+    )
+    new_status = Column(
+        String,
+        nullable=False
+    )
+    updated_by = Column(
+        UUID(as_uuid=True),
+        nullable=True
+    )
+    remarks = Column(
+        Text,
+        nullable=True
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+    booking = relationship(
+        "Booking",
+        back_populates="status_history"
     )

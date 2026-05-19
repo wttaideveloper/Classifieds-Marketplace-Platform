@@ -4,18 +4,25 @@ from sqlalchemy.orm import Session
 from app.schemas.common_schema import (
     CategoryListResponse,
     SubCategoryListResponse,
-    UploadListingImagesResponse
+    UploadListingImagesResponse,
+    CreateBooking,
+    CreateBookingResponse
 )
-from app.db.database import SessionLocal
-from app.services.common_service import validate_role
+from app.utils.common import (
+    generate_booking_number
+)
+from app.db.database import SessionLocal, get_db
+from app.repository.customer_repo import create_booking_repo
 from app.services.customer_service import (
     get_public_listings_service,
     get_public_listing_details_service,
     search_listings_service,
     get_categories_service,
-    get_subcategories_service
+    get_subcategories_service,
+    create_booking_service
 )
 from app.services.common_service import (
+    validate_role,
     upload_business_image_service,
     upload_listing_images_service
 )
@@ -152,4 +159,19 @@ async def upload_listing_images(
 
     return await upload_listing_images_service(
         files
+    )
+
+@router.post(
+    "/bookings",
+    response_model=CreateBookingResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_booking(
+    payload: CreateBooking,
+    db: Session = Depends(get_db)
+):
+
+    return create_booking_service(
+        db=db,
+        payload=payload
     )

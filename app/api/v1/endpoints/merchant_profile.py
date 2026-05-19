@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, status, UploadFile, File, Query
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.db.database import SessionLocal
+from datetime import date
 from app.services.merchant_service import (
     get_merchant_profile_service, 
     update_merchant_profile_service, 
@@ -27,7 +28,9 @@ from app.services.merchant_service import (
     delete_listing_image_service,
     create_custom_attribute_service,
     map_attribute_to_business_service,
-    map_attribute_to_listing_service
+    map_attribute_to_listing_service,
+    get_merchant_bookings_service,
+    update_booking_status_service
 )
 from app.schemas.merchant_schema import (
     MerchantProfileUpdate, 
@@ -42,8 +45,12 @@ from app.schemas.merchant_schema import (
     BusinessAttributeMapCreate,
     BusinessAttributeMapResponse,
     ListingAttributeMapCreate,
-    ListingAttributeMapResponse
+    ListingAttributeMapResponse,
+    MerchantBookingList,
+    BookingStatusUpdateResponse,
+    BookingStatusUpdate
 )
+from uuid import UUID
 
 router = APIRouter(
     tags=["Merchant"]
@@ -446,4 +453,52 @@ def map_attribute_to_listing(
         db,
         id,
         payload
+    )
+
+@router.get(
+    "/bookings",
+    response_model=MerchantBookingList,
+    status_code=status.HTTP_200_OK
+)
+def get_merchant_bookings(
+    status_filter: str = Query(
+        default=None,
+        alias="status"
+    ),
+    booking_date: date = Query(
+        default=None
+    ),
+    page: int = Query(
+        ...,
+        gt=0
+    ),
+    size: int = Query(
+        ...,
+        gt=0
+    ),
+    db: Session = Depends(get_db)
+):
+    return get_merchant_bookings_service(
+        db=db,
+        page=page,
+        size=size,
+        booking_status=status_filter,
+        booking_date=booking_date
+    )
+
+@router.put(
+    "/bookings/{id}/status",
+    response_model=BookingStatusUpdateResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_booking_status(
+    id: UUID,
+    payload: BookingStatusUpdate,
+    db: Session = Depends(get_db)
+):
+
+    return update_booking_status_service(
+        db=db,
+        booking_id=id,
+        payload=payload
     )

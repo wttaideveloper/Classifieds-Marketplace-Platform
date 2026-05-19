@@ -13,6 +13,9 @@ from app.core.token_blacklist import TOKEN_BLACKLIST
 from app.services.common_service import (
     CustomException
 )
+from app.schemas.common_schema import (
+    CreateBooking
+)
 
 GOOGLE_VERIFY_URL = "https://oauth2.googleapis.com/tokeninfo"
 
@@ -340,3 +343,26 @@ def get_subcategories_service(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             str(e)
         )
+
+def create_booking_service(
+    db: Session,
+    payload: CreateBooking
+):
+    return create_booking_repo(
+        db=db,
+        payload=payload
+    )
+
+def get_customer_bookings_service(
+    db: Session,
+    page: int,
+    size: int,
+    booking_status: str = None
+):
+
+    return get_customer_bookings_repo(
+        db=db,
+        page=page,
+        size=size,
+        booking_status=booking_status
+    )

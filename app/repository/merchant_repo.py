@@ -1,5 +1,6 @@
 from fastapi import status
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 from sqlalchemy import or_
 from app.models.merchant_model import (
     Merchant,
@@ -9,10 +10,18 @@ from app.models.merchant_model import (
     MerchantListingDraft,
     MerchantCustomAttribute,
     BusinessAttributeMapping,
-    ListingAttributeMapping
+    ListingAttributeMapping,
+    BookingStatusHistory
+)
+from app.schemas.merchant_schema import (
+    BookingStatus,
+    BookingStatusUpdate
 )
 from app.models.admin_model import Business, Attribute, AttributeOption
+from app.models.customer_model import Customer, Booking
+from app.exceptions.custom_exception import CustomException
 import uuid
+from uuid import UUID
 
 # MERCHANT 
 
@@ -466,3 +475,129 @@ def create_listing_attribute_mapping_repo(
     db.commit()
     db.refresh(listing_attribute)
     return listing_attribute
+
+def get_merchant_bookings_repo(
+    db: Session,
+    page: int,
+    size: int,
+    booking_status: str = None,
+    booking_date=None
+):
+
+    try:
+
+        query = db.query(
+            Booking.id.label("booking_id"),
+
+            (
+                Customer.firstName + " " + Customer.lastName
+            ).label("customer_name"),
+
+            MerchantListing.title.label("listing_name"),
+
+            Booking.booking_status,
+
+            Booking.booking_date
+
+        ).join(
+            Customer,
+            Booking.customer_id == Customer.id
+        ).join(
+            MerchantListing,
+            Booking.listing_id == MerchantListing.id
+        )
+
+        if booking_status:
+
+            booking_status = booking_status.capitalize()
+
+            query = query.filter(
+                Booking.booking_status == BookingStatus(
+                    booking_status
+                )
+            )
+
+        if booking_date:
+
+            query = query.filter(
+                Booking.booking_date == booking_date
+            )
+
+        total_records = query.count()
+
+        bookings = query.order_by(
+            desc(Booking.created_at)
+        ).offset(
+            (page - 1) * size
+        ).limit(size).all()
+
+        return {
+            "total_records": total_records,
+            "page": page,
+            "size": size,
+            "bookings": bookings
+        }
+
+    except Exception as e:
+
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Failed to fetch merchant bookings: {str(e)}"
+        )
+    
+def update_booking_status_repo(
+    db: Session,
+    booking_id: UUID,
+    payload: BookingStatusUpdate
+):
+    try:
+        booking = db.query(Booking).filter(
+            Booking.id == booking_id
+        ).first()
+
+        if not booking:
+            raise CustomException(
+                status.HTTP_404_NOT_FOUND,
+                "Booking not found"
+            )
+        current_status = booking.booking_status
+        new_status = payload.booking_status
+        allowed_transitions = {
+            "Pending": ["Approved", "Rejected"],
+            "Approved": ["Completed", "Cancelled"]
+        }
+        if current_status not in allowed_transitions:
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Cannot change booking status from {current_status}"
+            )
+        if new_status not in allowed_transitions[current_status]:
+            raise CustomException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Invalid status transition from {current_status} to {new_status}"
+            )
+        history = BookingStatusHistory(
+            booking_id=booking.id,
+            old_status=current_status,
+            new_status=new_status,
+            updated_by=None,
+            remarks=payload.remarks
+        )
+        booking.booking_status = new_status
+        db.add(history)
+        db.commit()
+        db.refresh(booking)
+        return {
+            "message": "Booking status updated successfully",
+            "booking_id": str(booking.id),
+            "old_status": current_status,
+            "new_status": new_status
+        }
+    except CustomException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Failed to update booking status: {str(e)}"
+        )

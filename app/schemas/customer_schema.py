@@ -1,7 +1,18 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, date
+from enum import Enum
+from decimal import Decimal
+from enum import Enum as PyEnum
+
+class BookingStatus(str, PyEnum):
+    Pending = "Pending"
+    Approved = "Approved"
+    Rejected = "Rejected"
+    Completed = "Completed"
+    Cancelled = "Cancelled"
+
 
 # REGISTER
 class CustomerRegister(BaseModel):
@@ -107,9 +118,22 @@ class SearchListingsResponseData(BaseModel):
 class SearchListingsResponse(BaseModel):
 
     success: bool
-
     message: str
-
     total: int
-
     data: List[SearchListingsResponseData]
+
+class CustomerBookingResponse(BaseModel):
+    booking_id: UUID
+    listing_name: str
+    booking_date: date
+    booking_status: BookingStatus
+    total_amount: Decimal
+
+    class Config:
+        from_attributes = True
+
+class CustomerBookingList(BaseModel):
+    total_records: int
+    page: int
+    size: int
+    bookings: List[CustomerBookingResponse]

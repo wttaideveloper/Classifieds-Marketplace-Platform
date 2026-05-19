@@ -1,5 +1,4 @@
 # app/services/merchant_service.py
-
 from fastapi import (
     UploadFile,
     status,
@@ -35,12 +34,17 @@ from app.repository.merchant_repo import (
     check_existing_business_attribute_repo,
     create_business_attribute_mapping_repo,
     check_existing_listing_attribute_repo,
-    create_listing_attribute_mapping_repo
+    create_listing_attribute_mapping_repo,
+    get_merchant_bookings_repo,
+     update_booking_status_repo
 )
 from app.models.merchant_model import (
     Merchant,
     MerchantProfile,
     MerchantBusinessDraft
+)
+from app.schemas.merchant_schema import (
+    BookingStatusUpdate
 )
 from app.models.admin_model import Business
 from app.exceptions.custom_exception import (
@@ -50,17 +54,14 @@ from datetime import datetime, timezone
 from typing import List
 import os
 import uuid
-from uuid import uuid4
+from uuid import uuid4, UUID
 
-# =========================================================
 # CONSTANTS
-# =========================================================
 
 LOGO_FOLDER = "uploads/business_logo"
 BANNER_FOLDER = "uploads/business_banner"
 GALLERY_FOLDER = "uploads/business_gallery"
 UPLOAD_DIR = "uploads/listings"
-
 
 class BusinessStatus:
     DRAFT = "draft"
@@ -69,10 +70,7 @@ class BusinessStatus:
     REJECTED = "rejected"
     SUSPENDED = "suspended"
 
-
-# =========================================================
 # OWNERSHIP HELPERS (no auth in scope)
-# =========================================================
 
 def _assert_business_owned(
     db: Session,
@@ -97,10 +95,7 @@ def _assert_business_owned(
 
     return business
 
-
-# =========================================================
 # REGISTER MERCHANT
-# =========================================================
 
 def register_merchant_service(
     db,
@@ -142,11 +137,7 @@ def register_merchant_service(
         "data": created_merchant
     }
 
-
-# =========================================================
 # LOGIN MERCHANT
-# =========================================================
-
 def login_merchant_service(
     db,
     email: str,
@@ -184,11 +175,7 @@ def login_merchant_service(
         }
     }
 
-
-# =========================================================
 # GOOGLE LOGIN
-# =========================================================
-
 def google_login_service(
     db,
     google_token: str
@@ -208,11 +195,7 @@ def google_login_service(
         "googleToken": google_token
     }
 
-
-# =========================================================
 # MERCHANT PROFILE
-# =========================================================
-
 def sync_merchant_service(
     db: Session,
     current_user
@@ -321,11 +304,7 @@ def update_merchant_profile_service(
         "data": updated
     }
 
-
-# =========================================================
 # MEDIA UPLOADS (logo/banner/gallery) - no auth in scope
-# =========================================================
-
 def _get_merchant_profile_or_404(
     db: Session,
     merchant_id: str
@@ -508,11 +487,7 @@ def delete_business_gallery_image_service(
             str(e)
         )
 
-
-# =========================================================
 # BUSINESS PROFILE
-# =========================================================
-
 def create_business_profile_service(
     db: Session,
     merchant_id: str,
@@ -576,7 +551,6 @@ def create_business_profile_service(
         "data": created
     }
 
-
 def save_business_draft_service(
     db: Session,
     merchant_id: str,
@@ -637,7 +611,6 @@ def save_business_draft_service(
         "data": created
     }
 
-
 def get_business_profile_service(
     db: Session,
     merchant_id: str
@@ -659,7 +632,6 @@ def get_business_profile_service(
         "success": True,
         "data": profile
     }
-
 
 def update_business_profile_service(
     db: Session,
@@ -721,7 +693,6 @@ def update_business_profile_service(
         "reapprovalRequired": reapproval_required,
         "data": updated
     }
-
 
 def submit_business_for_approval_service(
     db: Session,
@@ -812,11 +783,7 @@ def submit_business_for_approval_service(
         "status": business.status
     }
 
-
-# =========================================================
 # BUSINESS STATUS
-# =========================================================
-
 def get_business_status_service(
     db: Session,
     merchant_id: str
@@ -840,11 +807,7 @@ def get_business_status_service(
         "businessName": profile.businessName
     }
 
-
-# =========================================================
 # LISTINGS
-# =========================================================
-
 def create_listing_service(
     db: Session,
     merchant_id: str,
@@ -1303,10 +1266,7 @@ def create_custom_attribute_service(
         payload
     )
 
-# =========================================================
 # ATTRIBUTE VALUE VALIDATION
-# =========================================================
-
 def validate_attribute_value(
     attribute,
     attribute_value
@@ -1521,4 +1481,31 @@ def map_attribute_to_listing_service(
         db,
         listing_id,
         payload
+    )
+
+def get_merchant_bookings_service(
+    db: Session,
+    page: int,
+    size: int,
+    booking_status: str = None,
+    booking_date = None
+):
+    return get_merchant_bookings_repo(
+        db=db,
+        page=page,
+        size=size,
+        booking_status=booking_status,
+        booking_date=booking_date
+    )
+
+def update_booking_status_service(
+    db: Session,
+    booking_id: UUID,
+    payload: BookingStatusUpdate
+):
+
+    return update_booking_status_repo(
+        db=db,
+        booking_id=booking_id,
+        payload=payload
     )

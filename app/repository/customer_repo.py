@@ -1,10 +1,16 @@
+from fastapi import status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-
-from app.models.customer_model import Customer
+from sqlalchemy import desc
+from app.models.customer_model import Customer, Booking
 from app.models.merchant_model import Merchant, MerchantListing
 from app.models.admin_model import Admin
 from app.models.category_model import Category
+from app.schemas.common_schema import CreateBooking, ListingType, BookingStatus, PaymentStatus
+from app.utils.common import generate_booking_number
+from app.exceptions.custom_exception import (
+    CustomException
+)
 
 def get_customer_by_email(db: Session, email: str):
     return db.query(Customer).filter(Customer.email == email).first()
@@ -328,3 +334,102 @@ def get_subcategories_repo(
         Category.isDeleted == False,
         Category.isActive == True
     ).all()
+
+def create_booking_repo(
+    db: Session,
+    payload: CreateBooking
+):
+
+    listing = db.query(
+        MerchantListing
+    ).filter(
+        MerchantListing.id == payload.listing_id
+    ).first()
+
+    if not listing:
+
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Listing not found"
+        )
+
+    total_amount = (
+        listing.price * payload.quantity
+    )
+
+    booking = Booking(
+
+        booking_number=generate_booking_number(),
+        customer_id=payload.customer_id,
+        merchant_id=payload.merchant_id,
+        business_id=payload.business_id,
+        listing_id=listing.id,
+        listing_type=ListingType(
+            listing.listingType
+        ),
+        booking_date=payload.booking_date,
+        booking_time=payload.booking_time,
+        quantity=payload.quantity,
+        total_amount=total_amount,
+        booking_status=BookingStatus.Pending,
+        payment_status=PaymentStatus.Pending,
+        notes=payload.notes
+    )
+
+    db.add(booking)
+    db.commit()
+    db.refresh(booking)
+
+    return {
+        "booking_id": booking.id,
+        "booking_number": booking.booking_number,
+        "booking_status": booking.booking_status,
+        "total_amount": booking.total_amount
+    }
+
+def get_customer_bookings_repo(
+    db: Session,
+    page: int,
+    size: int,
+    booking_status: str = None
+):
+
+    try:
+
+        query = db.query(
+            Booking.id.label("booking_id"),
+            MerchantListing.title.label("listing_name"),
+            Booking.booking_date,
+            Booking.booking_status,
+            Booking.total_amount
+        ).join(
+            MerchantListing,
+            Booking.listing_id == MerchantListing.id
+        )
+
+        if booking_status:
+            query = query.filter(
+                Booking.booking_status == booking_status
+            )
+
+        total_records = query.count()
+
+        bookings = query.order_by(
+            desc(Booking.created_at)
+        ).offset(
+            (page - 1) * size
+        ).limit(size).all()
+
+        return {
+            "total_records": total_records,
+            "page": page,
+            "size": size,
+            "bookings": bookings
+        }
+
+    except Exception as e:
+
+        raise CustomException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Failed to fetch bookings: {str(e)}"
+        )

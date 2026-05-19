@@ -54,6 +54,14 @@ class Business(Base):
     merchant = relationship("Merchant", back_populates="businesses")
 
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    listings = relationship(
+        "MerchantListing",
+        back_populates="business"
+    )
+    bookings = relationship(
+        "Booking",
+        back_populates="business"
+    )
 
     def __repr__(self):
         return f"<Business {self.name} ({self.status})>"
