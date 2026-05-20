@@ -30,10 +30,9 @@ def get_db():
 @router.post("/reviews", status_code=201, response_model=ReviewSubmissionResponse)
 def submit_review(
     payload: ReviewCreateSchema,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    return create_review_service(db=db, payload=payload, current_user=current_user)
+    return create_review_service(db=db, payload=payload)
 
 
 @router.get("/reviews/{businessId}", status_code=200, response_model=PaginatedReviewsResponse)
@@ -57,7 +56,6 @@ def get_reviews(
 def moderate_review(
     reviewId: str,
     payload: ReviewModerationSchema,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_admin),
+    db: Session = Depends(get_db)
 ):
-    return moderate_review_service(db=db, review_id=reviewId, payload=payload, current_user=current_user)
+    return moderate_review_service(db=db, review_id=reviewId, payload=payload)
