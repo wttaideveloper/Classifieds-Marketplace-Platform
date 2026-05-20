@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List, Dict
 from datetime import datetime, date
 from uuid import UUID
@@ -32,42 +32,62 @@ class BookingStatus(str, PyEnum):
 
 # REGISTER
 class MerchantRegister(BaseModel):
-    fullName: str = Field(..., examples=["John Doe"])
-    businessEmail: EmailStr = Field(..., examples=["john@business.com"])
-    mobileNumber: str = Field(..., examples=["+1234567890"])
-    password: str = Field(..., examples=["Password@123"])
-    confirmPassword: str = Field(..., examples=["Password@123"])
-    businessName: str = Field(..., examples=["John's Store"])
-    acceptTerms: bool = Field(..., examples=[True])
-    acceptPrivacyPolicy: bool = Field(..., examples=[True])
+    fullName: str
+    businessEmail: EmailStr
+    mobileNumber: str
+    password: str
+    confirmPassword: str
+    businessName: str
+    acceptTerms: bool
+    acceptPrivacyPolicy: bool
 
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "password" in values.data and v != values.data["password"]:
+            raise ValueError("Passwords do not match")
+        return v
 # LOGIN
 class MerchantLogin(BaseModel):
-    email: EmailStr = Field(..., examples=["john@business.com"])
-    password: str = Field(..., examples=["Password@123"])
+    email: EmailStr
+    password: str
 
 # FORGOT PASSWORD
 class ForgotPassword(BaseModel):
-    email: EmailStr = Field(..., examples=["john@business.com"])
-    role: str = Field(..., examples=["merchant"])
+    email: EmailStr
+    role: str
 
 #  RESET PASSWORD
 class ResetPassword(BaseModel):
-    resetToken: str = Field(..., examples=["your-reset-token"])
-    newPassword: str = Field(..., examples=["NewPassword@123"])
-    confirmPassword: str = Field(..., examples=["NewPassword@123"])
+    resetToken: str
+    newPassword: str
+    confirmPassword: str
+
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "newPassword" in values.data and v != values.data["newPassword"]:
+            raise ValueError("Passwords do not match")
+        return v
 
 #  CHANGE PASSWORD
 class ChangePassword(BaseModel):
-    currentPassword: str = Field(..., examples=["OldPassword@123"])
-    newPassword: str = Field(..., examples=["NewPassword@123"])
-    confirmPassword: str = Field(..., examples=["NewPassword@123"])
+    currentPassword: str
+    newPassword: str
+    confirmPassword: str
+
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "newPassword" in values.data and v != values.data["newPassword"]:
+            raise ValueError("Passwords do not match")
+        return v
 
 # PROFILE
 class MerchantProfileUpdate(BaseModel):
-    name: Optional[str] = Field(None, examples=[None])
-    mobileNumber: Optional[str] = Field(None, examples=[None])
-    profileImage: Optional[str] = Field(None, examples=[None])
+    name: Optional[str] = None
+    mobileNumber: Optional[str] = None
+    profileImage: Optional[str] = None
 
 class MerchantBusinessProfileCreate(BaseModel):    
     businessName: str    

@@ -8,7 +8,6 @@ security = HTTPBearer()
 import os
 
 from app.db.database import Base, engine
-from app.api.v1.router import api_router
 from app.exceptions.custom_exception import CustomException
 
 app = FastAPI(
@@ -55,9 +54,6 @@ def startup():
         import app.models.review_model  # noqa: F401
         import app.models.review_moderation_history_model  # noqa: F401
         Base.metadata.create_all(bind=engine)
-
-# Routes
-app.include_router(api_router, prefix="/api/v1")
 
 # Health check
 @app.get("/health")

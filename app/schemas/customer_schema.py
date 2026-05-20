@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime, date
@@ -16,38 +16,44 @@ class BookingStatus(str, PyEnum):
 
 # REGISTER
 class CustomerRegister(BaseModel):
-    firstName: str = Field(..., examples=["John"])
-    lastName: str = Field(..., examples=["Doe"])
-    email: EmailStr = Field(..., examples=["john@example.com"])
-    mobileNumber: str = Field(..., examples=["+1234567890"])
-    password: str = Field(..., examples=["Password@123"])
-    confirmPassword: str = Field(..., examples=["Password@123"])
-    acceptTerms: bool = Field(..., examples=[True])
-    acceptPrivacyPolicy: bool = Field(..., examples=[True])
+    firstName: str
+    lastName: str
+    email: EmailStr
+    mobileNumber: str
+    password: str
+    confirmPassword: str
+    acceptTerms: bool
+    acceptPrivacyPolicy: bool
 
 # LOGIN
 class CustomerLogin(BaseModel):
-    email: EmailStr = Field(..., examples=["john@example.com"])
-    password: str = Field(..., examples=["Password@123"])
+    email: EmailStr
+    password: str
 
 # FORGOT PASSWORD
 class ForgotPassword(BaseModel):
-    email: EmailStr = Field(..., examples=["john@example.com"])
-    role: str = Field(..., examples=["customer"])
-
+    email: EmailStr
+    role: str
 
 #  RESET PASSWORD
 class ResetPassword(BaseModel):
-    resetToken: str = Field(..., examples=["your-reset-token"])
-    newPassword: str = Field(..., examples=["NewPassword@123"])
-    confirmPassword: str = Field(..., examples=["NewPassword@123"])
-
+    resetToken: str
+    newPassword: str
+    confirmPassword: str
 
 #  CHANGE PASSWORD
 class ChangePassword(BaseModel):
-    currentPassword: str = Field(..., examples=["OldPassword@123"])
-    newPassword: str = Field(..., examples=["NewPassword@123"])
-    confirmPassword: str = Field(..., examples=["NewPassword@123"])
+    currentPassword: str
+    newPassword: str
+    confirmPassword: str
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "password" in values.data and v != values.data["password"]:
+            raise ValueError("Passwords do not match")
+        if "newPassword" in values.data and v != values.data["newPassword"]:
+            raise ValueError("Passwords do not match")
+        return v
 
 # PROFILE
 class CustomerProfileUpdate(BaseModel):
