@@ -20,6 +20,7 @@ def search_businesses_repo(
     db: Session,
     keyword: str = None,
     category_id: str = None,
+    subcategory_id: str = None,
     city: str = None,
     skip: int = 0,
     limit: int = 10,
@@ -41,6 +42,9 @@ def search_businesses_repo(
     if category_id:
         query = query.filter(MerchantProfile.primaryCategory == category_id)
 
+    if subcategory_id:
+        query = query.filter(MerchantProfile.subcategory == subcategory_id)
+
     if city:
         query = query.filter(MerchantProfile.city.ilike(f"%{city}%"))
 
@@ -53,7 +57,9 @@ def search_listings_repo(
     db: Session,
     keyword: str = None,
     category_id: str = None,
+    subcategory_id: str = None,
     listing_type: str = None,
+    city: str = None,
     min_price: float = None,
     max_price: float = None,
     skip: int = 0,
@@ -79,8 +85,18 @@ def search_listings_repo(
     if category_id:
         query = query.filter(MerchantListing.categoryId == category_id)
 
+    if subcategory_id:
+        query = query.filter(MerchantListing.subcategoryId == subcategory_id)
+
     if listing_type:
-        query = query.filter(MerchantListing.listingType == listing_type)
+        query = query.filter(MerchantListing.listingType.ilike(listing_type))
+
+    if city:
+        query = query.join(
+            MerchantProfile,
+            MerchantProfile.merchant_id == Business.merchant_id,
+            isouter=True
+        ).filter(MerchantProfile.city.ilike(f"%{city}%"))
 
     if min_price is not None:
         query = query.filter(MerchantListing.price >= min_price)
