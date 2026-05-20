@@ -50,3 +50,6 @@ _safe_include("app.api.v1.endpoints.blog_admin", prefix="/admin", tags=["Admin B
 # PUBLIC BLOGS + CATEGORIES
 _safe_include("app.api.v1.endpoints.blog_public", tags=["Public Blogs"])
 _safe_include("app.api.v1.endpoints.blog_categories", tags=["Blog Categories"])
+
+# ORDERS
+_safe_include("app.api.v1.endpoints.orders", prefix="/orders", tags=["Orders"])
