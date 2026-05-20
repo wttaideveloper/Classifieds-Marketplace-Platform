@@ -903,11 +903,11 @@ def delete_listing_service(
 def publish_listing_service(
     db: Session,
     merchant_id,
-    listingId
+    listing_id
 ):
     listing = get_listing_by_id_repo(
         db=db,
-        listingId=listingId
+        listing_id=listing_id
     )
     if not listing:
         raise CustomException(

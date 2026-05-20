@@ -7,15 +7,16 @@ from app.services.customer_service import (
     update_profile_service,
     get_customer_bookings_service
 )
+from uuid import UUID
 
 router = APIRouter(
     tags=["Customer Profile"]
 )
 
 #  GET PROFILE
-@router.get("/{customer_id}/profile", status_code=status.HTTP_200_OK)
+@router.get("/profile", status_code=status.HTTP_200_OK)
 def get_profile(
-    customer_id: str,
+    customer_id: UUID,
     db: Session = Depends(get_db)
 ):
     return get_profile_service(db, customer_id)

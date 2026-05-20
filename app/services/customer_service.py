@@ -31,7 +31,6 @@ def register_customer_service(db, customer):
         raise CustomException(400, "Accept terms and privacy policy")
     data = customer.dict()
     data.pop("confirmPassword")
-    data["id"] = str(uuid4())
     data["password"] = hash_password(data["password"])
     new_customer = Customer(**data)
     return create_customer(db, new_customer)

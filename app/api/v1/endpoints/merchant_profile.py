@@ -335,18 +335,18 @@ def delete_listing(
 
 # PUBLISH LISTING
 @router.patch(
-    "/listings/{listingId}/publish",
+    "/listings/{listing_id}/publish",
     status_code=status.HTTP_200_OK
 )
 def publish_listing(
-    listingId: str,
+    listing_id: str,
     merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return publish_listing_service(
         db=db,
         merchant_id=merchant_id,
-        listingId=listingId
+        listing_id=listing_id
     )
 
 # UNPUBLISH LISTING

@@ -26,7 +26,7 @@ class Review(Base):
     )
 
     customer_id = Column(
-        String,
+        UUID(as_uuid=True),
         ForeignKey("customers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

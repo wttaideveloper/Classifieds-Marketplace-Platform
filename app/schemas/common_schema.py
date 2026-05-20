@@ -159,7 +159,7 @@ class UploadListingImagesResponse(BaseModel):
 
 class CreateBooking(BaseModel):
 
-    customer_id: Optional[str] = None
+    customer_id: Optional[UUID] = None
     merchant_id: Optional[UUID] = None
     business_id: Optional[UUID] = None
     listing_id: UUID
