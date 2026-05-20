@@ -30,6 +30,17 @@ def get_merchant_by_email(db: Session, email: str):
         Merchant.businessEmail == email
     ).first()
 
+def get_merchant_by_external_auth_id(db: Session, external_auth_user_id: str):
+    """
+    Optional lookup used by some auth flows.
+    If the column isn't present in the model, return None.
+    """
+    if not hasattr(Merchant, "externalAuthUserId"):
+        return None
+    return db.query(Merchant).filter(
+        Merchant.externalAuthUserId == external_auth_user_id
+    ).first()
+
 def get_merchant_by_id(db: Session, merch_id: str):
     return db.query(Merchant).filter(
         Merchant.id == merch_id
@@ -229,10 +240,6 @@ def get_my_listings_repo(
     skip,
     limit
 ):
-
-    # query = db.query(MerchantListing).filter(
-    #     MerchantListing.businessId == businessId
-    # )
     query = db.query(MerchantListing).join(
         Business,
         MerchantListing.businessId == Business.id

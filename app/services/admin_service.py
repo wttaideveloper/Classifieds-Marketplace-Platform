@@ -38,44 +38,265 @@ from app.models.admin_model import Admin
 from app.repository.customer_repo import get_all_users
 from app.exceptions.custom_exception import CustomException
 
-# GET ADMIN PROFILE
+from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
+from app.services.email_service import send_email
+from app.core.token_blacklist import TOKEN_BLACKLIST
+from datetime import datetime, timedelta
+import secrets
+
+
+def admin_login_service(db: Session, payload):
+    admin = get_admin_by_email(db, payload.email)
+    if not admin:
+        raise CustomException(http_status.HTTP_404_NOT_FOUND, "Admin not found")
+    if not verify_password(payload.password, admin.password):
+        raise CustomException(http_status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
+    token_data = {"id": str(admin.id), "email": admin.email, "role": "admin"}
+    return {
+        "success": True,
+        "message": "Login successful",
+        "accessToken": create_access_token(token_data),
+        "refreshToken": create_refresh_token(token_data),
+        "tokenType": "bearer"
+    }
+
+
+def forgot_password_admin_service(db: Session, email: str):
+    admin = get_admin_by_email(db, email)
+    if not admin:
+        raise CustomException(http_status.HTTP_404_NOT_FOUND, "Admin not found")
+    reset_token = secrets.token_urlsafe(32)
+    admin.resetToken = reset_token
+    admin.resetTokenExpiry = datetime.utcnow() + timedelta(minutes=15)
+    db.commit()
+    reset_link = f"http://localhost:8000/reset-password?token={reset_token}"
+    if not send_email(admin.email, reset_link):
+        raise CustomException(500, "Failed to send email")
+    return {"success": True, "message": "Reset link sent successfully"}
+
+
+def reset_password_admin_service(db: Session, resetToken: str, newPassword: str, confirmPassword: str):
+    if newPassword != confirmPassword:
+        raise CustomException(400, "Passwords do not match")
+    admin = db.query(Admin).filter(Admin.resetToken == resetToken).first()
+    if not admin:
+        raise CustomException(400, "Invalid or expired token")
+    if admin.resetTokenExpiry < datetime.utcnow():
+        raise CustomException(400, "Token expired")
+    admin.password = hash_password(newPassword)
+    admin.resetToken = None
+    admin.resetTokenExpiry = None
+    db.commit()
+    return {"success": True, "message": "Password reset successful"}
+
+
+def change_password_admin_service(db: Session, admin_id, currentPassword: str, newPassword: str, confirmPassword: str):
+    if newPassword != confirmPassword:
+        raise CustomException(400, "Passwords do not match")
+    admin = get_admin_by_id(db, admin_id)
+    if not admin:
+        raise CustomException(404, "Admin not found")
+    if not verify_password(currentPassword, admin.password):
+        raise CustomException(401, "Incorrect current password")
+    admin.password = hash_password(newPassword)
+    db.commit()
+    return {"success": True, "message": "Password changed successfully"}
+
+
+def logout_admin_service(token: str, current_user):
+    TOKEN_BLACKLIST.add(token)
+    return {"success": True, "message": "Logged out successfully"}
+
+# ADMIN GET MERCHANTS
+def admin_get_merchants_service(
+    db: Session,
+    search,
+    status,
+    page,
+    limit
+):
+    try:
+        from app.models.merchant_model import Merchant
+        from sqlalchemy import or_
+        query = db.query(Merchant)
+        if search:
+            query = query.filter(
+                or_(
+                    Merchant.fullName.ilike(f"%{search}%"),
+                    Merchant.businessEmail.ilike(f"%{search}%"),
+                    Merchant.businessName.ilike(f"%{search}%")
+                )
+            )
+        if status:
+            query = query.filter(Merchant.status == status.lower())
+        total = query.count()
+        skip = (page - 1) * limit
+        merchants = query.order_by(Merchant.createdAt.desc()).offset(skip).limit(limit).all()
+        return {
+            "success": True,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "data": [{
+                "id": m.id,
+                "full_name": m.fullName,
+                "business_email": m.businessEmail,
+                "status": m.status,
+                "created_at": m.createdAt
+            } for m in merchants]
+        }
+    except Exception as e:
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
+
+# ADMIN GET MERCHANT DETAILS
+def admin_get_merchant_details_service(db: Session, merchant_id):
+    try:
+        from app.models.merchant_model import Merchant
+        merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+        if not merchant:
+            raise CustomException(http_status.HTTP_404_NOT_FOUND, "Merchant not found")
+        return {
+            "success": True,
+            "data": {
+                "id": merchant.id,
+                "full_name": merchant.fullName,
+                "business_email": merchant.businessEmail,
+                "mobile_number": merchant.mobileNumber,
+                "status": merchant.status,
+                "created_at": merchant.createdAt
+            }
+        }
+    except CustomException as e:
+        raise e
+    except Exception as e:
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
+
+# GET ASSOCIATED MERCHANT
+def get_associated_merchant_service(db: Session, business_id):
+    try:
+        business = get_business_with_merchant(db=db, business_id=business_id)
+        if not business:
+            raise CustomException(http_status.HTTP_404_NOT_FOUND, "Business not found")
+        m = business.merchant
+        return {
+            "success": True,
+            "data": {
+                "id": m.id,
+                "full_name": m.fullName,
+                "business_email": m.businessEmail,
+                "status": m.status,
+                "created_at": m.createdAt
+            }
+        }
+    except CustomException as e:
+        raise e
+    except Exception as e:
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
+
+# GET ALL LISTINGS
+def get_all_listings_service(db: Session):
+    try:
+        total, listings = get_all_listings_repo(db=db)
+        return {"success": True, "message": "Listings fetched", "total": total, "data": listings}
+    except Exception as e:
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
+
+# APPROVE LISTING
+def approve_listing_service(db: Session, listingId):
+    try:
+        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        if not listing:
+            raise CustomException(http_status.HTTP_404_NOT_FOUND, "Listing not found")
+        return {"success": True, "message": "Listing approved", "data": approve_listing_repo(db, listing)}
+    except CustomException as e:
+        raise e
+    except Exception as e:
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
+
+# REJECT LISTING
+def reject_listing_service(db: Session, listingId, payload):
+    try:
+        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        if not listing:
+            raise CustomException(http_status.HTTP_404_NOT_FOUND, "Listing not found")
+        return {"success": True, "message": "Listing rejected", "data": reject_listing_repo(db, listing, payload.reason)}
+    except CustomException as e:
+        raise e
+    except Exception as e:
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
+
+# SUSPEND LISTING
+def suspend_listing_service(db: Session, listingId, payload):
+    try:
+        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        if not listing:
+            raise CustomException(http_status.HTTP_404_NOT_FOUND, "Listing not found")
+        return {"success": True, "message": "Listing suspended", "data": suspend_listing_repo(db, listing, payload.reason)}
+    except CustomException as e:
+        raise e
+    except Exception as e:
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
+
+# REACTIVATE LISTING
+def reactivate_listing_service(db: Session, listingId):
+    try:
+        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        if not listing:
+            raise CustomException(http_status.HTTP_404_NOT_FOUND, "Listing not found")
+        return {"success": True, "message": "Listing reactivated", "data": reactivate_listing_repo(db, listing)}
+    except CustomException as e:
+        raise e
+    except Exception as e:
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
+
+# SUSPEND BUSINESS
+def suspend_business_service(db: Session, business_id, reason=None):
+    try:
+        business = get_business_by_id(db=db, business_id=business_id)
+        if not business:
+            raise CustomException(http_status.HTTP_404_NOT_FOUND, "Business not found")
+        return {"success": True, "message": "Business suspended", "data": suspend_business(db=db, business=business, reason=reason)}
+    except CustomException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
+
+# REACTIVATE BUSINESS
+def reactivate_business_service(db: Session, business_id):
+    try:
+        business = get_business_by_id(db=db, business_id=business_id)
+        if not business:
+            raise CustomException(http_status.HTTP_404_NOT_FOUND, "Business not found")
+        return {"success": True, "message": "Business reactivated", "data": reactivate_business(db=db, business=business)}
+    except CustomException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+
 def get_admin_profile_service(
     db: Session,
     admin_id
 ):
-
     try:
-
-        admin = get_admin_by_id(
-            db=db,
-            admin_id=admin_id
-        )
-
+        admin = get_admin_by_id(db=db, admin_id=admin_id)
         if not admin:
-
-            raise CustomException(
-                http_status.HTTP_404_NOT_FOUND,
-                "Admin not found"
-            )
-
-        return {
-            "success": True,
-            "data": {
-                "id": admin.id,
-                "name": admin.name,
-                "email": admin.email
-            }
-        }
-
+            raise CustomException(http_status.HTTP_404_NOT_FOUND, "Admin not found")
+        return {"success": True, "data": {"id": admin.id, "name": admin.name, "email": admin.email}}
     except CustomException as e:
         raise e
-
     except Exception as e:
-
-        raise CustomException(
-            http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            str(e)
-        )
+        raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
 # UPDATE ADMIN PROFILE
 def update_admin_profile_service(

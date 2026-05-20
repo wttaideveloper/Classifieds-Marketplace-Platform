@@ -1,6 +1,9 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     DATABASE_URL: str
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
@@ -12,8 +15,6 @@ class Settings(BaseSettings):
     # send email
     email_user: str
     email_pass: str
-    
-    class Config:
-        env_file = ".env"
+
 
 settings = Settings()
