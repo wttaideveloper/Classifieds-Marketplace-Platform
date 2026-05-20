@@ -607,7 +607,7 @@ def fetch_businesses_service(
                 "name": business.name,
                 "category": business.category,
                 "status": business.status,
-                "createdAt": business.createdAt
+                "created_at": business.created_at
             })
         return {
             "success": True,
@@ -644,7 +644,7 @@ def fetch_business_detail_service(
                 "name": business.name,
                 "category": business.category,
                 "status": business.status,
-                "createdAt": business.createdAt
+                "created_at": business.created_at
             }
         }
     except CustomException as e:

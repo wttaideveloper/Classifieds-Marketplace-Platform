@@ -83,7 +83,7 @@ def get_all_businesses(
 ) -> Tuple[int, List[Business]]:
 
     query = db.query(Business).filter(
-        Business.isDeleted == False
+        Business.is_deleted  == False
     )
 
     # SEARCH
@@ -113,7 +113,7 @@ def get_all_businesses(
     total = query.count()
 
     businesses = query.order_by(
-        Business.createdAt.desc()
+        Business.created_at.desc()
     ).offset(skip).limit(limit).all()
 
     return total, businesses
@@ -126,7 +126,7 @@ def get_business_by_id(
 
     return db.query(Business).filter(
         Business.id == business_id,
-        Business.isDeleted == False
+        Business.is_deleted  == False
     ).first()
 
 
@@ -139,7 +139,7 @@ def get_business_with_merchant(
         joinedload(Business.merchant)
     ).filter(
         Business.id == business_id,
-        Business.isDeleted == False
+        Business.is_deleted  == False
     ).first()
 
 
@@ -152,7 +152,7 @@ def approve_business(
 ) -> Business:
 
     business.status = BusinessStatus.APPROVED
-    business.approvedAt = datetime.utcnow()
+    business.approved_at = datetime.utcnow()
 
     return _commit(
         db=db,
@@ -167,8 +167,8 @@ def reject_business(
 ) -> Business:
 
     business.status = BusinessStatus.REJECTED
-    business.rejectionReason = reason
-    business.rejectedAt = datetime.utcnow()
+    business.rejection_reason = reason
+    business.rejected_at = datetime.utcnow()
 
     return _commit(
         db=db,
@@ -183,8 +183,8 @@ def suspend_business(
 ) -> Business:
 
     business.status = BusinessStatus.SUSPENDED
-    business.suspensionReason = reason
-    business.suspendedAt = datetime.utcnow()
+    business.suspension_reason = reason
+    business.suspended_at = datetime.utcnow()
 
     return _commit(
         db=db,
@@ -198,8 +198,8 @@ def reactivate_business(
 ) -> Business:
 
     business.status = BusinessStatus.APPROVED
-    business.suspensionReason = None
-    business.suspendedAt = None
+    business.suspension_reason = None
+    business.suspended_at = None
 
     return _commit(
         db=db,
