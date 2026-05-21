@@ -395,6 +395,23 @@ def create_custom_attribute_repo(
     db.refresh(custom_attribute)
     return custom_attribute
 
+# GET MERCHANT ATTRIBUTES
+def get_merchant_attributes_repo(
+    db: Session
+):
+
+    attributes = db.query(
+        MerchantCustomAttribute,
+        Attribute
+    ).join(
+        Attribute,
+        MerchantCustomAttribute.attribute_id == Attribute.id
+    ).filter(
+        MerchantCustomAttribute.is_active == True
+    ).all()
+
+    return attributes
+
 # GET BUSINESS BY ID
 def get_business_by_id_repo(
     db: Session,

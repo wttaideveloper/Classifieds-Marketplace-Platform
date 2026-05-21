@@ -30,7 +30,8 @@ from app.services.merchant_service import (
     map_attribute_to_business_service,
     map_attribute_to_listing_service,
     get_merchant_bookings_service,
-    update_booking_status_service
+    update_booking_status_service,
+    get_merchant_attributes_service
 )
 from app.schemas.merchant_schema import (
     MerchantProfileUpdate, 
@@ -414,11 +415,16 @@ def create_custom_attribute(
         payload
     )
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    status
+# GET MERCHANT ATTRIBUTES
+@router.get(
+    "/attributes",
+    status_code=status.HTTP_200_OK
 )
+def get_merchant_attributes(
+    db: Session = Depends(get_db)
+):
+
+    return get_merchant_attributes_service(db)
 
 # MAP ATTRIBUTE TO BUSINESS
 @router.post(

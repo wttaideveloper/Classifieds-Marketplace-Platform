@@ -30,6 +30,7 @@ from app.repository.merchant_repo import (
     get_attribute_by_id_repo,
     check_existing_custom_attribute_repo,
     create_custom_attribute_repo,
+    get_merchant_attributes_repo,
     get_business_by_id_repo,
     check_existing_business_attribute_repo,
     create_business_attribute_mapping_repo,
@@ -1265,6 +1266,41 @@ def create_custom_attribute_service(
         db,
         payload
     )
+
+# GET MERCHANT ATTRIBUTES
+def get_merchant_attributes_service(
+    db: Session
+):
+    attributes = get_merchant_attributes_repo(db)
+    if not attributes:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "No merchant attributes found"
+        )
+    response = []
+    for custom_attribute, attribute in attributes:
+        response.append({
+            "id": custom_attribute.id,
+            "merchant_id": custom_attribute.merchant_id,
+            "attribute_id": attribute.id,
+            "name": attribute.name,
+            "display_name": attribute.display_name,
+            "slug": attribute.slug,
+            "field_type": attribute.field_type,
+            "custom_label": custom_attribute.custom_label,
+            "custom_placeholder": custom_attribute.custom_placeholder,
+            "is_required": custom_attribute.is_required,
+            "default_value": custom_attribute.default_value,
+            "is_active": custom_attribute.is_active,
+            "created_at": custom_attribute.created_at,
+            "options": attribute.options
+        })
+
+    return {
+        "success": True,
+        "message": "Merchant attributes fetched successfully",
+        "data": response
+    }
 
 # ATTRIBUTE VALUE VALIDATION
 def validate_attribute_value(
