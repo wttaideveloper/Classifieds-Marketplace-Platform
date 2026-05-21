@@ -107,7 +107,7 @@ class CategoryData(BaseModel):
     description: Optional[str]
     icon: Optional[str]
     isActive: bool
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
