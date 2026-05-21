@@ -59,8 +59,7 @@ def main():
     customer_token = b.get("access_token") if s == 200 else None
 
     s, b = request("POST", "/auth/merchant/login", {"email": "priya@healthclinic.com", "password": "Password@123"})
-    # Seed stores bcrypt hashes; merchant login currently compares plain text.
-    check("POST /auth/merchant/login", s in (200, 401), b)
+    check("POST /auth/merchant/login", s == 200 and b.get("success"), b)
 
     s, b = request("POST", "/auth/admin/login", {"email": "admin@example.com", "password": "admin123"})
     check("POST /auth/admin/login", s == 200 and "accessToken" in b, b)

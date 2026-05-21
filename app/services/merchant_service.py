@@ -99,7 +99,7 @@ def register_merchant_service(
         businessName=payload.businessName,
         businessEmail=payload.businessEmail,
         mobileNumber=payload.mobileNumber,
-        password=payload.password,  # plain password since auth removed
+        password=hash_password(payload.password),
         acceptTerms=payload.acceptTerms,
         acceptPrivacyPolicy=payload.acceptPrivacyPolicy,
         status="active"
@@ -129,11 +129,10 @@ def login_merchant_service(
             status.HTTP_404_NOT_FOUND,
             "Merchant not found"
         )
-    # Plain password check
-    if merchant.password != password:
+    if not verify_password(password, merchant.password):
         raise CustomException(
             status.HTTP_401_UNAUTHORIZED,
-            "Invalid password"
+            "Invalid credentials"
         )
     return {
         "success": True,
