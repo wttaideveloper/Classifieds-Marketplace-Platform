@@ -46,6 +46,7 @@ def startup():
         import app.models.order_model  # noqa: F401
         import app.models.review_model  # noqa: F401
         import app.models.review_moderation_history_model  # noqa: F401
+        import app.models.notification_model  # noqa: F401
         Base.metadata.create_all(bind=engine)
 
 app.include_router(api_router, prefix="/api/v1")

@@ -1,7 +1,10 @@
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt, JWTError, ExpiredSignatureError
 from app.db.database import SessionLocal
 from app.core.config import settings
+
+bearer_scheme = HTTPBearer(auto_error=True)
 
 def get_db():
     db = SessionLocal()
@@ -10,22 +13,14 @@ def get_db():
     finally:
         db.close()
 
-def get_current_user(request: Request):
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        raise HTTPException(status_code=401, detail="Missing token")
-    parts = auth_header.split()
-    if len(parts) != 2:
-        raise HTTPException(status_code=401, detail="Invalid token format")
-    token = parts[1]
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    token = credentials.credentials
     try:
         payload = jwt.decode(
             token,
             settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM]
+            algorithms=[settings.ALGORITHM],
         )
-    except Exception as e:
-        raise HTTPException(401, "Invalid token")
     except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except JWTError:
