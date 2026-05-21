@@ -30,6 +30,15 @@ class BookingStatus(str, PyEnum):
     Completed = "Completed"
     Cancelled = "Cancelled"
 
+# FIELD TYPE ENUM
+class AttributeFieldType(str, PyEnum):
+    text = "text"
+    textarea = "textarea"
+    number = "number"
+    dropdown = "dropdown"
+    checkbox = "checkbox"
+    date = "date"
+
 # REGISTER
 class MerchantRegister(BaseModel):
     fullName: str
@@ -465,6 +474,37 @@ class MerchantCustomAttributeResponse(BaseModel):
     default_value: Optional[str]
     is_active: bool
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# ATTRIBUTE OPTION RESPONSE
+class AttributeOptionResponse(BaseModel):
+
+    id: UUID
+    option_label: str
+    option_value: str
+
+    class Config:
+        from_attributes = True
+
+# MERCHANT ATTRIBUTE RESPONSE
+class MerchantAttributeListResponse(BaseModel):
+
+    id: UUID
+    merchant_id: UUID
+    attribute_id: UUID
+    name: str
+    display_name: str
+    slug: str
+    field_type: AttributeFieldType
+    custom_label: Optional[str]
+    custom_placeholder: Optional[str]
+    is_required: bool
+    default_value: Optional[str]
+    is_active: bool
+    created_at: datetime
+    options: List[AttributeOptionResponse] = []
 
     class Config:
         from_attributes = True
