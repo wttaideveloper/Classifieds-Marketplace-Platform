@@ -53,3 +53,6 @@ _safe_include("app.api.v1.endpoints.blog_categories", tags=["Blog Categories"])
 
 # ORDERS
 _safe_include("app.api.v1.endpoints.orders", prefix="/orders", tags=["Orders"])
+
+# Capacity 
+_safe_include("app.api.v1.endpoints.capacity", prefix="/capacity", tags=["Capacity"])
