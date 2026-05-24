@@ -158,9 +158,18 @@ def get_public_listings_repo(
     limit,
     sortBy
 ):
+    from app.models.admin_model import Business
+    from app.models.merchant_model import Merchant
 
-    query = db.query(MerchantListing).filter(
-        MerchantListing.status == "published"
+    query = (
+        db.query(MerchantListing)
+        .join(Business, MerchantListing.businessId == Business.id)
+        .join(Merchant, Business.merchant_id == Merchant.id)
+        .filter(
+            MerchantListing.status == "published",
+            Business.status == "approved",
+            Merchant.status == "active",
+        )
     )
 
     # SEARCH
@@ -232,11 +241,21 @@ def get_public_listing_details_repo(
     db: Session,
     listingId
 ):
+    from app.models.admin_model import Business
+    from app.models.merchant_model import Merchant
 
-    listing = db.query(MerchantListing).filter(
-        MerchantListing.id == listingId,
-        MerchantListing.status == "published"
-    ).first()
+    listing = (
+        db.query(MerchantListing)
+        .join(Business, MerchantListing.businessId == Business.id)
+        .join(Merchant, Business.merchant_id == Merchant.id)
+        .filter(
+            MerchantListing.id == listingId,
+            MerchantListing.status == "published",
+            Business.status == "approved",
+            Merchant.status == "active",
+        )
+        .first()
+    )
 
     return listing
 
@@ -249,9 +268,18 @@ def search_listings_repo(
     rating,
     sort
 ):
+    from app.models.admin_model import Business
+    from app.models.merchant_model import Merchant
 
-    query = db.query(MerchantListing).filter(
-        MerchantListing.status == "published"
+    query = (
+        db.query(MerchantListing)
+        .join(Business, MerchantListing.businessId == Business.id)
+        .join(Merchant, Business.merchant_id == Merchant.id)
+        .filter(
+            MerchantListing.status == "published",
+            Business.status == "approved",
+            Merchant.status == "active",
+        )
     )
 
     # KEYWORD SEARCH

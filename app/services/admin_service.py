@@ -589,7 +589,7 @@ def fetch_businesses_service(
                 "name": business.name,
                 "category": business.category,
                 "status": business.status,
-                "createdAt": business.createdAt
+                "createdAt": business.created_at
             })
 
         return {
@@ -634,7 +634,7 @@ def fetch_business_detail_service(
                 "name": business.name,
                 "category": business.category,
                 "status": business.status,
-                "createdAt": business.createdAt
+                "createdAt": business.created_at
             }
         }
 

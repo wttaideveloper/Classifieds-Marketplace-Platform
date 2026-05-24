@@ -1,11 +1,8 @@
-# app/repository/admin_repo.py
-
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import or_
 
 from typing import Optional, Tuple, List
-from uuid import UUID
 from datetime import datetime
 
 from app.models.merchant_model import (
@@ -28,7 +25,10 @@ class BusinessStatus:
     REJECTED = "rejected"
     SUSPENDED = "suspended"
 
+
+# =========================================================
 # ADMIN QUERIES
+# =========================================================
 def get_admin_by_id(
     db: Session,
     admin_id
@@ -70,7 +70,10 @@ def update_admin(
             f"Database Error: {str(e)}"
         )
 
+
+# =========================================================
 # BUSINESS LIST
+# =========================================================
 def get_all_businesses(
     db: Session,
     search: Optional[str] = None,
@@ -80,9 +83,7 @@ def get_all_businesses(
     limit: int = 10
 ) -> Tuple[int, List[Business]]:
 
-    query = db.query(Business).filter(
-        Business.isDeleted == False
-    )
+    query = db.query(Business)
 
     # SEARCH
     if search:
@@ -111,20 +112,22 @@ def get_all_businesses(
     total = query.count()
 
     businesses = query.order_by(
-        Business.createdAt.desc()
+        Business.created_at.desc()
     ).offset(skip).limit(limit).all()
 
     return total, businesses
 
+
+# =========================================================
 # BUSINESS DETAIL
+# =========================================================
 def get_business_by_id(
     db: Session,
     business_id
 ) -> Optional[Business]:
 
     return db.query(Business).filter(
-        Business.id == business_id,
-        Business.isDeleted == False
+        Business.id == business_id
     ).first()
 
 
@@ -136,8 +139,7 @@ def get_business_with_merchant(
     return db.query(Business).options(
         joinedload(Business.merchant)
     ).filter(
-        Business.id == business_id,
-        Business.isDeleted == False
+        Business.id == business_id
     ).first()
 
 
@@ -150,7 +152,7 @@ def approve_business(
 ) -> Business:
 
     business.status = BusinessStatus.APPROVED
-    business.approvedAt = datetime.utcnow()
+    business.approved_at = datetime.utcnow()
 
     return _commit(
         db=db,
@@ -165,8 +167,8 @@ def reject_business(
 ) -> Business:
 
     business.status = BusinessStatus.REJECTED
-    business.rejectionReason = reason
-    business.rejectedAt = datetime.utcnow()
+    business.rejection_reason = reason
+    business.rejected_at = datetime.utcnow()
 
     return _commit(
         db=db,
@@ -181,8 +183,8 @@ def suspend_business(
 ) -> Business:
 
     business.status = BusinessStatus.SUSPENDED
-    business.suspensionReason = reason
-    business.suspendedAt = datetime.utcnow()
+    business.suspension_reason = reason
+    business.suspended_at = datetime.utcnow()
 
     return _commit(
         db=db,
@@ -196,8 +198,8 @@ def reactivate_business(
 ) -> Business:
 
     business.status = BusinessStatus.APPROVED
-    business.suspensionReason = None
-    business.suspendedAt = None
+    business.suspension_reason = None
+    business.suspended_at = None
 
     return _commit(
         db=db,
@@ -345,7 +347,10 @@ def get_category_by_name_repo(
         Category.isDeleted == False
     ).first()
 
+
+# =========================================================
 # GET CATEGORY BY ID
+# =========================================================
 def get_category_by_id_repo(
     db: Session,
     categoryId
@@ -356,7 +361,10 @@ def get_category_by_id_repo(
         Category.isDeleted == False
     ).first()
 
+
+# =========================================================
 # CREATE CATEGORY
+# =========================================================
 def create_category_repo(
     db: Session,
     payload

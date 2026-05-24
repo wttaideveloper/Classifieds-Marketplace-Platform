@@ -31,6 +31,7 @@ _safe_include("app.api.v1.endpoints.merchant_profile", prefix="/merchant", tags=
 # ADMIN
 _safe_include("app.api.v1.endpoints.admin", prefix="/admin", tags=["Admin Auth"])
 _safe_include("app.api.v1.endpoints.admin_profile", prefix="/admin", tags=["Admin Profile"])
+_safe_include("app.api.v1.endpoints.admin_moderation", prefix="/admin", tags=["Admin Moderation"])
 
 # PUBLIC LISTINGS
 _safe_include("app.api.v1.endpoints.public_listing", tags=["Public Listings"])

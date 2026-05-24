@@ -11,6 +11,7 @@ import app.models.review_model  # noqa: F401
 import app.models.review_moderation_history_model  # noqa: F401
 import app.models.order_model  # noqa: F401
 import app.models.notification_model  # noqa: F401
+import app.models.moderation_model  # noqa: F401
 
 if __name__ == '__main__':
     Base.metadata.create_all(bind=engine)

@@ -3,7 +3,7 @@ from sqlalchemy import or_, func
 from math import radians, cos, sin, asin, sqrt
 
 from app.models.admin_model import Business
-from app.models.merchant_model import MerchantProfile, MerchantListing
+from app.models.merchant_model import Merchant, MerchantProfile, MerchantListing
 
 
 def _haversine(lat1, lon1, lat2, lon2) -> float:
@@ -29,7 +29,13 @@ def search_businesses_repo(
         MerchantProfile,
         Business.merchant_id == MerchantProfile.merchant_id,
         isouter=True
-    ).filter(Business.status == "approved")
+    ).join(
+        Merchant,
+        Business.merchant_id == Merchant.id,
+    ).filter(
+        Business.status == "approved",
+        Merchant.status == "active",
+    )
 
     if keyword:
         query = query.filter(
@@ -69,9 +75,13 @@ def search_listings_repo(
         Business,
         MerchantListing.businessId == Business.id,
         isouter=True
+    ).join(
+        Merchant,
+        Business.merchant_id == Merchant.id,
     ).filter(
         MerchantListing.status == "published",
-        Business.status == "approved"
+        Business.status == "approved",
+        Merchant.status == "active",
     )
 
     if keyword:
@@ -121,10 +131,14 @@ def nearby_businesses_repo(
         Business,
         MerchantProfile.merchant_id == Business.merchant_id,
         isouter=True
+    ).join(
+        Merchant,
+        Business.merchant_id == Merchant.id,
     ).filter(
         MerchantProfile.latitude.isnot(None),
         MerchantProfile.longitude.isnot(None),
-        Business.status == "approved"
+        Business.status == "approved",
+        Merchant.status == "active",
     ).all()
 
     nearby = []
