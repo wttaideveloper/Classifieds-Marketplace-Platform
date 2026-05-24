@@ -6,7 +6,8 @@ from app.api.v1.endpoints import (
     merchant,
     merchant_profile, 
     admin_profile,
-    public_listing
+    public_listing,
+    capacity
 )
 
 api_router = APIRouter()
@@ -57,4 +58,11 @@ api_router.include_router(
 api_router.include_router(
     public_listing.router,
     tags=["Public Listings"]
+)
+
+# Capacity 
+api_router.include_router(
+    capacity.router,
+    prefix="/capacity",
+    tags=["Capacity"]
 )
