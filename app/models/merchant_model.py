@@ -416,6 +416,11 @@ class MerchantListing(Base):
         "Booking",
         back_populates="listing"
     )
+    wishlists = relationship(
+        "Wishlist",
+        back_populates="listing",
+        cascade="all, delete"
+    )
 
 # MERCHANT LISTING DRAFT
 class MerchantListingDraft(Base):

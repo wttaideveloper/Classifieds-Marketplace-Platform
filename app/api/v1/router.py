@@ -81,3 +81,6 @@ _safe_include("app.api.v1.endpoints.capacity", prefix="/capacity", tags=["Capaci
 
 # NOTIFICATIONS
 _safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tags=["Notifications"])
+
+# Wishlist
+_safe_include("app.api.v1.endpoints.wishlist",  prefix="/wishlist", tags=["Wishlist"])

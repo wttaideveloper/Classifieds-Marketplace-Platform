@@ -62,6 +62,11 @@ class Business(Base):
         "Booking",
         back_populates="business"
     )
+    wishlists = relationship(
+        "Wishlist",
+        back_populates="business",
+        cascade="all, delete"
+    )
 
     def __repr__(self):
         return f"<Business {self.name} ({self.status})>"

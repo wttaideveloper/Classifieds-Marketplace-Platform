@@ -52,6 +52,12 @@ class Customer(Base):
         "Booking",
         back_populates="customer"
     )
+   
+    wishlists = relationship(
+        "Wishlist",
+        back_populates="customer",
+        cascade="all, delete"
+    )
 
 class Booking(Base):
     __tablename__ = "bookings"
