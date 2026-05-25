@@ -1,68 +1,71 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import ( 
-    customer,
-    customer_profile, 
-    address, 
-    merchant,
-    merchant_profile, 
-    admin_profile,
-    public_listing,
-    capacity
-)
+import logging
+
+logger = logging.getLogger(__name__)
 
 api_router = APIRouter()
 
+
+def _safe_include(module_path: str, prefix: str = "", tags: list[str] | None = None):
+    try:
+        module = __import__(module_path, fromlist=["router"])
+        router = getattr(module, "router")
+        api_router.include_router(router, prefix=prefix, tags=tags)
+    except Exception as e:
+        logger.error(f"Failed to load router '{module_path}': {e}")
+
+
 # CUSTOMER AUTH
-api_router.include_router(
-    customer.router,
+_safe_include(
+    "app.api.v1.endpoints.customer",
     prefix="/auth/customer",
     tags=["Customer Auth"]
 )
 
 # CUSTOMER PROFILE
-api_router.include_router(
-    customer_profile.router,
+_safe_include(
+    "app.api.v1.endpoints.customer_profile",
     prefix="/customer",
     tags=["Customer Profile"]
 )
 
 # ADDRESS
-api_router.include_router(
-    address.router,
+_safe_include(
+    "app.api.v1.endpoints.address",
     prefix="/customer/addresses",
     tags=["Address"]
 )
 
 # MERCHANT AUTH
-api_router.include_router(
-    merchant.router,
+_safe_include(
+    "app.api.v1.endpoints.merchant",
     prefix="/auth/merchant",
     tags=["Auth Merchant"]
 )
 
 # MERCHANT PROFILE
-api_router.include_router(
-    merchant_profile.router,
+_safe_include(
+    "app.api.v1.endpoints.merchant_profile",
     prefix="/merchant",
     tags=["Merchant Profile"]
 )
 
 # ADMIN PROFILE
-api_router.include_router(
-    admin_profile.router,
+_safe_include(
+    "app.api.v1.endpoints.admin_profile",
     prefix="/admin",
     tags=["Admin Profile"]
 )
 
 # PUBLIC LISTINGS
-api_router.include_router(
-    public_listing.router,
+_safe_include(
+    "app.api.v1.endpoints.public_listing",
     tags=["Public Listings"]
 )
 
-# Capacity 
-api_router.include_router(
-    capacity.router,
+# CAPACITY
+_safe_include(
+    "app.api.v1.endpoints.capacity",
     prefix="/capacity",
     tags=["Capacity"]
 )
