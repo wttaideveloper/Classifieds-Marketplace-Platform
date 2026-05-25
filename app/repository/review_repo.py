@@ -40,8 +40,7 @@ def create_review_history_repo(
         remarks=remarks,
     )
     db.add(history)
-    db.commit()
-    db.refresh(history)
+    db.flush()
     return history
 
 
@@ -205,6 +204,7 @@ def moderate_review_service(db: Session, review_id: str, payload, current_user):
             moderated_by=int(current_user.get("id")),
             remarks=payload.remarks,
         )
+        db.commit()
 
         return {
             "review_id": str(review.id),

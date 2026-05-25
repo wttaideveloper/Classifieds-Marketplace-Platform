@@ -1,11 +1,8 @@
-# app/repository/admin_repo.py
-
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import or_
 
 from typing import Optional, Tuple, List
-from uuid import UUID
 from datetime import datetime
 
 from app.models.merchant_model import (
@@ -30,7 +27,10 @@ class BusinessStatus:
     REJECTED = "rejected"
     SUSPENDED = "suspended"
 
+
+# =========================================================
 # ADMIN QUERIES
+# =========================================================
 def get_admin_by_id(
     db: Session,
     admin_id
@@ -72,7 +72,10 @@ def update_admin(
             f"Database Error: {str(e)}"
         )
 
+
+# =========================================================
 # BUSINESS LIST
+# =========================================================
 def get_all_businesses(
     db: Session,
     search: Optional[str] = None,
@@ -118,7 +121,10 @@ def get_all_businesses(
 
     return total, businesses
 
+
+# =========================================================
 # BUSINESS DETAIL
+# =========================================================
 def get_business_by_id(
     db: Session,
     business_id
@@ -347,7 +353,10 @@ def get_category_by_name_repo(
         Category.isDeleted == False
     ).first()
 
+
+# =========================================================
 # GET CATEGORY BY ID
+# =========================================================
 def get_category_by_id_repo(
     db: Session,
     categoryId
@@ -358,7 +367,10 @@ def get_category_by_id_repo(
         Category.isDeleted == False
     ).first()
 
+
+# =========================================================
 # CREATE CATEGORY
+# =========================================================
 def create_category_repo(
     db: Session,
     payload

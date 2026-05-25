@@ -53,6 +53,7 @@ _safe_include(
 # ADMIN
 _safe_include("app.api.v1.endpoints.admin", prefix="/auth/admin", tags=["Admin Auth"])
 _safe_include("app.api.v1.endpoints.admin_profile", prefix="/admin", tags=["Admin Profile"])
+_safe_include("app.api.v1.endpoints.admin_moderation", prefix="/admin", tags=["Admin Moderation"])
 
 # PUBLIC LISTINGS
 _safe_include("app.api.v1.endpoints.public_listing", tags=["Public Listings"])
@@ -78,3 +79,7 @@ _safe_include("app.api.v1.endpoints.orders", prefix="/orders", tags=["Orders"])
 
 # Capacity 
 _safe_include("app.api.v1.endpoints.capacity", prefix="/capacity", tags=["Capacity"])
+
+
+# NOTIFICATIONS
+_safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tags=["Notifications"])

@@ -150,6 +150,11 @@ def create_order_service(db: Session, customer_id: str, payload):
         )
 
         order = get_order_by_id(db, order.id)
+        try:
+            from app.services.notification_service import notify_order_created
+            notify_order_created(db, order)
+        except Exception:
+            pass
         return {"success": True, "message": "Order created successfully", "data": _order_to_dict(order)}
     except CustomException as e:
         raise e
@@ -227,6 +232,11 @@ def update_order_status_service(db: Session, order_id: str, merchant_id: str, pa
             ),
         )
         order = get_order_by_id(db, order.id)
+        try:
+            from app.services.notification_service import notify_order_status_updated
+            notify_order_status_updated(db, order, new_status)
+        except Exception:
+            pass
         return {"success": True, "message": "Order status updated", "data": _order_to_dict(order)}
     except CustomException as e:
         raise e
