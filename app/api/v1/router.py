@@ -15,18 +15,40 @@ def _safe_include(module_path: str, prefix: str = "", tags: list[str] | None = N
         logger.error(f"Failed to load router '{module_path}': {e}")
 
 
-# AUTH (shared: forgot/reset/change password, logout, refresh, me, verify-email)
-_safe_include("app.api.v1.endpoints.auth", tags=["Auth"])
+# CUSTOMER AUTH
+_safe_include(
+    "app.api.v1.endpoints.customer",
+    prefix="/auth/customer",
+    tags=["Customer Auth"]
+)
 
-# CUSTOMER
-_safe_include("app.api.v1.endpoints.customer", prefix="/auth/customer", tags=["Customer Auth"])
-_safe_include("app.api.v1.endpoints.customer_profile", prefix="/customer", tags=["Customer Profile"])
-_safe_include("app.api.v1.endpoints.address", prefix="/customer/addresses", tags=["Address"])
-_safe_include("app.api.v1.endpoints.users", prefix="/users", tags=["Users"])
+# CUSTOMER PROFILE
+_safe_include(
+    "app.api.v1.endpoints.customer_profile",
+    prefix="/customer",
+    tags=["Customer Profile"]
+)
 
-# MERCHANT
-_safe_include("app.api.v1.endpoints.merchant", prefix="/auth/merchant", tags=["Merchant Auth"])
-_safe_include("app.api.v1.endpoints.merchant_profile", prefix="/merchant", tags=["Merchant Profile"])
+# ADDRESS
+_safe_include(
+    "app.api.v1.endpoints.address",
+    prefix="/customer/addresses",
+    tags=["Address"]
+)
+
+# MERCHANT AUTH
+_safe_include(
+    "app.api.v1.endpoints.merchant",
+    prefix="/auth/merchant",
+    tags=["Auth Merchant"]
+)
+
+# MERCHANT PROFILE
+_safe_include(
+    "app.api.v1.endpoints.merchant_profile",
+    prefix="/merchant",
+    tags=["Merchant Profile"]
+)
 
 # ADMIN
 _safe_include("app.api.v1.endpoints.admin", prefix="/auth/admin", tags=["Admin Auth"])
