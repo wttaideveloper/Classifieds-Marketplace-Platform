@@ -10,3 +10,4 @@ pydantic-settings
 email-validator
 python-multipart
 requests
+google-auth

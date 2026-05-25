@@ -57,3 +57,4 @@ _safe_include("app.api.v1.endpoints.orders", prefix="/orders", tags=["Orders"])
 
 # NOTIFICATIONS
 _safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tags=["Notifications"])
+_safe_include("app.api.v1.endpoints.push_notifications", prefix="/push", tags=["Push Notifications"])
