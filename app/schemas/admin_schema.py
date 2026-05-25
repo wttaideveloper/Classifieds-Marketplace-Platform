@@ -9,8 +9,8 @@ from enum import Enum
 #  AUTH 
 
 class AdminLogin(BaseModel):
-    email: EmailStr
-    password: str = Field(..., min_length=6)
+    email: EmailStr = Field(..., examples=["admin@example.com"])
+    password: str = Field(..., min_length=6, examples=["Password@123"])
 
 
 class ForgotPassword(BaseModel):
@@ -354,11 +354,10 @@ class ReactivateListingResponse(BaseModel):
 
 # CREATE CATEGORY
 class CreateCategorySchema(BaseModel):
-
-    name: str
-    description: Optional[str] = None
-    icon: Optional[str] = None
-    isActive: bool = True
+    name: str = Field(..., examples=["Electronics"])
+    description: Optional[str] = Field(None, examples=["Electronics category"])
+    icon: Optional[str] = Field(None, examples=[None])
+    isActive: bool = Field(True, examples=[True])
 
 
 # CATEGORY RESPONSE

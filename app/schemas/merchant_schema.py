@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List, Dict
 from datetime import datetime, date
 from uuid import UUID
@@ -50,6 +50,12 @@ class MerchantRegister(BaseModel):
     acceptTerms: bool
     acceptPrivacyPolicy: bool
 
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "password" in values.data and v != values.data["password"]:
+            raise ValueError("Passwords do not match")
+        return v
 # LOGIN
 class MerchantLogin(BaseModel):
     email: EmailStr
@@ -66,11 +72,25 @@ class ResetPassword(BaseModel):
     newPassword: str
     confirmPassword: str
 
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "newPassword" in values.data and v != values.data["newPassword"]:
+            raise ValueError("Passwords do not match")
+        return v
+
 #  CHANGE PASSWORD
 class ChangePassword(BaseModel):
     currentPassword: str
     newPassword: str
     confirmPassword: str
+
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "newPassword" in values.data and v != values.data["newPassword"]:
+            raise ValueError("Passwords do not match")
+        return v
 
 # PROFILE
 class MerchantProfileUpdate(BaseModel):

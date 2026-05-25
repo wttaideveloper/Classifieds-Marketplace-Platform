@@ -5,6 +5,7 @@ from app.core.security import hash_password, verify_password, create_access_toke
 from app.exceptions.custom_exception import CustomException
 from app.models.customer_model import Customer
 from app.services.email_service import send_email  
+from app.core.token_blacklist import TOKEN_BLACKLIST
 from uuid import uuid4
 from datetime import datetime, timedelta
 import requests
@@ -19,7 +20,7 @@ from app.schemas.common_schema import (
 
 GOOGLE_VERIFY_URL = "https://oauth2.googleapis.com/tokeninfo"
 
-# REGISTER 
+# REGISTER
 def register_customer_service(db, customer):
     existing = get_customer_by_email(db, customer.email)
     if existing:
@@ -30,7 +31,6 @@ def register_customer_service(db, customer):
         raise CustomException(400, "Accept terms and privacy policy")
     data = customer.dict()
     data.pop("confirmPassword")
-    data["id"] = str(uuid4())
     data["password"] = hash_password(data["password"])
     new_customer = Customer(**data)
     return create_customer(db, new_customer)
@@ -139,6 +139,11 @@ def change_password_service(db, user_id, currentPassword, newPassword, confirmPa
     db.commit()
     return {"message": "Password changed successfully"}
 
+# LOGOUT
+def logout_customer_service(token: str, current_user):
+    TOKEN_BLACKLIST.add(token)
+    return {"success": True, "message": "Logged out successfully"}
+
 # GET PROFILE
 def get_profile_service(db, cust_id):
     user = get_customer_by_id(db, cust_id)
@@ -175,16 +180,6 @@ def update_profile_service(db, cust_id, data):
         "message": "Profile updated successfully"
     }
 
-# # LOGOUT 
-# def logout_customer_service(token: str, current_user):
-#     """
-#     Invalidate JWT token by adding it to blacklist.
-#     Frontend should also delete token.
-#     """
-#     TOKEN_BLACKLIST.add(token)
-#     return {
-#         "message": "Logged out successfully"
-#     }
 
 def get_public_listings_service(
     db: Session,
@@ -198,11 +193,8 @@ def get_public_listings_service(
     limit,
     sortBy
 ):
-
     try:
-
         skip = (page - 1) * limit
-
         total, listings = get_public_listings_repo(
             db=db,
             search=search,
@@ -215,7 +207,6 @@ def get_public_listings_service(
             limit=limit,
             sortBy=sortBy
         )
-
         return {
             "success": True,
             "message": "Public listings fetched successfully",
@@ -224,9 +215,7 @@ def get_public_listings_service(
             "limit": limit,
             "data": listings
         }
-
     except Exception as e:
-
         raise CustomException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             str(e)
@@ -236,21 +225,16 @@ def get_public_listing_details_service(
     db: Session,
     listingId
 ):
-
     try:
-
         listing = get_public_listing_details_repo(
             db=db,
             listingId=listingId
         )
-
         if not listing:
-
             raise CustomException(
                 status.HTTP_404_NOT_FOUND,
                 "Listing not found"
             )
-
         return {
             "success": True,
             "message": "Listing details fetched successfully",
@@ -273,9 +257,7 @@ def search_listings_service(
     rating,
     sort
 ):
-
     try:
-
         total, listings = search_listings_repo(
             db=db,
             keyword=keyword,
@@ -285,14 +267,12 @@ def search_listings_service(
             rating=rating,
             sort=sort
         )
-
         return {
             "success": True,
             "message": "Listings fetched successfully",
             "total": total,
             "data": listings
         }
-
     except Exception as e:
         raise CustomException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -300,18 +280,14 @@ def search_listings_service(
         )
     
 def get_categories_service(db):
-
     try:
-
         total, categories = get_categories_repo(db)
-
         return {
             "success": True,
             "message": "Categories fetched successfully",
             "total": total,
             "data": categories
         }
-
     except Exception as e:
         raise CustomException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -323,21 +299,17 @@ def get_subcategories_service(
     db,
     categoryId
 ):
-
     try:
-
         subcategories = get_subcategories_repo(
             db=db,
             categoryId=categoryId
         )
-
         return {
             "success": True,
             "message": "Subcategories fetched successfully",
             "total": len(subcategories),
             "data": subcategories
         }
-
     except Exception as e:
         raise CustomException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -359,7 +331,6 @@ def get_customer_bookings_service(
     size: int,
     booking_status: str = None
 ):
-
     return get_customer_bookings_repo(
         db=db,
         page=page,

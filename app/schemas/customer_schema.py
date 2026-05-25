@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime, date
@@ -35,19 +35,25 @@ class ForgotPassword(BaseModel):
     email: EmailStr
     role: str
 
-
 #  RESET PASSWORD
 class ResetPassword(BaseModel):
     resetToken: str
     newPassword: str
     confirmPassword: str
 
-
 #  CHANGE PASSWORD
 class ChangePassword(BaseModel):
     currentPassword: str
     newPassword: str
     confirmPassword: str
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, values):
+        if "password" in values.data and v != values.data["password"]:
+            raise ValueError("Passwords do not match")
+        if "newPassword" in values.data and v != values.data["newPassword"]:
+            raise ValueError("Passwords do not match")
+        return v
 
 # PROFILE
 class CustomerProfileUpdate(BaseModel):

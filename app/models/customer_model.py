@@ -31,7 +31,7 @@ class PaymentStatus(str, PyEnum):
 class Customer(Base):
     __tablename__ = "customers"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     firstName = Column(String)
     lastName = Column(String)
     email = Column(String, unique=True, index=True)
@@ -59,7 +59,7 @@ class Booking(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     booking_number = Column(String, unique=True, nullable=False, index=True)
     customer_id = Column(
-        String,
+        UUID(as_uuid=True),
         ForeignKey("customers.id"),
         nullable=True
     )

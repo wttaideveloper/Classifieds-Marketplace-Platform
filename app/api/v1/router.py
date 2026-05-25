@@ -14,7 +14,6 @@ def _safe_include(module_path: str, prefix: str = "", tags: list[str] | None = N
     except Exception as e:
         logger.error(f"Failed to load router '{module_path}': {e}")
 
-
 # CUSTOMER AUTH
 _safe_include(
     "app.api.v1.endpoints.customer",
@@ -50,22 +49,35 @@ _safe_include(
     tags=["Merchant Profile"]
 )
 
-# ADMIN PROFILE
-_safe_include(
-    "app.api.v1.endpoints.admin_profile",
-    prefix="/admin",
-    tags=["Admin Profile"]
-)
+# ADMIN
+_safe_include("app.api.v1.endpoints.admin", prefix="/auth/admin", tags=["Admin Auth"])
+_safe_include("app.api.v1.endpoints.admin_profile", prefix="/admin", tags=["Admin Profile"])
+_safe_include("app.api.v1.endpoints.admin_moderation", prefix="/admin", tags=["Admin Moderation"])
 
 # PUBLIC LISTINGS
-_safe_include(
-    "app.api.v1.endpoints.public_listing",
-    tags=["Public Listings"]
-)
+_safe_include("app.api.v1.endpoints.public_listing", tags=["Public Listings"])
 
-# CAPACITY
-_safe_include(
-    "app.api.v1.endpoints.capacity",
-    prefix="/capacity",
-    tags=["Capacity"]
-)
+# SEARCH & DISCOVERY
+_safe_include("app.api.v1.endpoints.search", tags=["Search & Discovery"])
+
+# REVIEWS & RATINGS
+_safe_include("app.api.v1.endpoints.review", tags=["Reviews & Ratings"])
+
+# MERCHANT BLOGS
+_safe_include("app.api.v1.endpoints.blog_merchant", prefix="/merchant", tags=["Merchant Blogs"])
+
+# ADMIN BLOGS
+_safe_include("app.api.v1.endpoints.blog_admin", prefix="/admin", tags=["Admin Blogs"])
+
+# PUBLIC BLOGS + CATEGORIES
+_safe_include("app.api.v1.endpoints.blog_public", tags=["Public Blogs"])
+_safe_include("app.api.v1.endpoints.blog_categories", tags=["Blog Categories"])
+
+# ORDERS
+_safe_include("app.api.v1.endpoints.orders", prefix="/orders", tags=["Orders"])
+
+# Capacity 
+_safe_include("app.api.v1.endpoints.capacity", prefix="/capacity", tags=["Capacity"])
+
+# NOTIFICATIONS
+_safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tags=["Notifications"])
