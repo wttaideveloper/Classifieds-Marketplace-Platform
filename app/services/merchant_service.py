@@ -7,7 +7,6 @@ from fastapi import (
 from sqlalchemy.orm import Session
 from app.repository.merchant_repo import (
     get_merchant_by_email,
-    get_merchant_by_external_auth_id,
     create_merchant,
     update_merchant,
     get_merchant_by_id,
@@ -52,7 +51,7 @@ from app.models.admin_model import Business
 from app.exceptions.custom_exception import (
     CustomException
 )
-from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
+from app.core.security import hash_password, verify_password
 from app.services.email_service import send_email
 from app.core.token_blacklist import TOKEN_BLACKLIST
 from datetime import datetime, timezone, timedelta
