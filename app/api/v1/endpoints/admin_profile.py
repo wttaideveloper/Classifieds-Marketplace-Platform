@@ -59,21 +59,11 @@ from app.services.admin_service import (
     delete_attribute_service
 )
 from app.exceptions.custom_exception import CustomException
-
+from app.db.database import get_db
 
 router = APIRouter(
     tags=["Admin"]
 )
-
-
-# DB Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 
 #  ADMIN PROFILE 
 @router.get("/profile", status_code=status.HTTP_200_OK)
@@ -172,7 +162,7 @@ def get_merchants(
     status_code=status.HTTP_200_OK
 )
 def get_merchant_details(
-    merchant_id: str,
+    merchant_id: UUID,
     db: Session = Depends(get_db)
 ):
     return admin_get_merchant_details_service(
@@ -304,7 +294,7 @@ def get_all_listings(
     status_code=status.HTTP_200_OK
 )
 def approve_listing(
-    listingId: str,
+    listingId: UUID,
     db: Session = Depends(get_db)
 ):
     return approve_listing_service(
@@ -318,7 +308,7 @@ def approve_listing(
     status_code=status.HTTP_200_OK
 )
 def reject_listing(
-    listingId: str,
+    listingId: UUID,
     payload: RejectListingRequest,
     db: Session = Depends(get_db)
 ):
@@ -336,7 +326,7 @@ def reject_listing(
     status_code=status.HTTP_200_OK
 )
 def suspend_listing(
-    listingId: str,
+    listingId: UUID,
     payload: SuspendListingRequest,
     db: Session = Depends(get_db)
 ):
@@ -354,7 +344,7 @@ def suspend_listing(
     status_code=status.HTTP_200_OK
 )
 def reactivate_listing(
-    listingId: str,
+    listingId: UUID,
     db: Session = Depends(get_db)
 ):
 
@@ -416,7 +406,7 @@ def get_all_attributes(
     status_code=status.HTTP_200_OK
 )
 def get_attribute_by_id(
-    attribute_id: str,
+    attribute_id: UUID,
     db: Session = Depends(get_db)
 ):
 
@@ -433,7 +423,7 @@ def get_attribute_by_id(
     status_code=status.HTTP_200_OK
 )
 def update_attribute(
-    attribute_id: str,
+    attribute_id: UUID,
     payload: AttributeUpdate,
     db: Session = Depends(get_db)
 ):
@@ -451,7 +441,7 @@ def update_attribute(
     status_code=status.HTTP_200_OK
 )
 def delete_attribute(
-    attribute_id: str,
+    attribute_id: UUID,
     db: Session = Depends(get_db)
 ):
 

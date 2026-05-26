@@ -56,6 +56,16 @@ class ChangePassword(BaseModel):
         return v
 
 # PROFILE
+class CustomerProfileResponse(BaseModel):
+    id: UUID
+    firstName: str
+    lastName: str
+    email: str
+    mobileNumber: str
+
+    class Config:
+        from_attributes = True
+
 class CustomerProfileUpdate(BaseModel):
     firstName: Optional[str] = None
     lastName: Optional[str] = None
@@ -72,6 +82,28 @@ class AddressBase(BaseModel):
     zipCode: str
     country: str
     isDefault: bool = False
+
+# CREATE ADDRESS REQUEST
+class AddressCreate(AddressBase):
+    pass
+
+# ADDRESS RESPONSE
+class AddressResponse(AddressBase):
+    id: UUID
+    customer_id: UUID
+
+    class Config:
+        from_attributes = True
+
+# UPDATE ADDRESS REQUEST
+class AddressUpdate(AddressBase):
+    pass
+
+# GET ALL ADDRESSES RESPONSE
+class AddressListResponse(BaseModel):
+    success: bool
+    message: str
+    data: list[AddressResponse]
 
 class PublicListingQuerySchema(BaseModel):
 

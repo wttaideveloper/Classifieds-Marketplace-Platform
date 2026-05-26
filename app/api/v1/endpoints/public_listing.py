@@ -8,11 +8,7 @@ from app.schemas.common_schema import (
     CreateBooking,
     CreateBookingResponse
 )
-from app.utils.common import (
-    generate_booking_number
-)
-from app.db.database import SessionLocal, get_db
-from app.repository.customer_repo import create_booking_repo
+from app.db.database import get_db
 from app.services.customer_service import (
     get_public_listings_service,
     get_public_listing_details_service,
@@ -30,14 +26,6 @@ from uuid import UUID
 
 router = APIRouter()
 
-def get_db():
-
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 @router.get(
     "/listings",
     status_code=status.HTTP_200_OK
@@ -51,7 +39,7 @@ def get_public_listings(
     priceMin: float = None,
     priceMax: float = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=10, ge=1),
+    limit: int = Query(default=10, ge=1, le=100),
     sortBy: str = "latest",
     db: Session = Depends(get_db)
 ):
@@ -66,19 +54,6 @@ def get_public_listings(
         page=page,
         limit=limit,
         sortBy=sortBy
-    )
-
-@router.get(
-    "/listings/{listingId}",
-    status_code=status.HTTP_200_OK
-)
-def get_listing_details(
-    listingId: str,
-    db: Session = Depends(get_db)
-):
-    return get_public_listing_details_service(
-        db=db,
-        listingId=listingId
     )
 
 # SEARCH LISTINGS
@@ -110,6 +85,19 @@ def search_listings(
         sort=sort
     )
 
+@router.get(
+    "/listings/{listingId}",
+    status_code=status.HTTP_200_OK
+)
+def get_listing_details(
+    listing_id: UUID,
+    db: Session = Depends(get_db)
+):
+    return get_public_listing_details_service(
+        db=db,
+        listingId=listing_id
+    )
+
 # GET CATEGORIES
 @router.get(
     "/categories",
@@ -128,13 +116,13 @@ def get_categories(
     status_code=status.HTTP_200_OK
 )
 def get_subcategories(
-    categoryId: UUID,
+    category_id: UUID,
     db: Session = Depends(get_db)
 ):
 
     return get_subcategories_service(
         db=db,
-        categoryId=categoryId
+        categoryId=category_id
     )
 
 @router.post(

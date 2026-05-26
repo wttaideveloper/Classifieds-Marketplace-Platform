@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
-
 from app.db.database import get_db
 from app.schemas.wishlist_schema import (
     WishlistCreate,
@@ -17,11 +16,11 @@ from app.services.wishlist_service import (
     get_business_wishlist_service,
     get_listing_wishlist_service
 )
+from uuid import UUID
 
 router = APIRouter(
     tags=["Wishlist"]
 )
-
 
 @router.post(
     "/",
@@ -32,7 +31,6 @@ def create_wishlist(
     payload: WishlistCreate,
     db: Session = Depends(get_db)
 ):
-
     return create_wishlist_service(
         db=db,
         payload=payload
@@ -46,7 +44,6 @@ def create_wishlist(
 def get_all_wishlist(
     db: Session = Depends(get_db)
 ):
-
     return get_all_wishlist_service(db)
 
 @router.delete(
@@ -55,10 +52,9 @@ def get_all_wishlist(
     status_code=status.HTTP_200_OK
 )
 def delete_wishlist_api(
-    wishlist_id,
+    wishlist_id: UUID,
     db: Session = Depends(get_db)
 ):
-
     return delete_wishlist_service(
         db,
         wishlist_id
@@ -72,7 +68,6 @@ def delete_wishlist_api(
 def get_business_wishlist_api(
     db: Session = Depends(get_db)
 ):
-
     return get_business_wishlist_service(db)
 
 @router.get(
@@ -81,11 +76,10 @@ def get_business_wishlist_api(
     status_code=status.HTTP_200_OK
 )
 def get_listing_wishlist_api(
-    page: int = Query(1),
-    size: int = Query(10),
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db)
 ):
-
     return get_listing_wishlist_service(
         db,
         page,

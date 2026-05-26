@@ -93,6 +93,16 @@ class ChangePassword(BaseModel):
         return v
 
 # PROFILE
+class MerchantProfileResponse(BaseModel):
+    id: UUID
+    name: str
+    businessEmail: EmailStr
+    mobileNumber: str
+    profileImage: Optional[str]
+
+    class Config:
+        from_attributes = True
+
 class MerchantProfileUpdate(BaseModel):
     name: Optional[str] = None
     mobileNumber: Optional[str] = None
@@ -114,14 +124,14 @@ class MerchantBusinessProfileCreate(BaseModel):
     longitude: float   
     businessLogo: Optional[str] = None    
     bannerImage: Optional[str] = None    
-    galleryImages: Optional[List[str]] = []    
+    galleryImages: List[str] = Field(default_factory=list)  
     operatingHours: Optional[Dict] = {}    
     businessType: str   # physical | online | hybrid    
     cancellationPolicy: Optional[str] = None    
     refundPolicy: Optional[str] = None    
     merchantTermsOfService: Optional[str] = None    
     websiteUrl: Optional[str] = None    
-    socialMediaLinks: Optional[Dict] = {}    
+    socialMediaLinks: Dict = Field(default_factory=dict)   
     additionalContactNumbers: Optional[List[str]] = []    
     shortTagline: Optional[str] = None
 
@@ -137,18 +147,18 @@ class MerchantBusinessDraft(BaseModel):
     state: Optional[str] = None
     zipCode: Optional[str] = None
     country: Optional[str] = None
-    latitude: Optional[str] = None
+    latitude: Optional[float] = None
     longitude: Optional[str] = None
     businessLogo: Optional[str] = None
     bannerImage: Optional[str] = None
-    galleryImages: Optional[List[str]] = None
+    galleryImages: List[str] = Field(default_factory=list)
     operatingHours: Optional[Dict] = None
     businessType: Optional[str] = None
     cancellationPolicy: Optional[str] = None
     refundPolicy: Optional[str] = None
     merchantTermsOfService: Optional[str] = None
     websiteUrl: Optional[str] = None
-    socialMediaLinks: Optional[Dict] = None
+    socialMediaLinks: Dict = Field(default_factory=dict)
     additionalContactNumbers: Optional[List[str]] = None
     shortTagline: Optional[str] = None
 
@@ -166,18 +176,18 @@ class MerchantBusinessProfileResponse(BaseModel):
     state: Optional[str]
     zipCode: Optional[str]
     country: Optional[str]
-    latitude: Optional[str]
+    latitude: Optional[float]
     longitude: Optional[str]
     businessLogo: Optional[str]
     bannerImage: Optional[str]
-    galleryImages: Optional[List[str]]
+    galleryImages: List[str] = Field(default_factory=list)
     operatingHours: Optional[Dict]
     businessType: Optional[str]
     cancellationPolicy: Optional[str]
     refundPolicy: Optional[str]
     merchantTermsOfService: Optional[str]
     websiteUrl: Optional[str]
-    socialMediaLinks: Optional[Dict]
+    socialMediaLinks: Dict = Field(default_factory=dict)
     additionalContactNumbers: Optional[List[str]]
     shortTagline: Optional[str]
 
@@ -199,13 +209,13 @@ class UpdateBusinessProfile(BaseModel):
     # Images
     businessLogo: Optional[str] = None
     bannerImage: Optional[str] = None
-    galleryImages: Optional[List[str]] = None
+    galleryImages: List[str] = Field(default_factory=list)
     # Contact Details
     businessEmail: Optional[EmailStr] = None
     phoneNumber: Optional[str] = None
     additionalContactNumbers: Optional[List[str]] = None
     websiteUrl: Optional[str] = None
-    socialMediaLinks: Optional[Dict] = None
+    socialMediaLinks: Dict = Field(default_factory=dict)
     # Operating Hours
     operatingHours: Optional[Dict] = None
     # Policies
@@ -223,7 +233,7 @@ class UpdateBusinessProfile(BaseModel):
     state: Optional[str] = None
     zipCode: Optional[str] = None
     country: Optional[str] = None
-    latitude: Optional[str] = None
+    latitude: Optional[float] = None
     longitude: Optional[str] = None
     # Category
     primaryCategory: Optional[str] = None
