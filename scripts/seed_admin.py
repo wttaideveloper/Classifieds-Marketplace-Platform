@@ -1,29 +1,27 @@
-import sys
-sys.path.insert(0, '.')
-
-# Import all models first so SQLAlchemy relationships resolve correctly
-import app.models.merchant_model
-import app.models.customer_model
-import app.models.admin_model
-import app.models.blog_model
-import app.models.category_model
+import os
 
 from app.db.database import SessionLocal
 from app.models.admin_model import Admin
 from app.core.security import hash_password
 
+admin_name = os.getenv("SEED_ADMIN_NAME", "Super Admin")
+admin_email = os.getenv("SEED_ADMIN_EMAIL")
+admin_password = os.getenv("SEED_ADMIN_PASSWORD")
+
+if not admin_email or not admin_password:
+    raise RuntimeError(
+        "Set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD before running seed_admin.py"
+    )
+
 db = SessionLocal()
 
-ADMIN_EMAIL = "admin@example.com"
-ADMIN_PASSWORD = "admin123"
-
-existing = db.query(Admin).filter(Admin.email == ADMIN_EMAIL).first()
+existing = db.query(Admin).filter(Admin.email == admin_email).first()
 
 if not existing:
     admin = Admin(
-        name="Super Admin",
-        email=ADMIN_EMAIL,
-        password=hash_password(ADMIN_PASSWORD)
+        name=admin_name,
+        email=admin_email,
+        password=hash_password(admin_password)
     )
     db.add(admin)
     db.commit()

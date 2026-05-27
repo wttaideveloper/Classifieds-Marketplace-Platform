@@ -2,7 +2,6 @@ import re
 import uuid
 from fastapi import status
 from sqlalchemy.orm import Session
-
 from app.exceptions.custom_exception import CustomException
 from app.models.blog_model import Blog, BlogCategory, BlogApprovalLog
 from app.repository.blog_repo import (
@@ -23,13 +22,11 @@ from app.repository.blog_repo import (
     create_approval_log,
 )
 
-
 def _to_uuid(value: str, field_name: str):
     try:
         return uuid.UUID(str(value))
     except Exception:
         raise CustomException(400, f"Invalid {field_name}")
-
 
 def _to_int(value: str, field_name: str) -> int:
     try:
@@ -37,13 +34,11 @@ def _to_int(value: str, field_name: str) -> int:
     except Exception:
         raise CustomException(400, f"Invalid {field_name}")
 
-
 def _slugify(text: str) -> str:
     text = (text or "").strip().lower()
     text = re.sub(r"[^a-z0-9\s-]", "", text)
     text = re.sub(r"[\s-]+", "-", text).strip("-")
     return text or str(uuid.uuid4())
-
 
 def _unique_blog_slug(db: Session, base: str) -> str:
     slug = base
@@ -55,7 +50,6 @@ def _unique_blog_slug(db: Session, base: str) -> str:
         slug = f"{base}-{i}"
         i += 1
 
-
 def _unique_category_slug(db: Session, base: str) -> str:
     slug = base
     i = 2
@@ -65,7 +59,6 @@ def _unique_category_slug(db: Session, base: str) -> str:
             return slug
         slug = f"{base}-{i}"
         i += 1
-
 
 def _blog_to_dict(blog: Blog):
     return {
@@ -84,7 +77,6 @@ def _blog_to_dict(blog: Blog):
         "updatedAt": blog.updated_at,
     }
 
-
 def _category_to_dict(cat: BlogCategory):
     return {
         "id": str(cat.id),
@@ -94,7 +86,6 @@ def _category_to_dict(cat: BlogCategory):
         "isActive": cat.is_active,
         "createdAt": cat.created_at,
     }
-
 
 # MERCHANT: CREATE BLOG
 def create_blog_service(db: Session, merchant_id: str, payload):
@@ -135,7 +126,6 @@ def create_blog_service(db: Session, merchant_id: str, payload):
         raise e
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
-
 
 # MERCHANT: UPDATE BLOG
 def update_blog_service(db: Session, merchant_id: str, blog_id: str, payload):
@@ -196,7 +186,6 @@ def update_blog_service(db: Session, merchant_id: str, blog_id: str, payload):
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
-
 # MERCHANT: DELETE BLOG
 def delete_blog_service(db: Session, merchant_id: str, blog_id: str):
     try:
@@ -214,7 +203,6 @@ def delete_blog_service(db: Session, merchant_id: str, blog_id: str):
         raise e
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
-
 
 # MERCHANT: LIST BLOGS
 def get_merchant_blogs_service(
@@ -248,7 +236,6 @@ def get_merchant_blogs_service(
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
-
 # MERCHANT: SUBMIT FOR APPROVAL
 def submit_blog_for_approval_service(db: Session, merchant_id: str, blog_id: str):
     try:
@@ -271,7 +258,6 @@ def submit_blog_for_approval_service(db: Session, merchant_id: str, blog_id: str
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
-
 # ADMIN: PENDING BLOGS
 def get_pending_blogs_service(db: Session, page: int = 1, limit: int = 10, search: str = None):
     try:
@@ -292,7 +278,6 @@ def get_pending_blogs_service(db: Session, page: int = 1, limit: int = 10, searc
         }
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
-
 
 # ADMIN: APPROVE BLOG
 def approve_blog_service(db: Session, admin_id: str, blog_id: str):
@@ -327,7 +312,6 @@ def approve_blog_service(db: Session, admin_id: str, blog_id: str):
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
-
 # ADMIN: REJECT BLOG
 def reject_blog_service(db: Session, admin_id: str, blog_id: str, remarks: str):
     try:
@@ -360,7 +344,6 @@ def reject_blog_service(db: Session, admin_id: str, blog_id: str, remarks: str):
         raise e
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
-
 
 # ADMIN: LIST BLOGS
 def admin_list_blogs_service(
@@ -397,7 +380,6 @@ def admin_list_blogs_service(
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
-
 # PUBLIC: LIST BLOGS
 def public_list_blogs_service(
     db: Session,
@@ -428,7 +410,6 @@ def public_list_blogs_service(
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
-
 # PUBLIC: BLOG DETAILS
 def public_blog_details_service(db: Session, slug: str):
     try:
@@ -450,7 +431,6 @@ def public_blog_details_service(db: Session, slug: str):
         raise e
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
-
 
 # BLOG CATEGORIES: ADMIN CRUD + PUBLIC LIST
 def create_blog_category_service(db: Session, payload):
@@ -474,7 +454,6 @@ def create_blog_category_service(db: Session, payload):
         raise e
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
-
 
 def update_blog_category_service(db: Session, category_id: str, payload):
     try:
@@ -505,7 +484,6 @@ def update_blog_category_service(db: Session, category_id: str, payload):
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
-
 def delete_blog_category_service(db: Session, category_id: str):
     try:
         cat_uuid = _to_uuid(category_id, "categoryId")
@@ -519,7 +497,6 @@ def delete_blog_category_service(db: Session, category_id: str):
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
-
 def list_blog_categories_service(db: Session):
     try:
         total, cats = list_categories_repo(db)
@@ -531,4 +508,3 @@ def list_blog_categories_service(db: Session):
         }
     except Exception as e:
         raise CustomException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
-

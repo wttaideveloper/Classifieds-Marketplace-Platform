@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.services.search_service import (
     search_businesses_service,
     search_listings_service,
@@ -9,14 +9,6 @@ from app.services.search_service import (
 )
 
 router = APIRouter(tags=["Search & Discovery"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.get("/search/business")

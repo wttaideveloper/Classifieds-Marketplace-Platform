@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.schemas.push_notification_schema import (
+    DeleteDeviceResponse,
     PushNotificationListResponse,
+    PushNotificationReadResponse,
     RegisterDeviceRequest,
     RegisterDeviceResponse,
     SendPushNotificationRequest,
@@ -19,14 +21,6 @@ from app.services.push_notification_service import (
 )
 
 router = APIRouter(tags=["Push Notifications"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.post("/register-device", status_code=201, response_model=RegisterDeviceResponse)
@@ -59,7 +53,11 @@ def list_push_notifications(
     )
 
 
-@router.put("/notifications/{id}/read", status_code=200)
+@router.put(
+    "/notifications/{id}/read",
+    status_code=200,
+    response_model=PushNotificationReadResponse,
+)
 def mark_push_notification_read(
     id: str,
     db: Session = Depends(get_db),
@@ -70,7 +68,7 @@ def mark_push_notification_read(
     )
 
 
-@router.delete("/device/{id}", status_code=200)
+@router.delete("/device/{id}", status_code=200, response_model=DeleteDeviceResponse)
 def delete_device(
     id: str,
     db: Session = Depends(get_db),

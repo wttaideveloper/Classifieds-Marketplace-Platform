@@ -88,3 +88,14 @@ class PushNotificationListResponse(BaseModel):
     total_pages: int
     unread_count: int
     data: List[PushNotificationResponse]
+
+
+class PushNotificationReadResponse(BaseModel):
+    success: bool = True
+    message: str
+    data: PushNotificationResponse
+
+
+class DeleteDeviceResponse(BaseModel):
+    success: bool = True
+    message: str

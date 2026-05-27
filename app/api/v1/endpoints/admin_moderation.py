@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.schemas.moderation_schema import (
     ModerationActionResponse,
     PaginatedReportsResponse,
@@ -26,14 +26,6 @@ from app.services.moderation_service import (
 )
 
 router = APIRouter(tags=["Admin Moderation"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.put(

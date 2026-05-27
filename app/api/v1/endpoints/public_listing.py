@@ -1,29 +1,34 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, UploadFile, File
+from typing import List
 from sqlalchemy.orm import Session
 from app.schemas.common_schema import (
     CategoryListResponse,
-    SubCategoryListResponse
+    SubCategoryListResponse,
+    UploadListingImagesResponse,
+    CreateBooking,
+    CreateBookingResponse
 )
-from app.db.database import SessionLocal
-from app.services.common_service import validate_role
+from app.utils.common import (
+    generate_booking_number
+)
+from app.db.database import get_db
+from app.repository.customer_repo import create_booking_repo
 from app.services.customer_service import (
     get_public_listings_service,
     get_public_listing_details_service,
     search_listings_service,
     get_categories_service,
-    get_subcategories_service
+    get_subcategories_service,
+    create_booking_service
+)
+from app.services.common_service import (
+    validate_role,
+    upload_business_image_service,
+    upload_listing_images_service
 )
 from uuid import UUID
 
 router = APIRouter()
-
-def get_db():
-
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.get(
     "/listings",
@@ -33,39 +38,39 @@ def get_public_listings(
 
     search: str = None,
     category: str = None,
-    listingType: str = None,
+    listing_type: str = None,
     city: str = None,
-    priceMin: float = None,
-    priceMax: float = None,
+    price_min: float = None,
+    price_max: float = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=10, ge=1),
-    sortBy: str = "latest",
+    sort_by: str = "latest",
     db: Session = Depends(get_db)
 ):
     return get_public_listings_service(
         db=db,
         search=search,
         category=category,
-        listingType=listingType,
+        listingType=listing_type,
         city=city,
-        priceMin=priceMin,
-        priceMax=priceMax,
+        priceMin=price_min,
+        priceMax=price_max,
         page=page,
         limit=limit,
-        sortBy=sortBy
+        sortBy=sort_by
     )
 
 @router.get(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
     status_code=status.HTTP_200_OK
 )
 def get_listing_details(
-    listingId: str,
+    listing_id: str,
     db: Session = Depends(get_db)
 ):
     return get_public_listing_details_service(
         db=db,
-        listingId=listingId
+        listingId=listing_id
     )
 
 # SEARCH LISTINGS
@@ -78,7 +83,7 @@ def search_listings(
     role: str,
     keyword: str = Query(default=None),
     category: str = Query(default=None),
-    listingType: str = Query(default=None),
+    listing_type: str = Query(default=None),
     location: str = Query(default=None),
     rating: float = Query(default=None),
     sort: str = Query(default=None),
@@ -91,7 +96,7 @@ def search_listings(
         db=db,
         keyword=keyword,
         category=category,
-        listingType=listingType,
+        listingType=listing_type,
         location=location,
         rating=rating,
         sort=sort
@@ -110,16 +115,55 @@ def get_categories(
 
 # GET SUBCATEGORIES
 @router.get(
-    "/categories/{categoryId}/subcategories",
+    "/categories/{category_id}/subcategories",
     response_model=SubCategoryListResponse,
     status_code=status.HTTP_200_OK
 )
 def get_subcategories(
-    categoryId: UUID,
+    category_id: UUID,
     db: Session = Depends(get_db)
 ):
 
     return get_subcategories_service(
         db=db,
-        categoryId=categoryId
+        categoryId=category_id
+    )
+
+@router.post(
+    "/upload/business-image",
+    status_code=status.HTTP_201_CREATED
+)
+async def upload_business_image(
+    files: List[UploadFile] = File(...)
+):
+    return await upload_business_image_service(
+        files
+    )
+
+@router.post(
+    "/upload/listing-images",
+    response_model=UploadListingImagesResponse,
+    status_code=status.HTTP_201_CREATED
+)
+async def upload_listing_images(
+    files: List[UploadFile] = File(...)
+):
+
+    return await upload_listing_images_service(
+        files
+    )
+
+@router.post(
+    "/bookings",
+    response_model=CreateBookingResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_booking(
+    payload: CreateBooking,
+    db: Session = Depends(get_db)
+):
+
+    return create_booking_service(
+        db=db,
+        payload=payload
     )

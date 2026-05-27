@@ -1,8 +1,31 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
+from decimal import Decimal
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, date, time
+from enum import Enum
+from enum import Enum as PyEnum
 
+class ListingType(str, PyEnum):
+    product = "product"
+    service = "service"
+    event = "event"
+    training = "training"
+    program = "program"
+
+class BookingStatus(str, PyEnum):
+    Pending = "Pending"
+    Approved = "Approved"
+    Rejected = "Rejected"
+    Completed = "Completed"
+    Cancelled = "Cancelled"
+
+class PaymentStatus(str, PyEnum):
+    Pending = "Pending"
+    Paid = "Paid"
+    Failed = "Failed"
+    Refunded = "Refunded"
+    
 class RefreshTokenSchema(BaseModel):
     refreshToken: str
 
@@ -82,9 +105,9 @@ class CategoryData(BaseModel):
     id: UUID
     name: str
     description: Optional[str]
-    image: Optional[str]
-    status: str
-    createdAt: datetime
+    icon: Optional[str]
+    isActive: bool
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -101,7 +124,7 @@ class CategoryResponse(BaseModel):
     id: UUID
     name: str
     description: Optional[str]
-    image: Optional[str]
+    icon: Optional[str]
 
     class Config:
         from_attributes = True
@@ -112,7 +135,7 @@ class SubcategoryResponse(BaseModel):
     id: UUID
     name: str
     description: Optional[str]
-    image: Optional[str]
+    icon: Optional[str]
     parentCategoryId: Optional[UUID]
 
     class Config:
@@ -124,3 +147,30 @@ class SubCategoryListResponse(BaseModel):
     message: str
     total: int
     data: List[SubcategoryResponse]
+
+class UploadedListingImage(BaseModel):
+    fileName: str
+    filePath: str
+
+class UploadListingImagesResponse(BaseModel):
+    success: bool
+    message: str
+    data: List[UploadedListingImage]
+
+class CreateBooking(BaseModel):
+
+    customer_id: Optional[UUID] = None
+    merchant_id: Optional[UUID] = None
+    business_id: Optional[UUID] = None
+    listing_id: UUID
+    booking_date: date
+    booking_time: time
+    quantity: int
+    notes: Optional[str] = None
+
+class CreateBookingResponse(BaseModel):
+
+    booking_id: UUID
+    booking_number: str
+    booking_status: BookingStatus
+    total_amount: Decimal

@@ -1,34 +1,66 @@
 from fastapi import APIRouter
-import logging
-
-logger = logging.getLogger(__name__)
 
 api_router = APIRouter()
 
 
 def _safe_include(module_path: str, prefix: str = "", tags: list[str] | None = None):
-    try:
-        module = __import__(module_path, fromlist=["router"])
-        router = getattr(module, "router")
-        api_router.include_router(router, prefix=prefix, tags=tags)
-    except Exception as e:
-        logger.error(f"Failed to load router '{module_path}': {e}")
+    module = __import__(module_path, fromlist=["router"])
+    router = getattr(module, "router")
+    api_router.include_router(router, prefix=prefix, tags=tags)
 
 
-# AUTH (shared: forgot/reset/change password, logout, refresh, me, verify-email)
-_safe_include("app.api.v1.endpoints.auth", tags=["Auth"])
+# CUSTOMER AUTH
+_safe_include(
+    "app.api.v1.endpoints.customer",
+    prefix="/auth/customer",
+    tags=["Customer Auth"]
+)
+_safe_include(
+    "app.api.v1.endpoints.customer",
+    prefix="/customer",
+    tags=["Customer Auth"]
+)
+_safe_include(
+    "app.api.v1.endpoints.users",
+    prefix="/users",
+    tags=["Users"]
+)
 
-# CUSTOMER
-_safe_include("app.api.v1.endpoints.customer", prefix="/customer", tags=["Customer Auth"])
-_safe_include("app.api.v1.endpoints.customer_profile", prefix="/customer", tags=["Customer Profile"])
-_safe_include("app.api.v1.endpoints.address", prefix="/customer/addresses", tags=["Address"])
-_safe_include("app.api.v1.endpoints.users", prefix="/users", tags=["Users"])
+# CUSTOMER PROFILE
+_safe_include(
+    "app.api.v1.endpoints.customer_profile",
+    prefix="/customer",
+    tags=["Customer Profile"]
+)
 
-# MERCHANT
-_safe_include("app.api.v1.endpoints.merchant", prefix="/merchant", tags=["Merchant Auth"])
-_safe_include("app.api.v1.endpoints.merchant_profile", prefix="/merchant", tags=["Merchant Profile"])
+# ADDRESS
+_safe_include(
+    "app.api.v1.endpoints.address",
+    prefix="/customer/addresses",
+    tags=["Address"]
+)
+
+# MERCHANT AUTH
+_safe_include(
+    "app.api.v1.endpoints.merchant",
+    prefix="/auth/merchant",
+    tags=["Auth Merchant"]
+)
+_safe_include(
+    "app.api.v1.endpoints.merchant",
+    prefix="/merchant",
+    tags=["Auth Merchant"]
+)
+
+# MERCHANT PROFILE
+_safe_include(
+    "app.api.v1.endpoints.merchant_profile",
+    prefix="/merchant",
+    tags=["Merchant Profile"]
+)
 
 # ADMIN
+_safe_include("app.api.v1.endpoints.admin", prefix="/auth/admin", tags=["Admin Auth"])
 _safe_include("app.api.v1.endpoints.admin", prefix="/admin", tags=["Admin Auth"])
 _safe_include("app.api.v1.endpoints.admin_profile", prefix="/admin", tags=["Admin Profile"])
 _safe_include("app.api.v1.endpoints.admin_moderation", prefix="/admin", tags=["Admin Moderation"])
@@ -54,6 +86,10 @@ _safe_include("app.api.v1.endpoints.blog_categories", tags=["Blog Categories"])
 
 # ORDERS
 _safe_include("app.api.v1.endpoints.orders", prefix="/orders", tags=["Orders"])
+
+# Capacity 
+_safe_include("app.api.v1.endpoints.capacity", prefix="/capacity", tags=["Capacity"])
+
 
 # NOTIFICATIONS
 _safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tags=["Notifications"])

@@ -12,7 +12,9 @@ from app.models.merchant_model import (
 
 from app.models.admin_model import (
     Admin,
-    Business
+    Business,
+    Attribute,
+    AttributeOption
 )
 
 from app.models.category_model import Category
@@ -83,7 +85,9 @@ def get_all_businesses(
     limit: int = 10
 ) -> Tuple[int, List[Business]]:
 
-    query = db.query(Business)
+    query = db.query(Business).filter(
+        Business.is_deleted  == False
+    )
 
     # SEARCH
     if search:
@@ -127,7 +131,8 @@ def get_business_by_id(
 ) -> Optional[Business]:
 
     return db.query(Business).filter(
-        Business.id == business_id
+        Business.id == business_id,
+        Business.is_deleted  == False
     ).first()
 
 
@@ -139,7 +144,8 @@ def get_business_with_merchant(
     return db.query(Business).options(
         joinedload(Business.merchant)
     ).filter(
-        Business.id == business_id
+        Business.id == business_id,
+        Business.is_deleted  == False
     ).first()
 
 
@@ -382,3 +388,110 @@ def create_category_repo(
     db.refresh(category)
 
     return category
+
+# CREATE ATTRIBUTE
+def create_attribute_repo(
+    db: Session,
+    payload
+):
+
+    attribute = Attribute(
+        name=payload.name,
+        display_name=payload.display_name,
+        slug=payload.slug,
+        field_type=payload.field_type,
+        placeholder=payload.placeholder,
+        is_required=payload.is_required,
+        is_active=payload.is_active,
+        is_global=payload.is_global,
+        created_by=payload.created_by
+    )
+
+    db.add(attribute)
+    db.commit()
+    db.refresh(attribute)
+
+    # CREATE OPTIONS
+    if payload.options:
+
+        for option in payload.options:
+
+            attribute_option = AttributeOption(
+                attribute_id=attribute.id,
+                option_label=option.option_label,
+                option_value=option.option_value
+            )
+
+            db.add(attribute_option)
+
+        db.commit()
+
+    db.refresh(attribute)
+
+    return attribute
+
+
+# GET ATTRIBUTE BY SLUG
+def get_attribute_by_slug_repo(
+    db: Session,
+    slug: str
+):
+
+    return db.query(Attribute).filter(
+        Attribute.slug == slug
+    ).first()
+
+
+# GET ATTRIBUTE BY ID
+def get_attribute_by_id_repo(
+    db: Session,
+    attribute_id
+):
+
+    return db.query(Attribute).filter(
+        Attribute.id == attribute_id
+    ).first()
+
+
+# GET ALL ATTRIBUTES
+def get_all_attributes_repo(db: Session):
+
+    return db.query(Attribute).all()
+
+
+# UPDATE ATTRIBUTE
+def update_attribute_repo(
+    db: Session,
+    attribute,
+    payload
+):
+
+    if payload.name is not None:
+        attribute.name = payload.name
+
+    if payload.display_name is not None:
+        attribute.display_name = payload.display_name
+
+    if payload.placeholder is not None:
+        attribute.placeholder = payload.placeholder
+
+    if payload.is_required is not None:
+        attribute.is_required = payload.is_required
+
+    if payload.is_active is not None:
+        attribute.is_active = payload.is_active
+
+    db.commit()
+    db.refresh(attribute)
+
+    return attribute
+
+
+# DELETE ATTRIBUTE
+def delete_attribute_repo(
+    db: Session,
+    attribute
+):
+
+    db.delete(attribute)
+    db.commit()

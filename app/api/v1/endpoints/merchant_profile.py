@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, status, UploadFile, File, Query
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
+from app.db.database import get_db
+from app.core.dependencies import get_current_user
+from datetime import date
 from app.services.merchant_service import (
     get_merchant_profile_service, 
     update_merchant_profile_service, 
@@ -24,7 +26,13 @@ from app.services.merchant_service import (
     publish_listing_service,
     unpublish_listing_service,
     upload_listing_images_service,
-    delete_listing_image_service
+    delete_listing_image_service,
+    create_custom_attribute_service,
+    map_attribute_to_business_service,
+    map_attribute_to_listing_service,
+    get_merchant_bookings_service,
+    update_booking_status_service,
+    get_merchant_attributes_service
 )
 from app.schemas.merchant_schema import (
     MerchantProfileUpdate, 
@@ -33,19 +41,23 @@ from app.schemas.merchant_schema import (
     UpdateBusinessProfile,
     MerchantListingCreate,
     MerchantDraftCreate,
-    UpdateMerchantListing
+    UpdateMerchantListing, 
+    MerchantCustomAttributeCreate,
+    MerchantCustomAttributeResponse,
+    BusinessAttributeMapCreate,
+    BusinessAttributeMapResponse,
+    ListingAttributeMapCreate,
+    ListingAttributeMapResponse,
+    MerchantBookingList,
+    BookingStatusUpdateResponse,
+    BookingStatusUpdate
 )
+from uuid import UUID
 
 router = APIRouter(
-    tags=["Merchant"]
+    tags=["Merchant"],
+    dependencies=[Depends(get_current_user)]
 )
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.get("/profile", status_code=status.HTTP_200_OK)
 def get_profile(
@@ -246,13 +258,13 @@ def save_listing_as_draft(
     status_code=status.HTTP_200_OK
 )
 def get_my_listings(
-    merchantId: str = Query(..., description="Merchant id"),
-    businessId: Optional[str] = None,
+    merchant_id: str = Query(..., description="Merchant id"),
+    business_id: Optional[str] = None,
     status_filter: str = Query(
         default=None,
         alias="status"
     ),
-    listingType: str = None,
+    listing_type: str = None,
     search: str = None,
     page: int = 1,
     limit: int = 10,
@@ -260,10 +272,10 @@ def get_my_listings(
 ):
     return get_my_listings_service(
         db=db,
-        merchant_id=merchantId,
-        businessId=businessId,
+        merchant_id=merchant_id,
+        businessId=business_id,
         status_filter=status_filter,
-        listingType=listingType,
+        listingType=listing_type,
         search=search,
         page=page,
         limit=limit
@@ -271,25 +283,25 @@ def get_my_listings(
 
 # GET LISTING DETAILS
 @router.get(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
     status_code=status.HTTP_200_OK
 )
 def get_listing_details(
-    listingId: str,
+    listing_id: str,
     db: Session = Depends(get_db)
 ):
     return get_listing_details_service(
         db=db,
-        listingId=listingId
+        listingId=listing_id
     )
 
 # UPDATE LISTING
 @router.put(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
     status_code=status.HTTP_200_OK
 )
 def update_listing(
-    listingId: str,
+    listing_id: str,
     payload: UpdateMerchantListing,
     merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
@@ -297,87 +309,197 @@ def update_listing(
     return update_listing_service(
         db=db,
         merchant_id=merchant_id,
-        listingId=listingId,
+        listingId=listing_id,
         payload=payload
     )
 
 # DELETE LISTING
 @router.delete(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
     status_code=status.HTTP_200_OK
 )
 def delete_listing(
-    listingId: str,
-    merchantId: str = Query(..., description="Merchant id"),
+    listing_id: str,
+    merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return delete_listing_service(
         db=db,
-        merchant_id=merchantId,
-        listingId=listingId
+        merchant_id=merchant_id,
+        listingId=listing_id
     )
 
 # PUBLISH LISTING
 @router.patch(
-    "/listings/{listingId}/publish",
+    "/listings/{listing_id}/publish",
     status_code=status.HTTP_200_OK
 )
 def publish_listing(
-    listingId: str,
-    merchantId: str = Query(..., description="Merchant id"),
+    listing_id: str,
+    merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return publish_listing_service(
         db=db,
-        merchant_id=merchantId,
-        listingId=listingId
+        merchant_id=merchant_id,
+        listing_id=listing_id
     )
 
 # UNPUBLISH LISTING
 @router.patch(
-    "/listings/{listingId}/unpublish",
+    "/listings/{listing_id}/unpublish",
     status_code=status.HTTP_200_OK
 )
 def unpublish_listing(
-    listingId: str,
-    merchantId: str = Query(..., description="Merchant id"),
+    listing_id: str,
+    merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return unpublish_listing_service(
         db=db,
-        merchant_id=merchantId,
-        listingId=listingId
+        merchant_id=merchant_id,
+        listingId=listing_id
     )
 
 # UPLOAD LISTING IMAGES
 @router.post(
-    "/listings/{listingId}/images",
+    "/listings/{listing_id}/images",
     status_code=status.HTTP_200_OK
 )
 def upload_listing_images(
-    listingId: str,
+    listing_id: str,
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db)
 ):
 
     return upload_listing_images_service(
         db=db,
-        listingId=listingId,
+        listingId=listing_id,
         files=files
     )
 
 # DELETE LISTING IMAGE
 @router.delete(
-    "/listings/{listingId}/images/{imageId}",
+    "/listings/{listing_id}/images/{image_id}",
     status_code=status.HTTP_200_OK
 )
 def delete_listing_image(
-    listingId: str,
-    imageId: str,
+    listing_id: str,
+    image_id: str,
     db: Session = Depends(get_db)
 ):
     return delete_listing_image_service(
         db=db,
-        listingId=listingId,
-        imageId=imageId
+        listingId=listing_id,
+        imageId=image_id
+    )
+
+# CREATE CUSTOM ATTRIBUTE
+@router.post(
+    "/attributes",
+    response_model=MerchantCustomAttributeResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_custom_attribute(
+    payload: MerchantCustomAttributeCreate,
+    db: Session = Depends(get_db)
+):
+
+    return create_custom_attribute_service(
+        db,
+        payload
+    )
+
+# GET MERCHANT ATTRIBUTES
+@router.get(
+    "/attributes",
+    status_code=status.HTTP_200_OK
+)
+def get_merchant_attributes(
+    db: Session = Depends(get_db)
+):
+
+    return get_merchant_attributes_service(db)
+
+# MAP ATTRIBUTE TO BUSINESS
+@router.post(
+    "/business/{id}/attributes",
+    response_model=BusinessAttributeMapResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def map_attribute_to_business(
+    id: str,
+    payload: BusinessAttributeMapCreate,
+    db: Session = Depends(get_db)
+):
+
+    return map_attribute_to_business_service(
+        db,
+        id,
+        payload
+    )
+
+# MAP ATTRIBUTE TO LISTING
+@router.post(
+    "/listings/{id}/attributes",
+    response_model=ListingAttributeMapResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def map_attribute_to_listing(
+    id: str,
+    payload: ListingAttributeMapCreate,
+    db: Session = Depends(get_db)
+):
+    return map_attribute_to_listing_service(
+        db,
+        id,
+        payload
+    )
+
+@router.get(
+    "/bookings",
+    response_model=MerchantBookingList,
+    status_code=status.HTTP_200_OK
+)
+def get_merchant_bookings(
+    status_filter: str = Query(
+        default=None,
+        alias="status"
+    ),
+    booking_date: date = Query(
+        default=None
+    ),
+    page: int = Query(
+        ...,
+        gt=0
+    ),
+    size: int = Query(
+        ...,
+        gt=0
+    ),
+    db: Session = Depends(get_db)
+):
+    return get_merchant_bookings_service(
+        db=db,
+        page=page,
+        size=size,
+        booking_status=status_filter,
+        booking_date=booking_date
+    )
+
+@router.put(
+    "/bookings/{id}/status",
+    response_model=BookingStatusUpdateResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_booking_status(
+    id: UUID,
+    payload: BookingStatusUpdate,
+    db: Session = Depends(get_db)
+):
+
+    return update_booking_status_service(
+        db=db,
+        booking_id=id,
+        payload=payload
     )

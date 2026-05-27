@@ -181,7 +181,6 @@ def _get_fcm_access_token() -> str | None:
     except ImportError:
         return None
 
-    info = None
     if settings.FCM_SERVICE_ACCOUNT_JSON:
         info = json.loads(settings.FCM_SERVICE_ACCOUNT_JSON)
         credentials = service_account.Credentials.from_service_account_info(

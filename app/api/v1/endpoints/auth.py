@@ -38,17 +38,9 @@ from app.models.customer_model import Customer
 from app.models.merchant_model import Merchant
 from app.models.admin_model import Admin
 
-from app.db.database import SessionLocal
+from app.db.database import get_db
 
 router = APIRouter()
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # FORGOT PASSWORD
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)

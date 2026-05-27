@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.schemas.merchant_schema import MerchantRegister, MerchantLogin
 from app.services.merchant_service import register_merchant_service, login_merchant_service, google_login_service
 
@@ -9,12 +9,6 @@ router = APIRouter(
 )
 
 # DB Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_merchant(user: MerchantRegister, db: Session = Depends(get_db)):

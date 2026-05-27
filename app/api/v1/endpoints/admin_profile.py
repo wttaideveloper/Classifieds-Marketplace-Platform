@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
 
-from app.db.database import SessionLocal
+from app.db.database import get_db
+from app.core.dependencies import get_current_admin
 from app.schemas.admin_schema import (
     AdminProfileUpdate,
     UserDetailsResponse,
@@ -26,7 +27,10 @@ from app.schemas.admin_schema import (
     SuspendListingResponse,
     ReactivateListingResponse,
     CreateCategorySchema,
-    CreateCategoryResponse
+    CreateCategoryResponse,
+    AttributeCreate,
+    AttributeUpdate,
+    AttributeResponse
 )
 from app.services.admin_service import (
     get_admin_profile_service,
@@ -48,23 +52,23 @@ from app.services.admin_service import (
     reject_listing_service,
     suspend_listing_service,
     reactivate_listing_service,
-    create_category_service
+    create_category_service,
+    create_attribute_service,
+    get_all_attributes_service,
+    get_attribute_by_id_service,
+    update_attribute_service,
+    delete_attribute_service
 )
 from app.exceptions.custom_exception import CustomException
 
 
 router = APIRouter(
-    tags=["Admin"]
+    tags=["Admin"],
+    dependencies=[Depends(get_current_admin)]
 )
 
 
 # DB Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 #  ADMIN PROFILE 
@@ -292,67 +296,67 @@ def get_all_listings(
 
 # APPROVE LISTING
 @router.patch(
-    "/listings/{listingId}/approve",
+    "/listings/{listing_id}/approve",
     status_code=status.HTTP_200_OK
 )
 def approve_listing(
-    listingId: str,
+    listing_id: str,
     db: Session = Depends(get_db)
 ):
     return approve_listing_service(
         db=db,
-        listingId=listingId
+        listingId=listing_id
     )
 
 # REJECT LISTING
 @router.patch(
-    "/listings/{listingId}/reject",
+    "/listings/{listing_id}/reject",
     status_code=status.HTTP_200_OK
 )
 def reject_listing(
-    listingId: str,
+    listing_id: str,
     payload: RejectListingRequest,
     db: Session = Depends(get_db)
 ):
 
     return reject_listing_service(
         db=db,
-        listingId=listingId,
+        listingId=listing_id,
         payload=payload
     )
 
 # SUSPEND LISTING
 @router.patch(
-    "/listings/{listingId}/suspend",
+    "/listings/{listing_id}/suspend",
     response_model=SuspendListingResponse,
     status_code=status.HTTP_200_OK
 )
 def suspend_listing(
-    listingId: str,
+    listing_id: str,
     payload: SuspendListingRequest,
     db: Session = Depends(get_db)
 ):
 
     return suspend_listing_service(
         db=db,
-        listingId=listingId,
+        listingId=listing_id,
         payload=payload
     )
 
 # REACTIVATE LISTING
 @router.patch(
-    "/listings/{listingId}/reactivate",
+    "/listings/{listing_id}/reactivate",
     response_model=ReactivateListingResponse,
     status_code=status.HTTP_200_OK
 )
 def reactivate_listing(
-    listingId: str,
+    listing_id: str,
     db: Session = Depends(get_db)
 ):
 
     return reactivate_listing_service(
         db=db,
-        listingId=listingId
+        listingId=listing_id
     )
 
 # CREATE CATEGORY
@@ -370,3 +374,85 @@ def create_category(
         db=db,
         payload=payload
     )
+
+# CREATE ATTRIBUTE
+@router.post(
+    "/attributes",
+    response_model=AttributeResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_attribute(
+    payload: AttributeCreate,
+    db: Session = Depends(get_db)
+):
+
+    return create_attribute_service(
+        db,
+        payload
+    )
+
+
+# GET ALL ATTRIBUTES
+@router.get(
+    "/attributes",
+    response_model=list[AttributeResponse],
+    status_code=status.HTTP_200_OK
+)
+def get_all_attributes(
+    db: Session = Depends(get_db)
+):
+
+    return get_all_attributes_service(db)
+
+
+# GET ATTRIBUTE BY ID
+@router.get(
+    "/attributes/{attribute_id}",
+    response_model=AttributeResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_attribute_by_id(
+    attribute_id: str,
+    db: Session = Depends(get_db)
+):
+
+    return get_attribute_by_id_service(
+        db,
+        attribute_id
+    )
+
+
+# UPDATE ATTRIBUTE
+@router.put(
+    "/attributes/{attribute_id}",
+    response_model=AttributeResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_attribute(
+    attribute_id: str,
+    payload: AttributeUpdate,
+    db: Session = Depends(get_db)
+):
+
+    return update_attribute_service(
+        db,
+        attribute_id,
+        payload
+    )
+
+
+# DELETE ATTRIBUTE
+@router.delete(
+    "/attributes/{attribute_id}",
+    status_code=status.HTTP_200_OK
+)
+def delete_attribute(
+    attribute_id: str,
+    db: Session = Depends(get_db)
+):
+
+    return delete_attribute_service(
+        db,
+        attribute_id
+    )
+

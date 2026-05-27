@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.db.database import SessionLocal
+from app.core.dependencies import get_current_user
+from app.db.database import get_db
 from app.services.address_service import (
     add_address_service,
     get_addresses_service,
@@ -10,14 +11,7 @@ from app.services.address_service import (
 )
 from app.schemas.customer_schema import AddressBase
 
-router = APIRouter()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 @router.post("/")
 def add_address(
