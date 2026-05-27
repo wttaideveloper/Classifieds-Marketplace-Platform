@@ -25,7 +25,7 @@ from app.schemas.admin_schema import (
     SuspendListingRequest,
     SuspendListingResponse,
     ReactivateListingResponse,
-    CreateCategorySchema,
+    CreateCategoryRequest,
     CreateCategoryResponse,
     AttributeCreate,
     AttributeUpdate,
@@ -290,67 +290,67 @@ def get_all_listings(
 
 # APPROVE LISTING
 @router.patch(
-    "/listings/{listingId}/approve",
+    "/listings/{listing_id}/approve",
     status_code=status.HTTP_200_OK
 )
 def approve_listing(
-    listingId: UUID,
+    listing_id: UUID,
     db: Session = Depends(get_db)
 ):
     return approve_listing_service(
         db=db,
-        listingId=listingId
+        listing_id=listing_id
     )
 
 # REJECT LISTING
 @router.patch(
-    "/listings/{listingId}/reject",
+    "/listings/{listing_id}/reject",
     status_code=status.HTTP_200_OK
 )
 def reject_listing(
-    listingId: UUID,
+    listing_id: UUID,
     payload: RejectListingRequest,
     db: Session = Depends(get_db)
 ):
 
     return reject_listing_service(
         db=db,
-        listingId=listingId,
+        listing_id=listing_id,
         payload=payload
     )
 
 # SUSPEND LISTING
 @router.patch(
-    "/listings/{listingId}/suspend",
+    "/listings/{listing_id}/suspend",
     response_model=SuspendListingResponse,
     status_code=status.HTTP_200_OK
 )
 def suspend_listing(
-    listingId: UUID,
+    listing_id: UUID,
     payload: SuspendListingRequest,
     db: Session = Depends(get_db)
 ):
 
     return suspend_listing_service(
         db=db,
-        listingId=listingId,
+        listing_id=listing_id,
         payload=payload
     )
 
 # REACTIVATE LISTING
 @router.patch(
-    "/listings/{listingId}/reactivate",
+    "/listings/{listing_id}/reactivate",
     response_model=ReactivateListingResponse,
     status_code=status.HTTP_200_OK
 )
 def reactivate_listing(
-    listingId: UUID,
+    listing_id: UUID,
     db: Session = Depends(get_db)
 ):
 
     return reactivate_listing_service(
         db=db,
-        listingId=listingId
+        listing_id=listing_id
     )
 
 # CREATE CATEGORY
@@ -360,7 +360,7 @@ def reactivate_listing(
     status_code=status.HTTP_201_CREATED
 )
 def create_category(
-    payload: CreateCategorySchema,
+    payload: CreateCategoryRequest,
     db: Session = Depends(get_db)
 ):
 

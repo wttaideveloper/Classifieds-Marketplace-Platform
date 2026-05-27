@@ -7,23 +7,23 @@ from decimal import Decimal
 from enum import Enum as PyEnum
 
 class BookingStatus(str, PyEnum):
-    Pending = "Pending"
-    Approved = "Approved"
-    Rejected = "Rejected"
-    Completed = "Completed"
-    Cancelled = "Cancelled"
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 # REGISTER
 class CustomerRegister(BaseModel):
-    firstName: str
-    lastName: str
+    first_name: str
+    last_name: str
     email: EmailStr
-    mobileNumber: str
+    mobile_number: str
     password: str
-    confirmPassword: str
-    acceptTerms: bool
-    acceptPrivacyPolicy: bool
+    confirm_password: str
+    accept_terms: bool
+    accept_privacy_policy: bool
 
 # LOGIN
 class CustomerLogin(BaseModel):
@@ -37,51 +37,51 @@ class ForgotPassword(BaseModel):
 
 #  RESET PASSWORD
 class ResetPassword(BaseModel):
-    resetToken: str
-    newPassword: str
-    confirmPassword: str
+    reset_token: str
+    new_password: str
+    confirm_password: str
 
 #  CHANGE PASSWORD
 class ChangePassword(BaseModel):
-    currentPassword: str
-    newPassword: str
-    confirmPassword: str
+    current_password: str
+    new_password: str
+    confirm_password: str
     @field_validator("confirmPassword")
     @classmethod
     def passwords_match(cls, v, values):
         if "password" in values.data and v != values.data["password"]:
             raise ValueError("Passwords do not match")
-        if "newPassword" in values.data and v != values.data["newPassword"]:
+        if "new_password" in values.data and v != values.data["new_password"]:
             raise ValueError("Passwords do not match")
         return v
 
 # PROFILE
 class CustomerProfileResponse(BaseModel):
     id: UUID
-    firstName: str
-    lastName: str
+    first_name: str
+    last_name: str
     email: str
-    mobileNumber: str
+    mobile_number: str
 
     class Config:
         from_attributes = True
 
 class CustomerProfileUpdate(BaseModel):
-    firstName: Optional[str] = None
-    lastName: Optional[str] = None
-    mobileNumber: Optional[str] = None
-    profileImage: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    mobile_number: Optional[str] = None
+    profile_image: Optional[str] = None
     addresses: Optional[str] = None
 
 # ADDRESS
 class AddressBase(BaseModel):
-    addressLine1: str
-    addressLine2: Optional[str]
+    address_line_1: str
+    address_line_2: Optional[str]
     city: str
     state: str
-    zipCode: str
+    zip_code: str
     country: str
-    isDefault: bool = False
+    is_default: bool = False
 
 # CREATE ADDRESS REQUEST
 class AddressCreate(AddressBase):
@@ -109,33 +109,33 @@ class PublicListingQuerySchema(BaseModel):
 
     search: Optional[str] = None
     category: Optional[str] = None
-    listingType: Optional[str] = None
+    listing_type: Optional[str] = None
     city: Optional[str] = None
-    priceMin: Optional[float] = None
-    priceMax: Optional[float] = None
+    price_min: Optional[float] = None
+    price_max: Optional[float] = None
     page: int = 1
     limit: int = 10
-    sortBy: Optional[str] = "latest"
+    sort_by: Optional[str] = "latest"
 
 class GetListingDetailsSchema(BaseModel):
 
-    listingId: UUID
+    listing_id: UUID
 
 class SearchListingsResponseData(BaseModel):
 
     id: UUID
 
-    businessId: UUID
+    business_id: UUID
 
-    listingType: str
+    listing_type: str
 
     title: str
 
     description: Optional[str]
 
-    categoryId: Optional[UUID]
+    category_id: Optional[UUID]
 
-    subcategoryId: Optional[UUID]
+    subcategory_id: Optional[UUID]
 
     price: Optional[float]
 

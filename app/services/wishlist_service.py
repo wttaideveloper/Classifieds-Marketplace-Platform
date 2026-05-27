@@ -31,7 +31,7 @@ def create_wishlist_service(
             "Customer not found"
         )
 
-    if payload.wishlist_type == WishlistType.Business:
+    if payload.wishlist_type == WishlistType.BUSINESS:
 
         business = db.query(Business).filter(
             Business.id == payload.business_id
@@ -57,7 +57,7 @@ def create_wishlist_service(
                 "Business already added to wishlist"
             )
 
-    if payload.wishlist_type == WishlistType.Listing:
+    if payload.wishlist_type == WishlistType.LISTING:
 
         listing = db.query(MerchantListing).filter(
             MerchantListing.id == payload.listing_id

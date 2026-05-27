@@ -27,7 +27,7 @@ from uuid import UUID
 
 def get_merchant_by_email(db: Session, email: str):
     return db.query(Merchant).filter(
-        Merchant.businessEmail == email
+        Merchant.business_email == email
     ).first()
 
 def get_merchant_by_external_auth_id(db: Session, external_auth_user_id: str):
@@ -35,10 +35,10 @@ def get_merchant_by_external_auth_id(db: Session, external_auth_user_id: str):
     Optional lookup used by some auth flows.
     If the column isn't present in the model, return None.
     """
-    if not hasattr(Merchant, "externalAuthUserId"):
+    if not hasattr(Merchant, "external_auth_user_id"):
         return None
     return db.query(Merchant).filter(
-        Merchant.externalAuthUserId == external_auth_user_id
+        Merchant.external_auth_user_id == external_auth_user_id
     ).first()
 
 def get_merchant_by_id(db: Session, merch_id: str):
@@ -137,17 +137,17 @@ def create_listing_repo(db: Session, merchant_id: str, payload):
 
      # CHECK BUSINESS BELONGS TO MERCHANT
     business = db.query(Business).filter(
-        Business.id == payload.businessId,
+        Business.id == payload.business_id,
         Business.merchant_id == uuid.UUID(merchant_id)
     ).first()
 
     listing = MerchantListing(
-        businessId=payload.businessId,
-        listingType=payload.listingType,
+        business_id=payload.business_id,
+        listing_type=payload.listing_type,
         title=payload.title,
         description=payload.description,
-        categoryId=payload.categoryId,
-        subcategoryId=payload.subcategoryId,
+        category_id=payload.category_id,
+        subcategory_id=payload.subcategory_id,
         price=payload.price,
         currency=payload.currency,
         images=payload.images,
@@ -155,22 +155,22 @@ def create_listing_repo(db: Session, merchant_id: str, payload):
         tags=payload.tags,
 
         # Product
-        stockQuantity=payload.stockQuantity,
+        stock_quantity=payload.stock_quantity,
         sku=payload.sku,
         weight=payload.weight,
 
         # Service
         duration=payload.duration,
-        serviceMode=payload.serviceMode,
+        service_mode=payload.service_mode,
         availability=payload.availability,
 
         # Event / Training / Program
-        startDate=payload.startDate,
-        endDate=payload.endDate,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
         capacity=payload.capacity,
         location=payload.location,
-        isOnline=payload.isOnline,
-        registrationDeadline=payload.registrationDeadline
+        is_online=payload.is_online,
+        registration_deadline=payload.registration_deadline
     )
 
     db.add(listing)
@@ -187,14 +187,14 @@ def save_listing_draft_repo(
 
     draft = MerchantListingDraft(
 
-        businessId=payload.businessId,
-        listingType=payload.listingType,
+        business_id=payload.business_id,
+        listing_type=payload.listing_type,
 
         title=payload.title,
         description=payload.description,
 
-        categoryId=payload.categoryId,
-        subcategoryId=payload.subcategoryId,
+        category_id=payload.category_id,
+        subcategory_id=payload.subcategory_id,
 
         price=payload.price,
         currency=payload.currency,
@@ -206,22 +206,22 @@ def save_listing_draft_repo(
         tags=payload.tags,
 
         # Product
-        stockQuantity=payload.stockQuantity,
+        stock_quantity=payload.stock_quantity,
         sku=payload.sku,
         weight=payload.weight,
 
         # Service
         duration=payload.duration,
-        serviceMode=payload.serviceMode,
+        service_mode=payload.service_mode,
         availability=payload.availability,
 
         # Event / Training / Program
-        startDate=payload.startDate,
-        endDate=payload.endDate,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
         capacity=payload.capacity,
         location=payload.location,
-        isOnline=payload.isOnline,
-        registrationDeadline=payload.registrationDeadline
+        is_online=payload.is_online,
+        registration_deadline=payload.registration_deadline
     )
 
     db.add(draft)
@@ -233,24 +233,24 @@ def save_listing_draft_repo(
 def get_my_listings_repo(
     db: Session,
     merchant_id,
-    businessId,
+    business_id,
     status,
-    listingType,
+    listing_type,
     search,
     skip,
     limit
 ):
     query = db.query(MerchantListing).join(
         Business,
-        MerchantListing.businessId == Business.id
+        MerchantListing.business_id == Business.id
     ).filter(
         Business.merchant_id == merchant_id
     )
 
     # FILTER BY BUSINESS ID
-    if businessId:
+    if business_id:
         query = query.filter(
-            MerchantListing.businessId == businessId
+            MerchantListing.businessId == business_id
         )
 
     # FILTER BY STATUS
@@ -260,9 +260,9 @@ def get_my_listings_repo(
         )
 
     # FILTER BY LISTING TYPE
-    if listingType:
+    if listing_type:
         query = query.filter(
-            MerchantListing.listingType == listingType
+            MerchantListing.listing_type == listing_type
         )
 
     # SEARCH
@@ -283,19 +283,19 @@ def get_my_listings_repo(
 
 def get_listing_details_repo(
     db: Session,
-    listingId
+    listing_id
 ):
     listing = db.query(MerchantListing).filter(
-        MerchantListing.id == listingId
+        MerchantListing.id == listing_id
     ).first()
     return listing
 
 def get_listing_by_id_repo(
     db: Session,
-    listingId
+    listing_id
 ):
     return db.query(MerchantListing).filter(
-        MerchantListing.id == listingId
+        MerchantListing.id == listing_id
     ).first()
 
 
@@ -514,7 +514,7 @@ def get_merchant_bookings_repo(
             Booking.id.label("booking_id"),
 
             (
-                Customer.firstName + " " + Customer.lastName
+                Customer.first_name + " " + Customer.last_name
             ).label("customer_name"),
 
             MerchantListing.title.label("listing_name"),

@@ -6,8 +6,8 @@ from enum import Enum as PyEnum
 
 
 class WishlistType(str, PyEnum):
-    Business = "business"
-    Listing = "listing"
+    BUSINESS = "business"
+    LISTING = "listing"
 
 
 class WishlistCreate(BaseModel):
@@ -19,13 +19,13 @@ class WishlistCreate(BaseModel):
     @model_validator(mode="after")
     def validate_wishlist(self):
 
-        if self.wishlist_type == WishlistType.Business:
+        if self.wishlist_type == WishlistType.BUSINESS:
             if not self.business_id:
                 raise ValueError(
                     "business_id is required for business wishlist"
                 )
 
-        if self.wishlist_type == WishlistType.Listing:
+        if self.wishlist_type == WishlistType.LISTING:
             if not self.listing_id:
                 raise ValueError(
                     "listing_id is required for listing wishlist"

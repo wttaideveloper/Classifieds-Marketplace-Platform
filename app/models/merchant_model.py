@@ -112,7 +112,11 @@ class MerchantProfile(Base):
 
     __tablename__ = "merchant_profiles"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
 
     merchant_id = Column(
         UUID(as_uuid=True),
@@ -122,55 +126,55 @@ class MerchantProfile(Base):
         index=True
     )
 
-    businessName = Column(String(255), nullable=False)
+    business_name = Column(String(255), nullable=False)
 
-    businessDescription = Column(Text, nullable=True)
+    business_description = Column(Text, nullable=True)
 
-    primaryCategory = Column(String(255), nullable=False)
+    primary_category = Column(String(255), nullable=False)
 
     subcategory = Column(String(255), nullable=True)
 
-    businessEmail = Column(String(255), nullable=False)
+    business_email = Column(String(255), nullable=False)
 
-    phoneNumber = Column(String(20), nullable=False)
+    phone_number = Column(String(20), nullable=False)
 
-    fullAddress = Column(Text, nullable=False)
+    full_address = Column(Text, nullable=False)
 
     city = Column(String(100), nullable=False)
 
     state = Column(String(100), nullable=False)
 
-    zipCode = Column(String(20), nullable=False)
+    zip_code = Column(String(20), nullable=False)
 
     country = Column(String(100), nullable=False)
 
-    latitude = Column(String(50), nullable=True)
+    latitude = Column(Float, nullable=True)
 
-    longitude = Column(String(50), nullable=True)
+    longitude = Column(Float, nullable=True)
 
-    businessLogo = Column(String(500), nullable=True)
+    business_logo = Column(String(500), nullable=True)
 
-    bannerImage = Column(String(500), nullable=True)
+    banner_image = Column(String(500), nullable=True)
 
-    galleryImages = Column(JSON, default=list)
+    gallery_images = Column(JSON, default=list)
 
-    operatingHours = Column(JSON, default=dict)
+    operating_hours = Column(JSON, default=dict)
 
-    businessType = Column(String(50), nullable=False)
+    business_type = Column(String(50), nullable=False)
 
-    cancellationPolicy = Column(Text, nullable=True)
+    cancellation_policy = Column(Text, nullable=True)
 
-    refundPolicy = Column(Text, nullable=True)
+    refund_policy = Column(Text, nullable=True)
 
-    merchantTermsOfService = Column(Text, nullable=True)
+    merchant_terms_of_service = Column(Text, nullable=True)
 
-    websiteUrl = Column(String(500), nullable=True)
+    website_url = Column(String(500), nullable=True)
 
-    socialMediaLinks = Column(JSON, default=dict)
+    social_media_links = Column(JSON, default=dict)
 
-    additionalContactNumbers = Column(JSON, default=list)
+    additional_contact_numbers = Column(JSON, default=list)
 
-    shortTagline = Column(String(255), nullable=True)
+    short_tagline = Column(String(255), nullable=True)
 
     status = Column(String, default="draft")
 
@@ -195,7 +199,11 @@ class MerchantBusinessDraft(Base):
 
     __tablename__ = "merchant_business_drafts"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
 
     merchant_id = Column(
         UUID(as_uuid=True),
@@ -205,55 +213,55 @@ class MerchantBusinessDraft(Base):
         index=True
     )
 
-    businessName = Column(String(255), nullable=True)
+    business_name = Column(String(255), nullable=True)
 
-    businessDescription = Column(Text, nullable=True)
+    business_description = Column(Text, nullable=True)
 
-    primaryCategory = Column(String(255), nullable=True)
+    primary_category = Column(String(255), nullable=True)
 
     subcategory = Column(String(255), nullable=True)
 
-    businessEmail = Column(String(255), nullable=True)
+    business_email = Column(String(255), nullable=True)
 
-    phoneNumber = Column(String(20), nullable=True)
+    phone_number = Column(String(20), nullable=True)
 
-    fullAddress = Column(Text, nullable=True)
+    full_address = Column(Text, nullable=True)
 
     city = Column(String(100), nullable=True)
 
     state = Column(String(100), nullable=True)
 
-    zipCode = Column(String(20), nullable=True)
+    zip_code = Column(String(20), nullable=True)
 
     country = Column(String(100), nullable=True)
 
-    latitude = Column(String(50), nullable=True)
+    latitude = Column(Float, nullable=True)
 
-    longitude = Column(String(50), nullable=True)
+    longitude = Column(Float, nullable=True)
 
-    businessLogo = Column(String(500), nullable=True)
+    business_logo = Column(String(500), nullable=True)
 
-    bannerImage = Column(String(500), nullable=True)
+    banner_image = Column(String(500), nullable=True)
 
-    galleryImages = Column(JSON, default=list)
+    gallery_images = Column(JSON, default=list)
 
-    operatingHours = Column(JSON, default=dict)
+    operating_hours = Column(JSON, default=dict)
 
-    businessType = Column(String(50), nullable=True)
+    business_type = Column(String(50), nullable=True)
 
-    cancellationPolicy = Column(Text, nullable=True)
+    cancellation_policy = Column(Text, nullable=True)
 
-    refundPolicy = Column(Text, nullable=True)
+    refund_policy = Column(Text, nullable=True)
 
-    merchantTermsOfService = Column(Text, nullable=True)
+    merchant_terms_of_service = Column(Text, nullable=True)
 
-    websiteUrl = Column(String(500), nullable=True)
+    website_url = Column(String(500), nullable=True)
 
-    socialMediaLinks = Column(JSON, default=dict)
+    social_media_links = Column(JSON, default=dict)
 
-    additionalContactNumbers = Column(JSON, default=list)
+    additional_contact_numbers = Column(JSON, default=list)
 
-    shortTagline = Column(String(255), nullable=True)
+    short_tagline = Column(String(255), nullable=True)
 
     status = Column(
         String(50),
@@ -288,13 +296,13 @@ class MerchantListing(Base):
         default=uuid.uuid4
     )
 
-    businessId = Column(
+    business_id = Column(
         UUID(as_uuid=True),
         ForeignKey("businesses.id"),
         nullable=False
     )
 
-    listingType = Column(
+    listing_type = Column(
         String,
         nullable=False
     )
@@ -309,13 +317,13 @@ class MerchantListing(Base):
         nullable=True
     )
 
-    categoryId = Column(
+    category_id = Column(
         UUID(as_uuid=True),
         ForeignKey("categories.id"),
         nullable=True
     )
 
-    subcategoryId = Column(
+    subcategory_id = Column(
         UUID(as_uuid=True),
         ForeignKey("categories.id"),
         nullable=True
@@ -347,7 +355,7 @@ class MerchantListing(Base):
     )
 
     # PRODUCT
-    stockQuantity = Column(Integer, nullable=True)
+    stock_quantity = Column(Integer, nullable=True)
 
     sku = Column(String, nullable=True)
 
@@ -356,37 +364,37 @@ class MerchantListing(Base):
     # SERVICE
     duration = Column(String, nullable=True)
 
-    serviceMode = Column(String, nullable=True)
+    service_mode = Column(String, nullable=True)
 
     availability = Column(String, nullable=True)
 
     schedule = Column(String, nullable=True)
 
     # EVENT / TRAINING / PROGRAM
-    startDate = Column(DateTime, nullable=True)
+    start_date = Column(DateTime, nullable=True)
 
-    endDate = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
 
     capacity = Column(Integer, nullable=True)
 
     location = Column(String, nullable=True)
 
-    isOnline = Column(Boolean, default=False)
+    is_online = Column(Boolean, default=False)
 
-    registrationDeadline = Column(
+    registration_deadline = Column(
         DateTime,
         nullable=True
     )
 
-    rejectionReason = Column(Text, nullable=True)
+    rejection_reason = Column(Text, nullable=True)
 
-    rejectedAt = Column(DateTime, nullable=True)
+    rejected_at = Column(DateTime, nullable=True)
 
-    suspensionReason = Column(Text, nullable=True)
+    suspension_reason = Column(Text, nullable=True)
 
-    suspendedAt = Column(DateTime, nullable=True)
+    suspended_at = Column(DateTime, nullable=True)
 
-    approvedAt = Column(DateTime, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),
@@ -405,12 +413,12 @@ class MerchantListing(Base):
 
     category = relationship(
         "Category",
-        foreign_keys=[categoryId]
+        foreign_keys=[category_id]
     )
 
     subcategory = relationship(
         "Category",
-        foreign_keys=[subcategoryId]
+        foreign_keys=[subcategory_id]
     )
     bookings = relationship(
         "Booking",
@@ -433,13 +441,13 @@ class MerchantListingDraft(Base):
         default=uuid.uuid4
     )
 
-    businessId = Column(
+    business_id = Column(
         UUID(as_uuid=True),
         ForeignKey("businesses.id"),
         nullable=False
     )
 
-    listingType = Column(
+    listing_type = Column(
         String,
         nullable=True
     )
@@ -454,13 +462,13 @@ class MerchantListingDraft(Base):
         nullable=True
     )
 
-    categoryId = Column(
+    category_id = Column(
         UUID(as_uuid=True),
         ForeignKey("categories.id"),
         nullable=True
     )
 
-    subcategoryId = Column(
+    subcategory_id = Column(
         UUID(as_uuid=True),
         ForeignKey("categories.id"),
         nullable=True
@@ -486,7 +494,7 @@ class MerchantListingDraft(Base):
         default=list
     )
 
-    stockQuantity = Column(Integer, nullable=True)
+    stock_quantity = Column(Integer, nullable=True)
 
     sku = Column(String, nullable=True)
 
@@ -494,23 +502,23 @@ class MerchantListingDraft(Base):
 
     duration = Column(String, nullable=True)
 
-    serviceMode = Column(String, nullable=True)
+    service_mode = Column(String, nullable=True)
 
     availability = Column(String, nullable=True)
 
     schedule = Column(String, nullable=True)
 
-    startDate = Column(DateTime, nullable=True)
+    start_date = Column(DateTime, nullable=True)
 
-    endDate = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
 
     capacity = Column(Integer, nullable=True)
 
     location = Column(String, nullable=True)
 
-    isOnline = Column(Boolean, default=False)
+    is_online = Column(Boolean, default=False)
 
-    registrationDeadline = Column(
+    registration_deadline = Column(
         DateTime,
         nullable=True
     )
@@ -533,12 +541,12 @@ class MerchantListingDraft(Base):
 
     category = relationship(
         "Category",
-        foreign_keys=[categoryId]
+        foreign_keys=[category_id]
     )
 
     subcategory = relationship(
         "Category",
-        foreign_keys=[subcategoryId]
+        foreign_keys=[subcategory_id]
     )
 
 # CUSTOM ATTRIBUTE TABLE

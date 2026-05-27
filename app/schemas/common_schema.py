@@ -3,34 +3,33 @@ from typing import Optional, List
 from decimal import Decimal
 from uuid import UUID
 from datetime import datetime, date, time
-from enum import Enum
 from enum import Enum as PyEnum
 
 class ListingType(str, PyEnum):
-    product = "product"
-    service = "service"
-    event = "event"
-    training = "training"
-    program = "program"
+    PRODUCT = "product"
+    SERVICE = "service"
+    EVENT = "event"
+    TRAINING = "training"
+    PROGRAM = "program"
 
 class BookingStatus(str, PyEnum):
-    Pending = "Pending"
-    Approved = "Approved"
-    Rejected = "Rejected"
-    Completed = "Completed"
-    Cancelled = "Cancelled"
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 class PaymentStatus(str, PyEnum):
-    Pending = "Pending"
-    Paid = "Paid"
-    Failed = "Failed"
-    Refunded = "Refunded"
+    PENDING = "pending"
+    PAID = "paid"
+    FAILED = "failed"
+    REFUNDED = "refunded"
     
 class RefreshTokenSchema(BaseModel):
-    refreshToken: str
+    refresh_token: str
 
 class VerifyEmailSchema(BaseModel):
-    verificationToken: str
+    verification_token: str
 
 class ResendVerificationSchema(BaseModel):
     email: EmailStr
@@ -38,8 +37,8 @@ class ResendVerificationSchema(BaseModel):
 class PublicListingResponse(BaseModel):
 
     id: UUID
-    businessId: UUID
-    listingType: str
+    business_Id: UUID
+    listing_type: str
     title: str
     description: Optional[str]
     category: Optional[str]
@@ -63,27 +62,27 @@ class PublicListingPaginationResponse(BaseModel):
 class PublicListingDetailsResponse(BaseModel):
 
     id: UUID
-    businessId: UUID
-    listingType: str
+    business_id: UUID
+    listing_type: str
     title: str
     description: Optional[str]
-    categoryId: Optional[UUID]
-    subcategoryId: Optional[UUID]
+    category_id: Optional[UUID]
+    subcategory_id: Optional[UUID]
     price: Optional[float]
     currency: Optional[str]
     images: List[str]
     status: str
     tags: List[str]
     duration: Optional[str]
-    serviceMode: Optional[str]
+    service_mode: Optional[str]
     availability: Optional[str]
     schedule: Optional[str]
-    startDate: Optional[datetime]
-    endDate: Optional[datetime]
+    start_date: Optional[datetime]
+    end_date: Optional[datetime]
     capacity: Optional[int]
     location: Optional[str]
     isOnline: Optional[bool]
-    registrationDeadline: Optional[datetime]
+    registration_deadline: Optional[datetime]
 
     class Config:
         from_attributes = True
@@ -106,7 +105,7 @@ class CategoryData(BaseModel):
     name: str
     description: Optional[str]
     icon: Optional[str]
-    isActive: bool
+    is_active: bool
     created_at: Optional[datetime] = None
 
     class Config:
@@ -136,7 +135,7 @@ class SubcategoryResponse(BaseModel):
     name: str
     description: Optional[str]
     icon: Optional[str]
-    parentCategoryId: Optional[UUID]
+    parent_category_id: Optional[UUID]
 
     class Config:
         from_attributes = True
@@ -149,8 +148,8 @@ class SubCategoryListResponse(BaseModel):
     data: List[SubcategoryResponse]
 
 class UploadedListingImage(BaseModel):
-    fileName: str
-    filePath: str
+    file_name: str
+    file_path: str
 
 class UploadListingImagesResponse(BaseModel):
     success: bool

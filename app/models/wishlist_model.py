@@ -9,12 +9,12 @@ from app.db.database import Base
 
 
 class WishlistType(str, PyEnum):
-    Business = "business"
-    Listing = "listing"
+    BUSINESS = "business"
+    LISTING = "listing"
 
 
 class Wishlist(Base):
-    __tablename__ = "wishlist"
+    __tablename__ = "wishlists"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 

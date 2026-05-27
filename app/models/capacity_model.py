@@ -19,14 +19,14 @@ import uuid
 
 class CapacityStatus(str, PyEnum):
 
-    OPEN = "OPEN"
-    FULL = "FULL"
-    CLOSED = "CLOSED"
+    OPEN = "open"
+    FULL = "full"
+    CLOSED = "closed"
 
 
 class ListingCapacity(Base):
 
-    __tablename__ = "listing_capacity"
+    __tablename__ = "listing_capacities"
 
     id = Column(
         UUID(as_uuid=True),

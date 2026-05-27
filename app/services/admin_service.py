@@ -59,25 +59,25 @@ def forgot_password_admin_service(db: Session, email: str):
     if not admin:
         raise CustomException(http_status.HTTP_404_NOT_FOUND, "Admin not found")
     reset_token = secrets.token_urlsafe(32)
-    admin.resetToken = reset_token
-    admin.resetTokenExpiry = datetime.utcnow() + timedelta(minutes=15)
+    admin.reset_token = reset_token
+    admin.reset_token_expiry = datetime.utcnow() + timedelta(minutes=15)
     db.commit()
     reset_link = f"http://localhost:8000/reset-password?token={reset_token}"
     if not send_email(admin.email, reset_link):
         raise CustomException(500, "Failed to send email")
     return {"success": True, "message": "Reset link sent successfully"}
 
-def reset_password_admin_service(db: Session, resetToken: str, newPassword: str, confirmPassword: str):
-    if newPassword != confirmPassword:
+def reset_password_admin_service(db: Session, reset_token: str, new_password: str, confirm_password: str):
+    if new_password != confirm_password:
         raise CustomException(400, "Passwords do not match")
-    admin = db.query(Admin).filter(Admin.resetToken == resetToken).first()
+    admin = db.query(Admin).filter(Admin.reset_token == reset_token).first()
     if not admin:
         raise CustomException(400, "Invalid or expired token")
-    if admin.resetTokenExpiry < datetime.utcnow():
+    if admin.reset_token_expiry < datetime.utcnow():
         raise CustomException(400, "Token expired")
-    admin.password = hash_password(newPassword)
-    admin.resetToken = None
-    admin.resetTokenExpiry = None
+    admin.password = hash_password(new_password)
+    admin.reset_token = None
+    admin.reset_token_expiry = None
     db.commit()
     return {"success": True, "message": "Password reset successful"}
 
@@ -112,16 +112,16 @@ def admin_get_merchants_service(
         if search:
             query = query.filter(
                 or_(
-                    Merchant.fullName.ilike(f"%{search}%"),
-                    Merchant.businessEmail.ilike(f"%{search}%"),
-                    Merchant.businessName.ilike(f"%{search}%")
+                    Merchant.full_name.ilike(f"%{search}%"),
+                    Merchant.business_email.ilike(f"%{search}%"),
+                    Merchant.business_name.ilike(f"%{search}%")
                 )
             )
         if status:
             query = query.filter(Merchant.status == status.lower())
         total = query.count()
         skip = (page - 1) * limit
-        merchants = query.order_by(Merchant.createdAt.desc()).offset(skip).limit(limit).all()
+        merchants = query.order_by(Merchant.created_at.desc()).offset(skip).limit(limit).all()
         return {
             "success": True,
             "total": total,
@@ -129,10 +129,10 @@ def admin_get_merchants_service(
             "limit": limit,
             "data": [{
                 "id": m.id,
-                "full_name": m.fullName,
-                "business_email": m.businessEmail,
+                "full_name": m.full_name,
+                "business_email": m.business_email,
                 "status": m.status,
-                "created_at": m.createdAt
+                "created_at": m.created_at
             } for m in merchants]
         }
     except Exception as e:
@@ -149,11 +149,11 @@ def admin_get_merchant_details_service(db: Session, merchant_id):
             "success": True,
             "data": {
                 "id": merchant.id,
-                "full_name": merchant.fullName,
-                "business_email": merchant.businessEmail,
-                "mobile_number": merchant.mobileNumber,
+                "full_name": merchant.full_name,
+                "business_email": merchant.business_email,
+                "mobile_number": merchant.mobile_number,
                 "status": merchant.status,
-                "created_at": merchant.createdAt
+                "created_at": merchant.created_at
             }
         }
     except CustomException as e:
@@ -172,10 +172,10 @@ def get_associated_merchant_service(db: Session, business_id):
             "success": True,
             "data": {
                 "id": m.id,
-                "full_name": m.fullName,
-                "business_email": m.businessEmail,
+                "full_name": m.full_name,
+                "business_email": m.business_email,
                 "status": m.status,
-                "created_at": m.createdAt
+                "created_at": m.created_at
             }
         }
     except CustomException as e:
@@ -204,9 +204,9 @@ def approve_listing_service(db: Session, listingId):
         raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
 # REJECT LISTING
-def reject_listing_service(db: Session, listingId, payload):
+def reject_listing_service(db: Session, listing_id, payload):
     try:
-        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        listing = get_listing_by_id_repo(db=db, listing_id=listing_id)
         if not listing:
             raise CustomException(http_status.HTTP_404_NOT_FOUND, "Listing not found")
         return {"success": True, "message": "Listing rejected", "data": reject_listing_repo(db, listing, payload.reason)}
@@ -216,9 +216,9 @@ def reject_listing_service(db: Session, listingId, payload):
         raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
 # SUSPEND LISTING
-def suspend_listing_service(db: Session, listingId, payload):
+def suspend_listing_service(db: Session, listing_id, payload):
     try:
-        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        listing = get_listing_by_id_repo(db=db, listing_id=listing_id)
         if not listing:
             raise CustomException(http_status.HTTP_404_NOT_FOUND, "Listing not found")
         return {"success": True, "message": "Listing suspended", "data": suspend_listing_repo(db, listing, payload.reason)}
@@ -228,9 +228,9 @@ def suspend_listing_service(db: Session, listingId, payload):
         raise CustomException(http_status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
 # REACTIVATE LISTING
-def reactivate_listing_service(db: Session, listingId):
+def reactivate_listing_service(db: Session, listing_id):
     try:
-        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        listing = get_listing_by_id_repo(db=db, listing_id=listing_id)
         if not listing:
             raise CustomException(http_status.HTTP_404_NOT_FOUND, "Listing not found")
         return {"success": True, "message": "Listing reactivated", "data": reactivate_listing_repo(db, listing)}
@@ -372,11 +372,11 @@ def admin_get_user_details_service(
                 "success": True,
                 "data": {
                     "id": customer.id,
-                    "name": f"{customer.firstName} {customer.lastName}",
+                    "name": f"{customer.first_name} {customer.last_name}",
                     "email": customer.email,
                     "role": "customer",
                     "status": customer.status,
-                    "createdAt": customer.createdAt
+                    "created_at": customer.created_at
                 }
             }
         merchant = db.query(Merchant).filter(
@@ -387,11 +387,11 @@ def admin_get_user_details_service(
                 "success": True,
                 "data": {
                     "id": merchant.id,
-                    "name": merchant.businessName,
-                    "email": merchant.businessEmail,
+                    "name": merchant.business_name,
+                    "email": merchant.business_email,
                     "role": "merchant",
                     "status": merchant.status,
-                    "createdAt": merchant.createdAt
+                    "created_at": merchant.created_at
                 }
             }
         admin = db.query(Admin).filter(
@@ -406,7 +406,7 @@ def admin_get_user_details_service(
                     "email": admin.email,
                     "role": "admin",
                     "status": admin.status,
-                    "createdAt": admin.createdAt
+                    "created_at": admin.created_at
                 }
             }
         raise CustomException(
@@ -505,9 +505,9 @@ def admin_get_merchants_service(
         if search:
             query = query.filter(
                 or_(
-                    Merchant.fullName.ilike(f"%{search}%"),
-                    Merchant.businessName.ilike(f"%{search}%"),
-                    Merchant.businessEmail.ilike(f"%{search}%")
+                    Merchant.full_name.ilike(f"%{search}%"),
+                    Merchant.business_name.ilike(f"%{search}%"),
+                    Merchant.business_email.ilike(f"%{search}%")
                 )
             )
         # STATUS FILTER
@@ -517,7 +517,7 @@ def admin_get_merchants_service(
             )
         total = query.count()
         merchants = query.order_by(
-            Merchant.createdAt.desc()
+            Merchant.created_at.desc()
         ).offset(
             (page - 1) * limit
         ).limit(limit).all()
@@ -525,12 +525,12 @@ def admin_get_merchants_service(
         for merchant in merchants:
             result.append({
                 "id": merchant.id,
-                "fullName": merchant.fullName,
-                "businessName": merchant.businessName,
-                "businessEmail": merchant.businessEmail,
-                "mobileNumber": merchant.mobileNumber,
+                "full_name": merchant.full_name,
+                "business_name": merchant.business_name,
+                "business_email": merchant.business_email,
+                "mobile_number": merchant.mobile_number,
                 "status": merchant.status,
-                "createdAt": merchant.createdAt
+                "created_at": merchant.created_at
             })
         return {
             "success": True,
@@ -565,12 +565,12 @@ def admin_get_merchant_details_service(
             "message": "Merchant details fetched successfully",
             "data": {
                 "id": merchant.id,
-                "fullName": merchant.fullName,
-                "businessName": merchant.businessName,
-                "businessEmail": merchant.businessEmail,
-                "mobileNumber": merchant.mobileNumber,
+                "full_name": merchant.full_name,
+                "business_name": merchant.business_name,
+                "business_email": merchant.business_email,
+                "mobile_number": merchant.mobile_number,
                 "status": merchant.status,
-                "createdAt": merchant.createdAt
+                "created_at": merchant.created_at
             }
         }
     except CustomException as e:
@@ -761,7 +761,7 @@ def suspend_business_service(
                 "id": updated_business.id,
                 "status": updated_business.status,
                 "reason": updated_business.suspension_reason,
-                "suspendedAt": updated_business.suspended_at
+                "suspended_at": updated_business.suspended_at
             }
         }
     except CustomException as e:
@@ -840,12 +840,12 @@ def get_associated_merchant_service(
             "message": "Associated merchant fetched successfully",
             "data": {
                 "id": merchant.id,
-                "fullName": merchant.fullName,
-                "businessName": merchant.businessName,
-                "businessEmail": merchant.businessEmail,
-                "mobileNumber": merchant.mobileNumber,
+                "full_name": merchant.full_name,
+                "business_name": merchant.business_name,
+                "business_email": merchant.business_email,
+                "mobile_number": merchant.mobile_number,
                 "status": merchant.status,
-                "createdAt": merchant.createdAt
+                "created_at": merchant.created_at
             }
         }
     except CustomException as e:
@@ -910,10 +910,10 @@ def get_all_listings_service(
 
 def approve_listing_service(
     db: Session,
-    listingId
+    listing_id
 ):
     try:
-        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        listing = get_listing_by_id_repo(db=db, listing_id=listing_id)
         if not listing:
             raise CustomException(
                 http_status.HTTP_404_NOT_FOUND,
@@ -941,11 +941,11 @@ def approve_listing_service(
 
 def reject_listing_service(
     db: Session,
-    listingId,
+    listing_id,
     payload
 ):
     try:
-        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        listing = get_listing_by_id_repo(db=db, listing_id=listing_id)
         if not listing:
             raise CustomException(
                 http_status.HTTP_404_NOT_FOUND,
@@ -978,11 +978,11 @@ def reject_listing_service(
 
 def suspend_listing_service(
     db: Session,
-    listingId,
+    listing_id,
     payload
 ):
     try:
-        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        listing = get_listing_by_id_repo(db=db, listing_id=listing_id)
 
         if not listing:
             raise CustomException(
@@ -1015,10 +1015,10 @@ def suspend_listing_service(
 
 def reactivate_listing_service(
     db: Session,
-    listingId
+    listing_id
 ):
     try:
-        listing = get_listing_by_id_repo(db=db, listingId=listingId)
+        listing = get_listing_by_id_repo(db=db, listing_id=listing_id)
         if not listing:
             raise CustomException(
                 http_status.HTTP_404_NOT_FOUND,
