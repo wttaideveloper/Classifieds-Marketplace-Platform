@@ -283,7 +283,7 @@ def get_my_listings(
         default=None,
         alias="status"
     ),
-    listingType: str = None,
+    listing_type: str = None,
     search: str = None,
     page: int = 1,
     limit: int = 10,
@@ -292,9 +292,9 @@ def get_my_listings(
     return get_my_listings_service(
         db=db,
         merchant_id=merchant_id,
-        businessId=business_id,
+        business_id=business_id,
         status_filter=status_filter,
-        listingType=listingType,
+        listing_type=listing_type,
         search=search,
         page=page,
         limit=limit
@@ -302,7 +302,7 @@ def get_my_listings(
 
 # GET LISTING DETAILS
 @router.get(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
     response_model=MerchantListingDetailsResponse,
     status_code=status.HTTP_200_OK
 )
@@ -312,12 +312,12 @@ def get_listing_details(
 ):
     return get_listing_details_service(
         db=db,
-        listingId=listing_id
+        listing_id=listing_id
     )
 
 # UPDATE LISTING
 @router.put(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
     response_model=MerchantListingUpdateResponse,
     status_code=status.HTTP_200_OK
 )
@@ -330,13 +330,13 @@ def update_listing(
     return update_listing_service(
         db=db,
         merchant_id=merchant_id,
-        listingId=listing_id,
+        listing_id=listing_id,
         payload=payload
     )
 
 # DELETE LISTING
 @router.delete(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
     response_model=DeleteMerchantListingResponse,
     status_code=status.HTTP_200_OK
 )
@@ -348,7 +348,7 @@ def delete_listing(
     return delete_listing_service(
         db=db,
         merchant_id=merchant_id,
-        listingId=listing_id
+        listing_id=listing_id
     )
 
 # PUBLISH LISTING
@@ -370,7 +370,7 @@ def publish_listing(
 
 # UNPUBLISH LISTING
 @router.patch(
-    "/listings/{listingId}/unpublish",
+    "/listings/{listing_id}/unpublish",
     response_model=UnpublishListingResponse,
     status_code=status.HTTP_200_OK
 )
@@ -382,12 +382,12 @@ def unpublish_listing(
     return unpublish_listing_service(
         db=db,
         merchant_id=merchant_id,
-        listingId=listing_id
+        listing_id=listing_id
     )
 
 # UPLOAD LISTING IMAGES
 @router.post(
-    "/listings/{listingId}/images",
+    "/listings/{listing_id}/images",
     response_model=UploadListingImagesResponse,
     status_code=status.HTTP_200_OK
 )
@@ -399,13 +399,13 @@ def upload_listing_images(
 
     return upload_listing_images_service(
         db=db,
-        listingId=listing_id,
+        listing_id=listing_id,
         files=files
     )
 
 # DELETE LISTING IMAGE
 @router.delete(
-    "/listings/{listingId}/images/{imageId}",
+    "/listings/{listing_id}/images/{image_id}",
     response_model=DeleteListingImageResponse,
     status_code=status.HTTP_200_OK
 )
@@ -416,8 +416,8 @@ def delete_listing_image(
 ):
     return delete_listing_image_service(
         db=db,
-        listingId=listing_id,
-        imageId=image_id
+        listing_id=listing_id,
+        image_id=image_id
     )
 
 # CREATE CUSTOM ATTRIBUTE
