@@ -30,40 +30,40 @@ class Merchant(Base):
         default=uuid.uuid4
     )
 
-    fullName = Column(String(255), nullable=False)
+    full_name = Column(String(255), nullable=False)
 
-    businessEmail = Column(
+    business_email = Column(
         String(255),
         unique=True,
         index=True,
         nullable=False
     )
 
-    mobileNumber = Column(String(20), nullable=False)
+    mobile_number = Column(String(20), nullable=False)
 
-    businessName = Column(String(255), nullable=False)
+    business_name = Column(String(255), nullable=False)
 
     password = Column(String(255), nullable=False)
 
-    acceptTerms = Column(Boolean, default=False, nullable=False)
+    accept_terms = Column(Boolean, default=False, nullable=False)
 
-    acceptPrivacyPolicy = Column(
+    accept_privacy_policy = Column(
         Boolean,
         default=False,
         nullable=False
     )
 
-    resetToken = Column(String(255), nullable=True)
+    reset_token = Column(String(255), nullable=True)
 
-    resetTokenExpiry = Column(DateTime, nullable=True)
+    reset_token_expiry = Column(DateTime, nullable=True)
 
-    isEmailVerified = Column(
+    is_email_verified = Column(
         Boolean,
         default=False,
         nullable=False
     )
 
-    verificationToken = Column(String(255), nullable=True)
+    verification_token = Column(String(255), nullable=True)
 
     status = Column(
         String(50),
