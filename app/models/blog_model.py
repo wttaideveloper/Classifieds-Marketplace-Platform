@@ -78,7 +78,7 @@ class BlogApprovalLog(Base):
         index=True,
     )
     admin_id = Column(
-        Integer,
+        UUID(as_uuid=True),
         ForeignKey("admins.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

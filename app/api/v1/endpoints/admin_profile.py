@@ -1,10 +1,8 @@
 # app/api/v1/endpoints/admin_profile.py
-from fastapi import APIRouter, Depends, status, HTTPException, Query
+from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
-
-from app.db.database import SessionLocal
 from app.schemas.admin_schema import (
     AdminProfileUpdate,
     UserDetailsResponse,

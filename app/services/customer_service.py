@@ -25,7 +25,7 @@ def register_customer_service(db, customer):
     existing = get_customer_by_email(db, customer.email)
     if existing:
         raise CustomException(400, "Email already registered")
-    if customer.password != customer.confirmPassword:
+    if customer.password != customer.confirm_password:
         raise CustomException(400, "Passwords do not match")
     if not customer.accept_terms or not customer.accept_privacy_policy:
         raise CustomException(400, "Accept terms and privacy policy")
@@ -151,10 +151,10 @@ def get_profile_service(db, cust_id):
         raise CustomException(404, "User not found")
     return {
         "id": user.id,
-        "firstName": user.first_name,
-        "lastName": user.last_name,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
         "email": user.email,
-        "mobileNumber": user.mobile_number
+        "mobile_number": user.mobile_number
     }
 
 # UPDATE PROFILE

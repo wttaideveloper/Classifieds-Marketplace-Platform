@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.schemas.customer_schema import CustomerRegister, CustomerLogin
 from app.services.customer_service import (
     register_customer_service,
@@ -15,15 +15,6 @@ router = APIRouter()
 # Track which test emails we've cleaned in-process so we only wipe once per test run
 _CLEANED_TEST_EMAILS: set[str] = set()
 
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(payload: dict, db: Session = Depends(get_db)):
     # Accept minimal payloads like {username, email, password} for compatibility with tests
@@ -32,14 +23,14 @@ def register(payload: dict, db: Session = Depends(get_db)):
 
     # map to internal CustomerRegister schema expectations
     data = {
-        "firstName": payload.get("username") or payload.get("firstName") or "",
-        "lastName": "",
+        "first_name": payload.get("username") or payload.get("first_name") or "",
+        "last_name": "",
         "email": payload.get("email"),
-        "mobileNumber": payload.get("mobileNumber") or "",
+        "mobile_number": payload.get("mobile_number") or "",
         "password": payload.get("password"),
-        "confirmPassword": payload.get("password"),
-        "acceptTerms": True,
-        "acceptPrivacyPolicy": True,
+        "confirm_password": payload.get("password"),
+        "accept_terms": True,
+        "accept_privacy_policy": True,
     }
     # TEST-ONLY: if test user exists from previous runs, remove it so tests run cleanly
     if payload.get("username") == "testuser" and payload.get("email") and payload.get("email") not in _CLEANED_TEST_EMAILS:
@@ -59,9 +50,9 @@ def login(user: CustomerLogin, db: Session = Depends(get_db)):
     res = login_customer_service(db, user.email, user.password)
     # adapt response keys to common snake_case used in some tests
     return {
-        "access_token": res.get("accessToken"),
-        "refresh_token": res.get("refreshToken"),
-        "token_type": res.get("tokenType"),
+        "access_token": res.get("access_token"),
+        "refresh_token": res.get("refresh_token"),
+        "token_type": res.get("token_type"),
         "message": res.get("message"),
     }
 

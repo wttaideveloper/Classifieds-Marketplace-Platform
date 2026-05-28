@@ -1,17 +1,10 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt, JWTError, ExpiredSignatureError
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.core.config import settings
 
 bearer_scheme = HTTPBearer(auto_error=True)
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     token = credentials.credentials

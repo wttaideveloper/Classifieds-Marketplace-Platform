@@ -1,14 +1,13 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from uuid import UUID
-from app.db.database import SessionLocal
 from app.services.address_service import (
     add_address_service,
     get_addresses_service,
     update_address_service,
     delete_address_service
 )
-from app.schemas.customer_schema import AddressBase, AddressCreate, AddressResponse, AddressListResponse, AddressUpdate
+from app.schemas.customer_schema import AddressCreate, AddressResponse, AddressListResponse, AddressUpdate
 from app.db.database import get_db
 
 router = APIRouter()

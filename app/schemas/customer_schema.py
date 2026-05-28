@@ -46,13 +46,19 @@ class ChangePassword(BaseModel):
     current_password: str
     new_password: str
     confirm_password: str
-    @field_validator("confirmPassword")
+
+    @field_validator("confirm_password")
     @classmethod
     def passwords_match(cls, v, values):
-        if "password" in values.data and v != values.data["password"]:
-            raise ValueError("Passwords do not match")
-        if "new_password" in values.data and v != values.data["new_password"]:
-            raise ValueError("Passwords do not match")
+
+        if (
+            "new_password" in values.data
+            and v != values.data["new_password"]
+        ):
+            raise ValueError(
+                "Passwords do not match"
+            )
+
         return v
 
 # PROFILE

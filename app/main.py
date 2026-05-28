@@ -56,8 +56,12 @@ def startup():
             import app.models.review_moderation_history_model
             import app.models.notification_model
             import app.models.moderation_model
+            import app.models.capacity_model
             import app.models.wishlist_model
-            print("imports")
+            import app.models.media_model
+            print("REGISTERED TABLES:")
+            print(Base.metadata.tables.keys())
+
             Base.metadata.create_all(bind=engine)
 
             print("Tables created successfully")

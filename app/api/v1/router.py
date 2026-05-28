@@ -84,3 +84,6 @@ _safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tag
 
 # Wishlist
 _safe_include("app.api.v1.endpoints.wishlist",  prefix="/wishlist", tags=["Wishlist"])
+
+# Media Uploads
+_safe_include("app.api.v1.endpoints.media",  prefix="/media", tags=["Media"])

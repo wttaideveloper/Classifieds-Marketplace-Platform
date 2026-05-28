@@ -91,12 +91,12 @@ class Booking(Base):
     total_amount = Column(Numeric(10, 2), nullable=False)
     booking_status = Column(
         Enum(BookingStatus),
-        default=BookingStatus.Pending,
+        default=BookingStatus.PENDING,
         nullable=False
     )
     payment_status = Column(
         Enum(PaymentStatus),
-        default=PaymentStatus.Pending,
+        default=PaymentStatus.PENDING,
         nullable=False
     )
     notes = Column(Text, nullable=True)

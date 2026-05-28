@@ -450,36 +450,36 @@ def get_merchant_attributes(
 
 # MAP ATTRIBUTE TO BUSINESS
 @router.post(
-    "/business/{id}/attributes",
+    "/business/{bussiness_id}/attributes",
     response_model=BusinessAttributeMapResponse,
     status_code=status.HTTP_201_CREATED
 )
 def map_attribute_to_business(
-    id: UUID,
+    business_id: UUID,
     payload: BusinessAttributeMapCreate,
     db: Session = Depends(get_db)
 ):
 
     return map_attribute_to_business_service(
         db,
-        id,
+        business_id,
         payload
     )
 
 # MAP ATTRIBUTE TO LISTING
 @router.post(
-    "/listings/{id}/attributes",
+    "/listings/{listing_id}/attributes",
     response_model=ListingAttributeMapResponse,
     status_code=status.HTTP_201_CREATED
 )
 def map_attribute_to_listing(
-    id: UUID,
+    listing_id: UUID,
     payload: ListingAttributeMapCreate,
     db: Session = Depends(get_db)
 ):
     return map_attribute_to_listing_service(
         db,
-        id,
+        listing_id,
         payload
     )
 
@@ -515,18 +515,18 @@ def get_merchant_bookings(
     )
 
 @router.put(
-    "/bookings/{id}/status",
+    "/bookings/{booking_id}/status",
     response_model=BookingStatusUpdateResponse,
     status_code=status.HTTP_200_OK
 )
 def update_booking_status(
-    id: UUID,
+    booking_id: UUID,
     payload: BookingStatusUpdate,
     db: Session = Depends(get_db)
 ):
 
     return update_booking_status_service(
         db=db,
-        booking_id=id,
+        booking_id=booking_id,
         payload=payload
     )

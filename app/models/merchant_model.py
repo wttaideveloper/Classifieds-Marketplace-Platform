@@ -429,6 +429,10 @@ class MerchantListing(Base):
         back_populates="listing",
         cascade="all, delete"
     )
+    media = relationship(
+        "Media",
+        back_populates="listing"
+    )
 
 # MERCHANT LISTING DRAFT
 class MerchantListingDraft(Base):

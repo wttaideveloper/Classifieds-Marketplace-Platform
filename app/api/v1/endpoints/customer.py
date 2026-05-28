@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.schemas.customer_schema import CustomerRegister, CustomerLogin
 from app.services.customer_service import (
     register_customer_service,
@@ -9,13 +9,6 @@ from app.services.customer_service import (
 )
 
 router = APIRouter()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 #  REGISTER
 @router.post("/register", status_code=status.HTTP_201_CREATED)
@@ -30,4 +23,4 @@ def login(user: CustomerLogin, db: Session = Depends(get_db)):
 # GOOGLE LOGIN
 @router.post("/google")
 def google_login(payload: dict, db: Session = Depends(get_db)):
-    return google_login_service(db, payload.get("googleToken"))
+    return google_login_service(db, payload.get("google_token"))

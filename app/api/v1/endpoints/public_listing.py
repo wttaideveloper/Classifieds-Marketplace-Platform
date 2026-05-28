@@ -34,26 +34,26 @@ def get_public_listings(
 
     search: str = None,
     category: str = None,
-    listingType: str = None,
+    listing_type: str = None,
     city: str = None,
-    priceMin: float = None,
-    priceMax: float = None,
+    price_min: float = None,
+    price_max: float = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=10, ge=1, le=100),
-    sortBy: str = "latest",
+    sort_by: str = "latest",
     db: Session = Depends(get_db)
 ):
     return get_public_listings_service(
         db=db,
         search=search,
         category=category,
-        listingType=listingType,
+        listing_type=listing_type,
         city=city,
-        priceMin=priceMin,
-        priceMax=priceMax,
+        price_min=price_min,
+        price_max=price_max,
         page=page,
         limit=limit,
-        sortBy=sortBy
+        sort_by=sort_by
     )
 
 # SEARCH LISTINGS
@@ -66,7 +66,7 @@ def search_listings(
     role: str,
     keyword: str = Query(default=None),
     category: str = Query(default=None),
-    listingType: str = Query(default=None),
+    listing_type: str = Query(default=None),
     location: str = Query(default=None),
     rating: float = Query(default=None),
     sort: str = Query(default=None),
@@ -79,14 +79,14 @@ def search_listings(
         db=db,
         keyword=keyword,
         category=category,
-        listingType=listingType,
+        listing_type=listing_type,
         location=location,
         rating=rating,
         sort=sort
     )
 
 @router.get(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
     status_code=status.HTTP_200_OK
 )
 def get_listing_details(
@@ -95,7 +95,7 @@ def get_listing_details(
 ):
     return get_public_listing_details_service(
         db=db,
-        listingId=listing_id
+        listing_id=listing_id
     )
 
 # GET CATEGORIES
@@ -111,7 +111,7 @@ def get_categories(
 
 # GET SUBCATEGORIES
 @router.get(
-    "/categories/{categoryId}/subcategories",
+    "/categories/{category_id}/subcategories",
     response_model=SubCategoryListResponse,
     status_code=status.HTTP_200_OK
 )
@@ -122,7 +122,7 @@ def get_subcategories(
 
     return get_subcategories_service(
         db=db,
-        categoryId=category_id
+        category_id=category_id
     )
 
 @router.post(

@@ -67,6 +67,10 @@ class Business(Base):
         back_populates="business",
         cascade="all, delete"
     )
+    media = relationship(
+        "Media",
+        back_populates="business"
+    )
 
     def __repr__(self):
         return f"<Business {self.name} ({self.status})>"
