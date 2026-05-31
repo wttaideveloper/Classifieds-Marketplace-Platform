@@ -6,9 +6,9 @@ from enum import Enum
 
 
 class StaffStatusEnum(str, Enum):
-    ACTIVE = "ACTIVE"
-    INACTIVE = "INACTIVE"
-    PENDING = "PENDING"
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    PENDING = "pending"
 
 class StaffCreate(BaseModel):
     merchant_id: UUID

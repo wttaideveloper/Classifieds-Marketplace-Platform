@@ -29,8 +29,8 @@ def create_staff_service(
     )
     if existing_staff:
         raise CustomException(
-            status_code=status.HTTP_409_CONFLICT,
-            message="Staff already exists with this email"
+            status.HTTP_409_CONFLICT,
+            "Staff already exists with this email"
         )
     staff = Staff(
         merchant_id=payload.merchant_id,
@@ -53,8 +53,8 @@ def get_staff_service(db: Session):
 
     if not staff_list:
         raise CustomException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            message="No staff found"
+            status.HTTP_404_NOT_FOUND,
+            "No staff found"
         )
 
     return staff_list
@@ -71,8 +71,8 @@ def get_staff_by_id_service(
 
     if not staff:
         raise CustomException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            message="Staff not found"
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
         )
 
     return staff
@@ -91,8 +91,8 @@ def update_staff_service(
 
     if not staff:
         raise CustomException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            message="Staff not found"
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
         )
 
     if payload.email:
@@ -107,8 +107,8 @@ def update_staff_service(
             existing_email.id != staff.id
         ):
             raise CustomException(
-                status_code=status.HTTP_409_CONFLICT,
-                message="Email already exists"
+                status.HTTP_409_CONFLICT,
+                "Email already exists"
             )
 
     update_data = payload.model_dump(
@@ -136,8 +136,8 @@ def delete_staff_service(
 
     if not staff:
         raise CustomException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            message="Staff not found"
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
         )
 
     delete_staff_repo(
@@ -160,15 +160,16 @@ def update_staff_status_service(
 
     if not staff:
         raise CustomException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            message="Staff not found"
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
         )
 
     if staff.staff_status == payload.staff_status:
         raise CustomException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            message=f"Staff is already {payload.staff_status}"
-        )
+        status.HTTP_400_BAD_REQUEST,
+        f"Staff is already {payload.staff_status.value}"
+    )
+        
 
     staff.staff_status = payload.staff_status
 
@@ -195,8 +196,8 @@ def assign_role_service(
 
     if not staff:
         raise CustomException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            message="Staff not found"
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
         )
 
     role = get_role_by_id_repo(
@@ -206,8 +207,8 @@ def assign_role_service(
 
     if not role:
         raise CustomException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            message="Role not found"
+            status.HTTP_404_NOT_FOUND,
+            "Role not found"
         )
 
     staff.role_id = payload.role_id
