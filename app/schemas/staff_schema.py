@@ -2,6 +2,13 @@ from pydantic import BaseModel, EmailStr
 from uuid import UUID
 from datetime import datetime
 from typing import Optional
+from enum import Enum
+
+
+class StaffStatusEnum(str, Enum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    PENDING = "PENDING"
 
 class StaffCreate(BaseModel):
     merchant_id: UUID
@@ -88,3 +95,33 @@ class StaffDetailResponse(BaseModel):
 class StaffDeleteResponse(BaseModel):
     success: bool
     message: str
+
+class UpdateStaffStatusRequest(BaseModel):
+    staff_status: StaffStatusEnum
+
+
+class StaffStatusData(BaseModel):
+    staff_id: UUID
+    staff_status: StaffStatusEnum
+
+
+class StaffStatusResponse(BaseModel):
+    success: bool
+    message: str
+    data: StaffStatusData
+
+class AssignRoleRequest(BaseModel):
+    role_id: UUID
+
+
+class AssignRoleData(BaseModel):
+    staff_id: UUID
+    role_id: UUID
+    staff_status: str
+    joined_at: datetime | None
+
+
+class AssignRoleResponse(BaseModel):
+    success: bool
+    message: str
+    data: AssignRoleData

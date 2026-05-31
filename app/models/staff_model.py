@@ -130,3 +130,17 @@ class StaffInvitation(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    role_name = Column(
+        String(100),
+        nullable=False
+    )

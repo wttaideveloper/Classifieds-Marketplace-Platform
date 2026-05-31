@@ -10,14 +10,20 @@ from app.schemas.staff_schema import (
     StaffListResponse,
     StaffDetailResponse,
     StaffUpdateRequest,
-    StaffDeleteResponse
+    StaffDeleteResponse,
+    UpdateStaffStatusRequest,
+    StaffStatusResponse,
+    AssignRoleResponse,
+    AssignRoleRequest
 )
 from app.services.staff_service import (
     create_staff_service,
     get_staff_service,
     get_staff_by_id_service,
     update_staff_service,
-    delete_staff_service
+    delete_staff_service,
+    update_staff_status_service,
+    assign_role_service
 )
 
 router = APIRouter(
@@ -25,7 +31,7 @@ router = APIRouter(
 )
 
 @router.post(
-    "",
+    "/",
     response_model=StaffCreateResponse,
     status_code=status.HTTP_201_CREATED
 )
@@ -44,7 +50,7 @@ def create_staff(
     }
 
 @router.get(
-    "",
+    "/",
     response_model=StaffListResponse,
     status_code=status.HTTP_200_OK
 )
@@ -61,18 +67,18 @@ def get_staff(
     }
 
 @router.get(
-    "/{id}",
+    "/{staff_id}",
     response_model=StaffDetailResponse,
     status_code=status.HTTP_200_OK
 )
 def get_staff(
-    id: UUID,
+    staff_id: UUID,
     db: Session = Depends(get_db)
 ):
 
     staff = get_staff_by_id_service(
         db,
-        id
+        staff_id
     )
 
     return {
@@ -83,19 +89,19 @@ def get_staff(
 
 
 @router.put(
-    "/{id}",
+    "/{staff_id}",
     response_model=StaffDetailResponse,
     status_code=status.HTTP_200_OK
 )
 def update_staff(
     payload: StaffUpdateRequest,
-    id: UUID,
+    staff_id: UUID,
     db: Session = Depends(get_db)
 ):
 
     staff = update_staff_service(
         db,
-        id,
+        staff_id,
         payload
     )
 
@@ -107,21 +113,66 @@ def update_staff(
 
 
 @router.delete(
-    "/{id}",
+    "/{staff_id}",
     response_model=StaffDeleteResponse,
     status_code=status.HTTP_200_OK
 )
 def delete_staff(
-    id: UUID,
+    staff_id: UUID,
     db: Session = Depends(get_db)
 ):
 
     delete_staff_service(
         db,
-        id
+        staff_id
     )
 
     return {
         "success": True,
         "message": "Staff deleted successfully"
+    }
+
+@router.put(
+    "/{staff_id}/status",
+    response_model=StaffStatusResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_staff_status(
+    staff_id: UUID,
+    payload: UpdateStaffStatusRequest,
+    db: Session = Depends(get_db)
+):
+    result = update_staff_status_service(
+        db=db,
+        staff_id=staff_id,
+        payload=payload
+    )
+
+    return {
+        "success": True,
+        "message": "Staff status updated successfully",
+        "data": result
+    }
+
+@router.post(
+    "/{staff_id}/roles",
+    response_model=AssignRoleResponse,
+    status_code=status.HTTP_200_OK
+)
+def assign_role(
+    staff_id: UUID,
+    payload: AssignRoleRequest,
+    db: Session = Depends(get_db)
+):
+
+    result = assign_role_service(
+        db=db,
+        staff_id=staff_id,
+        payload=payload
+    )
+
+    return {
+        "success": True,
+        "message": "Role assigned successfully",
+        "data": result
     }

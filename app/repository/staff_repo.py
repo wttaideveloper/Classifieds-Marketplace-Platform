@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from app.models.staff_model import (
     Staff,
+    Role,
     StaffInvitation
 )
 from uuid import UUID
@@ -66,3 +67,29 @@ def delete_staff_repo(
 ):
     db.delete(staff)
     db.commit()
+
+def update_staff_status_repo(
+    db: Session,
+    staff: Staff
+):
+    db.commit()
+    db.refresh(staff)
+    return staff
+
+def get_role_by_id_repo(
+    db: Session,
+    role_id: UUID
+):
+    return (
+        db.query(Role)
+        .filter(Role.id == role_id)
+        .first()
+    )
+
+def assign_role_repo(
+    db: Session,
+    staff: Staff
+):
+    db.commit()
+    db.refresh(staff)
+    return staff

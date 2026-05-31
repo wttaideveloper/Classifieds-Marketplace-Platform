@@ -87,3 +87,5 @@ _safe_include("app.api.v1.endpoints.wishlist",  prefix="/wishlist", tags=["Wishl
 
 # Media Uploads
 _safe_include("app.api.v1.endpoints.media",  prefix="/media", tags=["Media"])
+
+_safe_include("app.api.v1.endpoints.staff",  prefix="/staff", tags=["Staff"])

@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from fastapi import status
+from datetime import datetime, timezone
 from app.models.staff_model import Staff
 from app.schemas.staff_schema import StaffCreate, StaffUpdateRequest
 from app.exceptions.custom_exception import CustomException
@@ -8,7 +9,10 @@ from app.repository.staff_repo import (
     get_staff_by_id_repo, 
     get_staff_by_email_repo,
     update_staff_repo,
-    delete_staff_repo
+    delete_staff_repo,
+    update_staff_status_repo,
+    get_role_by_id_repo,
+    assign_role_repo
 )
 from uuid import UUID
 
@@ -142,3 +146,88 @@ def delete_staff_service(
     )
 
     return True
+
+def update_staff_status_service(
+    db: Session,
+    staff_id: UUID,
+    payload
+):
+
+    staff = get_staff_by_id_repo(
+        db=db,
+        staff_id=staff_id
+    )
+
+    if not staff:
+        raise CustomException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Staff not found"
+        )
+
+    if staff.staff_status == payload.staff_status:
+        raise CustomException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message=f"Staff is already {payload.staff_status}"
+        )
+
+    staff.staff_status = payload.staff_status
+
+    updated_staff = update_staff_status_repo(
+        db=db,
+        staff=staff
+    )
+
+    return {
+        "staff_id": updated_staff.id,
+        "staff_status": updated_staff.staff_status
+    }
+
+def assign_role_service(
+    db: Session,
+    staff_id: UUID,
+    payload
+):
+
+    staff = get_staff_by_id_repo(
+        db=db,
+        staff_id=staff_id
+    )
+
+    if not staff:
+        raise CustomException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Staff not found"
+        )
+
+    role = get_role_by_id_repo(
+        db=db,
+        role_id=payload.role_id
+    )
+
+    if not role:
+        raise CustomException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Role not found"
+        )
+
+    staff.role_id = payload.role_id
+
+    if staff.staff_status == "PENDING":
+        staff.staff_status = "ACTIVE"
+
+    if not staff.joined_at:
+        staff.joined_at = datetime.now(
+            timezone.utc
+        )
+
+    updated_staff = assign_role_repo(
+        db=db,
+        staff=staff
+    )
+
+    return {
+        "staff_id": updated_staff.id,
+        "role_id": updated_staff.role_id,
+        "staff_status": updated_staff.staff_status,
+        "joined_at": updated_staff.joined_at
+    }
