@@ -93,6 +93,9 @@ _safe_include("app.api.v1.endpoints.cart", prefix="/cart", tags=["Cart"])
 # Capacity 
 _safe_include("app.api.v1.endpoints.capacity", prefix="/capacity", tags=["Capacity"])
 
+# SEO & SITEMAP MANAGEMENT
+_safe_include("app.api.v1.endpoints.seo", prefix="/seo", tags=["SEO & Sitemap Management"])
+
 
 # NOTIFICATIONS
 _safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tags=["Notifications"])
