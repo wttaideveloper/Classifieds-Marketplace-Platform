@@ -6,11 +6,17 @@ from app.schemas.audit_schema import (
     AuditExportResponse,
     AuditExportListResponse,
     AuditLogResponse,
-    AuditLogListResponse
+    AuditLogListResponse,
+    UserAuthenticationLogsResponse,
+    AuthenticationLogResponse,
+    EntityAuditLogListResponse
 )
+from uuid import UUID
 from sqlalchemy.orm import Session
 from app.repository.audit_repo import (
-    get_all_audit_logs_repo
+    get_all_audit_logs_repo,
+    get_user_authentication_logs_repo,
+    get_entity_audit_logs_repo
 )
 
 def export_audit_logs_service(
@@ -83,6 +89,73 @@ def get_all_audit_logs_service(
             records=[
                 AuditLogResponse.model_validate(log)
                 for log in audit_logs
+            ]
+        )
+
+    except CustomException:
+        raise
+
+    except Exception as e:
+        raise CustomException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch audit logs: {str(e)}"
+        )
+
+
+def get_user_authentication_logs_service(
+    user_id: UUID,
+    db: Session
+):
+    try:
+        logs = get_user_authentication_logs_repo(
+            db=db,
+            user_id=user_id
+        )
+
+        if not logs:
+            raise CustomException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Authentication logs not found for this user"
+            )
+
+        return UserAuthenticationLogsResponse(
+            total_records=len(logs),
+            records=[
+                AuthenticationLogResponse.model_validate(log)
+                for log in logs
+            ]
+        )
+
+    except CustomException:
+        raise
+
+    except Exception as e:
+        raise CustomException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch authentication logs: {str(e)}"
+        )
+
+def get_entity_audit_logs_service(
+    entity_id: UUID,
+    db: Session
+):
+    try:
+        logs = get_entity_audit_logs_repo(
+            db=db,
+            entity_id=entity_id
+        )
+
+        if not logs:
+            raise CustomException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Audit logs not found for this entity"
+            )
+
+        return EntityAuditLogListResponse(
+            total_records=len(logs),
+            records=[
+                AuditLogResponse.model_validate(log)
+                for log in logs
             ]
         )
 
