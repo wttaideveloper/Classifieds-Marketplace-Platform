@@ -96,6 +96,9 @@ _safe_include("app.api.v1.endpoints.capacity", prefix="/capacity", tags=["Capaci
 # SEO & SITEMAP MANAGEMENT
 _safe_include("app.api.v1.endpoints.seo", prefix="/seo", tags=["SEO & Sitemap Management"])
 
+# SYSTEM HEALTH MONITORING
+_safe_include("app.api.v1.endpoints.health", prefix="/health", tags=["System Health Monitoring"])
+
 
 # NOTIFICATIONS
 _safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tags=["Notifications"])
