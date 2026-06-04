@@ -16,13 +16,18 @@ from app.schemas.calendar_schema import (
     CalendarConnectResponse,
     CalendarEventCreateRequest,
     CalendarEventCreateResponse,
-    CalendarStatusResponse
+    CalendarStatusResponse,
+    CalendarEventUpdateRequest,
+    CalendarEventUpdateResponse,
+    CalendarDeleteResponse
 )
 
 from app.services.calendar_service import (
     connect_calendar_service,
     create_calendar_event_service,
-    get_calendar_status_service
+    get_calendar_status_service,
+    update_calendar_event_service,
+    delete_calendar_event_service
 )
 
 router = APIRouter(
@@ -73,4 +78,34 @@ def get_calendar_status(
     return get_calendar_status_service(
         db,
         merchant_id
+    )
+
+@router.put(
+    "/events/{id}",
+    response_model=CalendarEventUpdateResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_calendar_event(
+    id: UUID,
+    payload: CalendarEventUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    return update_calendar_event_service(
+        db,
+        id,
+        payload
+    )
+
+@router.delete(
+    "/events/{id}",
+    response_model=CalendarDeleteResponse,
+    status_code=status.HTTP_200_OK
+)
+def delete_calendar_event(
+    id: UUID,
+    db: Session = Depends(get_db)
+):
+    return delete_calendar_event_service(
+        db=db,
+        event_id=id
     )

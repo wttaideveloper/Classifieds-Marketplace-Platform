@@ -79,3 +79,69 @@ class CalendarIntegration(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow
     )
+
+class CalendarEvent(Base):
+    __tablename__ = "calendar_events"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    booking_id = Column(
+        UUID(as_uuid=True),
+        nullable=False
+    )
+
+    merchant_id = Column(
+        UUID(as_uuid=True),
+        nullable=False
+    )
+
+    provider = Column(
+        SqlEnum(CalendarProvider),
+        nullable=False
+    )
+
+    external_event_id = Column(
+        String,
+        nullable=False
+    )
+
+    event_title = Column(
+        String,
+        nullable=False
+    )
+
+    start_time = Column(
+        DateTime,
+        nullable=False
+    )
+
+    end_time = Column(
+        DateTime,
+        nullable=False
+    )
+
+    meeting_link = Column(
+        String,
+        nullable=True
+    )
+
+    event_status = Column(
+        SqlEnum(EventStatusEnum),
+        nullable=False,
+        default=EventStatusEnum.SCHEDULED
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
