@@ -1,6 +1,6 @@
 from fastapi import status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import String, cast, or_
 from sqlalchemy import desc
 from app.models.customer_model import Customer, Booking
 from app.models.merchant_model import Merchant, MerchantListing
@@ -17,13 +17,16 @@ def get_customer_by_email(db: Session, email: str):
 
 
 def get_customer_by_id(db: Session, cust_id: str):
-    return db.query(Customer).filter(Customer.id == cust_id).first()
+    return db.query(Customer).filter(cast(Customer.id, String) == str(cust_id)).first()
 
 
 def create_customer(db: Session, customer: Customer):
     db.add(customer)
     db.commit()
-    db.refresh(customer)
+    try:
+        db.refresh(customer)
+    except Exception:
+        db.rollback()
     return customer
 
 

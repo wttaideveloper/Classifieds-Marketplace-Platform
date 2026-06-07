@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 
-from app.db.database import SessionLocal
+from app.core.dependencies import get_current_user
+from app.db.database import get_db
 from app.schemas.blog_schema import BlogCreateSchema, BlogUpdateSchema
 from app.services.blog_service import (
     create_blog_service,
@@ -12,53 +13,45 @@ from app.services.blog_service import (
 )
 
 
-router = APIRouter(tags=["Merchant Blogs"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+router = APIRouter(tags=["Merchant Blogs"], dependencies=[Depends(get_current_user)])
 
 
 @router.post("/blogs", status_code=status.HTTP_201_CREATED)
 def create_blog(
     payload: BlogCreateSchema,
-    merchantId: str = Query(..., description="Merchant id"),
+    merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db),
 ):
-    return create_blog_service(db=db, merchant_id=merchantId, payload=payload)
+    return create_blog_service(db=db, merchant_id=merchant_id, payload=payload)
 
 
-@router.put("/blogs/{blogId}", status_code=status.HTTP_200_OK)
+@router.put("/blogs/{blog_id}", status_code=status.HTTP_200_OK)
 def update_blog(
-    blogId: str,
+    blog_id: str,
     payload: BlogUpdateSchema,
-    merchantId: str = Query(..., description="Merchant id"),
+    merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db),
 ):
     return update_blog_service(
         db=db,
-        merchant_id=merchantId,
-        blog_id=blogId,
+        merchant_id=merchant_id,
+        blog_id=blog_id,
         payload=payload,
     )
 
 
-@router.delete("/blogs/{blogId}", status_code=status.HTTP_200_OK)
+@router.delete("/blogs/{blog_id}", status_code=status.HTTP_200_OK)
 def delete_blog(
-    blogId: str,
-    merchantId: str = Query(..., description="Merchant id"),
+    blog_id: str,
+    merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db),
 ):
-    return delete_blog_service(db=db, merchant_id=merchantId, blog_id=blogId)
+    return delete_blog_service(db=db, merchant_id=merchant_id, blog_id=blog_id)
 
 
 @router.get("/blogs", status_code=status.HTTP_200_OK)
 def get_merchant_blogs(
-    merchantId: str = Query(..., description="Merchant id"),
+    merchant_id: str = Query(..., description="Merchant id"),
     search: str = None,
     status_filter: str = Query(default=None, alias="status"),
     page: int = 1,
@@ -67,7 +60,7 @@ def get_merchant_blogs(
 ):
     return get_merchant_blogs_service(
         db=db,
-        merchant_id=merchantId,
+        merchant_id=merchant_id,
         search=search,
         status_filter=status_filter,
         page=page,
@@ -75,11 +68,11 @@ def get_merchant_blogs(
     )
 
 
-@router.put("/blogs/{blogId}/submit", status_code=status.HTTP_200_OK)
+@router.put("/blogs/{blog_id}/submit", status_code=status.HTTP_200_OK)
 def submit_blog(
-    blogId: str,
-    merchantId: str = Query(..., description="Merchant id"),
+    blog_id: str,
+    merchant_id: str = Query(..., description="Merchant id"),
     db: Session = Depends(get_db),
 ):
-    return submit_blog_for_approval_service(db=db, merchant_id=merchantId, blog_id=blogId)
+    return submit_blog_for_approval_service(db=db, merchant_id=merchant_id, blog_id=blog_id)
 

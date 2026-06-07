@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     # send email
     email_user: str
     email_pass: str
+    # push notifications
+    PUSH_PROVIDER: str = "local"  # local | fcm | onesignal
+    FCM_PROJECT_ID: str = ""
+    FCM_SERVICE_ACCOUNT_FILE: str = ""
+    FCM_SERVICE_ACCOUNT_JSON: str = ""
+    ONESIGNAL_APP_ID: str = ""
+    ONESIGNAL_REST_API_KEY: str = ""
 
 
 settings = Settings()

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.schemas.notification_schema import (
     CreateNotificationSchema,
     NotificationCreateResponseSchema,
@@ -19,14 +19,6 @@ from app.services.notification_service import (
 )
 
 router = APIRouter(tags=["Notifications"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.post("", status_code=201, response_model=NotificationCreateResponseSchema)

@@ -1,7 +1,4 @@
 from fastapi import APIRouter
-import logging
-
-logger = logging.getLogger(__name__)
 
 api_router = APIRouter()
 
@@ -19,6 +16,16 @@ _safe_include(
     "app.api.v1.endpoints.customer",
     prefix="/auth/customer",
     tags=["Customer Auth"]
+)
+_safe_include(
+    "app.api.v1.endpoints.customer",
+    prefix="/customer",
+    tags=["Customer Auth"]
+)
+_safe_include(
+    "app.api.v1.endpoints.users",
+    prefix="/users",
+    tags=["Users"]
 )
 
 # CUSTOMER PROFILE
@@ -41,6 +48,11 @@ _safe_include(
     prefix="/auth/merchant",
     tags=["Auth Merchant"]
 )
+_safe_include(
+    "app.api.v1.endpoints.merchant",
+    prefix="/merchant",
+    tags=["Auth Merchant"]
+)
 
 # MERCHANT PROFILE
 _safe_include(
@@ -51,6 +63,7 @@ _safe_include(
 
 # ADMIN
 _safe_include("app.api.v1.endpoints.admin", prefix="/auth/admin", tags=["Admin Auth"])
+_safe_include("app.api.v1.endpoints.admin", prefix="/admin", tags=["Admin Auth"])
 _safe_include("app.api.v1.endpoints.admin_profile", prefix="/admin", tags=["Admin Profile"])
 _safe_include("app.api.v1.endpoints.admin_moderation", prefix="/admin", tags=["Admin Moderation"])
 
@@ -76,11 +89,22 @@ _safe_include("app.api.v1.endpoints.blog_categories", tags=["Blog Categories"])
 # ORDERS
 _safe_include("app.api.v1.endpoints.orders", prefix="/orders", tags=["Orders"])
 
+# CART
+_safe_include("app.api.v1.endpoints.cart", prefix="/cart", tags=["Cart"])
+
 # Capacity 
 _safe_include("app.api.v1.endpoints.capacity", prefix="/capacity", tags=["Capacity"])
 
+# SEO & SITEMAP MANAGEMENT
+_safe_include("app.api.v1.endpoints.seo", prefix="/seo", tags=["SEO & Sitemap Management"])
+
+# SYSTEM HEALTH MONITORING
+_safe_include("app.api.v1.endpoints.health", prefix="/health", tags=["System Health Monitoring"])
+
 # NOTIFICATIONS
 _safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tags=["Notifications"])
+_safe_include("app.api.v1.endpoints.push_notifications", prefix="/push", tags=["Push Notifications"])
+
 
 # Wishlist
 _safe_include("app.api.v1.endpoints.wishlist",  prefix="/wishlist", tags=["Wishlist"])

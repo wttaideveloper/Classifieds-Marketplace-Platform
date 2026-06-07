@@ -8,12 +8,13 @@ from uuid import UUID
 from app.db.database import get_db
 from app.schemas.capacity_schema import (
     CapacityCreate,
-    CapacityResponse,
+    CapacityCreateResponse,
+    CapacityDetailResponse,
     CapacityUpdate,
-    CapacityUpdateResponse,
-    CapacityAvailabilityResponse,
-    CapacityHistoryResponse,
-    CapacityStatusUpdate
+    CapacityUpdateEnvelopeResponse,
+    CapacityAvailabilityEnvelopeResponse,
+    CapacityStatusUpdate,
+    CapacityStatusUpdateResponse
 )
 from app.services.capacity_service import (
     create_capacity_service,
@@ -41,7 +42,10 @@ def create_capacity(
         payload
     )
 
-@router.get("/{listing_id}", response_model=CapacityHistoryResponse, status_code=status.HTTP_200_OK)
+@router.get(
+    "/{listing_id}",
+    response_model=CapacityDetailResponse
+)
 def get_capacity(
     listing_id: UUID,
     db: Session = Depends(get_db)
@@ -51,7 +55,10 @@ def get_capacity(
         listing_id
     )
 
-@router.put("/{listing_id}", response_model=CapacityUpdateResponse, status_code=status.HTTP_200_OK)
+@router.put(
+    "/{listing_id}",
+    response_model=CapacityUpdateEnvelopeResponse
+)
 def update_capacity(
     listing_id: UUID,
     payload: CapacityUpdate,
@@ -63,7 +70,10 @@ def update_capacity(
         payload
     )
 
-@router.get("/{listing_id}/availability", response_model=CapacityAvailabilityResponse, status_code=status.HTTP_200_OK)
+@router.get(
+    "/{listing_id}/availability",
+    response_model=CapacityAvailabilityEnvelopeResponse
+)
 def get_capacity_availability(
     listing_id: UUID,
     db: Session = Depends(get_db)
@@ -74,7 +84,10 @@ def get_capacity_availability(
         listing_id
     )
 
-@router.put("/{listing_id}/status", response_model=CapacityStatusUpdate, status_code=status.HTTP_200_OK)
+@router.put(
+    "/{listing_id}/status",
+    response_model=CapacityStatusUpdateResponse
+)
 def update_capacity_status(
     listing_id: UUID,
     payload: CapacityStatusUpdate,

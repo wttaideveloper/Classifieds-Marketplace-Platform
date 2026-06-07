@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, status, UploadFile, File, Query
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
+from app.db.database import get_db
+from app.core.dependencies import get_current_user
 from datetime import date
 from app.services.merchant_service import (
     get_merchant_profile_service, 

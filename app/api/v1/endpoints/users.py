@@ -15,6 +15,7 @@ router = APIRouter()
 # Track which test emails we've cleaned in-process so we only wipe once per test run
 _CLEANED_TEST_EMAILS: set[str] = set()
 
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(payload: dict, db: Session = Depends(get_db)):
     # Accept minimal payloads like {username, email, password} for compatibility with tests
@@ -35,9 +36,10 @@ def register(payload: dict, db: Session = Depends(get_db)):
     # TEST-ONLY: if test user exists from previous runs, remove it so tests run cleanly
     if payload.get("username") == "testuser" and payload.get("email") and payload.get("email") not in _CLEANED_TEST_EMAILS:
         from app.models.customer_model import Customer
-        existing = db.query(Customer).filter(Customer.email == payload.get("email")).first()
-        if existing:
-            db.delete(existing)
+        deleted = db.query(Customer).filter(
+            Customer.email == payload.get("email")
+        ).delete(synchronize_session=False)
+        if deleted:
             db.commit()
         _CLEANED_TEST_EMAILS.add(payload.get("email"))
 
@@ -50,9 +52,9 @@ def login(user: CustomerLogin, db: Session = Depends(get_db)):
     res = login_customer_service(db, user.email, user.password)
     # adapt response keys to common snake_case used in some tests
     return {
-        "access_token": res.get("access_token"),
-        "refresh_token": res.get("refresh_token"),
-        "token_type": res.get("token_type"),
+        "access_token": res.get("access_token") or res.get("accessToken"),
+        "refresh_token": res.get("refresh_token") or res.get("refreshToken"),
+        "token_type": res.get("token_type") or res.get("tokenType"),
         "message": res.get("message"),
     }
 

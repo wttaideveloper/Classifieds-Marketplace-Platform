@@ -51,6 +51,15 @@ class CapacityHistoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+class CapacityDetailData(BaseModel):
+
+    capacity: CapacityResponse
+    history: list[CapacityHistoryResponse]
+
+    class Config:
+        from_attributes = True
+
 class CapacityUpdateResponse(BaseModel):
 
     listing_id: UUID
@@ -75,3 +84,38 @@ class CapacityAvailabilityResponse(BaseModel):
 class CapacityStatusUpdate(BaseModel):
 
     capacity_status: CapacityStatus
+
+
+class CapacityCreateResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: CapacityResponse
+
+
+class CapacityDetailResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: CapacityDetailData
+
+
+class CapacityUpdateEnvelopeResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: CapacityUpdateResponse
+
+
+class CapacityAvailabilityEnvelopeResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: CapacityAvailabilityResponse
+
+
+class CapacityStatusUpdateResponse(BaseModel):
+
+    success: bool
+    message: str
+    data: CapacityUpdateResponse

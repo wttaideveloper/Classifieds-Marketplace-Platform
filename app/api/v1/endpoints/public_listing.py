@@ -9,6 +9,11 @@ from app.schemas.common_schema import (
     CreateBookingResponse
 )
 from app.db.database import get_db
+from app.utils.common import (
+    generate_booking_number
+)
+from app.db.database import get_db
+from app.repository.customer_repo import create_booking_repo
 from app.services.customer_service import (
     get_public_listings_service,
     get_public_listing_details_service,
@@ -39,7 +44,7 @@ def get_public_listings(
     price_min: float = None,
     price_max: float = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=10, ge=1, le=100),
+    limit: int = Query(default=10, ge=1),
     sort_by: str = "latest",
     db: Session = Depends(get_db)
 ):
@@ -79,7 +84,7 @@ def search_listings(
         db=db,
         keyword=keyword,
         category=category,
-        listing_type=listing_type,
+        listingType=listing_type,
         location=location,
         rating=rating,
         sort=sort

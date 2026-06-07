@@ -32,6 +32,7 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+<<<<<<< HEAD
     first_name = Column(String)
     last_name = Column(String)
     email = Column(String, unique=True, index=True)
@@ -45,6 +46,21 @@ class Customer(Base):
 
     is_email_verified = Column(Boolean, default=False)
     verification_token = Column(String, nullable=True)
+=======
+    firstName = Column("first_name", String)
+    lastName = Column("last_name", String)
+    email = Column(String, unique=True, index=True)
+    mobileNumber = Column("mobile_number", String)
+    password = Column(String)
+    acceptTerms = Column("accept_terms", Boolean)
+    acceptPrivacyPolicy = Column("accept_privacy_policy", Boolean)
+
+    resetToken = Column("reset_token", String, nullable=True)
+    resetTokenExpiry = Column("reset_token_expiry", DateTime, nullable=True)
+
+    isEmailVerified = Column("is_email_verified", Boolean, default=False)
+    verificationToken = Column("verification_token", String, nullable=True)
+>>>>>>> 04dd8a47f2053fa5dc20b999a276ab54d16b01db
     status = Column(String, default="active")
 
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 
-from app.db.database import SessionLocal
+from app.core.dependencies import get_current_admin
+from app.db.database import get_db
 from app.schemas.blog_schema import BlogRejectSchema
 from app.services.blog_service import (
     get_pending_blogs_service,
@@ -11,15 +12,7 @@ from app.services.blog_service import (
 )
 
 
-router = APIRouter(tags=["Admin Blogs"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+router = APIRouter(tags=["Admin Blogs"], dependencies=[Depends(get_current_admin)])
 
 
 @router.get("/blogs/pending", status_code=status.HTTP_200_OK)
@@ -32,30 +25,30 @@ def get_pending_blogs(
     return get_pending_blogs_service(db=db, page=page, limit=limit, search=search)
 
 
-@router.put("/blogs/{blogId}/approve", status_code=status.HTTP_200_OK)
+@router.put("/blogs/{blog_id}/approve", status_code=status.HTTP_200_OK)
 def approve_blog(
-    blogId: str,
-    adminId: str = Query(..., description="Admin id"),
+    blog_id: str,
+    admin_id: str = Query(..., description="Admin id"),
     db: Session = Depends(get_db),
 ):
-    return approve_blog_service(db=db, admin_id=adminId, blog_id=blogId)
+    return approve_blog_service(db=db, admin_id=admin_id, blog_id=blog_id)
 
 
-@router.put("/blogs/{blogId}/reject", status_code=status.HTTP_200_OK)
+@router.put("/blogs/{blog_id}/reject", status_code=status.HTTP_200_OK)
 def reject_blog(
-    blogId: str,
+    blog_id: str,
     payload: BlogRejectSchema,
-    adminId: str = Query(..., description="Admin id"),
+    admin_id: str = Query(..., description="Admin id"),
     db: Session = Depends(get_db),
 ):
-    return reject_blog_service(db=db, admin_id=adminId, blog_id=blogId, remarks=payload.remarks)
+    return reject_blog_service(db=db, admin_id=admin_id, blog_id=blog_id, remarks=payload.remarks)
 
 
 @router.get("/blogs", status_code=status.HTTP_200_OK)
 def admin_list_blogs(
-    merchantId: str = None,
+    merchant_id: str = None,
     status_filter: str = Query(default=None, alias="status"),
-    approval_filter: str = Query(default=None, alias="approvalStatus"),
+    approval_filter: str = Query(default=None, alias="approval_status"),
     search: str = None,
     page: int = 1,
     limit: int = 10,
@@ -63,7 +56,7 @@ def admin_list_blogs(
 ):
     return admin_list_blogs_service(
         db=db,
-        merchant_id=merchantId,
+        merchant_id=merchant_id,
         status_filter=status_filter,
         approval_filter=approval_filter,
         search=search,

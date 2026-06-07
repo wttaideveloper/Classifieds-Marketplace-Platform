@@ -30,16 +30,31 @@ class Category(Base):
         String,
         nullable=True
     )
+<<<<<<< HEAD
     parent_category_id = Column(
+=======
+    parentCategoryId = Column(
+        "parent_category_id",
+>>>>>>> 04dd8a47f2053fa5dc20b999a276ab54d16b01db
         UUID(as_uuid=True),
         ForeignKey("categories.id"),
         nullable=True
     )
+<<<<<<< HEAD
     is_active = Column(
         Boolean,
         default=True
     )
     is_deleted = Column(
+=======
+    isActive = Column(
+        "is_active",
+        Boolean,
+        default=True
+    )
+    isDeleted = Column(
+        "is_deleted",
+>>>>>>> 04dd8a47f2053fa5dc20b999a276ab54d16b01db
         Boolean,
         default=False
     )

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from app.db.database import get_db
+from app.db.database import get_db
 from app.schemas.merchant_schema import MerchantRegister, MerchantLogin
 from app.services.merchant_service import register_merchant_service, login_merchant_service, google_login_service
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.exceptions.custom_exception import CustomException
 from app.schemas.order_schema import CreateOrderSchema, UpdateOrderStatusSchema
 from app.services.order_service import (
@@ -13,14 +13,6 @@ from app.services.order_service import (
 )
 
 router = APIRouter(tags=["Orders"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.post("")

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 from app.core.dependencies import get_db
-from app.schemas.customer_schema import CustomerProfileResponse, CustomerProfileUpdate, CustomerBookingList
+from app.core.dependencies import get_current_user
+from app.schemas.customer_schema import CustomerProfileUpdate, CustomerBookingList
 from app.services.customer_service import (
     get_profile_service,
     update_profile_service,
@@ -16,9 +17,10 @@ router = APIRouter(
 #  GET PROFILE
 @router.get("/profile", response_model=CustomerProfileResponse, status_code=status.HTTP_200_OK)
 def get_profile(
-    customer_id: UUID,
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    customer_id = current_user.get("id")
     return get_profile_service(db, customer_id)
 
 # UPDATE PROFILE
@@ -26,6 +28,7 @@ def get_profile(
 def update_profile(
     customer_id: UUID,
     payload: CustomerProfileUpdate,
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     return update_profile_service(
@@ -40,6 +43,7 @@ def update_profile(
     status_code=status.HTTP_200_OK
 )
 def get_customer_bookings(
+    current_user=Depends(get_current_user),
     status_filter: str = Query(
         default=None,
         alias="status"

@@ -17,11 +17,19 @@ class Admin(Base):
     email = Column(String, unique=True, nullable=False)
     password = Column(String, nullable=False)
 
+<<<<<<< HEAD
     reset_token = Column(String, nullable=True)
     reset_token_expiry = Column(DateTime, nullable=True)
 
     is_email_verified = Column(Boolean, default=False)
     verification_token = Column(String, nullable=True)
+=======
+    resetToken = Column("reset_token", String, nullable=True)
+    resetTokenExpiry = Column("reset_token_expiry", DateTime, nullable=True)
+
+    isEmailVerified = Column("is_email_verified", Boolean, default=False)
+    verificationToken = Column("verification_token", String, nullable=True)
+>>>>>>> 04dd8a47f2053fa5dc20b999a276ab54d16b01db
     status = Column(String, default="active")
 
     created_at = Column(DateTime, default=datetime.utcnow)

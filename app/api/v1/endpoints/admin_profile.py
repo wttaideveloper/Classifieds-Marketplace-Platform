@@ -3,6 +3,9 @@ from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
+
+from app.db.database import get_db
+from app.core.dependencies import get_current_admin
 from app.schemas.admin_schema import (
     AdminProfileUpdate,
     UserDetailsResponse,
@@ -60,7 +63,8 @@ from app.exceptions.custom_exception import CustomException
 from app.db.database import get_db
 
 router = APIRouter(
-    tags=["Admin"]
+    tags=["Admin"],
+    dependencies=[Depends(get_current_admin)]
 )
 
 #  ADMIN PROFILE 
@@ -289,6 +293,7 @@ def get_all_listings(
 # APPROVE LISTING
 @router.patch(
     "/listings/{listing_id}/approve",
+    "/listings/{listing_id}/approve",
     status_code=status.HTTP_200_OK
 )
 def approve_listing(
@@ -320,6 +325,7 @@ def reject_listing(
 # SUSPEND LISTING
 @router.patch(
     "/listings/{listing_id}/suspend",
+    "/listings/{listing_id}/suspend",
     response_model=SuspendListingResponse,
     status_code=status.HTTP_200_OK
 )
@@ -337,6 +343,7 @@ def suspend_listing(
 
 # REACTIVATE LISTING
 @router.patch(
+    "/listings/{listing_id}/reactivate",
     "/listings/{listing_id}/reactivate",
     response_model=ReactivateListingResponse,
     status_code=status.HTTP_200_OK
