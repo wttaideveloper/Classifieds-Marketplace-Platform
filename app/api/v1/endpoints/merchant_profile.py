@@ -34,15 +34,29 @@ from app.services.merchant_service import (
     get_merchant_attributes_service
 )
 from app.schemas.merchant_schema import (
+    MerchantProfileResponse,
     MerchantProfileUpdate, 
     MerchantBusinessProfileCreate, 
+    MerchantBusinessProfileResponse,
     MerchantBusinessDraft, 
     UpdateBusinessProfile,
+    BusinessStatusResponse,
     MerchantListingCreate,
+    MerchantListingCreateResponse,
     MerchantDraftCreate,
+    MerchantDraftResponse,
+    MerchantListingPaginationResponse,
+    MerchantListingDetailsResponse,
     UpdateMerchantListing, 
+    MerchantListingUpdateResponse,
+    DeleteMerchantListingResponse,
+    PublishListingResponse,
+    UnpublishListingResponse,
+    UploadListingImagesResponse,
+    DeleteListingImageResponse,
     MerchantCustomAttributeCreate,
     MerchantCustomAttributeResponse,
+    MerchantAttributeListResponse,
     BusinessAttributeMapCreate,
     BusinessAttributeMapResponse,
     ListingAttributeMapCreate,
@@ -51,43 +65,37 @@ from app.schemas.merchant_schema import (
     BookingStatusUpdateResponse,
     BookingStatusUpdate
 )
+from app.db.database import get_db
 from uuid import UUID
 
 router = APIRouter(
     tags=["Merchant"]
 )
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-@router.get("/profile", status_code=status.HTTP_200_OK)
+@router.get("/profile", response_model=MerchantProfileResponse, status_code=status.HTTP_200_OK)
 def get_profile(
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return get_merchant_profile_service(db, merchant_id)
 
 # UPDATE PROFILE API
-@router.put("/profile", status_code=status.HTTP_200_OK)
+@router.put("/profile", response_model=MerchantProfileResponse, status_code=status.HTTP_200_OK)
 def update_profile(
     payload: MerchantProfileUpdate,
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return update_merchant_profile_service(
         db,
         merchant_id,
-        payload.dict()
+        payload.model_dump()
     )
 
-@router.post("/business", status_code=status.HTTP_201_CREATED)
+@router.post("/business", response_model=MerchantBusinessProfileResponse, status_code=status.HTTP_201_CREATED)
 def create_business_profile(
     payload: MerchantBusinessProfileCreate,
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return create_business_profile_service(
@@ -102,7 +110,7 @@ def create_business_profile(
 )
 def save_business_draft(
     payload: MerchantBusinessDraft,
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return save_business_draft_service(
@@ -113,10 +121,11 @@ def save_business_draft(
 
 @router.get(
     "/business",
+    response_model=MerchantBusinessProfileResponse,
     status_code=status.HTTP_200_OK
 )
 def get_my_business_profile(
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return get_business_profile_service(
@@ -126,11 +135,12 @@ def get_my_business_profile(
 
 @router.put(
     "/business",
+    response_model=MerchantBusinessProfileResponse,
     status_code=status.HTTP_200_OK
 )
 def update_business_profile(
     payload: UpdateBusinessProfile,
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return update_business_profile_service(
@@ -144,7 +154,7 @@ def update_business_profile(
     status_code=status.HTTP_200_OK
 )
 def submit_business_for_approval(
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return submit_business_for_approval_service(
@@ -158,7 +168,7 @@ def submit_business_for_approval(
 )
 def upload_business_logo(
     file: UploadFile = File(...),
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return upload_business_logo_service(
@@ -173,7 +183,7 @@ def upload_business_logo(
 )
 def upload_business_banner(
     file: UploadFile = File(...),
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return upload_business_banner_service(
@@ -188,7 +198,7 @@ def upload_business_banner(
 )
 def upload_business_gallery(
     files: List[UploadFile] = File(...),
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return upload_business_gallery_service(
@@ -203,7 +213,7 @@ def upload_business_gallery(
 )
 def delete_business_gallery_image(
     image_id: str,
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return delete_business_gallery_image_service(
@@ -214,10 +224,11 @@ def delete_business_gallery_image(
 
 @router.get(
     "/business/status",
+    response_model=BusinessStatusResponse,
     status_code=status.HTTP_200_OK
 )
 def get_business_status(
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return get_business_status_service(
@@ -228,11 +239,12 @@ def get_business_status(
 # CREATE LISTING
 @router.post(
     "/listings",
+    response_model=MerchantListingCreateResponse,
     status_code=status.HTTP_201_CREATED
 )
 def create_listing(
     payload: MerchantListingCreate,
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return create_listing_service(
@@ -244,11 +256,12 @@ def create_listing(
 # SAVE LISTING AS DRAFT
 @router.post(
     "/listings/draft",
+    response_model=MerchantDraftResponse,
     status_code=status.HTTP_201_CREATED
 )
 def save_listing_as_draft(
     payload: MerchantDraftCreate,
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return save_listing_draft_service(
@@ -260,16 +273,17 @@ def save_listing_as_draft(
 # GET MY LISTINGS
 @router.get(
     "/listings",
+    response_model=MerchantListingPaginationResponse,
     status_code=status.HTTP_200_OK
 )
 def get_my_listings(
-    merchant_id: str = Query(..., description="Merchant id"),
-    businessId: Optional[str] = None,
+    merchant_id: UUID = Query(..., description="Merchant id"),
+    business_id: Optional[UUID] = None,
     status_filter: str = Query(
         default=None,
         alias="status"
     ),
-    listingType: str = None,
+    listing_type: str = None,
     search: str = None,
     page: int = 1,
     limit: int = 10,
@@ -278,9 +292,9 @@ def get_my_listings(
     return get_my_listings_service(
         db=db,
         merchant_id=merchant_id,
-        businessId=businessId,
+        business_id=business_id,
         status_filter=status_filter,
-        listingType=listingType,
+        listing_type=listing_type,
         search=search,
         page=page,
         limit=limit
@@ -288,60 +302,64 @@ def get_my_listings(
 
 # GET LISTING DETAILS
 @router.get(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
+    response_model=MerchantListingDetailsResponse,
     status_code=status.HTTP_200_OK
 )
 def get_listing_details(
-    listingId: str,
+    listing_id: UUID,
     db: Session = Depends(get_db)
 ):
     return get_listing_details_service(
         db=db,
-        listingId=listingId
+        listing_id=listing_id
     )
 
 # UPDATE LISTING
 @router.put(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
+    response_model=MerchantListingUpdateResponse,
     status_code=status.HTTP_200_OK
 )
 def update_listing(
-    listingId: str,
+    listing_id: UUID,
     payload: UpdateMerchantListing,
-    merchant_id: str = Query(..., description="Merchant id"),
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return update_listing_service(
         db=db,
         merchant_id=merchant_id,
-        listingId=listingId,
+        listing_id=listing_id,
         payload=payload
     )
 
 # DELETE LISTING
 @router.delete(
-    "/listings/{listingId}",
+    "/listings/{listing_id}",
+    response_model=DeleteMerchantListingResponse,
     status_code=status.HTTP_200_OK
 )
 def delete_listing(
-    listingId: str,
-    merchantId: str = Query(..., description="Merchant id"),
+    listing_id: UUID,
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return delete_listing_service(
         db=db,
-        merchant_id=merchantId,
-        listingId=listingId
+        merchant_id=merchant_id,
+        listing_id=listing_id
     )
 
 # PUBLISH LISTING
 @router.patch(
     "/listings/{listing_id}/publish",
+    response_model=PublishListingResponse,
     status_code=status.HTTP_200_OK
 )
 def publish_listing(
-    listing_id: str,
-    merchant_id: str = Query(..., description="Merchant id"),
+    listing_id: UUID,
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return publish_listing_service(
@@ -352,51 +370,54 @@ def publish_listing(
 
 # UNPUBLISH LISTING
 @router.patch(
-    "/listings/{listingId}/unpublish",
+    "/listings/{listing_id}/unpublish",
+    response_model=UnpublishListingResponse,
     status_code=status.HTTP_200_OK
 )
 def unpublish_listing(
-    listingId: str,
-    merchantId: str = Query(..., description="Merchant id"),
+    listing_id: UUID,
+    merchant_id: UUID = Query(..., description="Merchant id"),
     db: Session = Depends(get_db)
 ):
     return unpublish_listing_service(
         db=db,
-        merchant_id=merchantId,
-        listingId=listingId
+        merchant_id=merchant_id,
+        listing_id=listing_id
     )
 
 # UPLOAD LISTING IMAGES
 @router.post(
-    "/listings/{listingId}/images",
+    "/listings/{listing_id}/images",
+    response_model=UploadListingImagesResponse,
     status_code=status.HTTP_200_OK
 )
 def upload_listing_images(
-    listingId: str,
+    listing_id: UUID,
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db)
 ):
 
     return upload_listing_images_service(
         db=db,
-        listingId=listingId,
+        listing_id=listing_id,
         files=files
     )
 
 # DELETE LISTING IMAGE
 @router.delete(
-    "/listings/{listingId}/images/{imageId}",
+    "/listings/{listing_id}/images/{image_id}",
+    response_model=DeleteListingImageResponse,
     status_code=status.HTTP_200_OK
 )
 def delete_listing_image(
-    listingId: str,
-    imageId: str,
+    listing_id: UUID,
+    image_id: str,
     db: Session = Depends(get_db)
 ):
     return delete_listing_image_service(
         db=db,
-        listingId=listingId,
-        imageId=imageId
+        listing_id=listing_id,
+        image_id=image_id
     )
 
 # CREATE CUSTOM ATTRIBUTE
@@ -418,6 +439,7 @@ def create_custom_attribute(
 # GET MERCHANT ATTRIBUTES
 @router.get(
     "/attributes",
+    response_model=List[MerchantAttributeListResponse],
     status_code=status.HTTP_200_OK
 )
 def get_merchant_attributes(
@@ -428,36 +450,36 @@ def get_merchant_attributes(
 
 # MAP ATTRIBUTE TO BUSINESS
 @router.post(
-    "/business/{id}/attributes",
+    "/business/{bussiness_id}/attributes",
     response_model=BusinessAttributeMapResponse,
     status_code=status.HTTP_201_CREATED
 )
 def map_attribute_to_business(
-    id: str,
+    business_id: UUID,
     payload: BusinessAttributeMapCreate,
     db: Session = Depends(get_db)
 ):
 
     return map_attribute_to_business_service(
         db,
-        id,
+        business_id,
         payload
     )
 
 # MAP ATTRIBUTE TO LISTING
 @router.post(
-    "/listings/{id}/attributes",
+    "/listings/{listing_id}/attributes",
     response_model=ListingAttributeMapResponse,
     status_code=status.HTTP_201_CREATED
 )
 def map_attribute_to_listing(
-    id: str,
+    listing_id: UUID,
     payload: ListingAttributeMapCreate,
     db: Session = Depends(get_db)
 ):
     return map_attribute_to_listing_service(
         db,
-        id,
+        listing_id,
         payload
     )
 
@@ -493,18 +515,18 @@ def get_merchant_bookings(
     )
 
 @router.put(
-    "/bookings/{id}/status",
+    "/bookings/{booking_id}/status",
     response_model=BookingStatusUpdateResponse,
     status_code=status.HTTP_200_OK
 )
 def update_booking_status(
-    id: UUID,
+    booking_id: UUID,
     payload: BookingStatusUpdate,
     db: Session = Depends(get_db)
 ):
 
     return update_booking_status_service(
         db=db,
-        booking_id=id,
+        booking_id=booking_id,
         payload=payload
     )

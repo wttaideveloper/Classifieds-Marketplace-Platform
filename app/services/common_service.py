@@ -1,21 +1,18 @@
+import secrets
+import os
+import uuid
 from jose import jwt, JWTError, ExpiredSignatureError
 from fastapi import status, HTTPException, UploadFile
 from typing import List
 from app.core.config import settings
-from app.exceptions.custom_exception import CustomException
-from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
+from app.core.security import create_access_token
 from app.models.customer_model import Customer
 from app.models.merchant_model import Merchant
 from app.models.admin_model import Admin
 from app.services.email_service import send_email
 from app.repository.customer_repo import get_customer_by_id
 from app.repository.merchant_repo import get_merchant_by_id
-from app.repository.admin_repo import get_admin_by_id, get_admin_by_email
-from app.core.token_blacklist import TOKEN_BLACKLIST
-from datetime import datetime, timedelta
-import secrets
-import os
-import uuid
+from app.repository.admin_repo import get_admin_by_id
 from app.exceptions.custom_exception import (
     CustomException
 )
@@ -31,7 +28,7 @@ ALLOWED_EXTENSIONS = [
 MAX_FILE_SIZE = 5 * 1024 * 1024
 
 def refresh_token_service(payload):
-    token = payload.refreshToken
+    token = payload.refresh_token
     try:
         decoded = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         if decoded.get("type") != "refresh":
@@ -53,20 +50,20 @@ def refresh_token_service(payload):
 
 
 def verify_email_service(db, payload):
-    token = payload.verificationToken
+    token = payload.verification_token
     if not token:
         raise CustomException(400, "Verification token is required")
     user = (
-        db.query(Customer).filter(Customer.verificationToken == token).first()
-        or db.query(Merchant).filter(Merchant.verificationToken == token).first()
-        or db.query(Admin).filter(Admin.verificationToken == token).first()
+        db.query(Customer).filter(Customer.verification_token == token).first()
+        or db.query(Merchant).filter(Merchant.verification_token == token).first()
+        or db.query(Admin).filter(Admin.verification_token == token).first()
     )
     if not user:
         raise CustomException(404, "Invalid verification token")
-    if user.isEmailVerified:
+    if user.is_email_verified:
         raise CustomException(400, "Email already verified")
-    user.isEmailVerified = True
-    user.verificationToken = None
+    user.is_email_verified = True
+    user.verification_token = None
     db.commit()
     return {"success": True, "message": "Email verified successfully"}
 
@@ -75,15 +72,15 @@ def resend_verification_service(db, payload):
     email = payload.email
     user = (
         db.query(Customer).filter(Customer.email == email).first()
-        or db.query(Merchant).filter(Merchant.businessEmail == email).first()
+        or db.query(Merchant).filter(Merchant.business_email == email).first()
         or db.query(Admin).filter(Admin.email == email).first()
     )
     if not user:
         raise CustomException(404, "User not found")
-    if user.isEmailVerified:
+    if user.is_email_verified:
         raise CustomException(400, "Email already verified")
     verification_token = secrets.token_urlsafe(32)
-    user.verificationToken = verification_token
+    user.verification_token = verification_token
     db.commit()
     send_email(email, verification_token)
     return {"success": True, "message": "Verification email sent successfully"}
@@ -111,7 +108,7 @@ def get_current_user_service(db, current_user):
             "success": True,
             "data": {
                 "id": user.id,
-                "email": user.businessEmail,   # FIXED
+                "email": user.business_email,   
                 "role": "merchant"
             }
         }
@@ -184,8 +181,8 @@ async def upload_business_image_service(
             with open(file_path, "wb") as image:
                 image.write(file_content)
             uploaded_files.append({
-                "fileName": unique_filename,
-                "filePath": file_path
+                "file_name": unique_filename,
+                "file_path": file_path
             })
         return {
             "success": True,
@@ -247,8 +244,8 @@ async def upload_listing_images_service(
             with open(file_path, "wb") as image:
                 image.write(file_content)
             uploaded_images.append({
-                "fileName": unique_filename,
-                "filePath": file_path
+                "file_name": unique_filename,
+                "file_path": file_path
             })
         return {
             "success": True,

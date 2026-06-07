@@ -4,16 +4,22 @@ from fastapi.responses import JSONResponse
 from fastapi import Depends
 from fastapi.security import HTTPBearer
 import os
+from dotenv import load_dotenv
 from app.db.database import Base, engine
 from app.exceptions.custom_exception import CustomException
 from app.api.v1.router import api_router
 
 security = HTTPBearer()
 
+# This must happen BEFORE you check the env variables or import database blocks
+load_dotenv()
+
 app = FastAPI(
     title="Marketplace API",
     version="1.0.0"
 )
+
+print("--- DEBUG: AUTO_CREATE_TABLES is set to:", os.getenv("AUTO_CREATE_TABLES"))
 
 @app.get("/protected")
 def protected_route(credentials=Depends(security)):
@@ -38,18 +44,30 @@ def custom_exception_handler(request, exc: CustomException):
 @app.on_event("startup")
 def startup():
     if os.getenv("AUTO_CREATE_TABLES", "false").lower() == "true":
-        import app.models.address_model  # noqa: F401
-        import app.models.admin_model  # noqa: F401
-        import app.models.blog_model  # noqa: F401
-        import app.models.category_model  # noqa: F401
-        import app.models.customer_model  # noqa: F401
-        import app.models.merchant_model  # noqa: F401
-        import app.models.order_model  # noqa: F401
-        import app.models.review_model  # noqa: F401
-        import app.models.review_moderation_history_model  # noqa: F401
-        import app.models.notification_model  # noqa: F401
-        import app.models.moderation_model  # noqa: F401
-        Base.metadata.create_all(bind=engine)
+        try:
+            import app.models.address_model
+            import app.models.admin_model
+            import app.models.blog_model
+            import app.models.category_model
+            import app.models.customer_model
+            import app.models.merchant_model
+            import app.models.order_model
+            import app.models.review_model
+            import app.models.review_moderation_history_model
+            import app.models.notification_model
+            import app.models.moderation_model
+            import app.models.capacity_model
+            import app.models.wishlist_model
+            import app.models.media_model
+            print("REGISTERED TABLES:")
+            print(Base.metadata.tables.keys())
+
+            Base.metadata.create_all(bind=engine)
+
+            print("Tables created successfully")
+
+        except Exception as e:
+            print("TABLE CREATION ERROR:", e)
 
 # Routes
 app.include_router(api_router, prefix="/api/v1")

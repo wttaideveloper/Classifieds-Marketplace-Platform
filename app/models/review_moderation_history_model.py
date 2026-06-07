@@ -18,7 +18,7 @@ class ReviewModerationHistory(Base):
     )
     old_status = Column(String(50), nullable=False)
     new_status = Column(String(50), nullable=False)
-    moderated_by = Column(Integer, ForeignKey("admins.id"), nullable=False)
+    moderated_by = Column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=False)
     remarks = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

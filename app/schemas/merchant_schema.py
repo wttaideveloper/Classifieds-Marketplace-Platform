@@ -7,50 +7,50 @@ from enum import Enum as PyEnum
 
 # ENUMS
 class ListingType(str, PyEnum):
-    product = "product"
-    service = "service"
-    event = "event"
-    training = "training"
-    program = "program"
+    PRODUCT = "product"
+    SERVICE = "service"
+    EVENT = "event"
+    TRAINING = "training"
+    PROGRAM = "program"
 
 class ListingStatus(str, Enum):
-    draft = "draft"
-    published = "published"
+    DRAFT = "draft"
+    PUBLISHED = "published"
 
 
 class ServiceMode(str, Enum):
-    online = "online"
-    offline = "offline"
-    hybrid = "hybrid"
+    ONLINE = "online"
+    OFFLINE = "offline"
+    HYBRID = "hybrid"
 
 class BookingStatus(str, PyEnum):
-    Pending = "Pending"
-    Approved = "Approved"
-    Rejected = "Rejected"
-    Completed = "Completed"
-    Cancelled = "Cancelled"
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 # FIELD TYPE ENUM
 class AttributeFieldType(str, PyEnum):
-    text = "text"
-    textarea = "textarea"
-    number = "number"
-    dropdown = "dropdown"
-    checkbox = "checkbox"
-    date = "date"
+    TEXT = "text"
+    TEXTAREA = "textarea"
+    NUMBER = "number"
+    DROPDOWN = "dropdown"
+    CHECKBOX = "checkbox"
+    DATE = "date"
 
 # REGISTER
 class MerchantRegister(BaseModel):
-    fullName: str
-    businessEmail: EmailStr
-    mobileNumber: str
+    full_name: str
+    business_email: EmailStr
+    mobile_number: str
     password: str
-    confirmPassword: str
-    businessName: str
-    acceptTerms: bool
-    acceptPrivacyPolicy: bool
+    confirm_password: str
+    business_name: str
+    accept_terms: bool
+    accept_privacy_policy: bool
 
-    @field_validator("confirmPassword")
+    @field_validator("confirm_password")
     @classmethod
     def passwords_match(cls, v, values):
         if "password" in values.data and v != values.data["password"]:
@@ -68,118 +68,128 @@ class ForgotPassword(BaseModel):
 
 #  RESET PASSWORD
 class ResetPassword(BaseModel):
-    resetToken: str
-    newPassword: str
-    confirmPassword: str
+    reset_token: str
+    new_password: str
+    confirm_password: str
 
-    @field_validator("confirmPassword")
+    @field_validator("confirm_password")
     @classmethod
     def passwords_match(cls, v, values):
-        if "newPassword" in values.data and v != values.data["newPassword"]:
+        if "new_password" in values.data and v != values.data["new_password"]:
             raise ValueError("Passwords do not match")
         return v
 
 #  CHANGE PASSWORD
 class ChangePassword(BaseModel):
-    currentPassword: str
-    newPassword: str
-    confirmPassword: str
+    current_password: str
+    new_password: str
+    confirm_password: str
 
-    @field_validator("confirmPassword")
+    @field_validator("confirm_password")
     @classmethod
     def passwords_match(cls, v, values):
-        if "newPassword" in values.data and v != values.data["newPassword"]:
+        if "new_password" in values.data and v != values.data["new_password"]:
             raise ValueError("Passwords do not match")
         return v
 
 # PROFILE
+class MerchantProfileResponse(BaseModel):
+    id: UUID
+    name: str
+    business_email: EmailStr
+    mobile_number: str
+    profile_image: Optional[str]
+
+    class Config:
+        from_attributes = True
+
 class MerchantProfileUpdate(BaseModel):
     name: Optional[str] = None
-    mobileNumber: Optional[str] = None
-    profileImage: Optional[str] = None
+    mobile_number: Optional[str] = None
+    profile_image: Optional[str] = None
 
 class MerchantBusinessProfileCreate(BaseModel):    
-    businessName: str    
-    businessDescription: Optional[str] = None   
-    primaryCategory: str    
+    business_name: str    
+    business_description: Optional[str] = None   
+    primary_category: str    
     subcategory: Optional[str] = None    
-    businessEmail: EmailStr    
-    phoneNumber: str    
-    fullAddress: str    
+    business_email: EmailStr    
+    phone_number: str    
+    full_address: str    
     city: str    
     state: str    
-    zipCode: str    
+    zip_code: str    
     country: str    
     latitude: float    
     longitude: float   
-    businessLogo: Optional[str] = None    
-    bannerImage: Optional[str] = None    
-    galleryImages: Optional[List[str]] = []    
-    operatingHours: Optional[Dict] = {}    
-    businessType: str   # physical | online | hybrid    
-    cancellationPolicy: Optional[str] = None    
-    refundPolicy: Optional[str] = None    
-    merchantTermsOfService: Optional[str] = None    
-    websiteUrl: Optional[str] = None    
-    socialMediaLinks: Optional[Dict] = {}    
-    additionalContactNumbers: Optional[List[str]] = []    
-    shortTagline: Optional[str] = None
+    business_logo: Optional[str] = None    
+    banner_image: Optional[str] = None    
+    gallery_images: List[str] = Field(default_factory=list)  
+    operating_hours: Dict = Field(default_factory=dict)   
+    business_type: str   # physical | online | hybrid    
+    cancellation_policy: Optional[str] = None    
+    refund_policy: Optional[str] = None    
+    merchant_terms_of_service: Optional[str] = None    
+    website_url: Optional[str] = None    
+    social_media_links: Dict = Field(default_factory=dict)   
+    additional_contact_numbers: List[str] = Field(default_factory=list)    
+    short_tagline: Optional[str] = None
 
 class MerchantBusinessDraft(BaseModel):
-    businessName: Optional[str] = None
-    businessDescription: Optional[str] = None
-    primaryCategory: Optional[str] = None
+    business_name: Optional[str] = None
+    business_description: Optional[str] = None
+    primary_category: Optional[str] = None
     subcategory: Optional[str] = None
-    businessEmail: Optional[EmailStr] = None
-    phoneNumber: Optional[str] = None
-    fullAddress: Optional[str] = None
+    business_email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
+    full_address: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
-    zipCode: Optional[str] = None
+    zip_code: Optional[str] = None
     country: Optional[str] = None
-    latitude: Optional[str] = None
+    latitude: Optional[float] = None
     longitude: Optional[str] = None
-    businessLogo: Optional[str] = None
-    bannerImage: Optional[str] = None
-    galleryImages: Optional[List[str]] = None
-    operatingHours: Optional[Dict] = None
-    businessType: Optional[str] = None
-    cancellationPolicy: Optional[str] = None
-    refundPolicy: Optional[str] = None
-    merchantTermsOfService: Optional[str] = None
-    websiteUrl: Optional[str] = None
-    socialMediaLinks: Optional[Dict] = None
-    additionalContactNumbers: Optional[List[str]] = None
-    shortTagline: Optional[str] = None
+    business_logo: Optional[str] = None
+    banner_image: Optional[str] = None
+    gallery_images: List[str] = Field(default_factory=list)
+    operating_hours: Dict = Field(default_factory=dict)
+    business_type: Optional[str] = None
+    cancellation_policy: Optional[str] = None
+    refund_policy: Optional[str] = None
+    merchant_terms_of_service: Optional[str] = None
+    website_url: Optional[str] = None
+    social_media_links: Dict = Field(default_factory=dict)
+    additional_contact_numbers: List[str] = Field(default_factory=list)
+    short_tagline: Optional[str] = None
 
 class MerchantBusinessProfileResponse(BaseModel):
     id: str
     merchant_id: str
-    businessName: str
-    businessDescription: Optional[str]
-    primaryCategory: Optional[str]
+    business_name: str
+    business_description: Optional[str]
+    primary_category: Optional[str]
     subcategory: Optional[str]
-    businessEmail: Optional[str]
-    phoneNumber: Optional[str]
-    fullAddress: Optional[str]
+    business_email: Optional[str]
+    phone_number: Optional[str]
+    full_address: Optional[str]
     city: Optional[str]
     state: Optional[str]
-    zipCode: Optional[str]
+    zip_code: Optional[str]
     country: Optional[str]
-    latitude: Optional[str]
+    latitude: Optional[float]
     longitude: Optional[str]
-    businessLogo: Optional[str]
-    bannerImage: Optional[str]
-    galleryImages: Optional[List[str]]
-    operatingHours: Optional[Dict]
-    businessType: Optional[str]
-    cancellationPolicy: Optional[str]
-    refundPolicy: Optional[str]
-    merchantTermsOfService: Optional[str]
-    websiteUrl: Optional[str]
-    socialMediaLinks: Optional[Dict]
-    additionalContactNumbers: Optional[List[str]]
-    shortTagline: Optional[str]
+    business_logo: Optional[str]
+    banner_image: Optional[str]
+    gallery_images: List[str] = Field(default_factory=list)
+    operating_hours: Dict = Field(default_factory=dict)
+    business_type: Optional[str]
+    cancellation_policy: Optional[str]
+    refund_policy: Optional[str]
+    merchant_terms_of_service: Optional[str]
+    website_url: Optional[str]
+    social_media_links: Dict = Field(default_factory=dict)
+    additional_contact_numbers: List[str] = Field(default_factory=list)
+    short_tagline: Optional[str]
 
     class Config:
         from_attributes = True
@@ -187,77 +197,77 @@ class MerchantBusinessProfileResponse(BaseModel):
 class BusinessStatusResponse(BaseModel):
     success: bool
     message: str
-    businessStatus: str
-    businessName: Optional[str] = None
+    business_status: str
+    business_name: Optional[str] = None
 
 
 
 class UpdateBusinessProfile(BaseModel):
     # NORMAL EDITABLE FIELDS
     # Description
-    businessDescription: Optional[str] = None
+    business_description: Optional[str] = None
     # Images
-    businessLogo: Optional[str] = None
-    bannerImage: Optional[str] = None
-    galleryImages: Optional[List[str]] = None
+    business_logo: Optional[str] = None
+    banner_image: Optional[str] = None
+    gallery_images: List[str] = Field(default_factory=list)
     # Contact Details
-    businessEmail: Optional[EmailStr] = None
-    phoneNumber: Optional[str] = None
-    additionalContactNumbers: Optional[List[str]] = None
-    websiteUrl: Optional[str] = None
-    socialMediaLinks: Optional[Dict] = None
+    business_email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
+    additional_contact_numbers: Optional[List[str]] = None
+    website_url: Optional[str] = None
+    social_media_links: Dict = Field(default_factory=dict)
     # Operating Hours
-    operatingHours: Optional[Dict] = None
+    operating_hours: Dict = Field(default_factory=dict)
     # Policies
-    cancellationPolicy: Optional[str] = None
-    refundPolicy: Optional[str] = None
-    merchantTermsOfService: Optional[str] = None
+    cancellation_policy: Optional[str] = None
+    refund_policy: Optional[str] = None
+    merchant_terms_of_service: Optional[str] = None
     # Optional branding text
-    shortTagline: Optional[str] = None
+    short_tagline: Optional[str] = None
     # RESTRICTED FIELDS (May Need Approval)
     # Business Name
-    businessName: Optional[str] = None
+    business_name: Optional[str] = None
     # Address / Location
-    fullAddress: Optional[str] = None
+    full_address: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
-    zipCode: Optional[str] = None
+    zip_code: Optional[str] = None
     country: Optional[str] = None
-    latitude: Optional[str] = None
-    longitude: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     # Category
-    primaryCategory: Optional[str] = None
+    primary_category: Optional[str] = None
     subcategory: Optional[str] = None
 
 class MerchantListingBase(BaseModel):
 
-    businessId: UUID
-    listingType: ListingType
+    business_id: UUID
+    listing_type: ListingType
     title: str
     description: str
-    categoryId: UUID
-    subcategoryId: Optional[UUID] = None
+    category_id: UUID
+    subcategory_id: Optional[UUID] = None
     price: float
     currency: str = "INR"
     images: List[str] = Field(default_factory=list)
-    status: ListingStatus = ListingStatus.draft
+    status: ListingStatus = ListingStatus.DRAFT
     tags: List[str] = Field(default_factory=list)
     # PRODUCT
-    stockQuantity: Optional[int] = None
+    stock_quantity: Optional[int] = None
     sku: Optional[str] = None
     weight: Optional[float] = None
     # SERVICE
     duration: Optional[str] = None
-    serviceMode: Optional[ServiceMode] = None
+    service_mode: Optional[ServiceMode] = None
     availability: Optional[str] = None
     schedule: Optional[str] = None
     # EVENT / TRAINING / PROGRAM
-    startDate: Optional[datetime] = None
-    endDate: Optional[datetime] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
     capacity: Optional[int] = None
     location: Optional[str] = None
-    isOnline: bool = False
-    registrationDeadline: Optional[datetime] = None
+    is_online: bool = False
+    registration_deadline: Optional[datetime] = None
 
 class MerchantListingCreate(MerchantListingBase):
     pass
@@ -273,35 +283,35 @@ class MerchantListingCreateResponse(MerchantListingBase):
 
 class MerchantDraftCreate(BaseModel):
 
-    businessId: Optional[UUID] = None
-    listingType: Optional[ListingType] = None
+    business_id: Optional[UUID] = None
+    listing_type: Optional[ListingType] = None
     title: Optional[str] = None
     description: Optional[str] = None
-    categoryId: Optional[UUID] = None
-    subcategoryId: Optional[UUID] = None
+    category_id: Optional[UUID] = None
+    subcategory_id: Optional[UUID] = None
     price: Optional[float] = None
     currency: str = "INR"
     images: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
-    stockQuantity: Optional[int] = None
+    stock_quantity: Optional[int] = None
     sku: Optional[str] = None
     weight: Optional[float] = None
     duration: Optional[str] = None
-    serviceMode: Optional[ServiceMode] = None
+    service_mode: Optional[ServiceMode] = None
     availability: Optional[str] = None
     schedule: Optional[str] = None
-    startDate: Optional[datetime] = None
-    endDate: Optional[datetime] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
     capacity: Optional[int] = None
     location: Optional[str] = None
-    isOnline: bool = False
-    registrationDeadline: Optional[datetime] = None
+    is_online: bool = False
+    registration_deadline: Optional[datetime] = None
 
 class MerchantDraftResponse(BaseModel):
 
     id: UUID
-    businessId: Optional[UUID]
-    listingType: Optional[ListingType]
+    business_id: Optional[UUID]
+    listing_type: Optional[ListingType]
     title: Optional[str]
     description: Optional[str]
     status: ListingStatus
@@ -312,8 +322,8 @@ class MerchantDraftResponse(BaseModel):
 class MerchantListingListResponse(BaseModel):
 
     id: UUID
-    businessId: UUID
-    listingType: ListingType
+    business_id: UUID
+    listing_type: ListingType
     title: str
     description: Optional[str]
     price: Optional[float]
@@ -338,30 +348,30 @@ class MerchantListingPaginationResponse(BaseModel):
 class MerchantListingDetailsResponse(BaseModel):
 
     id: UUID
-    businessId: UUID
-    listingType: ListingType
+    business_id: UUID
+    listing_type: ListingType
     title: str
     description: Optional[str]
-    categoryId: Optional[UUID]
-    subcategoryId: Optional[UUID]
+    category_id: Optional[UUID]
+    subcategory_id: Optional[UUID]
     price: Optional[float]
     currency: Optional[str]
     images: List[str]
     status: ListingStatus
     tags: List[str]
-    stockQuantity: Optional[int]
+    stock_quantity: Optional[int]
     sku: Optional[str]
     weight: Optional[float]
     duration: Optional[str]
-    serviceMode: Optional[ServiceMode]
+    service_mode: Optional[ServiceMode]
     availability: Optional[str]
     schedule: Optional[str]
-    startDate: Optional[datetime]
-    endDate: Optional[datetime]
+    start_date: Optional[datetime]
+    end_date: Optional[datetime]
     capacity: Optional[int]
     location: Optional[str]
-    isOnline: bool
-    registrationDeadline: Optional[datetime]
+    is_online: bool
+    registration_deadline: Optional[datetime]
     created_at: datetime
     updated_at: datetime
 
@@ -397,7 +407,7 @@ class DeleteMerchantListingResponse(BaseModel):
 
     success: bool
     message: str
-    deletedListingId: UUID
+    deleted_listing_id: UUID
 
 class PublishListingResponse(BaseModel):
 
@@ -436,7 +446,7 @@ class UploadListingImagesResponse(BaseModel):
 
 class UploadListingImagesData(BaseModel):
 
-    listingId: UUID
+    listing_id: UUID
     images: List[str]
 
 class DeleteListingImageResponse(BaseModel):
@@ -447,9 +457,9 @@ class DeleteListingImageResponse(BaseModel):
 
 class DeleteListingImageData(BaseModel):
 
-    listingId: UUID
-    deletedImage: str
-    remainingImages: List[str]
+    listing_id: UUID
+    deleted_image: str
+    remaining_images: List[str]
 
 # CREATE CUSTOM ATTRIBUTE
 class MerchantCustomAttributeCreate(BaseModel):

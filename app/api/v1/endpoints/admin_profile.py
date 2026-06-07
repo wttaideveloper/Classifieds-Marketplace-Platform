@@ -1,10 +1,8 @@
 # app/api/v1/endpoints/admin_profile.py
-from fastapi import APIRouter, Depends, status, HTTPException, Query
+from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
-
-from app.db.database import SessionLocal
 from app.schemas.admin_schema import (
     AdminProfileUpdate,
     UserDetailsResponse,
@@ -25,7 +23,7 @@ from app.schemas.admin_schema import (
     SuspendListingRequest,
     SuspendListingResponse,
     ReactivateListingResponse,
-    CreateCategorySchema,
+    CreateCategoryRequest,
     CreateCategoryResponse,
     AttributeCreate,
     AttributeUpdate,
@@ -59,21 +57,11 @@ from app.services.admin_service import (
     delete_attribute_service
 )
 from app.exceptions.custom_exception import CustomException
-
+from app.db.database import get_db
 
 router = APIRouter(
     tags=["Admin"]
 )
-
-
-# DB Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 
 #  ADMIN PROFILE 
 @router.get("/profile", status_code=status.HTTP_200_OK)
@@ -172,7 +160,7 @@ def get_merchants(
     status_code=status.HTTP_200_OK
 )
 def get_merchant_details(
-    merchant_id: str,
+    merchant_id: UUID,
     db: Session = Depends(get_db)
 ):
     return admin_get_merchant_details_service(
@@ -300,67 +288,67 @@ def get_all_listings(
 
 # APPROVE LISTING
 @router.patch(
-    "/listings/{listingId}/approve",
+    "/listings/{listing_id}/approve",
     status_code=status.HTTP_200_OK
 )
 def approve_listing(
-    listingId: str,
+    listing_id: UUID,
     db: Session = Depends(get_db)
 ):
     return approve_listing_service(
         db=db,
-        listingId=listingId
+        listing_id=listing_id
     )
 
 # REJECT LISTING
 @router.patch(
-    "/listings/{listingId}/reject",
+    "/listings/{listing_id}/reject",
     status_code=status.HTTP_200_OK
 )
 def reject_listing(
-    listingId: str,
+    listing_id: UUID,
     payload: RejectListingRequest,
     db: Session = Depends(get_db)
 ):
 
     return reject_listing_service(
         db=db,
-        listingId=listingId,
+        listing_id=listing_id,
         payload=payload
     )
 
 # SUSPEND LISTING
 @router.patch(
-    "/listings/{listingId}/suspend",
+    "/listings/{listing_id}/suspend",
     response_model=SuspendListingResponse,
     status_code=status.HTTP_200_OK
 )
 def suspend_listing(
-    listingId: str,
+    listing_id: UUID,
     payload: SuspendListingRequest,
     db: Session = Depends(get_db)
 ):
 
     return suspend_listing_service(
         db=db,
-        listingId=listingId,
+        listing_id=listing_id,
         payload=payload
     )
 
 # REACTIVATE LISTING
 @router.patch(
-    "/listings/{listingId}/reactivate",
+    "/listings/{listing_id}/reactivate",
     response_model=ReactivateListingResponse,
     status_code=status.HTTP_200_OK
 )
 def reactivate_listing(
-    listingId: str,
+    listing_id: UUID,
     db: Session = Depends(get_db)
 ):
 
     return reactivate_listing_service(
         db=db,
-        listingId=listingId
+        listing_id=listing_id
     )
 
 # CREATE CATEGORY
@@ -370,7 +358,7 @@ def reactivate_listing(
     status_code=status.HTTP_201_CREATED
 )
 def create_category(
-    payload: CreateCategorySchema,
+    payload: CreateCategoryRequest,
     db: Session = Depends(get_db)
 ):
 
@@ -416,7 +404,7 @@ def get_all_attributes(
     status_code=status.HTTP_200_OK
 )
 def get_attribute_by_id(
-    attribute_id: str,
+    attribute_id: UUID,
     db: Session = Depends(get_db)
 ):
 
@@ -433,7 +421,7 @@ def get_attribute_by_id(
     status_code=status.HTTP_200_OK
 )
 def update_attribute(
-    attribute_id: str,
+    attribute_id: UUID,
     payload: AttributeUpdate,
     db: Session = Depends(get_db)
 ):
@@ -451,7 +439,7 @@ def update_attribute(
     status_code=status.HTTP_200_OK
 )
 def delete_attribute(
-    attribute_id: str,
+    attribute_id: UUID,
     db: Session = Depends(get_db)
 ):
 

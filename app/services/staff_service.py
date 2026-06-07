@@ -1,0 +1,234 @@
+from sqlalchemy.orm import Session
+from fastapi import status
+from datetime import datetime, timezone
+from app.models.staff_model import Staff
+from app.schemas.staff_schema import StaffCreate, StaffUpdateRequest
+from app.exceptions.custom_exception import CustomException
+from app.repository.staff_repo import (
+    get_staff_repo, 
+    get_staff_by_id_repo, 
+    get_staff_by_email_repo,
+    update_staff_repo,
+    delete_staff_repo,
+    update_staff_status_repo,
+    get_role_by_id_repo,
+    assign_role_repo
+)
+from uuid import UUID
+
+def create_staff_service(
+    payload: StaffCreate,
+    db: Session
+):
+    existing_staff = (
+        db.query(Staff)
+        .filter(
+            Staff.email == payload.email
+        )
+        .first()
+    )
+    if existing_staff:
+        raise CustomException(
+            status.HTTP_409_CONFLICT,
+            "Staff already exists with this email"
+        )
+    staff = Staff(
+        merchant_id=payload.merchant_id,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        email=payload.email,
+        phone_number=payload.phone_number,
+        role_id=payload.role_id,
+        invited_by=payload.invited_by,
+        staff_status="PENDING"
+    )
+    db.add(staff)
+    db.commit()
+    db.refresh(staff)
+    return staff
+
+def get_staff_service(db: Session):
+
+    staff_list = get_staff_repo(db)
+
+    if not staff_list:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "No staff found"
+        )
+
+    return staff_list
+
+def get_staff_by_id_service(
+    db: Session,
+    staff_id: UUID
+):
+
+    staff = get_staff_by_id_repo(
+        db,
+        staff_id
+    )
+
+    if not staff:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
+        )
+
+    return staff
+
+
+def update_staff_service(
+    db: Session,
+    staff_id: UUID,
+    payload: StaffUpdateRequest
+):
+
+    staff = get_staff_by_id_repo(
+        db,
+        staff_id
+    )
+
+    if not staff:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
+        )
+
+    if payload.email:
+
+        existing_email = get_staff_by_email_repo(
+            db,
+            payload.email
+        )
+
+        if (
+            existing_email and
+            existing_email.id != staff.id
+        ):
+            raise CustomException(
+                status.HTTP_409_CONFLICT,
+                "Email already exists"
+            )
+
+    update_data = payload.model_dump(
+        exclude_unset=True
+    )
+
+    for key, value in update_data.items():
+        setattr(staff, key, value)
+
+    return update_staff_repo(
+        db,
+        staff
+    )
+
+
+def delete_staff_service(
+    db: Session,
+    staff_id: UUID
+):
+
+    staff = get_staff_by_id_repo(
+        db,
+        staff_id
+    )
+
+    if not staff:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
+        )
+
+    delete_staff_repo(
+        db,
+        staff
+    )
+
+    return True
+
+def update_staff_status_service(
+    db: Session,
+    staff_id: UUID,
+    payload
+):
+
+    staff = get_staff_by_id_repo(
+        db=db,
+        staff_id=staff_id
+    )
+
+    if not staff:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
+        )
+
+    if staff.staff_status == payload.staff_status:
+        raise CustomException(
+        status.HTTP_400_BAD_REQUEST,
+        f"Staff is already {payload.staff_status.value}"
+    )
+        
+
+    staff.staff_status = payload.staff_status
+
+    updated_staff = update_staff_status_repo(
+        db=db,
+        staff=staff
+    )
+
+    return {
+        "staff_id": updated_staff.id,
+        "staff_status": updated_staff.staff_status
+    }
+
+def assign_role_service(
+    db: Session,
+    staff_id: UUID,
+    payload
+):
+
+    staff = get_staff_by_id_repo(
+        db=db,
+        staff_id=staff_id
+    )
+
+    if not staff:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Staff not found"
+        )
+
+    role = get_role_by_id_repo(
+        db=db,
+        role_id=payload.role_id
+    )
+
+    if not role:
+        raise CustomException(
+            status.HTTP_404_NOT_FOUND,
+            "Role not found"
+        )
+
+    staff.role_id = payload.role_id
+
+    if staff.staff_status == "PENDING":
+        staff.staff_status = "ACTIVE"
+
+    if not staff.joined_at:
+        staff.joined_at = datetime.now(
+            timezone.utc
+        )
+
+    updated_staff = assign_role_repo(
+        db=db,
+        staff=staff
+    )
+
+    return {
+        "staff_id": updated_staff.id,
+        "role_id": updated_staff.role_id,
+        "staff_status": updated_staff.staff_status,
+        "joined_at": updated_staff.joined_at
+    }

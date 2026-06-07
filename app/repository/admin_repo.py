@@ -27,55 +27,39 @@ class BusinessStatus:
     REJECTED = "rejected"
     SUSPENDED = "suspended"
 
-
-# =========================================================
 # ADMIN QUERIES
-# =========================================================
 def get_admin_by_id(
     db: Session,
     admin_id
 ) -> Optional[Admin]:
-
     return db.query(Admin).filter(
         Admin.id == admin_id
     ).first()
-
 
 def get_admin_by_email(
     db: Session,
     email: str
 ) -> Optional[Admin]:
-
     return db.query(Admin).filter(
         Admin.email == email
     ).first()
-
 
 def update_admin(
     db: Session,
     admin: Admin
 ) -> Admin:
-
     try:
-
         db.add(admin)
         db.commit()
         db.refresh(admin)
-
         return admin
-
     except SQLAlchemyError as e:
-
         db.rollback()
-
         raise Exception(
             f"Database Error: {str(e)}"
         )
 
-
-# =========================================================
 # BUSINESS LIST
-# =========================================================
 def get_all_businesses(
     db: Session,
     search: Optional[str] = None,
@@ -84,7 +68,6 @@ def get_all_businesses(
     skip: int = 0,
     limit: int = 10
 ) -> Tuple[int, List[Business]]:
-
     query = db.query(Business).filter(
         Business.is_deleted  == False
     )
@@ -121,10 +104,7 @@ def get_all_businesses(
 
     return total, businesses
 
-
-# =========================================================
 # BUSINESS DETAIL
-# =========================================================
 def get_business_by_id(
     db: Session,
     business_id
@@ -149,9 +129,7 @@ def get_business_with_merchant(
     ).first()
 
 
-# =========================================================
 # BUSINESS STATUS ACTIONS
-# =========================================================
 def approve_business(
     db: Session,
     business: Business
@@ -220,129 +198,86 @@ def _commit(
     db: Session,
     instance
 ):
-
     try:
-
         db.add(instance)
         db.commit()
         db.refresh(instance)
-
         return instance
-
     except SQLAlchemyError as e:
-
         db.rollback()
-
         raise Exception(
             f"Database Error: {str(e)}"
         )
 
-
-# =========================================================
 # GET ALL LISTINGS
-# =========================================================
 def get_all_listings_repo(
     db: Session
 ):
-
     listings = db.query(MerchantListing).order_by(
-        MerchantListing.createdAt.desc()
+        MerchantListing.created_at.desc()
     ).all()
-
     total = len(listings)
-
     return total, listings
 
-
-# =========================================================
 # GET LISTING BY ID
-# =========================================================
 def get_listing_by_id_repo(
     db: Session,
-    listingId
+    listing_id
 ):
-
     return db.query(MerchantListing).filter(
-        MerchantListing.id == listingId
+        MerchantListing.id == listing_id
     ).first()
 
-
-# =========================================================
 # APPROVE LISTING
-# =========================================================
 def approve_listing_repo(
     db: Session,
     listing
 ):
-
     listing.status = "approved"
-    listing.approvedAt = datetime.utcnow()
-
+    listing.approved_at = datetime.utcnow()
     db.commit()
     db.refresh(listing)
-
     return listing
 
-
-# =========================================================
 # REJECT LISTING
-# =========================================================
 def reject_listing_repo(
     db: Session,
     listing,
     reason
 ):
-
     listing.status = "rejected"
-    listing.rejectionReason = reason
-    listing.rejectedAt = datetime.utcnow()
-
+    listing.rejection_reason = reason
+    listing.rejected_at = datetime.utcnow()
     db.commit()
     db.refresh(listing)
-
     return listing
 
-
-# =========================================================
 # SUSPEND LISTING
-# =========================================================
 def suspend_listing_repo(
     db: Session,
     listing,
     reason
 ):
-
     listing.status = "suspended"
-    listing.suspendedAt = datetime.utcnow()
-    listing.suspensionReason = reason
-
+    listing.suspended_at = datetime.utcnow()
+    listing.suspension_reason = reason
     db.commit()
     db.refresh(listing)
-
     return listing
 
-
-# =========================================================
 # REACTIVATE LISTING
-# =========================================================
 def reactivate_listing_repo(
     db: Session,
     listing
 ):
-
     listing.status = "approved"
-    listing.suspendedAt = None
-    listing.suspensionReason = None
-
+    listing.suspended_at = None
+    listing.suspension_reason = None
     db.commit()
     db.refresh(listing)
-
     return listing
 
-
-# =========================================================
 # GET CATEGORY BY NAME
-# =========================================================
 def get_category_by_name_repo(
     db: Session,
     name: str
@@ -350,27 +285,20 @@ def get_category_by_name_repo(
 
     return db.query(Category).filter(
         Category.name.ilike(name),
-        Category.isDeleted == False
+        Category.is_deleted == False
     ).first()
 
-
-# =========================================================
 # GET CATEGORY BY ID
-# =========================================================
 def get_category_by_id_repo(
     db: Session,
-    categoryId
+    category_id
 ):
-
     return db.query(Category).filter(
-        Category.id == categoryId,
-        Category.isDeleted == False
+        Category.id == category_id,
+        Category.is_deleted == False
     ).first()
 
-
-# =========================================================
 # CREATE CATEGORY
-# =========================================================
 def create_category_repo(
     db: Session,
     payload
@@ -380,13 +308,11 @@ def create_category_repo(
         name=payload.name,
         description=payload.description,
         icon=payload.icon,
-        isActive=payload.isActive
+        is_active=payload.is_active
     )
-
     db.add(category)
     db.commit()
     db.refresh(category)
-
     return category
 
 # CREATE ATTRIBUTE
@@ -406,7 +332,6 @@ def create_attribute_repo(
         is_global=payload.is_global,
         created_by=payload.created_by
     )
-
     db.add(attribute)
     db.commit()
     db.refresh(attribute)
@@ -423,41 +348,32 @@ def create_attribute_repo(
             )
 
             db.add(attribute_option)
-
         db.commit()
-
     db.refresh(attribute)
-
     return attribute
-
 
 # GET ATTRIBUTE BY SLUG
 def get_attribute_by_slug_repo(
     db: Session,
     slug: str
 ):
-
     return db.query(Attribute).filter(
         Attribute.slug == slug
     ).first()
-
 
 # GET ATTRIBUTE BY ID
 def get_attribute_by_id_repo(
     db: Session,
     attribute_id
 ):
-
     return db.query(Attribute).filter(
         Attribute.id == attribute_id
     ).first()
-
 
 # GET ALL ATTRIBUTES
 def get_all_attributes_repo(db: Session):
 
     return db.query(Attribute).all()
-
 
 # UPDATE ATTRIBUTE
 def update_attribute_repo(
@@ -480,18 +396,14 @@ def update_attribute_repo(
 
     if payload.is_active is not None:
         attribute.is_active = payload.is_active
-
     db.commit()
     db.refresh(attribute)
-
     return attribute
-
 
 # DELETE ATTRIBUTE
 def delete_attribute_repo(
     db: Session,
     attribute
 ):
-
     db.delete(attribute)
     db.commit()

@@ -25,12 +25,12 @@ def register_customer_service(db, customer):
     existing = get_customer_by_email(db, customer.email)
     if existing:
         raise CustomException(400, "Email already registered")
-    if customer.password != customer.confirmPassword:
+    if customer.password != customer.confirm_password:
         raise CustomException(400, "Passwords do not match")
-    if not customer.acceptTerms or not customer.acceptPrivacyPolicy:
+    if not customer.accept_terms or not customer.accept_privacy_policy:
         raise CustomException(400, "Accept terms and privacy policy")
     data = customer.dict()
-    data.pop("confirmPassword")
+    data.pop("confirm_password")
     data["password"] = hash_password(data["password"])
     new_customer = Customer(**data)
     return create_customer(db, new_customer)
@@ -74,7 +74,7 @@ def google_login_service(db, google_token: str):
     user = get_customer_by_email(db, email)
     if not user:
         user_data = Customer(
-            id=str(uuid4()),
+            id=uuid4(),
             firstName=name,
             lastName="",
             email=email,
@@ -100,8 +100,8 @@ def forgot_password_service(db, email: str):
         raise CustomException(404, "User not found")
     reset_token = secrets.token_urlsafe(32)
     expiry = datetime.utcnow() + timedelta(minutes=15)
-    user.resetToken = reset_token
-    user.resetTokenExpiry = expiry
+    user.reset_token = reset_token
+    user.reset_token_expiry = expiry
     db.commit()
     #  CREATE RESET LINK
     reset_link = f"http://localhost:8000/reset-password?token={reset_token}"
@@ -112,35 +112,35 @@ def forgot_password_service(db, email: str):
     return {"message": "Reset link sent successfully"}
 
 # RESET PASSWORD
-def reset_password_service(db, resetToken, newPassword, confirmPassword):
-    if newPassword != confirmPassword:
+def reset_password_service(db, reset_token, new_password, confirm_password):
+    if new_password != confirm_password:
         raise CustomException(400, "Passwords do not match")
-    user = db.query(Customer).filter(Customer.resetToken == resetToken).first()
+    user = db.query(Customer).filter(Customer.reset_token == reset_token).first()
     if not user:
         raise CustomException(404, "Invalid token")
     if user.resetTokenExpiry < datetime.utcnow():
         raise CustomException(400, "Token expired")
-    user.password = hash_password(newPassword)
-    user.resetToken = None
-    user.resetTokenExpiry = None
+    user.password = hash_password(new_password)
+    user.reset_token = None
+    user.reset_token_expiry = None
     db.commit()
     return {"message": "Password reset successful"}
 
 # CHANGE PASSWORD
-def change_password_service(db, user_id, currentPassword, newPassword, confirmPassword):
-    if newPassword != confirmPassword:
+def change_password_service(db, user_id, current_password, new_password, confirm_password):
+    if new_password != confirm_password:
         raise CustomException(400, "Passwords do not match")
     user = get_customer_by_id(db, user_id)
     if not user:
         raise CustomException(404, "User not found")
-    if not verify_password(currentPassword, user.password):
+    if not verify_password(current_password, user.password):
         raise CustomException(401, "Incorrect current password")
-    user.password = hash_password(newPassword)
+    user.password = hash_password(new_password)
     db.commit()
     return {"message": "Password changed successfully"}
 
 # LOGOUT
-def logout_customer_service(token: str, current_user):
+def logout_customer_service(token: str):
     TOKEN_BLACKLIST.add(token)
     return {"success": True, "message": "Logged out successfully"}
 
@@ -151,10 +151,10 @@ def get_profile_service(db, cust_id):
         raise CustomException(404, "User not found")
     return {
         "id": user.id,
-        "firstName": user.firstName,
-        "lastName": user.lastName,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
         "email": user.email,
-        "mobileNumber": user.mobileNumber
+        "mobile_number": user.mobile_number
     }
 
 # UPDATE PROFILE
@@ -163,10 +163,10 @@ def update_profile_service(db, cust_id, data):
     if not user:
         raise CustomException(404, "User not found")
     allowed_fields = {
-        "firstName",
-        "lastName",
-        "mobileNumber",
-        "profileImage"
+        "first_name",
+        "last_name",
+        "mobile_number",
+        "profile_image"
     }
     clean_data = {
         k: v for k, v in data.items()
@@ -185,13 +185,13 @@ def get_public_listings_service(
     db: Session,
     search,
     category,
-    listingType,
+    listing_type,
     city,
-    priceMin,
-    priceMax,
+    price_min,
+    price_max,
     page,
     limit,
-    sortBy
+    sort_by
 ):
     try:
         skip = (page - 1) * limit
@@ -199,13 +199,13 @@ def get_public_listings_service(
             db=db,
             search=search,
             category=category,
-            listingType=listingType,
+            listing_type=listing_type,
             city=city,
-            priceMin=priceMin,
-            priceMax=priceMax,
+            price_min=price_min,
+            price_max=price_max,
             skip=skip,
             limit=limit,
-            sortBy=sortBy
+            sort_by=sort_by
         )
         return {
             "success": True,
@@ -223,12 +223,12 @@ def get_public_listings_service(
     
 def get_public_listing_details_service(
     db: Session,
-    listingId
+    listing_id
 ):
     try:
         listing = get_public_listing_details_repo(
             db=db,
-            listingId=listingId
+            listing_id=listing_id
         )
         if not listing:
             raise CustomException(
@@ -252,7 +252,7 @@ def search_listings_service(
     db: Session,
     keyword,
     category,
-    listingType,
+    listing_type,
     location,
     rating,
     sort
@@ -262,7 +262,7 @@ def search_listings_service(
             db=db,
             keyword=keyword,
             category=category,
-            listingType=listingType,
+            listing_type=listing_type,
             location=location,
             rating=rating,
             sort=sort
@@ -297,12 +297,12 @@ def get_categories_service(db):
 # GET SUBCATEGORIES
 def get_subcategories_service(
     db,
-    categoryId
+    category_id
 ):
     try:
         subcategories = get_subcategories_repo(
             db=db,
-            categoryId=categoryId
+            category_id=category_id
         )
         return {
             "success": True,

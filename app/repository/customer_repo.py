@@ -4,7 +4,7 @@ from sqlalchemy import or_
 from sqlalchemy import desc
 from app.models.customer_model import Customer, Booking
 from app.models.merchant_model import Merchant, MerchantListing
-from app.models.admin_model import Admin
+from app.models.admin_model import Admin, Business
 from app.models.category_model import Category
 from app.schemas.common_schema import CreateBooking, ListingType, BookingStatus, PaymentStatus
 from app.utils.common import generate_booking_number
@@ -58,8 +58,8 @@ def get_all_users(
         if search:
             query = query.filter(
                 or_(
-                    Customer.firstName.ilike(f"%{search}%"),
-                    Customer.lastName.ilike(f"%{search}%"),
+                    Customer.first_name.ilike(f"%{search}%"),
+                    Customer.last_name.ilike(f"%{search}%"),
                     Customer.email.ilike(f"%{search}%")
                 )
             )
@@ -72,11 +72,11 @@ def get_all_users(
         for row in customers:
             users.append({
                 "id": row.id,
-                "name": f"{row.firstName} {row.lastName}",
+                "name": f"{row.first_name} {row.last_name}",
                 "email": row.email,
                 "role": "customer",
                 "status": row.status,
-                "createdAt": row.createdAt
+                "created_at": row.created_at
             })
 
     # MERCHANT USERS
@@ -87,8 +87,8 @@ def get_all_users(
         if search:
             query = query.filter(
                 or_(
-                    Merchant.businessName.ilike(f"%{search}%"),
-                    Merchant.businessEmail.ilike(f"%{search}%")
+                    Merchant.business_name.ilike(f"%{search}%"),
+                    Merchant.business_email.ilike(f"%{search}%")
                 )
             )
 
@@ -100,11 +100,11 @@ def get_all_users(
         for row in merchants:
             users.append({
                 "id": row.id,
-                "name": row.businessName,
-                "email": row.businessEmail,
+                "name": row.business_name,
+                "email": row.business_email,
                 "role": "merchant",
                 "status": row.status,
-                "createdAt": row.createdAt
+                "created_at": row.created_at
             })
 
     # ADMIN USERS
@@ -132,12 +132,12 @@ def get_all_users(
                 "email": row.email,
                 "role": "admin",
                 "status": row.status,
-                "createdAt": row.createdAt
+                "created_at": row.created_at
             })
 
     users = sorted(
         users,
-        key=lambda x: x["createdAt"],
+        key=lambda x: x["created_at"],
         reverse=True
     )
 
@@ -156,20 +156,17 @@ def get_public_listings_repo(
     db: Session,
     search,
     category,
-    listingType,
+    listing_type,
     city,
-    priceMin,
-    priceMax,
+    price_min,
+    price_max,
     skip,
     limit,
-    sortBy
+    sort_by
 ):
-    from app.models.admin_model import Business
-    from app.models.merchant_model import Merchant
-
     query = (
         db.query(MerchantListing)
-        .join(Business, MerchantListing.businessId == Business.id)
+        .join(Business, MerchantListing.business_id == Business.id)
         .join(Merchant, Business.merchant_id == Merchant.id)
         .filter(
             MerchantListing.status == "published",
@@ -191,13 +188,13 @@ def get_public_listings_repo(
     # category query param will contain categoryId
     if category:
         query = query.filter(
-            MerchantListing.categoryId == category
+            MerchantListing.category_id == category
         )
 
     # LISTING TYPE
-    if listingType:
+    if listing_type:
         query = query.filter(
-            MerchantListing.listingType == listingType
+            MerchantListing.listing_type == listing_type
         )
 
     # CITY
@@ -207,25 +204,25 @@ def get_public_listings_repo(
         )
 
     # PRICE MIN
-    if priceMin is not None:
+    if price_min is not None:
         query = query.filter(
-            MerchantListing.price >= priceMin
+            MerchantListing.price >= price_min
         )
 
     # PRICE MAX
-    if priceMax is not None:
+    if price_max is not None:
         query = query.filter(
-            MerchantListing.price <= priceMax
+            MerchantListing.price <= price_max
         )
 
     # SORTING
-    if sortBy == "priceLowToHigh":
+    if sort_by == "price_low_to_high":
 
         query = query.order_by(
             MerchantListing.price.asc()
         )
 
-    elif sortBy == "priceHighToLow":
+    elif sort_by == "price_high_to_low":
 
         query = query.order_by(
             MerchantListing.price.desc()
@@ -245,17 +242,15 @@ def get_public_listings_repo(
 
 def get_public_listing_details_repo(
     db: Session,
-    listingId
+    listing_id
 ):
-    from app.models.admin_model import Business
-    from app.models.merchant_model import Merchant
 
     listing = (
         db.query(MerchantListing)
-        .join(Business, MerchantListing.businessId == Business.id)
+        .join(Business, MerchantListing.business_id == Business.id)
         .join(Merchant, Business.merchant_id == Merchant.id)
         .filter(
-            MerchantListing.id == listingId,
+            MerchantListing.id == listing_id,
             MerchantListing.status == "published",
             Business.status == "approved",
             Merchant.status == "active",
@@ -269,17 +264,15 @@ def search_listings_repo(
     db: Session,
     keyword,
     category,
-    listingType,
+    listing_type,
     location,
     rating,
     sort
 ):
-    from app.models.admin_model import Business
-    from app.models.merchant_model import Merchant
 
     query = (
         db.query(MerchantListing)
-        .join(Business, MerchantListing.businessId == Business.id)
+        .join(Business, MerchantListing.business_id == Business.id)
         .join(Merchant, Business.merchant_id == Merchant.id)
         .filter(
             MerchantListing.status == "published",
@@ -300,13 +293,13 @@ def search_listings_repo(
     # CATEGORY
     if category:
         query = query.filter(
-            MerchantListing.categoryId == category
+            MerchantListing.category_id == category
         )
 
     # LISTING TYPE
-    if listingType:
+    if listing_type:
         query = query.filter(
-            MerchantListing.listingType == listingType
+            MerchantListing.listingType == listing_type
         )
 
     # LOCATION
@@ -316,13 +309,13 @@ def search_listings_repo(
         )
 
     # SORTING
-    if sort == "priceLowToHigh":
+    if sort == "price_low_to_high":
 
         query = query.order_by(
             MerchantListing.price.asc()
         )
 
-    elif sort == "priceHighToLow":
+    elif sort == "price_high_to_low":
 
         query = query.order_by(
             MerchantListing.price.desc()
@@ -343,8 +336,8 @@ def search_listings_repo(
 def get_categories_repo(db):
 
     categories = db.query(Category).filter(
-       Category.isActive == True,
-        Category.isDeleted == False
+       Category.is_active == True,
+        Category.is_deleted == False
     ).order_by(Category.created_at.desc()).all()
 
     total = len(categories)
@@ -354,13 +347,13 @@ def get_categories_repo(db):
 # GET SUBCATEGORIES
 def get_subcategories_repo(
     db: Session,
-    categoryId
+    category_id
 ):
 
     return db.query(Category).filter(
-        Category.parentCategoryId == categoryId,
-        Category.isDeleted == False,
-        Category.isActive == True
+        Category.parent_category_id == category_id,
+        Category.is_deleted == False,
+        Category.is_active == True
     ).all()
 
 def create_booking_repo(
@@ -393,14 +386,14 @@ def create_booking_repo(
         business_id=payload.business_id,
         listing_id=listing.id,
         listing_type=ListingType(
-            listing.listingType
+            listing.listing_type
         ),
         booking_date=payload.booking_date,
         booking_time=payload.booking_time,
         quantity=payload.quantity,
         total_amount=total_amount,
-        booking_status=BookingStatus.Pending,
-        payment_status=PaymentStatus.Pending,
+        booking_status=BookingStatus.PENDING,
+        payment_status=PaymentStatus.PENDING,
         notes=payload.notes
     )
 

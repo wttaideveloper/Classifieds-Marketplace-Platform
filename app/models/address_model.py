@@ -7,12 +7,12 @@ class Address(Base):
     __tablename__ = "addresses"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    customerId = Column(UUID(as_uuid=True), ForeignKey("customers.id"))
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id"))
 
-    addressLine1 = Column(String)
-    addressLine2 = Column(String)
+    address_line_1 = Column(String)
+    address_line_2 = Column(String)
     city = Column(String)
     state = Column(String)
-    zipCode = Column(String)
+    zip_code = Column(String)
     country = Column(String)
-    isDefault = Column(Boolean, default=False)
+    is_default = Column(Boolean, default=False)

@@ -14,7 +14,6 @@ def _safe_include(module_path: str, prefix: str = "", tags: list[str] | None = N
     except Exception as e:
         logger.error(f"Failed to load router '{module_path}': {e}")
 
-
 # CUSTOMER AUTH
 _safe_include(
     "app.api.v1.endpoints.customer",
@@ -80,6 +79,20 @@ _safe_include("app.api.v1.endpoints.orders", prefix="/orders", tags=["Orders"])
 # Capacity 
 _safe_include("app.api.v1.endpoints.capacity", prefix="/capacity", tags=["Capacity"])
 
-
 # NOTIFICATIONS
 _safe_include("app.api.v1.endpoints.notifications", prefix="/notifications", tags=["Notifications"])
+
+# Wishlist
+_safe_include("app.api.v1.endpoints.wishlist",  prefix="/wishlist", tags=["Wishlist"])
+
+# Media Uploads
+_safe_include("app.api.v1.endpoints.media",  prefix="/media", tags=["Media"])
+
+# Staff
+_safe_include("app.api.v1.endpoints.staff",  prefix="/staff", tags=["Staff"])
+
+# Audit Logs
+_safe_include("app.api.v1.endpoints.audit_logs",  prefix="/audit", tags=["Audit"])
+
+# Calendar Synchronization
+_safe_include("app.api.v1.endpoints.calendar",  prefix="/calendar", tags=["Calendar"])

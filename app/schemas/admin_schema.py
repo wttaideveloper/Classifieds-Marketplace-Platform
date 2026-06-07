@@ -231,18 +231,17 @@ class MerchantResponse(BaseModel):
 class AdminListingData(BaseModel):
 
     id: UUID
+    business_id: UUID
 
-    businessId: UUID
-
-    listingType: str
+    listing_type: str
 
     title: str
 
     description: Optional[str]
 
-    categoryId: Optional[UUID]
+    category_id: Optional[UUID]
 
-    subcategoryId: Optional[UUID]
+    subcategory_id: Optional[UUID]
 
     price: Optional[float]
 
@@ -272,8 +271,8 @@ class AdminGetAllListingsResponse(BaseModel):
 class ApproveListingData(BaseModel):
 
     id: UUID
-    businessId: UUID
-    listingType: str
+    business_id: UUID
+    listing_type: str
     title: str
     status: str
     updated_at: Optional[datetime]
@@ -294,16 +293,15 @@ class RejectListingRequest(BaseModel):
 class RejectListingData(BaseModel):
 
     id: UUID
+    business_id: UUID
 
-    businessId: UUID
-
-    listingType: str
+    listing_type: str
 
     title: str
 
     status: str
 
-    rejectionReason: Optional[str]
+    rejection_reason: Optional[str]
 
     updated_at: Optional[datetime]
 
@@ -324,8 +322,8 @@ class SuspendListingData(BaseModel):
 
     id: UUID
     status: str
-    suspendedAt: Optional[datetime]
-    suspensionReason: Optional[str]
+    suspended_at: Optional[datetime]
+    suspension_reason: Optional[str]
 
     class Config:
         from_attributes = True
@@ -340,8 +338,8 @@ class ReactivateListingData(BaseModel):
 
     id: UUID
     status: str
-    suspendedAt: Optional[datetime]
-    suspensionReason: Optional[str]
+    suspended_at: Optional[datetime]
+    suspension_reason: Optional[str]
 
     class Config:
         from_attributes = True
@@ -353,11 +351,11 @@ class ReactivateListingResponse(BaseModel):
     data: ReactivateListingData
 
 # CREATE CATEGORY
-class CreateCategorySchema(BaseModel):
+class CreateCategoryRequest(BaseModel):
     name: str = Field(..., examples=["Electronics"])
     description: Optional[str] = Field(None, examples=["Electronics category"])
     icon: Optional[str] = Field(None, examples=[None])
-    isActive: bool = Field(True, examples=[True])
+    is_active: bool = Field(True, examples=[True])
 
 
 # CATEGORY RESPONSE
@@ -367,7 +365,7 @@ class CategoryResponse(BaseModel):
     name: str
     description: Optional[str]
     icon: Optional[str]
-    isActive: bool
+    is_active: bool
     created_at: datetime
 
     class Config:
@@ -382,12 +380,12 @@ class CreateCategoryResponse(BaseModel):
 
 # FIELD TYPE ENUM
 class AttributeFieldType(str, Enum):
-    text = "text"
-    textarea = "textarea"
-    number = "number"
-    dropdown = "dropdown"
-    checkbox = "checkbox"
-    date = "date"
+    TEXT = "text"
+    TEXTAREA = "textarea"
+    NUMBER = "number"
+    DROPDOWN = "dropdown"
+    CHECKBOX = "checkbox"
+    DATE = "date"
 
 # ATTRIBUTE OPTION
 class AttributeOptionCreate(BaseModel):

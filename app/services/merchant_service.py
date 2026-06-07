@@ -1,4 +1,10 @@
 # app/services/merchant_service.py
+import os
+import uuid
+from uuid import uuid4, UUID
+import secrets
+from typing import List
+from datetime import datetime, timezone, timedelta
 from fastapi import (
     UploadFile,
     status,
@@ -54,13 +60,9 @@ from app.exceptions.custom_exception import (
 from app.core.security import hash_password, verify_password
 from app.services.email_service import send_email
 from app.core.token_blacklist import TOKEN_BLACKLIST
-from datetime import datetime, timezone, timedelta
-from typing import List
-import os
-import uuid
-from uuid import uuid4, UUID
-import secrets
-import requests
+
+
+
 
 # CONSTANTS
 
@@ -86,7 +88,7 @@ def register_merchant_service(
 ):
     existing_merchant = get_merchant_by_email(
         db,
-        payload.businessEmail
+        payload.business_email
     )
     if existing_merchant:
         raise CustomException(
@@ -94,14 +96,14 @@ def register_merchant_service(
             "Merchant already exists"
         )
     merchant = Merchant(
-        id=str(uuid4()),
-        fullName=payload.fullName,
-        businessName=payload.businessName,
-        businessEmail=payload.businessEmail,
-        mobileNumber=payload.mobileNumber,
+        id=uuid4(),
+        full_name=payload.full_name,
+        business_name=payload.business_name,
+        business_email=payload.business_email,
+        mobile_number=payload.mobile_number,
         password=hash_password(payload.password),
-        acceptTerms=payload.acceptTerms,
-        acceptPrivacyPolicy=payload.acceptPrivacyPolicy,
+        accept_terms=payload.accept_terms,
+        accept_privacy_policy=payload.accept_privacy_policy,
         status="active"
     )
     created_merchant = create_merchant(
@@ -138,9 +140,9 @@ def login_merchant_service(
         "success": True,
         "message": "Login successful",
         "data": {
-            "merchantId": merchant.id,
-            "fullName": merchant.fullName,
-            "businessEmail": merchant.businessEmail,
+            "merchant_id": merchant.id,
+            "full_name": merchant.full_name,
+            "business_email": merchant.business_email,
             "status": merchant.status
         }
     }
@@ -159,7 +161,7 @@ def google_login_service(
     return {
         "success": True,
         "message": "Google login successful",
-        "googleToken": google_token
+        "google_token": google_token
     }
 
 def forgot_password_merchant_service(db: Session, email: str):
@@ -167,48 +169,48 @@ def forgot_password_merchant_service(db: Session, email: str):
     if not merchant:
         raise CustomException(404, "Merchant not found")
     reset_token = secrets.token_urlsafe(32)
-    merchant.resetToken = reset_token
-    merchant.resetTokenExpiry = datetime.utcnow() + timedelta(minutes=15)
+    merchant.reset_token = reset_token
+    merchant.reset_token_expiry = datetime.utcnow() + timedelta(minutes=15)
     db.commit()
     reset_link = f"http://localhost:8000/reset-password?token={reset_token}"
-    if not send_email(merchant.businessEmail, reset_link):
+    if not send_email(merchant.business_email, reset_link):
         raise CustomException(500, "Failed to send email")
     return {"success": True, "message": "Reset link sent successfully"}
 
-def reset_password_merchant_service(db: Session, resetToken: str, newPassword: str, confirmPassword: str):
-    if newPassword != confirmPassword:
+def reset_password_merchant_service(db: Session, reset_token: str, new_password: str, confirm_password: str):
+    if new_password != confirm_password:
         raise CustomException(400, "Passwords do not match")
-    merchant = db.query(Merchant).filter(Merchant.resetToken == resetToken).first()
+    merchant = db.query(Merchant).filter(Merchant.reset_token == reset_token).first()
     if not merchant:
         raise CustomException(400, "Invalid or expired token")
-    if merchant.resetTokenExpiry < datetime.utcnow():
+    if merchant.reset_token_expiry < datetime.utcnow():
         raise CustomException(400, "Token expired")
-    merchant.password = hash_password(newPassword)
-    merchant.resetToken = None
-    merchant.resetTokenExpiry = None
+    merchant.password = hash_password(new_password)
+    merchant.reset_token = None
+    merchant.reset_token_expiry = None
     db.commit()
     return {"success": True, "message": "Password reset successful"}
 
-def change_password_merchant_service(db: Session, merchant_id: str, currentPassword: str, newPassword: str, confirmPassword: str):
-    if newPassword != confirmPassword:
+def change_password_merchant_service(db: Session, merchant_id: UUID, current_password: str, new_password: str, confirm_password: str):
+    if new_password != confirm_password:
         raise CustomException(400, "Passwords do not match")
     merchant = get_merchant_by_id(db, merchant_id)
     if not merchant:
         raise CustomException(404, "Merchant not found")
-    if not verify_password(currentPassword, merchant.password):
+    if not verify_password(current_password, merchant.password):
         raise CustomException(401, "Incorrect current password")
-    merchant.password = hash_password(newPassword)
+    merchant.password = hash_password(new_password)
     db.commit()
     return {"success": True, "message": "Password changed successfully"}
 
-def logout_merchant_service(token: str, current_user):
+def logout_merchant_service(token: str):
     TOKEN_BLACKLIST.add(token)
     return {"success": True, "message": "Logged out successfully"}
 
 def _assert_business_owned(
     db: Session,
     business_id,
-    merchant_id: str
+    merchant_id: UUID
 ):
     business = db.query(Business).filter(
         Business.id == business_id
@@ -218,7 +220,7 @@ def _assert_business_owned(
             status.HTTP_404_NOT_FOUND,
             "Business not found"
         )
-    if str(business.merchant_id) != str(merchant_id):
+    if UUID(business.merchant_id) != UUID(merchant_id):
         raise CustomException(
             status.HTTP_403_FORBIDDEN,
             "Unauthorized access"
@@ -243,21 +245,21 @@ def sync_merchant_service(
     if merchant:
         return merchant
     merchant = Merchant(
-        id=str(uuid4()),
-        fullName=current_user.get("fullName") or current_user.get("name") or "Merchant",
-        businessEmail=email,
-        mobileNumber=current_user.get("mobileNumber") or current_user.get("mobile") or "0000000000",
-        businessName=current_user.get("businessName") or "Business",
+        id=uuid4(),
+        full_name=current_user.get("full_name") or current_user.get("name") or "Merchant",
+        business_email=email,
+        mobile_number=current_user.get("mobile_number") or current_user.get("mobile") or "0000000000",
+        business_name=current_user.get("business_name") or "Business",
         password=current_user.get("password") or "external",
-        acceptTerms=True,
-        acceptPrivacyPolicy=True,
+        accept_terms=True,
+        accept_privacy_policy=True,
         status="active",
     )
     return create_merchant(db, merchant)
 
 def get_merchant_profile_service(
     db: Session,
-    merchant_id: str
+    merchant_id: UUID
 ):
     merchant = get_merchant_by_id(
         db,
@@ -272,17 +274,17 @@ def get_merchant_profile_service(
         "success": True,
         "data": {
             "id": merchant.id,
-            "fullName": merchant.fullName,
-            "businessName": merchant.businessName,
-            "businessEmail": merchant.businessEmail,
-            "mobileNumber": merchant.mobileNumber,
+            "full_name": merchant.full_name,
+            "business_name": merchant.business_name,
+            "business_email": merchant.business_email,
+            "mobile_number": merchant.mobile_number,
             "status": merchant.status
         }
     }
 
 def update_merchant_profile_service(
     db: Session,
-    merchant_id: str,
+    merchant_id: UUID,
     data
 ):
     merchant = get_merchant_by_id(
@@ -295,10 +297,10 @@ def update_merchant_profile_service(
             "Merchant not found"
         )
     allowed_fields = {
-        "fullName",
-        "businessName",
-        "mobileNumber",
-        "profileImage"
+        "full_name",
+        "business_name",
+        "mobile_number",
+        "profile_image"
     }
     for field, value in data.items():
         if (
@@ -319,7 +321,7 @@ def update_merchant_profile_service(
 # MEDIA UPLOADS (logo/banner/gallery) - no auth in scope
 def _get_merchant_profile_or_404(
     db: Session,
-    merchant_id: str
+    merchant_id: UUID
 ):
     profile = get_business_profile_by_merchant_id(db, merchant_id)
     if not profile:
@@ -331,7 +333,7 @@ def _get_merchant_profile_or_404(
 
 def upload_business_logo_service(
     db: Session,
-    merchant_id: str,
+    merchant_id: UUID,
     file: UploadFile
 ):
     try:
@@ -347,7 +349,7 @@ def upload_business_logo_service(
         with open(file_path, "wb") as image:
             image.write(file.file.read())
         profile = _get_merchant_profile_or_404(db, merchant_id)
-        profile.businessLogo = unique_filename
+        profile.business_logo = unique_filename
         updated = update_business_profile(db, profile)
         return {
             "success": True,
@@ -365,7 +367,7 @@ def upload_business_logo_service(
 
 def upload_business_banner_service(
     db: Session,
-    merchant_id: str,
+    merchant_id: UUID,
     file: UploadFile
 ):
     try:
@@ -381,7 +383,7 @@ def upload_business_banner_service(
         with open(file_path, "wb") as image:
             image.write(file.file.read())
         profile = _get_merchant_profile_or_404(db, merchant_id)
-        profile.bannerImage = unique_filename
+        profile.banner_image = unique_filename
         updated = update_business_profile(db, profile)
         return {
             "success": True,
@@ -399,7 +401,7 @@ def upload_business_banner_service(
 
 def upload_business_gallery_service(
     db: Session,
-    merchant_id: str,
+    merchant_id: UUID,
     files: List[UploadFile]
 ):
     try:
@@ -418,15 +420,15 @@ def upload_business_gallery_service(
                 image.write(file.file.read())
             uploaded_images.append(unique_filename)
         profile = _get_merchant_profile_or_404(db, merchant_id)
-        existing = profile.galleryImages or []
-        profile.galleryImages = existing + uploaded_images
+        existing = profile.gallery_images or []
+        profile.gallery_images = existing + uploaded_images
         updated = update_business_profile(db, profile)
         return {
             "success": True,
             "message": "Business gallery images uploaded successfully",
             "data": {
-                "merchantId": merchant_id,
-                "images": updated.galleryImages
+                "merchant_id": merchant_id,
+                "images": updated.gallery_images
             }
         }
     except CustomException:
@@ -440,19 +442,19 @@ def upload_business_gallery_service(
 
 def delete_business_gallery_image_service(
     db: Session,
-    merchant_id: str,
-    image_id: str
+    merchant_id: UUID,
+    image_id: UUID
 ):
     try:
         profile = _get_merchant_profile_or_404(db, merchant_id)
-        images = profile.galleryImages or []
+        images = profile.gallery_images or []
         if image_id not in images:
             raise CustomException(
                 status.HTTP_404_NOT_FOUND,
                 "Image not found in gallery"
             )
         updated_images = [img for img in images if img != image_id]
-        profile.galleryImages = updated_images
+        profile.gallery_images = updated_images
         updated = update_business_profile(db, profile)
         image_path = os.path.join(GALLERY_FOLDER, image_id)
         if os.path.exists(image_path):
@@ -461,9 +463,9 @@ def delete_business_gallery_image_service(
             "success": True,
             "message": "Business gallery image deleted successfully",
             "data": {
-                "merchantId": merchant_id,
-                "deletedImage": image_id,
-                "remainingImages": updated.galleryImages
+                "merchant_id": merchant_id,
+                "deleted_image": image_id,
+                "remaining_images": updated.gallery_images
             }
         }
     except CustomException:
@@ -478,7 +480,7 @@ def delete_business_gallery_image_service(
 # BUSINESS PROFILE
 def create_business_profile_service(
     db: Session,
-    merchant_id: str,
+    merchant_id: UUID,
     payload
 ):
     merchant = get_merchant_by_id(
@@ -502,7 +504,7 @@ def create_business_profile_service(
         )
     data = payload.dict()
     profile = MerchantProfile(
-        id=str(uuid4()),
+        id=uuid4(),
         merchant_id=merchant_id,
         status=BusinessStatus.DRAFT,
         **data
@@ -519,7 +521,7 @@ def create_business_profile_service(
 
 def save_business_draft_service(
     db: Session,
-    merchant_id: str,
+    merchant_id: UUID,
     payload
 ):
     merchant = get_merchant_by_id(
@@ -552,7 +554,7 @@ def save_business_draft_service(
             "data": updated
         }
     draft = MerchantBusinessDraft(
-        id=str(uuid4()),
+        id=uuid4(),
         merchant_id=merchant_id,
         **data
     )
@@ -568,7 +570,7 @@ def save_business_draft_service(
 
 def get_business_profile_service(
     db: Session,
-    merchant_id: str
+    merchant_id: UUID
 ):
     profile = get_business_profile_by_merchant_id(
         db,
@@ -586,7 +588,7 @@ def get_business_profile_service(
 
 def update_business_profile_service(
     db: Session,
-    merchant_id: str,
+    merchant_id: UUID,
     payload
 ):
     profile = get_business_profile_by_merchant_id(
@@ -602,15 +604,15 @@ def update_business_profile_service(
         exclude_unset=True
     )
     restricted_fields = {
-        "businessName",
-        "fullAddress",
+        "business_name",
+        "full_address",
         "city",
         "state",
-        "zipCode",
+        "zip_code",
         "country",
         "latitude",
         "longitude",
-        "primaryCategory",
+        "primary_category",
         "subcategory"
     }
     reapproval_required = False
@@ -628,7 +630,7 @@ def update_business_profile_service(
     return {
         "success": True,
         "message": "Business profile updated successfully",
-        "reapprovalRequired": reapproval_required,
+        "reapproval_required": reapproval_required,
         "data": updated
     }
 
@@ -651,16 +653,16 @@ def submit_business_for_approval_service(
             "Business already submitted"
         )
     required_fields = [
-        "businessName",
-        "primaryCategory",
-        "businessEmail",
-        "phoneNumber",
-        "fullAddress",
+        "business_name",
+        "primary_category",
+        "business_email",
+        "phone_number",
+        "full_address",
         "city",
         "state",
-        "zipCode",
+        "zip_code",
         "country",
-        "businessType"
+        "business_type"
     ]
     for field in required_fields:
         if not getattr(profile, field):
@@ -677,18 +679,18 @@ def submit_business_for_approval_service(
         Business.merchant_id == merchant_id
     ).first()
     if existing_business:
-        existing_business.name = profile.businessName
-        existing_business.category = profile.primaryCategory
+        existing_business.name = profile.business_name
+        existing_business.category = profile.primary_category
         existing_business.status = BusinessStatus.PENDING
         db.commit()
         db.refresh(existing_business)
         business = existing_business
     else:
         business = Business(
-            id=str(uuid4()),
+            id=uuid4(),
             merchant_id=merchant_id,
-            name=profile.businessName,
-            category=profile.primaryCategory,
+            name=profile.business_name,
+            category=profile.primary_category,
             status=BusinessStatus.PENDING
         )
         db.add(business)
@@ -698,7 +700,7 @@ def submit_business_for_approval_service(
     return {
         "success": True,
         "message": "Business submitted for approval",
-        "businessId": business.id,
+        "business_id": business.id,
         "status": business.status
     }
 
@@ -719,7 +721,7 @@ def get_business_status_service(
     return {
         "success": True,
         "businessStatus": profile.status,
-        "businessName": profile.businessName
+        "business_name": profile.business_name
     }
 
 # LISTINGS
@@ -739,8 +741,8 @@ def create_listing_service(
             "message": "Listing created successfully",
             "data": listing
         }
-    except Exception as e:
-        raise e
+    except CustomException:
+        raise
     except Exception:
         raise CustomException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -755,7 +757,7 @@ def save_listing_draft_service(
     try:
         _assert_business_owned(
             db=db,
-            business_id=payload.businessId,
+            business_id=payload.business_id,
             merchant_id=merchant_id
         )
         draft = save_listing_draft_repo(
@@ -778,9 +780,9 @@ def save_listing_draft_service(
 def get_my_listings_service(
     db: Session,
     merchant_id,
-    businessId,
+    business_id,
     status_filter,
-    listingType,
+    listing_type,
     search,
     page,
     limit
@@ -790,9 +792,9 @@ def get_my_listings_service(
         total, listings = get_my_listings_repo(
             db=db,
             merchant_id=merchant_id,
-            businessId=businessId,
+            business_id=business_id,
             status=status_filter,
-            listingType=listingType,
+            listing_type=listing_type,
             search=search,
             skip=skip,
             limit=limit
@@ -805,6 +807,8 @@ def get_my_listings_service(
             "limit": limit,
             "data": listings
         }
+    except CustomException:
+        raise
     except Exception:
         raise CustomException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -814,12 +818,12 @@ def get_my_listings_service(
 
 def get_listing_details_service(
     db: Session,
-    listingId
+    listing_id
 ):
     try:
         listing = get_listing_details_repo(
             db=db,
-            listingId=listingId
+            listing_id=listing_id
         )
         if not listing:
             raise CustomException(
@@ -843,12 +847,12 @@ def get_listing_details_service(
 def update_listing_service(
     db: Session,
     merchant_id,
-    listingId,
+    listing_id,
     payload
 ):
     listing = get_listing_by_id_repo(
         db=db,
-        listingId=listingId
+        listing_id=listing_id
     )
     if not listing:
         raise CustomException(
@@ -857,7 +861,7 @@ def update_listing_service(
         )
     _assert_business_owned(
         db=db,
-        business_id=listing.businessId,
+        business_id=listing.business_id,
         merchant_id=merchant_id
     )
     updated = update_listing_repo(
@@ -874,11 +878,11 @@ def update_listing_service(
 def delete_listing_service(
     db: Session,
     merchant_id,
-    listingId
+    listing_id
 ):
     listing = get_listing_by_id_repo(
         db=db,
-        listingId=listingId
+        listing_id=listing_id
     )
     if not listing:
         raise CustomException(
@@ -887,7 +891,7 @@ def delete_listing_service(
         )
     _assert_business_owned(
         db=db,
-        business_id=listing.businessId,
+        business_id=listing.business_id,
         merchant_id=merchant_id
     )
     delete_listing_repo(
@@ -915,7 +919,7 @@ def publish_listing_service(
         )
     _assert_business_owned(
         db=db,
-        business_id=listing.businessId,
+        business_id=listing.business_id,
         merchant_id=merchant_id
     )
     updated = publish_listing_repo(
@@ -931,11 +935,11 @@ def publish_listing_service(
 def unpublish_listing_service(
     db: Session,
     merchant_id,
-    listingId
+    listing_id
 ):
     listing = get_listing_by_id_repo(
         db=db,
-        listingId=listingId
+        listing_id=listing_id
     )
     if not listing:
         raise CustomException(
@@ -944,7 +948,7 @@ def unpublish_listing_service(
         )
     _assert_business_owned(
         db=db,
-        business_id=listing.businessId,
+        business_id=listing.business_id,
         merchant_id=merchant_id
     )
     updated = unpublish_listing_repo(
@@ -959,14 +963,14 @@ def unpublish_listing_service(
 
 def upload_listing_images_service(
     db: Session,
-    listingId,
+    listing_id,
     files
 ):
     try:
         # CHECK LISTING EXISTS
         listing = get_listing_by_id_repo(
             db=db,
-            listingId=listingId
+            listing_id=listing_id
         )
         if not listing:
             raise CustomException(
@@ -1007,7 +1011,7 @@ def upload_listing_images_service(
             "success": True,
             "message": "Listing images uploaded successfully",
             "data": {
-                "listingId": updated_listing.id,
+                "listing_id": updated_listing.id,
                 "images": updated_listing.images
             }
         }
@@ -1022,14 +1026,14 @@ def upload_listing_images_service(
 
 def delete_listing_image_service(
     db: Session,
-    listingId,
-    imageId
+    listing_id,
+    image_id
 ):
     try:
         # CHECK LISTING EXISTS
         listing = get_listing_by_id_repo(
             db=db,
-            listingId=listingId
+            listing_id=listing_id
         )
         if not listing:
             raise CustomException(
@@ -1038,7 +1042,7 @@ def delete_listing_image_service(
             )
         images = listing.images or []
         # CHECK IMAGE EXISTS
-        if imageId not in images:
+        if image_id not in images:
             raise CustomException(
                 status.HTTP_404_NOT_FOUND,
                 "Image not found in listing"
@@ -1046,12 +1050,12 @@ def delete_listing_image_service(
         # REMOVE IMAGE FROM ARRAY
         updated_images = [
             image for image in images
-            if image != imageId
+            if image != image_id
         ]
         # DELETE IMAGE FILE
         image_path = os.path.join(
             UPLOAD_DIR,
-            imageId
+            image_id
         )
         if os.path.exists(image_path):
             os.remove(image_path)
@@ -1065,9 +1069,9 @@ def delete_listing_image_service(
             "success": True,
             "message": "Listing image deleted successfully",
             "data": {
-                "listingId": updated_listing.id,
-                "deletedImage": imageId,
-                "remainingImages": updated_listing.images
+                "listing_id": updated_listing.id,
+                "deleted_image": image_id,
+                "remaining_images": updated_listing.images
             }
         }
     except CustomException  as e:

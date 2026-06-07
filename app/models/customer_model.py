@@ -9,48 +9,54 @@ import enum
 from enum import Enum as PyEnum
 
 class ListingType(str, PyEnum):
-    product = "product"
-    service = "service"
-    event = "event"
-    training = "training"
-    program = "program"
+    PRODUCT = "product"
+    SERVICE = "service"
+    EVENT = "event"
+    TRAINING = "training"
+    PROGRAM = "program"
 
 class BookingStatus(str, PyEnum):
-    Pending = "Pending"
-    Approved = "Approved"
-    Rejected = "Rejected"
-    Completed = "Completed"
-    Cancelled = "Cancelled"
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 class PaymentStatus(str, PyEnum):
-    Pending = "Pending"
-    Paid = "Paid"
-    Failed = "Failed"
-    Refunded = "Refunded"
+    PENDING = "pending"
+    PAID = "paid"
+    FAILED = "failed"
+    REFUNDED = "refunded"
 
 class Customer(Base):
     __tablename__ = "customers"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    firstName = Column(String)
-    lastName = Column(String)
+    first_name = Column(String)
+    last_name = Column(String)
     email = Column(String, unique=True, index=True)
-    mobileNumber = Column(String)
+    mobile_number = Column(String)
     password = Column(String)
-    acceptTerms = Column(Boolean)
-    acceptPrivacyPolicy = Column(Boolean)
+    accept_terms = Column(Boolean)
+    accept_privacy_policy = Column(Boolean)
 
-    resetToken = Column(String, nullable=True)
-    resetTokenExpiry = Column(DateTime, nullable=True)
+    reset_token = Column(String, nullable=True)
+    reset_token_expiry = Column(DateTime, nullable=True)
 
-    isEmailVerified = Column(Boolean, default=False)
-    verificationToken = Column(String, nullable=True)
+    is_email_verified = Column(Boolean, default=False)
+    verification_token = Column(String, nullable=True)
     status = Column(String, default="active")
 
     created_at = Column(DateTime, default=datetime.utcnow)
     bookings = relationship(
         "Booking",
         back_populates="customer"
+    )
+   
+    wishlists = relationship(
+        "Wishlist",
+        back_populates="customer",
+        cascade="all, delete"
     )
 
 class Booking(Base):
@@ -85,12 +91,12 @@ class Booking(Base):
     total_amount = Column(Numeric(10, 2), nullable=False)
     booking_status = Column(
         Enum(BookingStatus),
-        default=BookingStatus.Pending,
+        default=BookingStatus.PENDING,
         nullable=False
     )
     payment_status = Column(
         Enum(PaymentStatus),
-        default=PaymentStatus.Pending,
+        default=PaymentStatus.PENDING,
         nullable=False
     )
     notes = Column(Text, nullable=True)

@@ -62,9 +62,6 @@ class CapacityUpdateResponse(BaseModel):
     class Config:
         from_attributes = True
 
-from pydantic import BaseModel
-
-
 class CapacityAvailabilityResponse(BaseModel):
 
     total_capacity: int

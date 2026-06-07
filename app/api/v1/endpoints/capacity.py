@@ -8,7 +8,11 @@ from uuid import UUID
 from app.db.database import get_db
 from app.schemas.capacity_schema import (
     CapacityCreate,
+    CapacityResponse,
     CapacityUpdate,
+    CapacityUpdateResponse,
+    CapacityAvailabilityResponse,
+    CapacityHistoryResponse,
     CapacityStatusUpdate
 )
 from app.services.capacity_service import (
@@ -25,6 +29,7 @@ router = APIRouter(
 
 @router.post(
     "/",
+    response_model=CapacityResponse,
     status_code=status.HTTP_201_CREATED
 )
 def create_capacity(
@@ -36,7 +41,7 @@ def create_capacity(
         payload
     )
 
-@router.get("/{listing_id}")
+@router.get("/{listing_id}", response_model=CapacityHistoryResponse, status_code=status.HTTP_200_OK)
 def get_capacity(
     listing_id: UUID,
     db: Session = Depends(get_db)
@@ -46,7 +51,7 @@ def get_capacity(
         listing_id
     )
 
-@router.put("/{listing_id}")
+@router.put("/{listing_id}", response_model=CapacityUpdateResponse, status_code=status.HTTP_200_OK)
 def update_capacity(
     listing_id: UUID,
     payload: CapacityUpdate,
@@ -58,7 +63,7 @@ def update_capacity(
         payload
     )
 
-@router.get("/{listing_id}/availability")
+@router.get("/{listing_id}/availability", response_model=CapacityAvailabilityResponse, status_code=status.HTTP_200_OK)
 def get_capacity_availability(
     listing_id: UUID,
     db: Session = Depends(get_db)
@@ -69,7 +74,7 @@ def get_capacity_availability(
         listing_id
     )
 
-@router.put("/{listing_id}/status")
+@router.put("/{listing_id}/status", response_model=CapacityStatusUpdate, status_code=status.HTTP_200_OK)
 def update_capacity_status(
     listing_id: UUID,
     payload: CapacityStatusUpdate,

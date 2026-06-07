@@ -11,17 +11,17 @@ import enum
 class Admin(Base):
     __tablename__ = "admins"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    name = Column(String, nullable=True)   # NEW
+    name = Column(String, nullable=True)  
     email = Column(String, unique=True, nullable=False)
     password = Column(String, nullable=False)
 
-    resetToken = Column(String, nullable=True)
-    resetTokenExpiry = Column(DateTime, nullable=True)
+    reset_token = Column(String, nullable=True)
+    reset_token_expiry = Column(DateTime, nullable=True)
 
-    isEmailVerified = Column(Boolean, default=False)
-    verificationToken = Column(String, nullable=True)
+    is_email_verified = Column(Boolean, default=False)
+    verification_token = Column(String, nullable=True)
     status = Column(String, default="active")
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -62,6 +62,15 @@ class Business(Base):
         "Booking",
         back_populates="business"
     )
+    wishlists = relationship(
+        "Wishlist",
+        back_populates="business",
+        cascade="all, delete"
+    )
+    media = relationship(
+        "Media",
+        back_populates="business"
+    )
 
     def __repr__(self):
         return f"<Business {self.name} ({self.status})>"
@@ -69,12 +78,12 @@ class Business(Base):
 
 # FIELD TYPES
 class AttributeFieldType(str, enum.Enum):
-    text = "text"
-    textarea = "textarea"
-    number = "number"
-    dropdown = "dropdown"
-    checkbox = "checkbox"
-    date = "date"
+    TEXT = "text"
+    TEXTAREA = "textarea"
+    NUMBER = "number"
+    DROPDOWN = "dropdown"
+    CHECKBOX = "checkbox"
+    DATE = "date"
 
 
 # ATTRIBUTE MASTER TABLE

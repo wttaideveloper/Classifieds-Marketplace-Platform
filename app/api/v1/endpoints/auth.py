@@ -7,9 +7,8 @@ from app.schemas.customer_schema import (
     ResetPassword,
     ChangePassword
 )
-from app.schemas.common_schema import RefreshTokenSchema, ResendVerificationSchema
+from app.schemas.common_schema import RefreshTokenSchema, ResendVerificationSchema, VerifyEmailSchema
 from app.exceptions.custom_exception import CustomException
-from app.schemas.common_schema import VerifyEmailSchema
 from app.services.customer_service import (
     forgot_password_service,
     reset_password_service,
@@ -38,17 +37,9 @@ from app.models.customer_model import Customer
 from app.models.merchant_model import Merchant
 from app.models.admin_model import Admin
 
-from app.db.database import SessionLocal
+from app.db.database import get_db
 
 router = APIRouter()
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # FORGOT PASSWORD
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
@@ -72,41 +63,41 @@ def reset_password(payload: ResetPassword, db: Session = Depends(get_db)):
 
     # customer
     user = db.query(Customer).filter(
-        Customer.resetToken == payload.resetToken
+        Customer.reset_token == payload.reset_token
     ).first()
 
     if user:
         return reset_password_service(
             db,
-            payload.resetToken,
-            payload.newPassword,
-            payload.confirmPassword
+            payload.reset_token,
+            payload.new_password,
+            payload.confirm_password
         )
 
     # merchant
     user = db.query(Merchant).filter(
-        Merchant.resetToken == payload.resetToken
+        Merchant.reset_token == payload.reset_token
     ).first()
 
     if user:
         return reset_password_merchant_service(
             db,
-            payload.resetToken,
-            payload.newPassword,
-            payload.confirmPassword
+            payload.reset_token,
+            payload.new_password,
+            payload.confirm_password
         )
 
     # admin
     user = db.query(Admin).filter(
-        Admin.resetToken == payload.resetToken
+        Admin.reset_token == payload.reset_token
     ).first()
 
     if user:
         return reset_password_admin_service(
             db,
-            payload.resetToken,
-            payload.newPassword,
-            payload.confirmPassword
+            payload.reset_token,
+            payload.new_password,
+            payload.confirm_password
         )
 
     raise CustomException(400, "Invalid or expired token")
@@ -129,27 +120,27 @@ def change_password(
         return change_password_service(
             db,
             user_id,
-            payload.currentPassword,
-            payload.newPassword,
-            payload.confirmPassword
+            payload.current_password,
+            payload.new_password,
+            payload.confirm_password
         )
 
     elif role == "merchant":
         return change_password_merchant_service(
             db,
             user_id,
-            payload.currentPassword,
-            payload.newPassword,
-            payload.confirmPassword
+            payload.current_password,
+            payload.new_password,
+            payload.confirm_password
         )
 
     elif role == "admin":
         return change_password_admin_service(
             db,
             user_id,
-            payload.currentPassword,
-            payload.newPassword,
-            payload.confirmPassword
+            payload.current_password,
+            payload.new_password,
+            payload.confirm_password
         )
 
     else:
