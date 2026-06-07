@@ -8,7 +8,7 @@ from app.models.calendar_model import CalendarProvider, EventStatusEnum
 class CalendarConnectRequest(BaseModel):
     merchant_id: UUID
     provider: CalendarProvider
-    authorization_code: str
+    # authorization_code: str
 
 class CalendarConnectResponse(BaseModel):
     integration_id: UUID
@@ -61,7 +61,7 @@ class CalendarAvailabilityItem(BaseModel):
     id: UUID
     booking_id: UUID
     merchant_id: UUID
-    title: str
+    event_title: str
     start_time: datetime
     end_time: datetime
 

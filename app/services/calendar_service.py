@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 
 from app.models.calendar_model import (
     CalendarIntegration,
+    CalendarEvent,
     EventStatusEnum
 )
 
@@ -17,7 +18,8 @@ from app.repository.calendar_repo import (
     get_calendar_event_by_id,
     update_calendar_event,
     delete_calendar_event,
-    get_calendar_availability
+    get_calendar_availability,
+    create_calendar_event
 )
 
 from app.schemas.calendar_schema import (
@@ -26,23 +28,28 @@ from app.schemas.calendar_schema import (
     CalendarEventUpdateRequest
 )
 
-
 def connect_calendar_service(
     db: Session,
     payload: CalendarConnectRequest
 ):
-    """
-    Simulated OAuth token exchange.
-    Replace with Google/Outlook API call.
-    """
+    existing = get_active_calendar_by_merchant(
+        db,
+        payload.merchant_id
+    )
+
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Calendar already connected"
+        )
 
     integration = CalendarIntegration(
         merchant_id=payload.merchant_id,
         provider=payload.provider,
         provider_account_id=str(uuid.uuid4()),
-        access_token=f"access_{uuid.uuid4()}",
-        refresh_token=f"refresh_{uuid.uuid4()}",
-        token_expiry=datetime.utcnow() + timedelta(days=30),
+        access_token="N/A",
+        refresh_token="N/A",
+        token_expiry=datetime.utcnow() + timedelta(days=365),
         is_active=True
     )
 
@@ -56,8 +63,6 @@ def connect_calendar_service(
         "provider": integration.provider,
         "message": "Calendar connected successfully"
     }
-
-
 def create_calendar_event_service(
     db: Session,
     merchant_id,
@@ -80,21 +85,31 @@ def create_calendar_event_service(
             detail="End time must be greater than start time"
         )
 
-    """
-    Simulated provider event creation.
-    Replace with Google Calendar API
-    or Microsoft Graph API.
-    """
+    external_event_id = str(uuid.uuid4())
 
-    event_id = str(uuid.uuid4())
+    calendar_event = CalendarEvent(
+        booking_id=payload.booking_id,
+        merchant_id=merchant_id,
+        provider=integration.provider,
+        external_event_id=external_event_id,
+        event_title=payload.event_title,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        meeting_link=f"https://meeting.example.com/{external_event_id}",
+        event_status=EventStatusEnum.SCHEDULED
+    )
+
+    calendar_event = create_calendar_event(
+        db,
+        calendar_event
+    )
 
     return {
         "integration_id": integration.id,
         "provider": integration.provider,
-        "event_id": event_id,
-        "meeting_link": f"https://meeting.example.com/{event_id}",
-        "event_status": "CONFIRMED"
- 
+        "event_id": str(calendar_event.id),
+        "meeting_link": calendar_event.meeting_link,
+        "event_status": calendar_event.event_status
     }
 
 def get_calendar_status_service(

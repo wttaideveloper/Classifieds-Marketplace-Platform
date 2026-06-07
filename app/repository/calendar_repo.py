@@ -27,6 +27,15 @@ def get_active_calendar_by_merchant(
         .first()
     )
 
+def create_calendar_event(
+    db: Session,
+    calendar_event: CalendarEvent
+):
+    db.add(calendar_event)
+    db.commit()
+    db.refresh(calendar_event)
+
+    return calendar_event
 
 def get_calendar_status_repo(
     db: Session,
@@ -39,12 +48,11 @@ def get_calendar_status_repo(
         )
         .join(
             CalendarEvent,
-            CalendarEvent.integration_id
-            == CalendarIntegration.id
+            CalendarEvent.merchant_id ==
+            CalendarIntegration.merchant_id
         )
         .filter(
-            CalendarIntegration.merchant_id
-            == merchant_id,
+            CalendarIntegration.merchant_id == merchant_id,
             CalendarIntegration.is_active == True
         )
         .order_by(
@@ -52,6 +60,7 @@ def get_calendar_status_repo(
         )
         .first()
     )
+
 def get_calendar_event_by_id(
     db: Session,
     event_id: UUID

@@ -6,11 +6,9 @@ from fastapi import (
     status,
     Query
 )
-
 from sqlalchemy.orm import Session
-
+from datetime import datetime
 from app.db.database import get_db
-
 from app.schemas.calendar_schema import (
     CalendarConnectRequest,
     CalendarConnectResponse,
@@ -19,7 +17,8 @@ from app.schemas.calendar_schema import (
     CalendarStatusResponse,
     CalendarEventUpdateRequest,
     CalendarEventUpdateResponse,
-    CalendarDeleteResponse
+    CalendarDeleteResponse,
+    CalendarAvailabilityResponse
 )
 
 from app.services.calendar_service import (
@@ -27,7 +26,8 @@ from app.services.calendar_service import (
     create_calendar_event_service,
     get_calendar_status_service,
     update_calendar_event_service,
-    delete_calendar_event_service
+    delete_calendar_event_service,
+    get_calendar_availability_service
 )
 
 router = APIRouter(
@@ -108,4 +108,22 @@ def delete_calendar_event(
     return delete_calendar_event_service(
         db=db,
         event_id=id
+    )
+
+@router.get(
+    "/availability",
+    response_model=CalendarAvailabilityResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_availability(
+    merchant_id: UUID | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    db: Session = Depends(get_db)
+):
+    return get_calendar_availability_service(
+        db=db,
+        merchant_id=merchant_id,
+        start_date=start_date,
+        end_date=end_date
     )
