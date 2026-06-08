@@ -96,3 +96,6 @@ _safe_include("app.api.v1.endpoints.audit_logs",  prefix="/audit", tags=["Audit"
 
 # Calendar Synchronization
 _safe_include("app.api.v1.endpoints.calendar",  prefix="/calendar", tags=["Calendar"])
+
+# Video Meeting Integration
+_safe_include("app.api.v1.endpoints.meeting",  prefix="/meetings", tags=["Meeting"])
