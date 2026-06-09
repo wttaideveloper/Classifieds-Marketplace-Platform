@@ -3,10 +3,7 @@ from uuid import UUID
 from app.models.meeting_model import MeetingIntegration, Meeting
 
 
-class MeetingRepository:
-
-    @staticmethod
-    def create(
+def create(
         db: Session,
         integration: MeetingIntegration
     ):
@@ -15,8 +12,8 @@ class MeetingRepository:
         db.refresh(integration)
         return integration
 
-    @staticmethod
-    def get_by_provider(
+
+def get_by_provider(
         db: Session,
         merchant_id,
         provider
@@ -30,10 +27,8 @@ class MeetingRepository:
             .first()
         )
 
-class MeetingRepository:
 
-    @staticmethod
-    def create_meeting(db, meeting):
+def create_meeting(db, meeting):
 
         db.add(meeting)
         db.commit()
@@ -41,8 +36,8 @@ class MeetingRepository:
 
         return meeting
 
-    @staticmethod
-    def get_active_integration(
+  
+def get_active_integration(
         db,
         provider
     ):
@@ -55,8 +50,8 @@ class MeetingRepository:
             .first()
         )
 
-    @staticmethod
-    def get_booking_meeting(
+
+def get_booking_meeting(
         db,
         booking_id
     ):
@@ -66,8 +61,8 @@ class MeetingRepository:
             .first()
         )
 
-    @staticmethod
-    def get_by_id(db, meeting_id: UUID):
+   
+def get_by_id(db, meeting_id: UUID):
 
         return (
             db.query(Meeting)
@@ -75,8 +70,8 @@ class MeetingRepository:
             .first()
         )
 
-    @staticmethod
-    def get_by_merchant(
+ 
+def get_by_merchant(
         db,
         merchant_id: UUID
     ):
@@ -87,16 +82,16 @@ class MeetingRepository:
             .all()
         )
 
-    @staticmethod
-    def update(db, meeting):
+   
+def update(db, meeting):
 
         db.commit()
         db.refresh(meeting)
 
         return meeting
 
-    @staticmethod
-    def delete(db, meeting):
+   
+def delete(db, meeting):
 
         db.delete(meeting)
         db.commit()

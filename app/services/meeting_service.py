@@ -4,20 +4,17 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from app.models.meeting_model import MeetingIntegration, MeetingStatusEnum, MeetingProviderEnum, Meeting
-from app.repository.meeting_repo import MeetingRepository
+from app.repository.meeting_repo import get_by_provider, get_booking_meeting, create, get_active_integration, get_by_id, get_by_merchant, create_meeting, update, delete
 
 
-class MeetingService:
-
-    @staticmethod
-    def connect_provider(
+def connect_provider_service(
         db: Session,
         merchant_id,
         provider,
         authorization_code
     ):
 
-        existing = MeetingRepository.get_by_provider(
+        existing = get_by_provider(
             db,
             merchant_id,
             provider
@@ -55,13 +52,13 @@ class MeetingService:
             is_active=True
         )
 
-        return MeetingRepository.create(
+        return create(
             db,
             integration
         )
 
-    @staticmethod
-    def create_meeting(
+
+def create_meeting_service(
         db,
         payload
     ):
@@ -72,7 +69,7 @@ class MeetingService:
                 detail="End time must be greater than start time"
             )
 
-        existing = MeetingRepository.get_booking_meeting(
+        existing = get_booking_meeting(
             db,
             payload.booking_id
         )
@@ -84,7 +81,7 @@ class MeetingService:
             )
 
         integration = (
-            MeetingRepository.get_active_integration(
+            get_active_integration(
                 db,
                 payload.provider
             )
@@ -142,7 +139,7 @@ class MeetingService:
         )
 
         saved_meeting = (
-            MeetingRepository.create_meeting(
+            create_meeting(
                 db,
                 meeting
             )
@@ -156,13 +153,13 @@ class MeetingService:
             "start_time": saved_meeting.start_time
         }
 
-    @staticmethod
-    def get_meeting(
+
+def get_meeting_service(
         db,
         meeting_id: UUID
     ):
 
-        meeting = MeetingRepository.get_by_id(
+        meeting = get_by_id(
             db,
             meeting_id
         )
@@ -175,25 +172,24 @@ class MeetingService:
 
         return meeting
 
-    @staticmethod
-    def get_merchant_meetings(
+def get_merchant_meetings_service(
         db,
         merchant_id: UUID
     ):
 
-        return MeetingRepository.get_by_merchant(
+        return get_by_merchant(
             db,
             merchant_id
         )
 
-    @staticmethod
-    def update_meeting(
+   
+def update_meeting_service(
         db,
         meeting_id,
         payload
     ):
 
-        meeting = MeetingRepository.get_by_id(
+        meeting = get_by_id(
             db,
             meeting_id
         )
@@ -234,18 +230,18 @@ class MeetingService:
         PATCH /onlineMeetings/{meetingId}
         """
 
-        return MeetingRepository.update(
+        return update(
             db,
             meeting
         )
 
-    @staticmethod
-    def cancel_meeting(
+   
+def cancel_meeting_service(
         db,
         meeting_id
     ):
 
-        meeting = MeetingRepository.get_by_id(
+        meeting = get_by_id(
             db,
             meeting_id
         )
@@ -271,7 +267,7 @@ class MeetingService:
             MeetingStatusEnum.CANCELLED
         )
 
-        MeetingRepository.update(
+        update(
             db,
             meeting
         )

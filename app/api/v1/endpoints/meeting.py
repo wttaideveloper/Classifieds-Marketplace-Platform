@@ -14,7 +14,12 @@ from app.schemas.meeting_schema import (
 )
 
 from app.services.meeting_service import (
-    MeetingService
+    connect_provider_service,
+    create_meeting_service,
+    get_meeting_service,
+    update_meeting_service,
+    cancel_meeting_service,
+    get_merchant_meetings_service
 )
 
 router = APIRouter(
@@ -31,7 +36,7 @@ def connect_provider(
     payload: MeetingConnectRequest,
     db: Session = Depends(get_db)
 ):
-    return MeetingService.connect_provider(
+    return connect_provider_service(
         db=db,
         merchant_id=payload.merchant_id,
         provider=payload.provider,
@@ -47,52 +52,9 @@ def create_meeting(
     payload: CreateMeetingRequest,
     db: Session = Depends(get_db)
 ):
-    return MeetingService.create_meeting(
+    return create_meeting_service(
         db,
         payload
-    )
-
-@router.get(
-    "/{id}",
-    response_model=MeetingResponse,
-    status_code=status.HTTP_200_OK
-)
-def get_meeting(
-    id: UUID,
-    db: Session = Depends(get_db)
-):
-    return MeetingService.get_meeting(
-        db,
-        id
-    )
-
-@router.put(
-    "/{id}",
-    response_model=MeetingResponse,
-    status_code=status.HTTP_200_OK
-)
-def update_meeting(
-    id: UUID,
-    payload: UpdateMeetingRequest,
-    db: Session = Depends(get_db)
-):
-    return MeetingService.update_meeting(
-        db,
-        id,
-        payload
-    )
-
-@router.delete(
-    "/{id}",
-    status_code=status.HTTP_200_OK
-)
-def cancel_meeting(
-    id: UUID,
-    db: Session = Depends(get_db)
-):
-    return MeetingService.cancel_meeting(
-        db,
-        id
     )
 
 @router.get(
@@ -104,7 +66,51 @@ def merchant_meetings(
     merchant_id: UUID,
     db: Session = Depends(get_db)
 ):
-    return MeetingService.get_merchant_meetings(
+    return get_merchant_meetings_service(
         db,
         merchant_id
     )
+
+@router.get(
+    "/{meeting_id}",
+    response_model=MeetingResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_meeting(
+    meeting_id: UUID,
+    db: Session = Depends(get_db)
+):
+    return get_meeting_service(
+        db,
+        meeting_id
+    )
+
+@router.put(
+    "/{meeting_id}",
+    response_model=MeetingResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_meeting(
+    meeting_id: UUID,
+    payload: UpdateMeetingRequest,
+    db: Session = Depends(get_db)
+):
+    return update_meeting_service(
+        db,
+        meeting_id,
+        payload
+    )
+
+@router.delete(
+    "/{meeting_id}",
+    status_code=status.HTTP_200_OK
+)
+def cancel_meeting(
+    meeting_id: UUID,
+    db: Session = Depends(get_db)
+):
+    return cancel_meeting_service(
+        db,
+        meeting_id
+    )
+

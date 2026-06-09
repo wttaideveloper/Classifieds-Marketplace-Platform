@@ -8,7 +8,7 @@ from app.models.meeting_model import MeetingProviderEnum, MeetingStatusEnum
 class MeetingConnectRequest(BaseModel):
     merchant_id: UUID
     provider: MeetingProviderEnum
-    authorization_code: Optional[str]
+    authorization_code: Optional[str] = None
 
 
 class MeetingConnectResponse(BaseModel):
