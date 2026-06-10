@@ -497,7 +497,7 @@ def create_business_profile_service(
         "online",
         "hybrid"
     ]
-    if payload.businessType not in business_type_allowed:
+    if payload.business_type not in business_type_allowed:
         raise CustomException(
             400,
             "Invalid business type"
@@ -513,6 +513,10 @@ def create_business_profile_service(
         db,
         profile
     )
+    print(type(created))
+    print(created)
+    print(created.id, type(created.id))
+    print(created.merchant_id, type(created.merchant_id))
     return {
         "success": True,
         "message": "Business profile created successfully",

@@ -162,9 +162,9 @@ class MerchantBusinessDraft(BaseModel):
     additional_contact_numbers: List[str] = Field(default_factory=list)
     short_tagline: Optional[str] = None
 
-class MerchantBusinessProfileResponse(BaseModel):
-    id: str
-    merchant_id: str
+class MerchantBusinessProfileData(BaseModel):
+    id: UUID
+    merchant_id: UUID
     business_name: str
     business_description: Optional[str]
     primary_category: Optional[str]
@@ -177,7 +177,7 @@ class MerchantBusinessProfileResponse(BaseModel):
     zip_code: Optional[str]
     country: Optional[str]
     latitude: Optional[float]
-    longitude: Optional[str]
+    longitude: Optional[float]
     business_logo: Optional[str]
     banner_image: Optional[str]
     gallery_images: List[str] = Field(default_factory=list)
@@ -193,6 +193,11 @@ class MerchantBusinessProfileResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class MerchantBusinessProfileResponse(BaseModel):
+    success: bool
+    message: str
+    data: MerchantBusinessProfileData
 
 class BusinessStatusResponse(BaseModel):
     success: bool
