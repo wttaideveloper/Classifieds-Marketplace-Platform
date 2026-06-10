@@ -99,3 +99,6 @@ _safe_include("app.api.v1.endpoints.calendar",  prefix="/calendar", tags=["Calen
 
 # Video Meeting Integration
 _safe_include("app.api.v1.endpoints.meeting",  prefix="/meetings", tags=["Meetings"])
+
+# Community Ecosystem
+_safe_include("app.api.v1.endpoints.community_ecosystem",  prefix="/community-ecosystem", tags=["Community Ecosystem"])
