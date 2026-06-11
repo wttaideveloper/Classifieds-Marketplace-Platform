@@ -33,14 +33,14 @@ def create_ecosystem_service(
                 detail="Invalid provider type"
             )
 
-        return create_ecosystem_repo.create(
+        return create_ecosystem_repo(
             db,
             payload.model_dump()
         )
 
    
 def get_all_ecosystem_service(db: Session):
-        return get_all_ecosystem_repo.get_all(db)
+        return get_all_ecosystem_repo(db)
 
 
 def get_by_id_ecosystem_service(
@@ -49,7 +49,7 @@ def get_by_id_ecosystem_service(
     ):
 
         ecosystem = (
-            get_by_id_ecosystem_repo.get_by_id(
+            get_by_id_ecosystem_repo(
                 db,
                 ecosystem_id
             )
@@ -71,7 +71,7 @@ def update_ecosystem_service(
     ):
 
         ecosystem = (
-            get_by_id_ecosystem_repo.get_by_id(
+            get_by_id_ecosystem_repo(
                 db,
                 ecosystem_id
             )
@@ -95,7 +95,7 @@ def update_ecosystem_service(
                 detail="Invalid provider type"
             )
 
-        return update_ecosytem_repo.update(
+        return update_ecosytem_repo(
             db,
             ecosystem,
             data
@@ -107,7 +107,7 @@ def delete_ecosystem_service(
     ):
 
         ecosystem = (
-            get_by_id_ecosystem_repo.get_by_id(
+            get_by_id_ecosystem_repo(
                 db,
                 ecosystem_id
             )
@@ -119,7 +119,7 @@ def delete_ecosystem_service(
                 detail="Provider not found"
             )
 
-        delete_ecosystem_repo.delete(
+        delete_ecosystem_repo(
             db,
             ecosystem
         )

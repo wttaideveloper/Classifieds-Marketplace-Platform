@@ -33,7 +33,7 @@ def create_provider(
     payload: CommunityEcosystemCreate,
     db: Session = Depends(get_db)
 ):
-    return create_ecosystem_service.create(
+    return create_ecosystem_service(
         db,
         payload
     )
@@ -46,7 +46,7 @@ def create_provider(
 def get_all_providers(
     db: Session = Depends(get_db)
 ):
-    return get_all_ecosystem_service.get_all(db)
+    return get_all_ecosystem_service(db)
 
 
 @router.get(
@@ -57,7 +57,7 @@ def get_provider(
     ecosystem_id: UUID,
     db: Session = Depends(get_db)
 ):
-    return get_by_id_ecosystem_service.get_by_id(
+    return get_by_id_ecosystem_service(
         db,
         ecosystem_id
     )
@@ -72,7 +72,7 @@ def update_provider(
     payload: CommunityEcosystemUpdate,
     db: Session = Depends(get_db)
 ):
-    return update_ecosystem_service.update(
+    return update_ecosystem_service(
         db,
         ecosystem_id,
         payload
@@ -87,7 +87,7 @@ def delete_provider(
     ecosystem_id: UUID,
     db: Session = Depends(get_db)
 ):
-    return delete_ecosystem_service.delete(
+    return delete_ecosystem_service(
         db,
         ecosystem_id
     )
