@@ -38,7 +38,6 @@ def create_provider(
         payload
     )
 
-
 @router.get(
     "/",
     response_model=list[CommunityEcosystemResponse]
@@ -61,7 +60,6 @@ def get_provider(
         db,
         ecosystem_id
     )
-
 
 @router.put(
     "/{ecosystem_id}",

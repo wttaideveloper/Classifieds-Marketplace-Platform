@@ -102,3 +102,6 @@ _safe_include("app.api.v1.endpoints.meeting",  prefix="/meetings", tags=["Meetin
 
 # Community Ecosystem
 _safe_include("app.api.v1.endpoints.community_ecosystem",  prefix="/community-ecosystem", tags=["Community Ecosystem"])
+
+# Enterprise Setup
+_safe_include("app.api.v1.endpoints.enterprise_setup",  prefix="/enterprise", tags=["Enterprise Setup"])
