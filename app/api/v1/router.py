@@ -105,3 +105,6 @@ _safe_include("app.api.v1.endpoints.community_ecosystem",  prefix="/community-ec
 
 # Enterprise Setup
 _safe_include("app.api.v1.endpoints.enterprise_setup",  prefix="/enterprise", tags=["Enterprise Setup"])
+
+# Scheduling
+_safe_include("app.api.v1.endpoints.scheduling",  prefix="/scheduling", tags=["Scheduling"])
