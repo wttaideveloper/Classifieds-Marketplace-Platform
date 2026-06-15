@@ -108,3 +108,6 @@ _safe_include("app.api.v1.endpoints.enterprise_setup",  prefix="/enterprise", ta
 
 # Scheduling
 _safe_include("app.api.v1.endpoints.scheduling",  prefix="/scheduling", tags=["Scheduling"])
+
+# Communication
+_safe_include("app.api.v1.endpoints.communication",  prefix="/communications", tags=["Communications"])
