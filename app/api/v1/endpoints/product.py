@@ -28,7 +28,7 @@ router = APIRouter(
 
 
 @router.post(
-    "",
+    "/",
     response_model=ProductResponse,
     status_code=status.HTTP_201_CREATED
 )
@@ -43,7 +43,7 @@ def create_product(
 
 
 @router.get(
-    "",
+    "/",
     response_model=list[ProductResponse],
     status_code=status.HTTP_200_OK
 )
