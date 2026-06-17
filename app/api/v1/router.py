@@ -103,8 +103,20 @@ _safe_include("app.api.v1.endpoints.meeting",  prefix="/meetings", tags=["Meetin
 # Community Ecosystem
 _safe_include("app.api.v1.endpoints.community_ecosystem",  prefix="/community-ecosystem", tags=["Community Ecosystem"])
 
-# Enterprise Setup
-_safe_include("app.api.v1.endpoints.enterprise_setup",  prefix="/enterprise", tags=["Enterprise Setup"])
+# Enterprise Management
+_safe_include("app.api.v1.endpoints.enterprise",  prefix="/api/enterprises", tags=["Enterprise"])
+
+# Products
+_safe_include("app.api.v1.endpoints.product",     prefix="/api/products", tags=["Products"])
+
+# Services
+_safe_include("app.api.v1.endpoints.service", prefix="/api/services", tags=["Services"])
+
+# Dynamic attributes
+_safe_include("app.api.v1.endpoints.attribute", prefix="/api/attributes", tags=["Dynamic Attributes"])
+
+# Inventory system
+_safe_include("app.api.v1.endpoints.system", prefix="/api", tags=["System"])
 
 # Scheduling
 _safe_include("app.api.v1.endpoints.scheduling",  prefix="/scheduling", tags=["Scheduling"])
