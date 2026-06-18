@@ -8,13 +8,8 @@ from sqlalchemy import engine_from_config, pool
 from app.core.config import settings
 from app.db.database import Base
 
-# Import all models so Alembic autogenerate can detect metadata.
-from app.models import (  # noqa: F401
-    address_model,
-    admin_model,
-    customer_model,
-    merchant_model,
-)
+# Import all models so Alembic can detect metadata.
+import app.models  # noqa: F401
 
 config = context.config
 

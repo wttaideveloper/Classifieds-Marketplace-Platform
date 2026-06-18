@@ -9,13 +9,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
+import app.models  # noqa: F401
 from app.db.database import Base
-from app.models import (  # noqa: F401
-    address_model,
-    admin_model,
-    customer_model,
-    merchant_model,
-)
 
 # revision identifiers, used by Alembic.
 revision: str = "334131df0950"
