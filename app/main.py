@@ -45,20 +45,11 @@ def custom_exception_handler(request, exc: CustomException):
 def startup():
     if os.getenv("AUTO_CREATE_TABLES", "false").lower() == "true":
         try:
-            import app.models.address_model
-            import app.models.admin_model
-            import app.models.blog_model
-            import app.models.category_model
-            import app.models.customer_model
-            import app.models.merchant_model
-            import app.models.order_model
-            import app.models.review_model
-            import app.models.review_moderation_history_model
-            import app.models.notification_model
-            import app.models.moderation_model
-            import app.models.capacity_model
-            import app.models.wishlist_model
-            import app.models.media_model
+            import app.models.attribute_model
+            import app.models.enterprise_model
+            import app.models.product_model
+            import app.models.service_model
+            
             print("REGISTERED TABLES:")
             print(Base.metadata.tables.keys())
 
