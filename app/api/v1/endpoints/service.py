@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import (
     APIRouter,
     Depends,
+    Path,
     status
 )
 
@@ -32,7 +33,25 @@ router = APIRouter(
 @router.post(
     "/",
     response_model=ServiceResponse,
-    status_code=status.HTTP_201_CREATED
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Service",
+    description="""
+Create a new service in the marketplace.
+
+Services represent offerings provided by an enterprise.
+
+Examples:
+- Website Development
+- Cloud Hosting
+- Technical Support
+- Digital Marketing
+""",
+    responses={
+        201: {"description": "Service created successfully"},
+        400: {"description": "Invalid request"},
+        422: {"description": "Validation error"},
+        500: {"description": "Internal server error"}
+    }
 )
 def create_service(
     service: ServiceCreate,
@@ -47,7 +66,15 @@ def create_service(
 @router.get(
     "/",
     response_model=list[ServiceResponse],
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Get All Services",
+    description="""
+Retrieve all active services available in the system.
+""",
+    responses={
+        200: {"description": "Services retrieved successfully"},
+        500: {"description": "Internal server error"}
+    }
 )
 def get_services(
     db: Session = Depends(get_db)
@@ -58,10 +85,23 @@ def get_services(
 @router.get(
     "/{service_id}",
     response_model=ServiceResponse,
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Get Service By ID",
+    description="""
+Retrieve a specific service using its unique identifier.
+""",
+    responses={
+        200: {"description": "Service retrieved successfully"},
+        404: {"description": "Service not found"},
+        422: {"description": "Validation error"},
+        500: {"description": "Internal server error"}
+    }
 )
 def get_service(
-    service_id: UUID,
+    service_id: UUID = Path(
+        ...,
+        description="Unique identifier of the service"
+    ),
     db: Session = Depends(get_db)
 ):
     return get_service_service(
@@ -73,11 +113,26 @@ def get_service(
 @router.put(
     "/{service_id}",
     response_model=ServiceResponse,
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Update Service",
+    description="""
+Update an existing service.
+
+Only the supplied fields will be updated.
+""",
+    responses={
+        200: {"description": "Service updated successfully"},
+        404: {"description": "Service not found"},
+        422: {"description": "Validation error"},
+        500: {"description": "Internal server error"}
+    }
 )
 def update_service(
-    service_id: UUID,
     service: ServiceUpdate,
+    service_id: UUID = Path(
+        ...,
+        description="Unique identifier of the service"
+    ),
     db: Session = Depends(get_db)
 ):
     return update_service_service(
@@ -89,10 +144,25 @@ def update_service(
 
 @router.delete(
     "/{service_id}",
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Deactivate Service",
+    description="""
+Marks a service as inactive.
+
+This operation performs a soft delete and does not permanently remove the record.
+""",
+    responses={
+        200: {"description": "Service marked inactive successfully"},
+        404: {"description": "Service not found"},
+        422: {"description": "Validation error"},
+        500: {"description": "Internal server error"}
+    }
 )
 def delete_service(
-    service_id: UUID,
+    service_id: UUID = Path(
+        ...,
+        description="Unique identifier of the service"
+    ),
     db: Session = Depends(get_db)
 ):
     delete_service_service(
@@ -101,6 +171,5 @@ def delete_service(
     )
 
     return {
-        "message":
-        "Service marked inactive successfully"
+        "message": "Service marked inactive successfully"
     }

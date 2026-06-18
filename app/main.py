@@ -16,10 +16,22 @@ load_dotenv()
 
 app = FastAPI(
     title="Marketplace API",
-    version="1.0.0"
+    description="""
+    Marketplace Management APIs
+
+    Modules:
+    - Enterprise Management
+    - Product Management
+    - Service Management
+    - Dynamic Attributes
+    - Inventory System
+    """,
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
 )
 
-print("--- DEBUG: AUTO_CREATE_TABLES is set to:", os.getenv("AUTO_CREATE_TABLES"))
 
 @app.get("/protected")
 def protected_route(credentials=Depends(security)):
@@ -50,15 +62,12 @@ def startup():
             import app.models.product_model
             import app.models.service_model
             
-            print("REGISTERED TABLES:")
-            print(Base.metadata.tables.keys())
 
             Base.metadata.create_all(bind=engine)
 
-            print("Tables created successfully")
 
         except Exception as e:
-            print("TABLE CREATION ERROR:", e)
+            raise e
 
 # Routes
 app.include_router(api_router, prefix="/api/v1")

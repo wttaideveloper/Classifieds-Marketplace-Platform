@@ -1,51 +1,39 @@
 from uuid import UUID
-
-from pydantic import BaseModel
-from pydantic import EmailStr
-
-from typing import Optional
+from pydantic import BaseModel, Field
 
 
 class EnterpriseCreate(BaseModel):
-    business_short_name: str
-    business_legal_name: str
-    business_description: Optional[str] = None
-    business_email: EmailStr
-    business_phone: Optional[str] = None
-    registered_address: Optional[str] = None
-    business_address: Optional[str] = None
-    communication_address: Optional[str] = None
-    logo_url: Optional[str] = None
-    business_images: Optional[str] = None
+    name: str = Field(
+        ...,
+        description="Enterprise name",
+        example="ABC Pvt Ltd"
+    )
+
+    description: str | None = Field(
+        None,
+        description="Enterprise description",
+        example="Leading software solutions provider"
+    )
 
 
 class EnterpriseUpdate(BaseModel):
-    business_short_name: Optional[str] = None
-    business_legal_name: Optional[str] = None
-    business_description: Optional[str] = None
-    business_email: Optional[EmailStr] = None
-    business_phone: Optional[str] = None
-    registered_address: Optional[str] = None
-    business_address: Optional[str] = None
-    communication_address: Optional[str] = None
-    logo_url: Optional[str] = None
-    business_images: Optional[str] = None
-    status: Optional[bool] = None
+    name: str | None = Field(
+        None,
+        description="Updated enterprise name",
+        example="ABC Technologies Pvt Ltd"
+    )
+
+    description: str | None = Field(
+        None,
+        description="Updated enterprise description",
+        example="Global technology services company"
+    )
 
 
 class EnterpriseResponse(BaseModel):
     id: UUID
-    business_short_name: str
-    business_legal_name: str
-    business_description: Optional[str]
-    business_email: str
-    business_phone: Optional[str]
-    registered_address: Optional[str]
-    business_address: Optional[str]
-    communication_address: Optional[str]
-    logo_url: Optional[str]
-    business_images: Optional[str]
-    status: bool
+    name: str
+    description: str | None
 
     class Config:
         from_attributes = True

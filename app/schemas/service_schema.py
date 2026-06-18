@@ -1,40 +1,44 @@
 from uuid import UUID
-from typing import Optional
-
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 
 class ServiceCreate(BaseModel):
-    enterprise_id: UUID
-    service_name: str
-    service_description: Optional[str] = None
-    service_category: str
-    service_price: float = Field(gt=0)
-    duration: int = Field(gt=0)
-    availability_status: bool = True
+    name: str = Field(
+        ...,
+        description="Service name",
+        example="Website Development"
+    )
+
+    description: str | None = Field(
+        None,
+        description="Service description",
+        example="Custom website development services"
+    )
+
+    enterprise_id: UUID = Field(
+        ...,
+        description="Associated enterprise ID"
+    )
 
 
 class ServiceUpdate(BaseModel):
-    service_name: Optional[str] = None
-    service_description: Optional[str] = None
-    service_category: Optional[str] = None
-    service_price: Optional[float] = None
-    duration: Optional[int] = None
-    availability_status: Optional[bool] = None
-    service_status: Optional[bool] = None
+    name: str | None = Field(
+        None,
+        description="Updated service name",
+        example="Advanced Website Development"
+    )
+
+    description: str | None = Field(
+        None,
+        description="Updated service description"
+    )
 
 
 class ServiceResponse(BaseModel):
     id: UUID
+    name: str
+    description: str | None
     enterprise_id: UUID
-    service_name: str
-    service_description: Optional[str]
-    service_category: str
-    service_price: float
-    duration: int
-    availability_status: bool
-    service_status: bool
 
     class Config:
         from_attributes = True

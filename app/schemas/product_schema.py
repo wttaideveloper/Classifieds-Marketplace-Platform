@@ -1,37 +1,44 @@
+from pydantic import BaseModel, Field
 from uuid import UUID
-from typing import Optional
-
-from pydantic import BaseModel
-from pydantic import Field
 
 
 class ProductCreate(BaseModel):
-    enterprise_id: UUID
-    product_name: str
-    product_description: Optional[str] = None
-    product_category: str
-    product_price: float = Field(gt=0)
-    product_images: Optional[str] = None
+    name: str = Field(
+        ...,
+        description="Product name",
+        example="Dell Latitude 5440"
+    )
+
+    description: str | None = Field(
+        None,
+        description="Product description",
+        example="Business laptop with Intel Core i7 processor"
+    )
+
+    enterprise_id: UUID = Field(
+        ...,
+        description="Associated enterprise ID"
+    )
 
 
 class ProductUpdate(BaseModel):
-    product_name: Optional[str] = None
-    product_description: Optional[str] = None
-    product_category: Optional[str] = None
-    product_price: Optional[float] = None
-    product_images: Optional[str] = None
-    product_status: Optional[bool] = None
+    name: str | None = Field(
+        None,
+        description="Updated product name",
+        example="Dell Latitude 5450"
+    )
+
+    description: str | None = Field(
+        None,
+        description="Updated product description"
+    )
 
 
 class ProductResponse(BaseModel):
     id: UUID
+    name: str
+    description: str | None
     enterprise_id: UUID
-    product_name: str
-    product_description: Optional[str]
-    product_category: str
-    product_price: float
-    product_images: Optional[str]
-    product_status: bool
 
     class Config:
         from_attributes = True

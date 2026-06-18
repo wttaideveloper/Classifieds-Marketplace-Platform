@@ -1,47 +1,53 @@
 from uuid import UUID
-from typing import Optional
-
-from pydantic import BaseModel
-from pydantic import field_validator
+from pydantic import BaseModel, Field
 
 
 class AttributeCreate(BaseModel):
-    entity_type: str
-    entity_id: UUID
-    attribute_name: str
-    attribute_value: str
-    attribute_type: str
+    entity_type: str = Field(
+        ...,
+        description="Entity type",
+        example="product"
+    )
 
-    @field_validator("entity_type")
-    @classmethod
-    def validate_entity_type(cls, value):
-        allowed = [
-            "enterprise",
-            "product",
-            "service"
-        ]
+    entity_id: UUID = Field(
+        ...,
+        description="Entity UUID",
+        example="550e8400-e29b-41d4-a716-446655440000"
+    )
 
-        if value.lower() not in allowed:
-            raise ValueError(
-                "entity_type must be enterprise, product or service"
-            )
+    key: str = Field(
+        ...,
+        description="Attribute name",
+        example="Color"
+    )
 
-        return value.lower()
+    value: str = Field(
+        ...,
+        description="Attribute value",
+        example="Blue"
+    )
 
 
 class AttributeUpdate(BaseModel):
-    attribute_name: Optional[str] = None
-    attribute_value: Optional[str] = None
-    attribute_type: Optional[str] = None
+    key: str | None = Field(
+        None,
+        description="Updated attribute name",
+        example="Size"
+    )
+
+    value: str | None = Field(
+        None,
+        description="Updated attribute value",
+        example="Large"
+    )
 
 
 class AttributeResponse(BaseModel):
     id: UUID
     entity_type: str
     entity_id: UUID
-    attribute_name: str
-    attribute_value: str
-    attribute_type: str
+    key: str
+    value: str
 
     class Config:
         from_attributes = True
