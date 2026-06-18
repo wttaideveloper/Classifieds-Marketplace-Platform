@@ -4,6 +4,7 @@ from app.core.security import hash_password, verify_password, create_access_toke
 from app.exceptions.custom_exception import CustomException
 from app.models.customer_model import Customer
 from app.services.email_service import send_email  
+from app.core.config import settings
 from uuid import uuid4
 from datetime import datetime, timedelta
 import requests
@@ -100,7 +101,7 @@ def forgot_password_service(db, email: str):
     user.resetTokenExpiry = expiry
     db.commit()
     #  CREATE RESET LINK
-    reset_link = f"http://localhost:8000/reset-password?token={reset_token}"
+    reset_link = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?token={reset_token}"
     # SEND EMAIL
     email_sent = send_email(user.email, reset_link)
     if not email_sent:

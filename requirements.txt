@@ -1,8 +1,14 @@
 fastapi
 uvicorn
-pymongo
 python-dotenv
 passlib[bcrypt]
 python-jose
 pydantic
+pydantic-settings
 email-validator
+requests
+sqlalchemy
+python-multipart
+psycopg2-binary
+alembic
+gunicorn

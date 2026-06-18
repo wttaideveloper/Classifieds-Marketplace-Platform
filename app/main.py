@@ -2,19 +2,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.core.config import settings
 from app.db.database import Base, engine
 from app.api.v1.router import api_router
 from app.exceptions.custom_exception import CustomException
 
 app = FastAPI(
     title="User Management API",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
-# CORS (important for frontend)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,13 +35,16 @@ def custom_exception_handler(request, exc: CustomException):
         content={"detail": exc.detail}
     )
 
-# DB init (DEV ONLY)
+
 @app.on_event("startup")
 def startup():
-    Base.metadata.create_all(bind=engine)
+    if not settings.is_production:
+        Base.metadata.create_all(bind=engine)
+
 
 # Routes
 app.include_router(api_router, prefix="/api/v1")
+
 
 # Health check
 @app.get("/health")

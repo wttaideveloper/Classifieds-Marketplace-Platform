@@ -29,6 +29,7 @@ from app.exceptions.custom_exception import CustomException
 from datetime import datetime, timedelta
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
 from app.services.email_service import send_email 
+from app.core.config import settings
 from app.core.token_blacklist import TOKEN_BLACKLIST
 from typing import List
 import os
@@ -44,8 +45,6 @@ GALLERY_FOLDER = "uploads/business_gallery"
 UPLOAD_DIR = "uploads/listings"
 
 def register_merchant_service(db, merchant):
-    print(db.bind.url)
-
     #  Check existing email
     existing = get_merchant_by_email(db, merchant.businessEmail)
     if existing:
@@ -159,7 +158,7 @@ def forgot_password_merchant_service(db, email: str):
     update_merchant(db, merchant)
 
     # Create reset link
-    reset_link = f"http://localhost:8000/reset-password?token={reset_token}"
+    reset_link = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?token={reset_token}"
 
     # Send email
     email_sent = send_email(merchant.businessEmail, reset_link)
