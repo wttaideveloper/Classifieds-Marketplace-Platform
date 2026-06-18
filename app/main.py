@@ -15,7 +15,20 @@ load_dotenv()
 
 app = FastAPI(
     title="Marketplace API",
-    version="1.0.0"
+    description="""
+    Marketplace Management APIs
+
+    Modules:
+    - Enterprise Management
+    - Product Management
+    - Service Management
+    - Dynamic Attributes
+    - Inventory System
+    """,
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
 )
 
 
@@ -45,29 +58,17 @@ def custom_exception_handler(request, exc: CustomException):
 def startup():
     if os.getenv("AUTO_CREATE_TABLES", "false").lower() == "true":
         try:
-            import app.models.address_model
-            import app.models.admin_model
-            import app.models.blog_model
-            import app.models.category_model
-            import app.models.customer_model
-            import app.models.merchant_model
-            import app.models.order_model
-            import app.models.review_model
-            import app.models.review_moderation_history_model
-            import app.models.notification_model
-            import app.models.moderation_model
-            import app.models.capacity_model
-            import app.models.wishlist_model
-            import app.models.media_model
-            print("REGISTERED TABLES:")
-            print(Base.metadata.tables.keys())
+            import app.models.attribute_model
+            import app.models.enterprise_model
+            import app.models.product_model
+            import app.models.service_model
+            
 
             Base.metadata.create_all(bind=engine)
 
-            print("Tables created successfully")
 
         except Exception as e:
-            print("TABLE CREATION ERROR:", e)
+            raise e
 
 # Routes
 app.include_router(api_router, prefix="/api/v1")
