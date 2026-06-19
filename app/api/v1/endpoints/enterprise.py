@@ -100,7 +100,7 @@ def get_enterprise(
     enterprise_id: UUID = Path(
         ...,
         description="Unique identifier of the enterprise",
-        example="550e8400-e29b-41d4-a716-446655440000"
+        example=["550e8400-e29b-41d4-a716-446655440000"]
     ),
     db: Session = Depends(get_db)
 ):
@@ -162,7 +162,7 @@ def delete_enterprise(
     enterprise_id: UUID = Path(
         ...,
         description="Unique identifier of the enterprise",
-        example="550e8400-e29b-41d4-a716-446655440000"
+        example=["550e8400-e29b-41d4-a716-446655440000"]
     ),
     db: Session = Depends(get_db)
 ):
