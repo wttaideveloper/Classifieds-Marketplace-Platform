@@ -31,7 +31,8 @@ Production values:
 | `DATABASE_URL` | `postgresql+psycopg2://user:pass@rds-endpoint:5432/dbname?sslmode=require` |
 | `SECRET_KEY` | Long random string (`openssl rand -hex 32`) |
 | `FRONTEND_URL` | Public frontend URL, e.g. `https://app.example.com` |
-| `CORS_ORIGINS` | Comma-separated allowed origins, e.g. `https://app.example.com` |
+| `CORS_ORIGINS` | Comma-separated allowed origins, e.g. `https://app.example.com,http://localhost:3000` |
+| `CORS_ALLOW_LOCALHOST` | Set to `true` to allow browser requests from `localhost` / `127.0.0.1` on any port |
 | `GOOGLE_*` | Google OAuth credentials |
 | `email_user` / `email_pass` | SMTP credentials |
 
@@ -199,6 +200,6 @@ With `ENVIRONMENT=development`, tables are auto-created on startup if migrations
 |-------|-------|
 | DB connection refused | RDS security group, `DATABASE_URL`, VPC/subnet |
 | `psycopg2` errors | Use `postgresql+psycopg2://` in `DATABASE_URL` |
-| CORS errors | `CORS_ORIGINS` must include exact frontend origin |
+| CORS errors | `CORS_ORIGINS` must include exact frontend origin; set `CORS_ALLOW_LOCALHOST=true` for local dev against production API |
 | Missing tables | Run `alembic upgrade head` |
 | Uploads lost on restart | Mount `/data/uploads` volume |
