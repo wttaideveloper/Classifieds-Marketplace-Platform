@@ -1,38 +1,99 @@
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+
+
+_ENTERPRISE_CREATE_EXAMPLE = {
+    "business_short_name": "Spin Health",
+    "business_legal_name": "Spin Health Co Pvt Ltd",
+    "business_description": "We provide Top-Class fitness programs for kids",
+    "business_email": "contact@spinhealth.com",
+}
 
 
 class EnterpriseCreate(BaseModel):
-    business_short_name: str = Field(
-        ...,
-        description="Business short name",
-        examples=["DEF"]
+    model_config = ConfigDict(
+        json_schema_extra={"example": _ENTERPRISE_CREATE_EXAMPLE},
     )
 
-    business_legal_name: str = Field(
+    business_short_name: str = Field(
         ...,
-        description="Business legal name",
-        examples=["DEF Technologies Pvt Ltd"]
+        description="Short display name for the business.",
+        examples=["Spin Health"],
+    )
+
+    business_legal_name: str | None = Field(
+        None,
+        description=(
+            "Registered legal business name. "
+            "Defaults to business_short_name when omitted."
+        ),
+        examples=["Spin Health Co Pvt Ltd"],
     )
 
     business_description: str | None = Field(
         None,
-        description="Business description"
+        description="Optional description of the business.",
+        examples=["We provide Top-Class fitness programs for kids"],
     )
 
-    business_email: EmailStr
+    business_email: EmailStr = Field(
+        ...,
+        description="Primary contact email for the business.",
+        examples=["contact@spinhealth.com"],
+    )
 
-    business_phone: str | None = None
+    business_phone: str | None = Field(
+        None,
+        description="Optional business phone number.",
+    )
 
-    registered_address: str | None = None
+    registered_address: str | None = Field(
+        None,
+        description="Registered business address.",
+    )
 
-    business_address: str | None = None
+    business_address: str | None = Field(
+        None,
+        description="Operating business address.",
+    )
 
-    communication_address: str | None = None
+    communication_address: str | None = Field(
+        None,
+        description="Mailing or communication address.",
+    )
 
-    logo_url: str | None = None
+    logo_url: str | None = Field(
+        None,
+        description="URL to the business logo.",
+    )
 
-    business_images: str | None = None
+    business_images: str | None = Field(
+        None,
+        description="URL or serialized list of business image URLs.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+
+        if "name" in normalized and "business_short_name" not in normalized:
+            normalized["business_short_name"] = normalized.pop("name")
+
+        if "description" in normalized and "business_description" not in normalized:
+            normalized["business_description"] = normalized.pop("description")
+
+        return normalized
+
+    @model_validator(mode="after")
+    def apply_defaults(self):
+        if not self.business_legal_name:
+            self.business_legal_name = self.business_short_name
+        return self
 
 
 class EnterpriseUpdate(BaseModel):
@@ -60,6 +121,8 @@ class EnterpriseUpdate(BaseModel):
 
 
 class EnterpriseResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
 
     business_short_name: str
@@ -83,6 +146,3 @@ class EnterpriseResponse(BaseModel):
     business_images: str | None
 
     status: bool
-
-    class Config:
-        from_attributes = True

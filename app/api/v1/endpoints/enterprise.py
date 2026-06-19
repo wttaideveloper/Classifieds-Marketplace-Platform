@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     Path,
     status
@@ -53,7 +54,30 @@ Example:
     }
 )
 def create_enterprise(
-    enterprise: EnterpriseCreate,
+    enterprise: EnterpriseCreate = Body(
+        ...,
+        openapi_examples={
+            "required_fields": {
+                "summary": "Minimum required fields",
+                "value": {
+                    "business_short_name": "Spin Health",
+                    "business_legal_name": "Spin Health Co Pvt Ltd",
+                    "business_email": "contact@spinhealth.com",
+                },
+            },
+            "with_description": {
+                "summary": "With business description",
+                "value": {
+                    "business_short_name": "Spin Health",
+                    "business_legal_name": "Spin Health Co Pvt Ltd",
+                    "business_description": (
+                        "We provide Top-Class fitness programs for kids"
+                    ),
+                    "business_email": "contact@spinhealth.com",
+                },
+            },
+        },
+    ),
     db: Session = Depends(get_db)
 ):
     return create_enterprise_service(

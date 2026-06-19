@@ -7,7 +7,7 @@ def test_create_enterprise(client):
     }
 
     response = client.post(
-        "/api/enterprises",
+        "/api/v1/api/enterprises/",
         json=payload
     )
 
@@ -20,7 +20,7 @@ def test_create_enterprise(client):
 def test_get_enterprises(client):
 
     response = client.get(
-        "/api/enterprises"
+        "/api/v1/api/enterprises/"
     )
 
     assert response.status_code == 200
@@ -28,7 +28,7 @@ def test_get_enterprises(client):
 def test_get_enterprise_not_found(client):
 
     response = client.get(
-        "/api/enterprises/11111111-1111-1111-1111-111111111111"
+        "/api/v1/api/enterprises/11111111-1111-1111-1111-111111111111"
     )
 
     assert response.status_code == 404

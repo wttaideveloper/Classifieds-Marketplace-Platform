@@ -9,7 +9,7 @@ def create_enterprise(
         db: Session,
         enterprise_data
 ):
-    enterprise = Enterprise(**enterprise_data.dict())
+    enterprise = Enterprise(**enterprise_data.model_dump())
 
     db.add(enterprise)
     db.commit()
@@ -38,7 +38,7 @@ def update_enterprise(
         enterprise,
         update_data
 ):
-    for key, value in update_data.dict(
+    for key, value in update_data.model_dump(
             exclude_unset=True
     ).items():
         setattr(
