@@ -1,39 +1,88 @@
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class EnterpriseCreate(BaseModel):
-    name: str = Field(
+    business_short_name: str = Field(
         ...,
-        description="Enterprise name",
-        example="ABC Pvt Ltd"
+        description="Business short name",
+        examples=["DEF"]
     )
 
-    description: str | None = Field(
-        None,
-        description="Enterprise description",
-        example="Leading software solutions provider"
+    business_legal_name: str = Field(
+        ...,
+        description="Business legal name",
+        examples=["DEF Technologies Pvt Ltd"]
     )
+
+    business_description: str | None = Field(
+        None,
+        description="Business description"
+    )
+
+    business_email: EmailStr
+
+    business_phone: str | None = None
+
+    registered_address: str | None = None
+
+    business_address: str | None = None
+
+    communication_address: str | None = None
+
+    logo_url: str | None = None
+
+    business_images: str | None = None
 
 
 class EnterpriseUpdate(BaseModel):
-    name: str | None = Field(
-        None,
-        description="Updated enterprise name",
-        example="ABC Technologies Pvt Ltd"
-    )
+    business_short_name: str | None = None
 
-    description: str | None = Field(
-        None,
-        description="Updated enterprise description",
-        example="Global technology services company"
-    )
+    business_legal_name: str | None = None
+
+    business_description: str | None = None
+
+    business_email: EmailStr | None = None
+
+    business_phone: str | None = None
+
+    registered_address: str | None = None
+
+    business_address: str | None = None
+
+    communication_address: str | None = None
+
+    logo_url: str | None = None
+
+    business_images: str | None = None
+
+    status: bool | None = None
 
 
 class EnterpriseResponse(BaseModel):
     id: UUID
-    name: str
-    description: str | None
+
+    business_short_name: str
+
+    business_legal_name: str
+
+    business_description: str | None
+
+    business_email: str
+
+    business_phone: str | None
+
+    registered_address: str | None
+
+    business_address: str | None
+
+    communication_address: str | None
+
+    logo_url: str | None
+
+    business_images: str | None
+
+    status: bool
 
     class Config:
         from_attributes = True

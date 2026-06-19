@@ -63,7 +63,7 @@ def create_enterprise(
 
 
 @router.get(
-    "",
+    "/",
     response_model=List[EnterpriseResponse],
     status_code=status.HTTP_200_OK,
     summary="Get All Enterprises",

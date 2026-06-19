@@ -5,12 +5,9 @@ logger = logging.getLogger(__name__)
 api_router = APIRouter()
 
 def _safe_include(module_path: str, prefix: str = "", tags: list[str] | None = None):
-    try:
-        module = __import__(module_path, fromlist=["router"])
-        router = getattr(module, "router")
-        api_router.include_router(router, prefix=prefix, tags=tags)
-    except Exception as e:
-        logger.error(f"Failed to load router '{module_path}': {e}")
+    module = __import__(module_path, fromlist=["router"])
+    router = getattr(module, "router")
+    api_router.include_router(router, prefix=prefix, tags=tags)
 
 # Enterprise Management
 _safe_include("app.api.v1.endpoints.enterprise",  prefix="/api/enterprises", tags=["Enterprise"])

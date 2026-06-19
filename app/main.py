@@ -41,6 +41,8 @@ def startup():
     if not settings.is_production:
         Base.metadata.create_all(bind=engine)
 
+    for route in app.routes:
+        print(route.path, route.methods)
 
 # Routes
 app.include_router(api_router, prefix="/api/v1")
