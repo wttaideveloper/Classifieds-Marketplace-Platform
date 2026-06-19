@@ -1,53 +1,72 @@
 from uuid import UUID
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel
+from pydantic import Field
 
 
 class AttributeCreate(BaseModel):
     entity_type: str = Field(
         ...,
-        description="Entity type",
-        example="product"
+        description="Entity type (enterprise, product, service)",
+        examples=["enterprise"]
     )
 
     entity_id: UUID = Field(
         ...,
-        description="Entity UUID",
-        example="550e8400-e29b-41d4-a716-446655440000"
+        description="Entity UUID"
     )
 
-    key: str = Field(
+    attribute_name: str = Field(
         ...,
         description="Attribute name",
-        example="Color"
+        examples=["License Number"]
     )
 
-    value: str = Field(
+    attribute_value: str = Field(
         ...,
         description="Attribute value",
-        example="Blue"
+        examples=["LIC-12345"]
+    )
+
+    attribute_type: str = Field(
+        ...,
+        description="Attribute type",
+        examples=["text"]
     )
 
 
 class AttributeUpdate(BaseModel):
-    key: str | None = Field(
+    attribute_name: str | None = Field(
         None,
         description="Updated attribute name",
-        example="Size"
+        examples=["GST Number"]
     )
 
-    value: str | None = Field(
+    attribute_value: str | None = Field(
         None,
         description="Updated attribute value",
-        example="Large"
+        examples=["GST123456789"]
+    )
+
+    attribute_type: str | None = Field(
+        None,
+        description="Updated attribute type",
+        examples=["text"]
     )
 
 
 class AttributeResponse(BaseModel):
     id: UUID
+
     entity_type: str
+
     entity_id: UUID
-    key: str
-    value: str
+
+    attribute_name: str
+
+    attribute_value: str
+
+    attribute_type: str
 
     class Config:
         from_attributes = True
