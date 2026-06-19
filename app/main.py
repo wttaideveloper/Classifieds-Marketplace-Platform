@@ -50,7 +50,5 @@ app.include_router(api_router, prefix="/api/v1")
 def health():
     return {"status": "ok"}
 
-@app.get("/test")
-def test():
-    return {"message": "working"}
+
 
