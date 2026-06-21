@@ -14,6 +14,16 @@ from app.repository.product_repo import (
     update_product,
     delete_product
 )
+from app.schemas.product_schema import (
+    ProductDetailResponse,
+    ProductListItemResponse,
+    ProductResponse,
+)
+from app.services.response_mappers import (
+    map_product_detail,
+    map_product_list_item,
+    map_product_write,
+)
 
 
 def create_product_service(
@@ -35,22 +45,31 @@ def create_product_service(
             detail="Enterprise not found"
         )
 
-    return create_product(
-        db,
-        product_data
+    return ProductResponse.model_validate(
+        map_product_write(
+            create_product(
+                db,
+                product_data
+            )
+        )
     )
 
 
 def get_products_service(
     db: Session
-):
-    return get_products(db)
+) -> list[ProductListItemResponse]:
+    return [
+        ProductListItemResponse.model_validate(
+            map_product_list_item(product)
+        )
+        for product in get_products(db)
+    ]
 
 
 def get_product_service(
     db: Session,
     product_id: UUID
-):
+) -> ProductDetailResponse:
     product = get_product_by_id(
         db,
         product_id
@@ -62,7 +81,9 @@ def get_product_service(
             detail="Product not found"
         )
 
-    return product
+    return ProductDetailResponse.model_validate(
+        map_product_detail(product)
+    )
 
 
 def update_product_service(
@@ -81,10 +102,14 @@ def update_product_service(
             detail="Product not found"
         )
 
-    return update_product(
-        db,
-        product,
-        update_data
+    return ProductResponse.model_validate(
+        map_product_write(
+            update_product(
+                db,
+                product,
+                update_data
+            )
+        )
     )
 
 

@@ -1,7 +1,6 @@
 from uuid import UUID
 
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProductCreate(BaseModel):
@@ -85,6 +84,8 @@ class ProductUpdate(BaseModel):
 
 
 class ProductResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
 
     enterprise_id: UUID
@@ -101,5 +102,36 @@ class ProductResponse(BaseModel):
 
     product_status: bool
 
-    class Config:
-        from_attributes = True
+
+class ProductListItemResponse(ProductResponse):
+    rating: float = Field(
+        0,
+        description="Average product rating (placeholder until stored in database).",
+    )
+
+
+class ProductDetailResponse(ProductResponse):
+    enterprise_name: str | None = Field(
+        None,
+        description="Short name of the owning enterprise.",
+    )
+    rating: float = Field(
+        0,
+        description="Average product rating (placeholder until stored in database).",
+    )
+    length: float | None = Field(
+        None,
+        description="Product length (placeholder until stored in database).",
+    )
+    width: float | None = Field(
+        None,
+        description="Product width (placeholder until stored in database).",
+    )
+    thick: float | None = Field(
+        None,
+        description="Product thickness (placeholder until stored in database).",
+    )
+    stock_count: int = Field(
+        0,
+        description="Available stock count (placeholder until stored in database).",
+    )

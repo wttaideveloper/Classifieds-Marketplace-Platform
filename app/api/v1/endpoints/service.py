@@ -14,6 +14,8 @@ from app.db.database import get_db
 from app.schemas.service_schema import (
     ServiceCreate,
     ServiceUpdate,
+    ServiceDetailResponse,
+    ServiceListItemResponse,
     ServiceResponse
 )
 
@@ -65,7 +67,7 @@ def create_service(
 
 @router.get(
     "/",
-    response_model=list[ServiceResponse],
+    response_model=list[ServiceListItemResponse],
     status_code=status.HTTP_200_OK,
     summary="Get All Services",
     description="""
@@ -84,7 +86,7 @@ def get_services(
 
 @router.get(
     "/{service_id}",
-    response_model=ServiceResponse,
+    response_model=ServiceDetailResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Service By ID",
     description="""

@@ -1,6 +1,9 @@
 from uuid import UUID
+from datetime import date
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+
+from app.schemas.common_schema import AvailabilityResponse, EnterpriseStatusLabel
 
 
 _ENTERPRISE_CREATE_EXAMPLE = {
@@ -146,3 +149,51 @@ class EnterpriseResponse(BaseModel):
     business_images: str | None
 
     status: bool
+
+
+class EnterpriseListItemResponse(EnterpriseResponse):
+    category: str | None = Field(
+        None,
+        description="Enterprise category (placeholder until stored in database).",
+    )
+    status_label: EnterpriseStatusLabel = Field(
+        ...,
+        description="Display status: active, inactive, or pending.",
+        examples=["active"],
+    )
+    members_count: int = Field(
+        0,
+        description="Number of members (placeholder until stored in database).",
+    )
+    revenue: float = Field(
+        0,
+        description="Total revenue (placeholder until stored in database).",
+    )
+    joined_date: date | None = Field(
+        None,
+        description="Date the enterprise joined (placeholder until stored in database).",
+    )
+
+
+class EnterpriseDetailResponse(EnterpriseResponse):
+    category: str | None = Field(
+        None,
+        description="Enterprise category (placeholder until stored in database).",
+    )
+    status_label: EnterpriseStatusLabel = Field(
+        ...,
+        description="Display status: active, inactive, or pending.",
+        examples=["active"],
+    )
+    members_count: int = Field(
+        0,
+        description="Number of members (placeholder until stored in database).",
+    )
+    revenue: float = Field(
+        0,
+        description="Total revenue (placeholder until stored in database).",
+    )
+    rating: float = Field(
+        0,
+        description="Average rating (placeholder until stored in database).",
+    )

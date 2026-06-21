@@ -1,7 +1,8 @@
 from uuid import UUID
 
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.common_schema import AvailabilityResponse
 
 
 class ServiceCreate(BaseModel):
@@ -37,7 +38,7 @@ class ServiceCreate(BaseModel):
     duration: int = Field(
         ...,
         description="Service Duration",
-        examples=[30 ]
+        examples=[30]
     )
 
     availability_status: bool = Field(
@@ -89,6 +90,8 @@ class ServiceUpdate(BaseModel):
 
 
 class ServiceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
 
     enterprise_id: UUID
@@ -107,5 +110,36 @@ class ServiceResponse(BaseModel):
 
     service_status: bool
 
-    class Config:
-        from_attributes = True
+
+class ServiceListItemResponse(ServiceResponse):
+    trainer_name: str | None = Field(
+        None,
+        description="Assigned trainer name (placeholder until stored in database).",
+    )
+
+
+class ServiceDetailResponse(ServiceResponse):
+    banner_image: str | None = Field(
+        None,
+        description="Service banner image URL (placeholder until stored in database).",
+    )
+    trainer_name: str | None = Field(
+        None,
+        description="Assigned trainer name (placeholder until stored in database).",
+    )
+    expertise_name: str | None = Field(
+        None,
+        description="Trainer expertise (placeholder until stored in database).",
+    )
+    type: str | None = Field(
+        None,
+        description="Service type (placeholder until stored in database).",
+    )
+    format: str | None = Field(
+        None,
+        description="Service format (placeholder until stored in database).",
+    )
+    availability: AvailabilityResponse = Field(
+        default_factory=AvailabilityResponse,
+        description="Weekly availability slots (placeholder until stored in database).",
+    )

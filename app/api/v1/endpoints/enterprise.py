@@ -7,7 +7,6 @@ from fastapi import (
     Path,
     status
 )
-from typing import List
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -15,6 +14,8 @@ from app.db.database import get_db
 from app.schemas.enterprise_schema import (
     EnterpriseCreate,
     EnterpriseUpdate,
+    EnterpriseDetailResponse,
+    EnterpriseListItemResponse,
     EnterpriseResponse
 )
 
@@ -88,7 +89,7 @@ def create_enterprise(
 
 @router.get(
     "/",
-    response_model=List[EnterpriseResponse],
+    response_model=list[EnterpriseListItemResponse],
     status_code=status.HTTP_200_OK,
     summary="Get All Enterprises",
     description="""
@@ -107,7 +108,7 @@ def get_enterprises(
 
 @router.get(
     "/{enterprise_id}",
-    response_model=EnterpriseResponse,
+    response_model=EnterpriseDetailResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Enterprise By ID",
     description="""

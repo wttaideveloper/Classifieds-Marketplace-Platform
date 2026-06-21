@@ -14,6 +14,16 @@ from app.repository.service_repo import (
     update_service,
     delete_service
 )
+from app.schemas.service_schema import (
+    ServiceDetailResponse,
+    ServiceListItemResponse,
+    ServiceResponse,
+)
+from app.services.response_mappers import (
+    map_service_detail,
+    map_service_list_item,
+    map_service_write,
+)
 
 
 def create_service_service(
@@ -35,22 +45,31 @@ def create_service_service(
             detail="Enterprise not found"
         )
 
-    return create_service(
-        db,
-        service_data
+    return ServiceResponse.model_validate(
+        map_service_write(
+            create_service(
+                db,
+                service_data
+            )
+        )
     )
 
 
 def get_services_service(
     db: Session
-):
-    return get_services(db)
+) -> list[ServiceListItemResponse]:
+    return [
+        ServiceListItemResponse.model_validate(
+            map_service_list_item(service)
+        )
+        for service in get_services(db)
+    ]
 
 
 def get_service_service(
     db: Session,
     service_id: UUID
-):
+) -> ServiceDetailResponse:
     service = get_service_by_id(
         db,
         service_id
@@ -62,7 +81,9 @@ def get_service_service(
             detail="Service not found"
         )
 
-    return service
+    return ServiceDetailResponse.model_validate(
+        map_service_detail(service)
+    )
 
 
 def update_service_service(
@@ -81,10 +102,14 @@ def update_service_service(
             detail="Service not found"
         )
 
-    return update_service(
-        db,
-        service,
-        update_data
+    return ServiceResponse.model_validate(
+        map_service_write(
+            update_service(
+                db,
+                service,
+                update_data
+            )
+        )
     )
 
 

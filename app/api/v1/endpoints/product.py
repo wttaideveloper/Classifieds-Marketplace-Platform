@@ -14,6 +14,8 @@ from app.db.database import get_db
 from app.schemas.product_schema import (
     ProductCreate,
     ProductUpdate,
+    ProductDetailResponse,
+    ProductListItemResponse,
     ProductResponse
 )
 
@@ -65,7 +67,7 @@ def create_product(
 
 @router.get(
     "/",
-    response_model=list[ProductResponse],
+    response_model=list[ProductListItemResponse],
     status_code=status.HTTP_200_OK,
     summary="Get All Products",
     description="""
@@ -84,7 +86,7 @@ def get_products(
 
 @router.get(
     "/{product_id}",
-    response_model=ProductResponse,
+    response_model=ProductDetailResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Product By ID",
     description="""

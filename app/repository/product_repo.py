@@ -1,5 +1,5 @@
 from uuid import UUID
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.product_model import Product
 
@@ -20,7 +20,11 @@ def create_product(
 
 
 def get_products(db: Session):
-    return db.query(Product).all()
+    return (
+        db.query(Product)
+        .options(joinedload(Product.enterprise))
+        .all()
+    )
 
 
 def get_product_by_id(
@@ -29,6 +33,7 @@ def get_product_by_id(
 ):
     return (
         db.query(Product)
+        .options(joinedload(Product.enterprise))
         .filter(Product.id == product_id)
         .first()
     )

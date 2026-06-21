@@ -12,6 +12,16 @@ from app.repository.enterprise_repo import (
     update_enterprise,
     delete_enterprise
 )
+from app.schemas.enterprise_schema import (
+    EnterpriseDetailResponse,
+    EnterpriseListItemResponse,
+    EnterpriseResponse,
+)
+from app.services.response_mappers import (
+    map_enterprise_detail,
+    map_enterprise_list_item,
+    map_enterprise_write,
+)
 
 
 def create_enterprise_service(
@@ -33,22 +43,31 @@ def create_enterprise_service(
             detail="Business email already exists"
         )
 
-    return create_enterprise(
-        db,
-        enterprise_data
+    return EnterpriseResponse.model_validate(
+        map_enterprise_write(
+            create_enterprise(
+                db,
+                enterprise_data
+            )
+        )
     )
 
 
 def get_all_enterprises_service(
         db: Session
-):
-    return get_enterprises(db)
+) -> list[EnterpriseListItemResponse]:
+    return [
+        EnterpriseListItemResponse.model_validate(
+            map_enterprise_list_item(enterprise)
+        )
+        for enterprise in get_enterprises(db)
+    ]
 
 
 def get_enterprise_service(
         db: Session,
         enterprise_id: UUID
-):
+) -> EnterpriseDetailResponse:
     enterprise = get_enterprise_by_id(
         db,
         enterprise_id
@@ -60,7 +79,9 @@ def get_enterprise_service(
             detail="Enterprise not found"
         )
 
-    return enterprise
+    return EnterpriseDetailResponse.model_validate(
+        map_enterprise_detail(enterprise)
+    )
 
 
 def update_enterprise_service(
@@ -79,10 +100,14 @@ def update_enterprise_service(
             detail="Enterprise not found"
         )
 
-    return update_enterprise(
-        db,
-        enterprise,
-        update_data
+    return EnterpriseResponse.model_validate(
+        map_enterprise_write(
+            update_enterprise(
+                db,
+                enterprise,
+                update_data
+            )
+        )
     )
 
 
