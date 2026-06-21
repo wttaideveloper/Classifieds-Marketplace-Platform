@@ -135,6 +135,26 @@ class EnterpriseCreate(BaseModel):
 
 
 class EnterpriseUpdate(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "business_category": "Fitness",
+                "website_url": "https://spinhealth.com",
+                "registration_number": "REG-2024-001",
+                "year_founded": 2018,
+                "primary_contact_name": "Jane Doe",
+                "primary_contact_title": "Owner",
+                "secondary_email": "support@spinhealth.com",
+                "secondary_phone": "+1-555-0101",
+                "suite_unit": "Suite 200",
+                "brand_color": "#1A73E8",
+                "tagline": "Move better, live stronger",
+                "logo_url": "https://cdn.example.com/logo.png",
+                "business_images": "https://cdn.example.com/banner.png",
+            }
+        }
+    )
+
     business_short_name: str | None = None
     business_legal_name: str | None = None
     business_description: str | None = None

@@ -81,6 +81,29 @@ class ServiceCreate(BaseModel):
 
 
 class ServiceUpdate(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "max_participants": 12,
+                "provider_name": "Spin Health Co",
+                "instructor_name": "Coach Alex",
+                "delivery_format": "in_person",
+                "package_price": 500.0,
+                "currency": "USD",
+                "cancellation_policy": "24-hour cancellation required",
+                "availability_schedule": [
+                    {
+                        "day": "monday",
+                        "is_available": True,
+                        "start_time": "09:00",
+                        "end_time": "17:00",
+                        "slot_length": "60",
+                    }
+                ],
+            }
+        }
+    )
+
     service_name: str | None = None
     service_description: str | None = None
     service_category: str | None = None

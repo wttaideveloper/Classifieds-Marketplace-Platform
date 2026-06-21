@@ -83,6 +83,26 @@ class ProductCreate(BaseModel):
 
 
 class ProductUpdate(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "sku": "YM-PRO-001",
+                "barcode_upc": "012345678905",
+                "weight": 1.2,
+                "dimensions": "72x24x0.2 in",
+                "sale_price": 39.99,
+                "cost_price": 20.0,
+                "tax_class": "standard",
+                "currency": "USD",
+                "stock_quantity": 100,
+                "low_stock_alert_threshold": 10,
+                "stock_management": "enabled",
+                "publish_status": "published",
+                "product_images": "https://cdn.example.com/yoga-mat.png",
+            }
+        }
+    )
+
     product_name: str | None = None
     product_description: str | None = None
     product_category: str | None = None
