@@ -1,6 +1,6 @@
 from fastapi import status
 from sqlalchemy.orm import Session
-from sqlalchemy import String, cast, or_
+from sqlalchemy import String, cast, or_, func
 from sqlalchemy import desc
 from app.models.customer_model import Customer, Booking
 from app.models.merchant_model import Merchant, MerchantListing
@@ -267,6 +267,186 @@ def get_public_listing_details_repo(
     )
 
     return listing
+
+
+def get_enterprises_repo(
+    db: Session,
+    skip: int,
+    limit: int
+):
+    from app.models.admin_model import Business
+
+    query = db.query(Business).filter(Business.is_deleted == False)
+    total = query.count()
+    enterprises = (
+        query
+        .order_by(Business.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return total, enterprises
+
+
+def get_enterprise_details_repo(db: Session, enterprise_id):
+    from app.models.admin_model import Business
+
+    return (
+        db.query(Business)
+        .filter(
+            Business.id == enterprise_id,
+            Business.is_deleted == False
+        )
+        .first()
+    )
+
+
+def get_business_metrics_repo(db: Session, business_ids):
+    if not business_ids:
+        return {}
+
+    rows = (
+        db.query(
+            Booking.business_id,
+            func.count(func.distinct(Booking.customer_id)).label("members_count"),
+            func.coalesce(func.sum(Booking.total_amount), 0).label("revenue"),
+        )
+        .filter(Booking.business_id.in_(business_ids))
+        .group_by(Booking.business_id)
+        .all()
+    )
+
+    return {
+        row.business_id: {
+            "membersCount": row.members_count or 0,
+            "revenue": float(row.revenue or 0),
+        }
+        for row in rows
+    }
+
+
+def get_business_ratings_repo(db: Session, business_ids):
+    if not business_ids:
+        return {}
+
+    from app.models.review_model import Review
+
+    rows = (
+        db.query(
+            Review.business_id,
+            func.avg(Review.rating).label("rating"),
+        )
+        .filter(Review.business_id.in_(business_ids))
+        .group_by(Review.business_id)
+        .all()
+    )
+
+    return {
+        row.business_id: round(float(row.rating), 1) if row.rating is not None else None
+        for row in rows
+    }
+
+
+def get_public_listings_by_type_repo(
+    db: Session,
+    listing_type: str,
+    skip: int,
+    limit: int
+):
+    from app.models.admin_model import Business
+    from app.models.merchant_model import Merchant
+
+    query = (
+        db.query(MerchantListing)
+        .join(Business, MerchantListing.businessId == Business.id)
+        .join(Merchant, Business.merchant_id == Merchant.id)
+        .filter(
+            MerchantListing.listingType == listing_type,
+            Business.is_deleted == False,
+        )
+    )
+
+    total = query.count()
+    listings = (
+        query
+        .order_by(MerchantListing.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return total, listings
+
+
+def get_public_listing_details_by_type_repo(
+    db: Session,
+    listing_id,
+    listing_type: str
+):
+    from app.models.admin_model import Business
+    from app.models.merchant_model import Merchant
+
+    return (
+        db.query(MerchantListing)
+        .join(Business, MerchantListing.businessId == Business.id)
+        .join(Merchant, Business.merchant_id == Merchant.id)
+        .filter(
+            MerchantListing.id == listing_id,
+            MerchantListing.listingType == listing_type,
+            Business.is_deleted == False,
+        )
+        .first()
+    )
+
+
+def get_listing_ratings_repo(db: Session, listing_ids):
+    if not listing_ids:
+        return {}
+
+    from app.models.review_model import Review
+
+    rows = (
+        db.query(
+            Review.listing_id,
+            func.avg(Review.rating).label("rating"),
+        )
+        .filter(Review.listing_id.in_(listing_ids))
+        .group_by(Review.listing_id)
+        .all()
+    )
+
+    return {
+        row.listing_id: round(float(row.rating), 1) if row.rating is not None else None
+        for row in rows
+    }
+
+
+def get_listing_attributes_repo(db: Session, listing_ids):
+    if not listing_ids:
+        return {}
+
+    from app.models.admin_model import Attribute
+    from app.models.merchant_model import ListingAttributeMapping
+
+    rows = (
+        db.query(ListingAttributeMapping, Attribute)
+        .join(Attribute, ListingAttributeMapping.attribute_id == Attribute.id)
+        .filter(ListingAttributeMapping.listing_id.in_(listing_ids))
+        .all()
+    )
+
+    attributes = {}
+    for mapping, attribute in rows:
+        keys = [
+            attribute.slug,
+            attribute.name,
+            attribute.display_name,
+        ]
+        listing_attributes = attributes.setdefault(mapping.listing_id, {})
+        for key in keys:
+            if key:
+                listing_attributes[key.strip().lower().replace(" ", "_")] = mapping.attribute_value
+
+    return attributes
 
 def search_listings_repo(
     db: Session,

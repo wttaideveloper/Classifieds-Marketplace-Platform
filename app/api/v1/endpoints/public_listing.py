@@ -6,7 +6,19 @@ from app.schemas.common_schema import (
     SubCategoryListResponse,
     UploadListingImagesResponse,
     CreateBooking,
-    CreateBookingResponse
+    CreateBookingResponse,
+    EnterpriseCreatePayload,
+    EnterpriseUpdatePayload,
+    EnterpriseListResponse,
+    EnterpriseDetailsResponse,
+    ProductCreatePayload,
+    ProductUpdatePayload,
+    ProductListResponse,
+    ProductDetailsResponse,
+    ServiceCreatePayload,
+    ServiceUpdatePayload,
+    ServiceListResponse,
+    ServiceDetailsResponse
 )
 from app.utils.common import (
     generate_booking_number
@@ -16,6 +28,18 @@ from app.repository.customer_repo import create_booking_repo
 from app.services.customer_service import (
     get_public_listings_service,
     get_public_listing_details_service,
+    create_enterprise_service,
+    update_enterprise_service,
+    get_enterprises_service,
+    get_enterprise_details_service,
+    create_product_service,
+    update_product_service,
+    get_products_service,
+    get_product_details_service,
+    create_service_service,
+    update_service_service,
+    get_services_service,
+    get_service_details_service,
     search_listings_service,
     get_categories_service,
     get_subcategories_service,
@@ -29,6 +53,198 @@ from app.services.common_service import (
 from uuid import UUID
 
 router = APIRouter()
+
+
+@router.post(
+    "/api/enterprises/",
+    response_model=EnterpriseDetailsResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_enterprise(
+    payload: EnterpriseCreatePayload,
+    db: Session = Depends(get_db)
+):
+    return create_enterprise_service(
+        db=db,
+        payload=payload
+    )
+
+
+@router.get(
+    "/api/enterprises/",
+    response_model=EnterpriseListResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_enterprises(
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=10, ge=1),
+    db: Session = Depends(get_db)
+):
+    return get_enterprises_service(
+        db=db,
+        page=page,
+        limit=limit
+    )
+
+
+@router.put(
+    "/api/enterprises/{enterprise_id}",
+    response_model=EnterpriseDetailsResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_enterprise(
+    enterprise_id: UUID,
+    payload: EnterpriseUpdatePayload,
+    db: Session = Depends(get_db)
+):
+    return update_enterprise_service(
+        db=db,
+        enterprise_id=enterprise_id,
+        payload=payload
+    )
+
+
+@router.get(
+    "/api/enterprises/{enterprise_id}",
+    response_model=EnterpriseDetailsResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_enterprise_details(
+    enterprise_id: UUID,
+    db: Session = Depends(get_db)
+):
+    return get_enterprise_details_service(
+        db=db,
+        enterprise_id=enterprise_id
+    )
+
+
+@router.post(
+    "/api/products/",
+    response_model=ProductDetailsResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_product(
+    payload: ProductCreatePayload,
+    db: Session = Depends(get_db)
+):
+    return create_product_service(
+        db=db,
+        payload=payload
+    )
+
+
+@router.get(
+    "/api/products/",
+    response_model=ProductListResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_products(
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=10, ge=1),
+    db: Session = Depends(get_db)
+):
+    return get_products_service(
+        db=db,
+        page=page,
+        limit=limit
+    )
+
+
+@router.put(
+    "/api/products/{product_id}",
+    response_model=ProductDetailsResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_product(
+    product_id: UUID,
+    payload: ProductUpdatePayload,
+    db: Session = Depends(get_db)
+):
+    return update_product_service(
+        db=db,
+        product_id=product_id,
+        payload=payload
+    )
+
+
+@router.get(
+    "/api/products/{product_id}",
+    response_model=ProductDetailsResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_product_details(
+    product_id: UUID,
+    db: Session = Depends(get_db)
+):
+    return get_product_details_service(
+        db=db,
+        product_id=product_id
+    )
+
+
+@router.post(
+    "/api/services/",
+    response_model=ServiceDetailsResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_service(
+    payload: ServiceCreatePayload,
+    db: Session = Depends(get_db)
+):
+    return create_service_service(
+        db=db,
+        payload=payload
+    )
+
+
+@router.get(
+    "/api/services/",
+    response_model=ServiceListResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_services(
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=10, ge=1),
+    db: Session = Depends(get_db)
+):
+    return get_services_service(
+        db=db,
+        page=page,
+        limit=limit
+    )
+
+
+@router.put(
+    "/api/services/{service_id}",
+    response_model=ServiceDetailsResponse,
+    status_code=status.HTTP_200_OK
+)
+def update_service(
+    service_id: UUID,
+    payload: ServiceUpdatePayload,
+    db: Session = Depends(get_db)
+):
+    return update_service_service(
+        db=db,
+        service_id=service_id,
+        payload=payload
+    )
+
+
+@router.get(
+    "/api/services/{service_id}",
+    response_model=ServiceDetailsResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_service_details(
+    service_id: UUID,
+    db: Session = Depends(get_db)
+):
+    return get_service_details_service(
+        db=db,
+        service_id=service_id
+    )
 
 @router.get(
     "/listings",
