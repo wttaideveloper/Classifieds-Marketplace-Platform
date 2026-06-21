@@ -8,9 +8,7 @@ def create_product(
     db: Session,
     product_data
 ):
-    product = Product(
-        **product_data.dict()
-    )
+    product = Product(**product_data.model_dump())
 
     db.add(product)
     db.commit()
@@ -44,11 +42,9 @@ def update_product(
     product,
     update_data
 ):
-    for key, value in (
-        update_data.dict(
+    for key, value in update_data.model_dump(
             exclude_unset=True
-        ).items()
-    ):
+    ).items():
         setattr(product, key, value)
 
     db.commit()

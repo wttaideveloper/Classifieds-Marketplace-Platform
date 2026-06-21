@@ -9,9 +9,14 @@ def create_service(
     db: Session,
     service_data
 ):
-    service = Service(
-        **service_data.dict()
-    )
+    payload = service_data.model_dump()
+    if payload.get("availability_schedule") is not None:
+        payload["availability_schedule"] = [
+            entry if isinstance(entry, dict) else entry
+            for entry in payload["availability_schedule"]
+        ]
+
+    service = Service(**payload)
 
     db.add(service)
     db.commit()
@@ -40,11 +45,14 @@ def update_service(
     service,
     update_data
 ):
-    for key, value in (
-        update_data.dict(
+    for key, value in update_data.model_dump(
             exclude_unset=True
-        ).items()
-    ):
+    ).items():
+        if key == "availability_schedule" and value is not None:
+            value = [
+                entry if isinstance(entry, dict) else entry
+                for entry in value
+            ]
         setattr(service, key, value)
 
     db.commit()

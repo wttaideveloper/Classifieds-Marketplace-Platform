@@ -1,145 +1,143 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.common_schema import AvailabilityResponse
+from app.schemas.common_schema import AvailabilityResponse, AvailabilityScheduleEntry
 
 
 class ServiceCreate(BaseModel):
-    enterprise_id: UUID = Field(
-        ...,
-        description="Enterprise ID"
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "enterprise_id": "550e8400-e29b-41d4-a716-446655440000",
+                "service_name": "Kids Fitness Program",
+                "service_description": "Weekly fitness classes for children",
+                "service_category": "Fitness",
+                "service_price": 150.0,
+                "duration": 60,
+                "availability_status": True,
+                "service_status": True,
+                "max_participants": 12,
+                "provider_name": "Spin Health Co",
+                "instructor_name": "Coach Alex",
+                "delivery_format": "in_person",
+                "package_price": 500.0,
+                "currency": "USD",
+                "cancellation_policy": "24-hour cancellation required",
+                "availability_schedule": [
+                    {
+                        "day": "monday",
+                        "is_available": True,
+                        "start_time": "09:00",
+                        "end_time": "17:00",
+                        "slot_length": "60",
+                    }
+                ],
+            }
+        }
     )
 
-    service_name: str = Field(
-        ...,
-        description="Service Name",
-        examples=["Website Development"]
-    )
+    enterprise_id: UUID = Field(..., description="Enterprise ID")
 
-    service_description: str | None = Field(
+    service_name: str = Field(..., description="Service name")
+
+    service_description: str | None = None
+
+    service_category: str = Field(..., description="Service category")
+
+    service_price: float = Field(..., description="Service price")
+
+    duration: int = Field(..., description="Duration in minutes")
+
+    availability_status: bool = Field(default=True, description="Availability flag")
+
+    service_status: bool = Field(default=True, description="Active/inactive flag")
+
+    max_participants: int | None = Field(
         None,
-        description="Service Description",
-        examples=["Custom website development services"]
+        description="Maximum participants per session",
     )
 
-    service_category: str = Field(
-        ...,
-        description="Service Category",
-        examples=["IT Services"]
+    provider_name: str | None = Field(None, description="Service provider name")
+
+    instructor_name: str | None = Field(None, description="Instructor or trainer name")
+
+    delivery_format: str | None = Field(
+        None,
+        description="Delivery format (e.g. in_person, online, hybrid)",
     )
 
-    service_price: float = Field(
-        ...,
-        description="Service Price",
-        examples=[15000.00]
-    )
+    package_price: float | None = Field(None, description="Package or bundle price")
 
-    duration: int = Field(
-        ...,
-        description="Service Duration",
-        examples=[30]
-    )
+    currency: str | None = Field("USD", description="ISO currency code")
 
-    availability_status: bool = Field(
-        default=True,
-        description="Availability Status"
-    )
+    cancellation_policy: str | None = Field(None, description="Cancellation policy text")
 
-    service_status: bool = Field(
-        default=True,
-        description="Service Status"
+    availability_schedule: list[AvailabilityScheduleEntry] | None = Field(
+        None,
+        description="Weekly availability schedule",
     )
 
 
 class ServiceUpdate(BaseModel):
-    service_name: str | None = Field(
-        None,
-        description="Updated Service Name"
-    )
-
-    service_description: str | None = Field(
-        None,
-        description="Updated Service Description"
-    )
-
-    service_category: str | None = Field(
-        None,
-        description="Updated Service Category"
-    )
-
-    service_price: float | None = Field(
-        None,
-        description="Updated Service Price"
-    )
-
-    duration: int | None = Field(
-        None,
-        description="Updated Duration"
-    )
-
-    availability_status: bool | None = Field(
-        None,
-        description="Updated Availability Status"
-    )
-
-    service_status: bool | None = Field(
-        None,
-        description="Updated Service Status"
-    )
+    service_name: str | None = None
+    service_description: str | None = None
+    service_category: str | None = None
+    service_price: float | None = None
+    duration: int | None = None
+    availability_status: bool | None = None
+    service_status: bool | None = None
+    max_participants: int | None = None
+    provider_name: str | None = None
+    instructor_name: str | None = None
+    delivery_format: str | None = None
+    package_price: float | None = None
+    currency: str | None = None
+    cancellation_policy: str | None = None
+    availability_schedule: list[AvailabilityScheduleEntry] | None = None
 
 
 class ServiceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-
     enterprise_id: UUID
-
     service_name: str
-
     service_description: str | None
-
     service_category: str
-
     service_price: float
-
     duration: int
-
     availability_status: bool
-
     service_status: bool
+    max_participants: int | None
+    provider_name: str | None
+    instructor_name: str | None
+    delivery_format: str | None
+    package_price: float | None
+    currency: str | None
+    cancellation_policy: str | None
+    availability_schedule: list[AvailabilityScheduleEntry] | None = None
+    created_at: datetime | None = None
 
 
 class ServiceListItemResponse(ServiceResponse):
     trainer_name: str | None = Field(
         None,
-        description="Assigned trainer name (placeholder until stored in database).",
+        description="Instructor name (alias of instructor_name).",
     )
 
 
 class ServiceDetailResponse(ServiceResponse):
-    banner_image: str | None = Field(
-        None,
-        description="Service banner image URL (placeholder until stored in database).",
-    )
     trainer_name: str | None = Field(
         None,
-        description="Assigned trainer name (placeholder until stored in database).",
-    )
-    expertise_name: str | None = Field(
-        None,
-        description="Trainer expertise (placeholder until stored in database).",
-    )
-    type: str | None = Field(
-        None,
-        description="Service type (placeholder until stored in database).",
+        description="Instructor name (alias of instructor_name).",
     )
     format: str | None = Field(
         None,
-        description="Service format (placeholder until stored in database).",
+        description="Delivery format (alias of delivery_format).",
     )
     availability: AvailabilityResponse = Field(
         default_factory=AvailabilityResponse,
-        description="Weekly availability slots (placeholder until stored in database).",
+        description="Derived availability summary from availability_schedule.",
     )

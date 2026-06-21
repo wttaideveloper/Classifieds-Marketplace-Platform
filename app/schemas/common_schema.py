@@ -4,12 +4,6 @@ from pydantic import BaseModel, Field
 
 EnterpriseStatusLabel = Literal["active", "inactive", "pending"]
 
-DEFAULT_AVAILABILITY: dict = {
-    "week_dates": [],
-    "day_wise_slot_count": {},
-    "slot_timings": [],
-}
-
 
 class AvailabilityResponse(BaseModel):
     week_dates: list[str] = Field(
@@ -23,4 +17,31 @@ class AvailabilityResponse(BaseModel):
     slot_timings: list[str] = Field(
         default_factory=list,
         description="Available slot time ranges.",
+    )
+
+
+class AvailabilityScheduleEntry(BaseModel):
+    day: str = Field(
+        ...,
+        description="Day of the week (e.g. monday, tuesday).",
+        examples=["monday"],
+    )
+    is_available: bool = Field(
+        True,
+        description="Whether the service is offered on this day.",
+    )
+    start_time: str = Field(
+        ...,
+        description="Start time in HH:MM format.",
+        examples=["09:00"],
+    )
+    end_time: str = Field(
+        ...,
+        description="End time in HH:MM format.",
+        examples=["17:00"],
+    )
+    slot_length: str = Field(
+        ...,
+        description="Slot duration in minutes.",
+        examples=["60"],
     )
