@@ -19,6 +19,9 @@ class ProductCreate(BaseModel):
                 "barcode_upc": "012345678905",
                 "weight": 1.2,
                 "dimensions": "72x24x0.2 in",
+                "length": 72.0,
+                "width": 24.0,
+                "thick": 0.2,
                 "sale_price": 39.99,
                 "cost_price": 20.0,
                 "tax_class": "standard",
@@ -56,6 +59,12 @@ class ProductCreate(BaseModel):
         description="Product dimensions (free-form, e.g. 72x24x0.2 in)",
     )
 
+    length: float | None = Field(None, description="Product length")
+
+    width: float | None = Field(None, description="Product width")
+
+    thick: float | None = Field(None, description="Product thickness")
+
     sale_price: float | None = Field(None, description="Promotional sale price")
 
     cost_price: float | None = Field(None, description="Cost price")
@@ -90,6 +99,9 @@ class ProductUpdate(BaseModel):
                 "barcode_upc": "012345678905",
                 "weight": 1.2,
                 "dimensions": "72x24x0.2 in",
+                "length": 72.0,
+                "width": 24.0,
+                "thick": 0.2,
                 "sale_price": 39.99,
                 "cost_price": 20.0,
                 "tax_class": "standard",
@@ -113,6 +125,9 @@ class ProductUpdate(BaseModel):
     barcode_upc: str | None = None
     weight: float | None = None
     dimensions: str | None = None
+    length: float | None = None
+    width: float | None = None
+    thick: float | None = None
     sale_price: float | None = None
     cost_price: float | None = None
     tax_class: str | None = None
@@ -138,6 +153,9 @@ class ProductResponse(BaseModel):
     barcode_upc: str | None
     weight: float | None
     dimensions: str | None
+    length: float | None
+    width: float | None
+    thick: float | None
     sale_price: float | None
     cost_price: float | None
     tax_class: str | None
@@ -157,6 +175,21 @@ class ProductListItemResponse(ProductResponse):
 
 
 class ProductDetailResponse(ProductResponse):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "550e8400-e29b-41d4-a716-446655440002",
+                "enterprise_id": "550e8400-e29b-41d4-a716-446655440000",
+                "enterprise_name": "Spin Health",
+                "product_name": "Yoga Mat Pro",
+                "length": 72.0,
+                "width": 24.0,
+                "thick": 0.2,
+                "stock_count": 100,
+            }
+        }
+    )
+
     enterprise_name: str | None = Field(
         None,
         description="Short name of the owning enterprise.",

@@ -38,6 +38,10 @@ class Service(Base):
 
     service_category = Column(String(100), nullable=False)
 
+    service_type = Column(String(100))
+
+    banner_image = Column(Text)
+
     service_price = Column(Float, nullable=False)
 
     duration = Column(Integer, nullable=False)

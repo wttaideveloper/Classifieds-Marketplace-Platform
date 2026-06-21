@@ -1,9 +1,29 @@
-from datetime import date
+from datetime import date, timedelta
 
 from app.models.enterprise_model import Enterprise
 from app.models.product_model import Product
 from app.models.service_model import Service
-from app.schemas.common_schema import AvailabilityResponse, EnterpriseStatusLabel
+from app.schemas.common_schema import EnterpriseStatusLabel
+
+_WEEKDAY_INDEX = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+
+_DAY_LABELS = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
 
 
 def enterprise_status_label(is_active: bool | None) -> EnterpriseStatusLabel:
@@ -20,31 +40,92 @@ def _joined_date(created_at) -> date | None:
     return created_at.date() if hasattr(created_at, "date") else None
 
 
-def schedule_to_availability(schedule: list | None) -> dict:
-    if not schedule:
-        return AvailabilityResponse().model_dump()
+def _parse_minutes(time_value: str) -> int:
+    hours, minutes = time_value.strip().split(":", 1)
+    return int(hours) * 60 + int(minutes)
 
-    day_wise_slot_count: dict[str, int] = {}
-    slot_timings: list[str] = []
+
+def _format_minutes(total_minutes: int) -> str:
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def _generate_slots(start_time: str, end_time: str, slot_length: str) -> list[str]:
+    slot_minutes = int(slot_length)
+    if slot_minutes <= 0:
+        return []
+
+    start = _parse_minutes(start_time)
+    end = _parse_minutes(end_time)
+    slots: list[str] = []
+
+    current = start
+    while current + slot_minutes <= end:
+        slots.append(
+            f"{_format_minutes(current)}-{_format_minutes(current + slot_minutes)}"
+        )
+        current += slot_minutes
+
+    return slots
+
+
+def _date_for_weekday(day_name: str, reference: date | None = None) -> date:
+    reference = reference or date.today()
+    weekday = _WEEKDAY_INDEX.get(day_name.strip().lower())
+    if weekday is None:
+        return reference
+    days_ahead = (weekday - reference.weekday()) % 7
+    return reference + timedelta(days=days_ahead)
+
+
+def _day_label(day_name: str) -> str:
+    weekday = _WEEKDAY_INDEX.get(day_name.strip().lower())
+    if weekday is None:
+        return day_name.strip().title()
+    return _DAY_LABELS[weekday]
+
+
+def schedule_to_availability_days(
+    schedule: list | None,
+    reference: date | None = None,
+) -> list[dict]:
+    if not schedule:
+        return []
+
+    reference = reference or date.today()
+    availability: list[dict] = []
 
     for entry in schedule:
         if not isinstance(entry, dict):
             continue
         if not entry.get("is_available", True):
             continue
-        day = entry.get("day")
-        if not day:
-            continue
-        day_wise_slot_count[day] = day_wise_slot_count.get(day, 0) + 1
-        start = entry.get("start_time", "")
-        end = entry.get("end_time", "")
-        slot_timings.append(f"{start}-{end}")
 
-    return AvailabilityResponse(
-        week_dates=sorted(day_wise_slot_count.keys()),
-        day_wise_slot_count=day_wise_slot_count,
-        slot_timings=slot_timings,
-    ).model_dump()
+        day_name = entry.get("day")
+        start_time = entry.get("start_time")
+        end_time = entry.get("end_time")
+        slot_length = entry.get("slot_length")
+        if not day_name or not start_time or not end_time or not slot_length:
+            continue
+
+        slots = _generate_slots(start_time, end_time, str(slot_length))
+        if not slots:
+            continue
+
+        day_date = _date_for_weekday(day_name, reference)
+        availability.append(
+            {
+                "day": _day_label(day_name),
+                "date": day_date.isoformat(),
+                "slots": slots,
+            }
+        )
+
+    return availability
+
+
+def _service_type_value(service: Service) -> str | None:
+    return service.service_type or service.service_category
 
 
 def map_enterprise_list_item(enterprise: Enterprise) -> dict:
@@ -146,6 +227,9 @@ def _product_base_fields(product: Product) -> dict:
         "barcode_upc": product.barcode_upc,
         "weight": product.weight,
         "dimensions": product.dimensions,
+        "length": product.length,
+        "width": product.width,
+        "thick": product.thick,
         "sale_price": product.sale_price,
         "cost_price": product.cost_price,
         "tax_class": product.tax_class,
@@ -165,12 +249,18 @@ def map_service_list_item(service: Service) -> dict:
 
 
 def map_service_detail(service: Service) -> dict:
+    enterprise_name = None
+    if service.enterprise is not None:
+        enterprise_name = service.enterprise.business_short_name
+
     base = _service_base_fields(service)
     base.update(
         {
+            "enterprise_name": enterprise_name,
+            "type": _service_type_value(service),
             "trainer_name": service.instructor_name,
             "format": service.delivery_format,
-            "availability": schedule_to_availability(service.availability_schedule),
+            "availability": schedule_to_availability_days(service.availability_schedule),
         }
     )
     return base
@@ -187,6 +277,8 @@ def _service_base_fields(service: Service) -> dict:
         "service_name": service.service_name,
         "service_description": service.service_description,
         "service_category": service.service_category,
+        "service_type": service.service_type,
+        "banner_image": service.banner_image,
         "service_price": service.service_price,
         "duration": service.duration,
         "availability_status": service.availability_status,

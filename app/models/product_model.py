@@ -68,6 +68,12 @@ class Product(Base):
 
     publish_status = Column(String(50), default="draft")
 
+    length = Column(Float)
+
+    width = Column(Float)
+
+    thick = Column(Float)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     enterprise = relationship("Enterprise", backref="products")

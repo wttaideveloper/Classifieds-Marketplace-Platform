@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.service_model import Service
 
@@ -26,7 +26,11 @@ def create_service(
 
 
 def get_services(db: Session):
-    return db.query(Service).all()
+    return (
+        db.query(Service)
+        .options(joinedload(Service.enterprise))
+        .all()
+    )
 
 
 def get_service_by_id(
@@ -35,6 +39,7 @@ def get_service_by_id(
 ):
     return (
         db.query(Service)
+        .options(joinedload(Service.enterprise))
         .filter(Service.id == service_id)
         .first()
     )

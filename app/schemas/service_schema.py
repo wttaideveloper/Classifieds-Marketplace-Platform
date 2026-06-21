@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.common_schema import AvailabilityResponse, AvailabilityScheduleEntry
+from app.schemas.common_schema import AvailabilityScheduleEntry, ServiceAvailabilityDay
 
 
 class ServiceCreate(BaseModel):
@@ -14,6 +14,8 @@ class ServiceCreate(BaseModel):
                 "service_name": "Kids Fitness Program",
                 "service_description": "Weekly fitness classes for children",
                 "service_category": "Fitness",
+                "service_type": "group_class",
+                "banner_image": "https://cdn.example.com/services/kids-fitness.png",
                 "service_price": 150.0,
                 "duration": 60,
                 "availability_status": True,
@@ -39,51 +41,37 @@ class ServiceCreate(BaseModel):
     )
 
     enterprise_id: UUID = Field(..., description="Enterprise ID")
-
     service_name: str = Field(..., description="Service name")
-
     service_description: str | None = None
-
     service_category: str = Field(..., description="Service category")
-
+    service_type: str | None = Field(
+        None,
+        description="Service type label (e.g. group_class, personal_training).",
+    )
+    banner_image: str | None = Field(
+        None,
+        description="URL of the service banner image.",
+    )
     service_price: float = Field(..., description="Service price")
-
     duration: int = Field(..., description="Duration in minutes")
-
     availability_status: bool = Field(default=True, description="Availability flag")
-
     service_status: bool = Field(default=True, description="Active/inactive flag")
-
-    max_participants: int | None = Field(
-        None,
-        description="Maximum participants per session",
-    )
-
-    provider_name: str | None = Field(None, description="Service provider name")
-
-    instructor_name: str | None = Field(None, description="Instructor or trainer name")
-
-    delivery_format: str | None = Field(
-        None,
-        description="Delivery format (e.g. in_person, online, hybrid)",
-    )
-
-    package_price: float | None = Field(None, description="Package or bundle price")
-
+    max_participants: int | None = None
+    provider_name: str | None = None
+    instructor_name: str | None = None
+    delivery_format: str | None = None
+    package_price: float | None = None
     currency: str | None = Field("USD", description="ISO currency code")
-
-    cancellation_policy: str | None = Field(None, description="Cancellation policy text")
-
-    availability_schedule: list[AvailabilityScheduleEntry] | None = Field(
-        None,
-        description="Weekly availability schedule",
-    )
+    cancellation_policy: str | None = None
+    availability_schedule: list[AvailabilityScheduleEntry] | None = None
 
 
 class ServiceUpdate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "service_type": "group_class",
+                "banner_image": "https://cdn.example.com/services/kids-fitness.png",
                 "max_participants": 12,
                 "provider_name": "Spin Health Co",
                 "instructor_name": "Coach Alex",
@@ -107,6 +95,8 @@ class ServiceUpdate(BaseModel):
     service_name: str | None = None
     service_description: str | None = None
     service_category: str | None = None
+    service_type: str | None = None
+    banner_image: str | None = None
     service_price: float | None = None
     duration: int | None = None
     availability_status: bool | None = None
@@ -129,6 +119,8 @@ class ServiceResponse(BaseModel):
     service_name: str
     service_description: str | None
     service_category: str
+    service_type: str | None = None
+    banner_image: str | None = None
     service_price: float
     duration: int
     availability_status: bool
@@ -151,7 +143,38 @@ class ServiceListItemResponse(ServiceResponse):
     )
 
 
+_SERVICE_DETAIL_EXAMPLE = {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "enterprise_id": "550e8400-e29b-41d4-a716-446655440000",
+    "enterprise_name": "Spin Health",
+    "service_name": "Kids Fitness Program",
+    "service_category": "Fitness",
+    "type": "group_class",
+    "banner_image": "https://cdn.example.com/services/kids-fitness.png",
+    "trainer_name": "Coach Alex",
+    "availability": [
+        {
+            "day": "Monday",
+            "date": "2026-06-22",
+            "slots": ["09:00-10:00", "10:00-11:00"],
+        }
+    ],
+}
+
+
 class ServiceDetailResponse(ServiceResponse):
+    model_config = ConfigDict(
+        json_schema_extra={"example": _SERVICE_DETAIL_EXAMPLE},
+    )
+
+    enterprise_name: str | None = Field(
+        None,
+        description="Short name of the owning enterprise.",
+    )
+    type: str | None = Field(
+        None,
+        description="Service type (from service_type, falling back to service_category).",
+    )
     trainer_name: str | None = Field(
         None,
         description="Instructor name (alias of instructor_name).",
@@ -160,7 +183,7 @@ class ServiceDetailResponse(ServiceResponse):
         None,
         description="Delivery format (alias of delivery_format).",
     )
-    availability: AvailabilityResponse = Field(
-        default_factory=AvailabilityResponse,
-        description="Derived availability summary from availability_schedule.",
+    availability: list[ServiceAvailabilityDay] = Field(
+        default_factory=list,
+        description="Weekly availability with generated time slots.",
     )
