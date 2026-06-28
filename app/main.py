@@ -10,9 +10,9 @@ from app.exceptions.custom_exception import CustomException
 app = FastAPI(
     title="User Management API",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
 
 app.add_middleware(
@@ -24,16 +24,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Middleware (if using JWT auth globally)
 # from app.core.middleware import AuthMiddleware
 # app.add_middleware(AuthMiddleware)
+
 
 # Exception handler
 @app.exception_handler(CustomException)
 def custom_exception_handler(request, exc: CustomException):
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail}
+        content={"detail": exc.detail},
     )
 
 
@@ -42,7 +44,8 @@ def startup():
     if not settings.is_production:
         Base.metadata.create_all(bind=engine)
 
-# Routes
+
+# API Routes
 app.include_router(api_router, prefix="/api/v1")
 
 
@@ -50,6 +53,3 @@ app.include_router(api_router, prefix="/api/v1")
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
-
-
