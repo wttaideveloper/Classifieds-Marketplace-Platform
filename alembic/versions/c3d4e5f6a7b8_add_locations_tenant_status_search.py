@@ -35,7 +35,12 @@ def upgrade() -> None:
         sa.Column("longitude", sa.Float(), nullable=True),
         sa.Column("status", sa.String(length=20), server_default="active", nullable=False),
         sa.Column("is_deleted", sa.Boolean(), server_default=sa.text("false"), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(),
+            server_default=sa.text("NOW()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["enterprise_id"], ["enterprises.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -68,8 +73,9 @@ def upgrade() -> None:
     )
     op.execute(
         "UPDATE enterprises SET status_new = CASE "
-        "WHEN status IS TRUE THEN 'active' "
-        "WHEN status IS FALSE THEN 'inactive' "
+        "WHEN status::text IN ('t', 'true', '1') THEN 'active' "
+        "WHEN status::text IN ('f', 'false', '0') THEN 'inactive' "
+        "WHEN status::text IN ('draft', 'active', 'inactive') THEN status::text "
         "ELSE 'draft' END"
     )
     op.drop_column("enterprises", "status")

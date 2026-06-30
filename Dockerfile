@@ -17,10 +17,11 @@ RUN pip install --upgrade pip \
 COPY . .
 
 RUN addgroup --system app && adduser --system --ingroup app app \
+    && chmod +x /app/scripts/entrypoint.sh \
     && chown -R app:app /app
 
 USER app
 
 EXPOSE 8000
 
-CMD ["gunicorn", "app.main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000"]
+CMD ["/app/scripts/entrypoint.sh"]

@@ -198,8 +198,29 @@ With `ENVIRONMENT=development`, tables are auto-created on startup if migrations
 
 | Issue | Check |
 |-------|-------|
+| **500 Internal Server Error on APIs** | Run `alembic upgrade head` — the latest migration adds `is_deleted`, `tenant_id`, `status` (string), and `enterprise_locations`. Without it, list/search endpoints fail. |
 | DB connection refused | RDS security group, `DATABASE_URL`, VPC/subnet |
 | `psycopg2` errors | Use `postgresql+psycopg2://` in `DATABASE_URL` |
 | CORS errors | `CORS_ORIGINS` must include exact frontend origin; set `CORS_ALLOW_LOCALHOST=true` for local dev against production API |
 | Missing tables | Run `alembic upgrade head` |
 | Uploads lost on restart | Mount `/data/uploads` volume |
+| View error details | `docker logs marketplace-api` — unhandled errors are logged server-side |
+
+### Fix 500 after deploying new code
+
+```bash
+docker build -t marketplace-api .
+docker run --rm --env-file .env marketplace-api alembic upgrade head
+docker stop marketplace-api && docker rm marketplace-api
+docker run -d --name marketplace-api --restart unless-stopped \
+  --env-file .env -p 127.0.0.1:8000:8000 \
+  -v /data/uploads:/app/uploads marketplace-api
+```
+
+Verify migration applied:
+
+```bash
+docker run --rm --env-file .env marketplace-api alembic current
+```
+
+Expected head: `c3d4e5f6a7b8`

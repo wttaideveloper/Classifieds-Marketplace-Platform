@@ -1,4 +1,6 @@
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -7,8 +9,10 @@ from app.db.database import Base, engine
 from app.api.v1.router import api_router
 from app.exceptions.custom_exception import CustomException
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
-    title="User Management API",
+    title="Classifieds Marketplace Platform API",
     version="1.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
@@ -25,17 +29,24 @@ app.add_middleware(
 )
 
 
-# Middleware (if using JWT auth globally)
-# from app.core.middleware import AuthMiddleware
-# app.add_middleware(AuthMiddleware)
-
-
-# Exception handler
 @app.exception_handler(CustomException)
 def custom_exception_handler(request, exc: CustomException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(Exception)
+def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "Unhandled error on %s %s",
+        request.method,
+        request.url.path,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
     )
 
 
@@ -45,11 +56,9 @@ def startup():
         Base.metadata.create_all(bind=engine)
 
 
-# API Routes
 app.include_router(api_router, prefix="/api/v1")
 
 
-# Health check
 @app.get("/health")
 def health():
     return {"status": "ok"}
