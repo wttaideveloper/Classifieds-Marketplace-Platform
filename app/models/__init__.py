@@ -7,6 +7,7 @@ from . import (  # noqa: F401
     attribute_model,
     enterprise_model,
     location_model,
+    onboarding_form_model,
     product_model,
     service_model,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "attribute_model",
     "enterprise_model",
     "location_model",
+    "onboarding_form_model",
     "product_model",
     "service_model",
 ]

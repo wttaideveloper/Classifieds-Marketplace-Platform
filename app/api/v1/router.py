@@ -44,5 +44,12 @@ _safe_include(
 # Search APIs
 _safe_include("app.api.v1.endpoints.search", prefix="/search", tags=["Search"])
 
+# Onboarding form templates
+_safe_include(
+    "app.api.v1.endpoints.onboarding_form",
+    prefix="/onboarding-forms",
+    tags=["Onboarding Forms"],
+)
+
 # System
 _safe_include("app.api.v1.endpoints.system", prefix="", tags=["System"])

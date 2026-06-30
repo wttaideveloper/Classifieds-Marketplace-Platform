@@ -23,7 +23,7 @@ def health_check_service(db: Session):
 
 def inventory_service():
     return {
-        "total_apis": 33,
+        "total_apis": 41,
         "apis": [
             {"method": "POST", "endpoint": "/api/v1/enterprises", "description": "Create Enterprise"},
             {"method": "GET", "endpoint": "/api/v1/enterprises", "description": "Get Enterprise List"},
@@ -53,6 +53,14 @@ def inventory_service():
             {"method": "GET", "endpoint": "/api/v1/search/enterprises", "description": "Search Enterprises"},
             {"method": "GET", "endpoint": "/api/v1/search/products", "description": "Search Products"},
             {"method": "GET", "endpoint": "/api/v1/search/services", "description": "Search Services"},
+            {"method": "POST", "endpoint": "/api/v1/onboarding-forms", "description": "Create Onboarding Form"},
+            {"method": "GET", "endpoint": "/api/v1/onboarding-forms", "description": "List Onboarding Forms"},
+            {"method": "GET", "endpoint": "/api/v1/onboarding-forms/{id}", "description": "Get Onboarding Form"},
+            {"method": "PUT", "endpoint": "/api/v1/onboarding-forms/{id}", "description": "Update Onboarding Form"},
+            {"method": "PUT", "endpoint": "/api/v1/onboarding-forms/{id}/publish", "description": "Publish Onboarding Form"},
+            {"method": "PUT", "endpoint": "/api/v1/onboarding-forms/{id}/unpublish", "description": "Unpublish Onboarding Form"},
+            {"method": "POST", "endpoint": "/api/v1/onboarding-forms/{id}/duplicate", "description": "Duplicate Onboarding Form"},
+            {"method": "DELETE", "endpoint": "/api/v1/onboarding-forms/{id}", "description": "Deactivate Onboarding Form"},
             {"method": "GET", "endpoint": "/api/v1/health", "description": "Health Check"},
             {"method": "GET", "endpoint": "/api/v1/inventory", "description": "API Inventory"},
         ]
