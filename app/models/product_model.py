@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -26,23 +27,37 @@ class Product(Base):
         default=uuid.uuid4,
     )
 
+    tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
     enterprise_id = Column(
         UUID(as_uuid=True),
         ForeignKey("enterprises.id"),
         nullable=False,
+        index=True,
     )
 
-    product_name = Column(String(255), nullable=False)
+    location_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("enterprise_locations.id"),
+        nullable=True,
+        index=True,
+    )
+
+    product_name = Column(String(255), nullable=False, index=True)
 
     product_description = Column(Text)
 
-    product_category = Column(String(100), nullable=False)
+    product_category = Column(String(100), nullable=False, index=True)
 
     product_price = Column(Float, nullable=False)
 
     product_images = Column(Text)
 
     product_status = Column(Boolean, default=True)
+
+    status = Column(String(20), default="draft", nullable=False, index=True)
+
+    is_deleted = Column(Boolean, default=False, nullable=False)
 
     sku = Column(String(100))
 
@@ -77,3 +92,9 @@ class Product(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     enterprise = relationship("Enterprise", backref="products")
+    location = relationship("EnterpriseLocation", backref="products")
+
+    __table_args__ = (
+        Index("ix_products_tenant_enterprise", "tenant_id", "enterprise_id"),
+        Index("ix_products_enterprise_location", "enterprise_id", "location_id"),
+    )

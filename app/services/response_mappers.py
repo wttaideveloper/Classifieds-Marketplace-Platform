@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from app.models.enterprise_model import Enterprise
+from app.models.location_model import EnterpriseLocation
 from app.models.product_model import Product
 from app.models.service_model import Service
 from app.schemas.common_schema import EnterpriseStatusLabel
@@ -26,11 +27,15 @@ _DAY_LABELS = [
 ]
 
 
-def enterprise_status_label(is_active: bool | None) -> EnterpriseStatusLabel:
-    if is_active is True:
+def enterprise_status_label(status_value: str | bool | None) -> EnterpriseStatusLabel:
+    if isinstance(status_value, bool):
+        return "active" if status_value else "inactive"
+    if status_value == "active":
         return "active"
-    if is_active is False:
+    if status_value == "inactive":
         return "inactive"
+    if status_value == "draft":
+        return "draft"
     return "pending"
 
 
@@ -161,8 +166,11 @@ def map_enterprise_write(enterprise: Enterprise) -> dict:
 
 
 def _enterprise_base_fields(enterprise: Enterprise) -> dict:
+    website = enterprise.website or enterprise.website_url
+    banner_url = enterprise.banner_url or enterprise.business_images
     return {
         "id": enterprise.id,
+        "tenant_id": enterprise.tenant_id,
         "business_short_name": enterprise.business_short_name,
         "business_legal_name": enterprise.business_legal_name,
         "business_description": enterprise.business_description,
@@ -171,12 +179,15 @@ def _enterprise_base_fields(enterprise: Enterprise) -> dict:
         "registered_address": enterprise.registered_address,
         "business_address": enterprise.business_address,
         "communication_address": enterprise.communication_address,
-        "suite_unit": enterprise.suite_unit,
+        "website": website,
         "logo_url": enterprise.logo_url,
+        "banner_url": banner_url,
+        "status": enterprise.status,
+        "suite_unit": enterprise.suite_unit,
         "business_images": enterprise.business_images,
         "registration_number": enterprise.registration_number,
         "business_category": enterprise.business_category,
-        "website_url": enterprise.website_url,
+        "website_url": enterprise.website_url or website,
         "year_founded": enterprise.year_founded,
         "primary_contact_name": enterprise.primary_contact_name,
         "primary_contact_title": enterprise.primary_contact_title,
@@ -184,8 +195,27 @@ def _enterprise_base_fields(enterprise: Enterprise) -> dict:
         "secondary_phone": enterprise.secondary_phone,
         "brand_color": enterprise.brand_color,
         "tagline": enterprise.tagline,
-        "status": enterprise.status,
         "created_at": enterprise.created_at,
+    }
+
+
+def map_location(location: EnterpriseLocation) -> dict:
+    return {
+        "id": location.id,
+        "enterprise_id": location.enterprise_id,
+        "location_name": location.location_name,
+        "address_line_1": location.address_line_1,
+        "address_line_2": location.address_line_2,
+        "city": location.city,
+        "state": location.state,
+        "country": location.country,
+        "postal_code": location.postal_code,
+        "phone": location.phone,
+        "email": location.email,
+        "latitude": location.latitude,
+        "longitude": location.longitude,
+        "status": location.status,
+        "created_at": location.created_at,
     }
 
 
@@ -216,8 +246,16 @@ def map_product_write(product: Product) -> dict:
 def _product_base_fields(product: Product) -> dict:
     return {
         "id": product.id,
+        "tenant_id": product.tenant_id,
         "enterprise_id": product.enterprise_id,
+        "location_id": product.location_id,
         "product_name": product.product_name,
+        "description": product.product_description,
+        "category": product.product_category,
+        "price": product.product_price,
+        "currency": product.currency,
+        "image_urls": product.product_images,
+        "status": product.status,
         "product_description": product.product_description,
         "product_category": product.product_category,
         "product_price": product.product_price,
@@ -233,7 +271,6 @@ def _product_base_fields(product: Product) -> dict:
         "sale_price": product.sale_price,
         "cost_price": product.cost_price,
         "tax_class": product.tax_class,
-        "currency": product.currency,
         "stock_quantity": product.stock_quantity,
         "low_stock_alert_threshold": product.low_stock_alert_threshold,
         "stock_management": product.stock_management,
@@ -273,14 +310,23 @@ def map_service_write(service: Service) -> dict:
 def _service_base_fields(service: Service) -> dict:
     return {
         "id": service.id,
+        "tenant_id": service.tenant_id,
         "enterprise_id": service.enterprise_id,
+        "location_id": service.location_id,
         "service_name": service.service_name,
+        "description": service.service_description,
+        "category": service.service_category,
+        "duration_minutes": service.duration,
+        "price": service.service_price,
+        "currency": service.currency,
+        "availability": service.availability_schedule,
+        "status": service.status,
         "service_description": service.service_description,
         "service_category": service.service_category,
-        "service_type": service.service_type,
-        "banner_image": service.banner_image,
         "service_price": service.service_price,
         "duration": service.duration,
+        "service_type": service.service_type,
+        "banner_image": service.banner_image,
         "availability_status": service.availability_status,
         "service_status": service.service_status,
         "max_participants": service.max_participants,
@@ -288,7 +334,6 @@ def _service_base_fields(service: Service) -> dict:
         "instructor_name": service.instructor_name,
         "delivery_format": service.delivery_format,
         "package_price": service.package_price,
-        "currency": service.currency,
         "cancellation_policy": service.cancellation_policy,
         "availability_schedule": service.availability_schedule,
         "created_at": service.created_at,

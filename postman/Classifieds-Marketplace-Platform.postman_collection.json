@@ -1,0 +1,354 @@
+{
+  "info": {
+    "name": "Classifieds Marketplace Platform API",
+    "description": "Backend APIs for Enterprise, Locations, Products, Services, Dynamic Attributes, and Search.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000/api/v1"
+    },
+    {
+      "key": "enterpriseId",
+      "value": ""
+    },
+    {
+      "key": "locationId",
+      "value": ""
+    },
+    {
+      "key": "productId",
+      "value": ""
+    },
+    {
+      "key": "serviceId",
+      "value": ""
+    },
+    {
+      "key": "attributeId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Enterprise",
+      "item": [
+        {
+          "name": "Create Enterprise",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"business_short_name\": \"Spin Health\",\n  \"business_legal_name\": \"Spin Health Co Pvt Ltd\",\n  \"business_email\": \"contact@spinhealth.com\",\n  \"website\": \"https://spinhealth.com\",\n  \"status\": \"draft\"\n}"
+            },
+            "url": "{{baseUrl}}/enterprises/"
+          }
+        },
+        {
+          "name": "List Enterprises",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/enterprises/?search=spin&status=active&page=1&page_size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["enterprises", ""],
+              "query": [
+                {"key": "search", "value": "spin"},
+                {"key": "status", "value": "active"},
+                {"key": "tenant_id", "value": "", "disabled": true},
+                {"key": "page", "value": "1"},
+                {"key": "page_size", "value": "20"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Enterprise",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/enterprises/{{enterpriseId}}"
+          }
+        },
+        {
+          "name": "Update Enterprise",
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"active\",\n  \"banner_url\": \"https://cdn.example.com/banner.png\"\n}"
+            },
+            "url": "{{baseUrl}}/enterprises/{{enterpriseId}}"
+          }
+        },
+        {
+          "name": "Delete Enterprise",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/enterprises/{{enterpriseId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Enterprise Locations",
+      "item": [
+        {
+          "name": "Create Location",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location_name\": \"Downtown Studio\",\n  \"address_line_1\": \"123 Main St\",\n  \"city\": \"Austin\",\n  \"state\": \"TX\",\n  \"country\": \"USA\",\n  \"postal_code\": \"78701\",\n  \"status\": \"active\"\n}"
+            },
+            "url": "{{baseUrl}}/enterprises/{{enterpriseId}}/locations"
+          }
+        },
+        {
+          "name": "List Enterprise Locations",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/enterprises/{{enterpriseId}}/locations?page=1&page_size=20"
+          }
+        },
+        {
+          "name": "Get Location",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/locations/{{locationId}}"
+          }
+        },
+        {
+          "name": "Update Location",
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location_name\": \"Updated Studio\",\n  \"status\": \"active\"\n}"
+            },
+            "url": "{{baseUrl}}/locations/{{locationId}}"
+          }
+        },
+        {
+          "name": "Delete Location",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/locations/{{locationId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "item": [
+        {
+          "name": "Create Product",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enterprise_id\": \"{{enterpriseId}}\",\n  \"location_id\": \"{{locationId}}\",\n  \"product_name\": \"Yoga Mat Pro\",\n  \"description\": \"Non-slip premium yoga mat\",\n  \"category\": \"Fitness\",\n  \"price\": 49.99,\n  \"currency\": \"USD\",\n  \"status\": \"draft\"\n}"
+            },
+            "url": "{{baseUrl}}/products/"
+          }
+        },
+        {
+          "name": "List Products",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/products/?search=yoga&category=Fitness&status=active&page=1&page_size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["products", ""],
+              "query": [
+                {"key": "search", "value": "yoga"},
+                {"key": "category", "value": "Fitness"},
+                {"key": "enterprise_id", "value": "{{enterpriseId}}", "disabled": true},
+                {"key": "location_id", "value": "{{locationId}}", "disabled": true},
+                {"key": "status", "value": "active"},
+                {"key": "page", "value": "1"},
+                {"key": "page_size", "value": "20"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Product",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/products/{{productId}}"
+          }
+        },
+        {
+          "name": "Update Product",
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"active\",\n  \"price\": 39.99\n}"
+            },
+            "url": "{{baseUrl}}/products/{{productId}}"
+          }
+        },
+        {
+          "name": "Delete Product",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/products/{{productId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Services",
+      "item": [
+        {
+          "name": "Create Service",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enterprise_id\": \"{{enterpriseId}}\",\n  \"location_id\": \"{{locationId}}\",\n  \"service_name\": \"Kids Fitness Program\",\n  \"description\": \"Weekly fitness classes\",\n  \"category\": \"Fitness\",\n  \"duration_minutes\": 60,\n  \"price\": 150.0,\n  \"currency\": \"USD\",\n  \"status\": \"draft\"\n}"
+            },
+            "url": "{{baseUrl}}/services/"
+          }
+        },
+        {
+          "name": "List Services",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/services/?search=fitness&category=Fitness&status=active&page=1&page_size=20"
+          }
+        },
+        {
+          "name": "Get Service",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/services/{{serviceId}}"
+          }
+        },
+        {
+          "name": "Update Service",
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"active\",\n  \"price\": 175.0\n}"
+            },
+            "url": "{{baseUrl}}/services/{{serviceId}}"
+          }
+        },
+        {
+          "name": "Delete Service",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/services/{{serviceId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dynamic Attributes",
+      "item": [
+        {
+          "name": "Create Dynamic Attribute",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entity_type\": \"enterprise\",\n  \"entity_id\": \"{{enterpriseId}}\",\n  \"attribute_name\": \"License Number\",\n  \"attribute_value\": \"LIC-12345\",\n  \"attribute_type\": \"text\",\n  \"is_required\": true,\n  \"status\": \"active\"\n}"
+            },
+            "url": "{{baseUrl}}/dynamic-attributes"
+          }
+        },
+        {
+          "name": "List Dynamic Attributes",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/dynamic-attributes?entity_type=enterprise&entity_id={{enterpriseId}}&status=active&page=1&page_size=20"
+          }
+        },
+        {
+          "name": "Get Dynamic Attribute",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/dynamic-attributes/{{attributeId}}"
+          }
+        },
+        {
+          "name": "Update Dynamic Attribute",
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"attribute_value\": \"LIC-99999\",\n  \"status\": \"active\"\n}"
+            },
+            "url": "{{baseUrl}}/dynamic-attributes/{{attributeId}}"
+          }
+        },
+        {
+          "name": "Delete Dynamic Attribute",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/dynamic-attributes/{{attributeId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "item": [
+        {
+          "name": "Search Enterprises",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/search/enterprises?query=spin&status=active&page=1&page_size=20"
+          }
+        },
+        {
+          "name": "Search Products",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/search/products?query=yoga&category=Fitness&status=active&page=1&page_size=20"
+          }
+        },
+        {
+          "name": "Search Services",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/search/services?query=fitness&category=Fitness&status=active&page=1&page_size=20"
+          }
+        }
+      ]
+    },
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/health"
+          }
+        },
+        {
+          "name": "API Inventory",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/inventory"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.database import Base
@@ -16,7 +16,9 @@ class Enterprise(Base):
         default=uuid.uuid4,
     )
 
-    business_short_name = Column(String(100), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
+    business_short_name = Column(String(100), nullable=False, index=True)
 
     business_legal_name = Column(String(255), nullable=False)
 
@@ -36,11 +38,15 @@ class Enterprise(Base):
 
     logo_url = Column(Text)
 
+    banner_url = Column(Text)
+
     business_images = Column(Text)
 
     registration_number = Column(String(100))
 
-    business_category = Column(String(100))
+    business_category = Column(String(100), index=True)
+
+    website = Column(Text)
 
     website_url = Column(Text)
 
@@ -58,6 +64,12 @@ class Enterprise(Base):
 
     tagline = Column(String(255))
 
-    status = Column(Boolean, default=True)
+    status = Column(String(20), default="draft", nullable=False, index=True)
+
+    is_deleted = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_enterprises_tenant_status", "tenant_id", "status"),
+    )

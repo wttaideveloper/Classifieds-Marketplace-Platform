@@ -12,6 +12,36 @@ app.include_router(router, prefix="/services")
 
 client = TestClient(app)
 
+_PAGINATION = {
+    "total": 1,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 1,
+}
+
+
+def _service_response(**overrides):
+    base = {
+        "id": str(uuid4()),
+        "enterprise_id": str(uuid4()),
+        "service_name": "Business Consulting",
+        "description": "Professional consulting",
+        "category": "Consulting",
+        "price": 2500.00,
+        "duration_minutes": 120,
+        "availability_status": True,
+        "status": "active",
+        "currency": "USD",
+        "service_description": "Professional consulting",
+        "service_category": "Consulting",
+        "service_price": 2500.00,
+        "duration": 120,
+        "service_status": True,
+        "availability": [],
+    }
+    base.update(overrides)
+    return base
+
 @patch(
     "app.api.v1.endpoints.service.create_service_service"
 )
@@ -21,17 +51,10 @@ def test_create_service(
     service_id = str(uuid4())
     enterprise_id = str(uuid4())
 
-    mock_create_service_service.return_value = {
-        "id": service_id,
-        "enterprise_id": enterprise_id,
-        "service_name": "Business Consulting",
-        "service_description": "Professional consulting",
-        "service_category": "Consulting",
-        "service_price": 2500.00,
-        "duration": 120,
-        "availability_status": True,
-        "service_status": True
-    }
+    mock_create_service_service.return_value = _service_response(
+        id=service_id,
+        enterprise_id=enterprise_id,
+    )
 
     payload = {
         "enterprise_id": enterprise_id,
@@ -53,7 +76,7 @@ def test_create_service(
     data = response.json()
 
     assert data["service_name"] == "Business Consulting"
-    assert data["service_category"] == "Consulting"
+    assert data["category"] == "Consulting"
 
 def test_create_service_validation_error():
 
@@ -75,19 +98,10 @@ def test_get_services(
     mock_get_services_service
 ):
 
-    mock_get_services_service.return_value = [
-        {
-            "id": str(uuid4()),
-            "enterprise_id": str(uuid4()),
-            "service_name": "Consulting",
-            "service_description": "Business Consulting",
-            "service_category": "Business",
-            "service_price": 1000,
-            "duration": 60,
-            "availability_status": True,
-            "service_status": True
-        }
-    ]
+    mock_get_services_service.return_value = {
+        "items": [_service_response(service_name="Consulting", category="Business")],
+        "pagination": _PAGINATION,
+    }
 
     response = client.get(
         "/services/"
@@ -97,8 +111,8 @@ def test_get_services(
 
     data = response.json()
 
-    assert len(data) == 1
-    assert data[0]["service_name"] == "Consulting"
+    assert len(data["items"]) == 1
+    assert data["items"][0]["service_name"] == "Consulting"
 
 @patch(
     "app.api.v1.endpoints.service.get_services_service"
@@ -107,14 +121,17 @@ def test_get_services_empty(
     mock_get_services_service
 ):
 
-    mock_get_services_service.return_value = []
+    mock_get_services_service.return_value = {
+        "items": [],
+        "pagination": {**_PAGINATION, "total": 0, "total_pages": 0},
+    }
 
     response = client.get(
         "/services/"
     )
 
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["items"] == []
 
 @patch(
     "app.api.v1.endpoints.service.get_service_service"
@@ -125,17 +142,13 @@ def test_get_service(
 
     service_id = str(uuid4())
 
-    mock_get_service_service.return_value = {
-        "id": service_id,
-        "enterprise_id": str(uuid4()),
-        "service_name": "Consulting",
-        "service_description": "Business Consulting",
-        "service_category": "Business",
-        "service_price": 1000,
-        "duration": 60,
-        "availability_status": True,
-        "service_status": True
-    }
+    mock_get_service_service.return_value = _service_response(
+        id=service_id,
+        service_name="Consulting",
+        category="Business",
+        price=1000,
+        duration_minutes=60,
+    )
 
     response = client.get(
         f"/services/{service_id}"
@@ -186,17 +199,12 @@ def test_update_service(
 
     service_id = str(uuid4())
 
-    mock_update_service_service.return_value = {
-        "id": service_id,
-        "enterprise_id": str(uuid4()),
-        "service_name": "Updated Consulting",
-        "service_description": "Updated Description",
-        "service_category": "Business",
-        "service_price": 2000,
-        "duration": 90,
-        "availability_status": True,
-        "service_status": True
-    }
+    mock_update_service_service.return_value = _service_response(
+        id=service_id,
+        service_name="Updated Consulting",
+        price=2000,
+        duration_minutes=90,
+    )
 
     payload = {
         "service_name": "Updated Consulting",
@@ -213,7 +221,7 @@ def test_update_service(
     data = response.json()
 
     assert data["service_name"] == "Updated Consulting"
-    assert data["service_price"] == 2000
+    assert data["price"] == 2000
 
 @patch(
     "app.api.v1.endpoints.service.update_service_service"

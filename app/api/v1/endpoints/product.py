@@ -1,35 +1,26 @@
 from uuid import UUID
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    Path,
-    status
-)
-
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-
+from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.product_schema import (
     ProductCreate,
-    ProductUpdate,
     ProductDetailResponse,
-    ProductListItemResponse,
-    ProductResponse
+    ProductPaginatedResponse,
+    ProductResponse,
+    ProductUpdate,
 )
-
 from app.services.product_service import (
     create_product_service,
-    get_products_service,
+    delete_product_service,
     get_product_service,
+    get_products_service,
     update_product_service,
-    delete_product_service
 )
 
-router = APIRouter(
-    tags=["Products"]
-)
+router = APIRouter(tags=["Products"])
 
 
 @router.post(
@@ -37,51 +28,42 @@ router = APIRouter(
     response_model=ProductResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create Product",
-    description="""
-Create a new product in the marketplace.
-
-Products belong to an enterprise and can contain dynamic attributes.
-
-Examples:
-- Laptop
-- Mobile Phone
-- Office Chair
-- Monitor
-""",
-    responses={
-        201: {"description": "Product created successfully"},
-        400: {"description": "Invalid request"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def create_product(
     product: ProductCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    return create_product_service(
-        db,
-        product
-    )
+    return create_product_service(db, product)
 
 
 @router.get(
     "/",
-    response_model=list[ProductListItemResponse],
+    response_model=ProductPaginatedResponse,
     status_code=status.HTTP_200_OK,
     summary="Get All Products",
-    description="""
-Retrieve all active products available in the system.
-""",
-    responses={
-        200: {"description": "Products retrieved successfully"},
-        500: {"description": "Internal server error"}
-    }
 )
 def get_products(
-    db: Session = Depends(get_db)
+    search: str | None = Query(None, description="Search across product fields."),
+    category: str | None = Query(None, description="Filter by category."),
+    tenant_id: UUID | None = Query(None, description="Filter by tenant ID."),
+    enterprise_id: UUID | None = Query(None, description="Filter by enterprise ID."),
+    location_id: UUID | None = Query(None, description="Filter by location ID."),
+    status_filter: str | None = Query(None, alias="status", description="Filter by status."),
+    page: int = Query(DEFAULT_PAGE, ge=1),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
 ):
-    return get_products_service(db)
+    return get_products_service(
+        db,
+        search=search,
+        category=category,
+        tenant_id=tenant_id,
+        enterprise_id=enterprise_id,
+        location_id=location_id,
+        status_filter=status_filter,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get(
@@ -89,27 +71,12 @@ def get_products(
     response_model=ProductDetailResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Product By ID",
-    description="""
-Retrieve a specific product using its unique identifier.
-""",
-    responses={
-        200: {"description": "Product retrieved successfully"},
-        404: {"description": "Product not found"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def get_product(
-    product_id: UUID = Path(
-        ...,
-        description="Unique identifier of the product"
-    ),
-    db: Session = Depends(get_db)
+    product_id: UUID = Path(..., description="Unique identifier of the product"),
+    db: Session = Depends(get_db),
 ):
-    return get_product_service(
-        db,
-        product_id
-    )
+    return get_product_service(db, product_id)
 
 
 @router.put(
@@ -117,61 +84,23 @@ def get_product(
     response_model=ProductResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Product",
-    description="""
-Update an existing product.
-
-Only the supplied fields will be updated.
-""",
-    responses={
-        200: {"description": "Product updated successfully"},
-        404: {"description": "Product not found"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def update_product(
     product: ProductUpdate,
-    product_id: UUID = Path(
-        ...,
-        description="Unique identifier of the product"
-    ),
-    db: Session = Depends(get_db)
+    product_id: UUID = Path(..., description="Unique identifier of the product"),
+    db: Session = Depends(get_db),
 ):
-    return update_product_service(
-        db,
-        product_id,
-        product
-    )
+    return update_product_service(db, product_id, product)
 
 
 @router.delete(
     "/{product_id}",
     status_code=status.HTTP_200_OK,
     summary="Deactivate Product",
-    description="""
-Marks a product as inactive.
-
-This operation performs a soft delete and does not permanently remove the record.
-""",
-    responses={
-        200: {"description": "Product marked inactive successfully"},
-        404: {"description": "Product not found"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def delete_product(
-    product_id: UUID = Path(
-        ...,
-        description="Unique identifier of the product"
-    ),
-    db: Session = Depends(get_db)
+    product_id: UUID = Path(..., description="Unique identifier of the product"),
+    db: Session = Depends(get_db),
 ):
-    delete_product_service(
-        db,
-        product_id
-    )
-
-    return {
-        "message": "Product marked inactive successfully"
-    }
+    delete_product_service(db, product_id)
+    return {"message": "Product marked inactive successfully"}

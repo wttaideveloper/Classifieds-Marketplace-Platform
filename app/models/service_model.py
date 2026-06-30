@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -26,17 +27,27 @@ class Service(Base):
         default=uuid.uuid4,
     )
 
+    tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
     enterprise_id = Column(
         UUID(as_uuid=True),
         ForeignKey("enterprises.id"),
         nullable=False,
+        index=True,
     )
 
-    service_name = Column(String(255), nullable=False)
+    location_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("enterprise_locations.id"),
+        nullable=True,
+        index=True,
+    )
+
+    service_name = Column(String(255), nullable=False, index=True)
 
     service_description = Column(Text)
 
-    service_category = Column(String(100), nullable=False)
+    service_category = Column(String(100), nullable=False, index=True)
 
     service_type = Column(String(100))
 
@@ -48,7 +59,13 @@ class Service(Base):
 
     availability_status = Column(Boolean, default=True)
 
+    availability_schedule = Column(JSONB)
+
     service_status = Column(Boolean, default=True)
+
+    status = Column(String(20), default="draft", nullable=False, index=True)
+
+    is_deleted = Column(Boolean, default=False, nullable=False)
 
     max_participants = Column(Integer)
 
@@ -64,8 +81,12 @@ class Service(Base):
 
     cancellation_policy = Column(Text)
 
-    availability_schedule = Column(JSONB)
-
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     enterprise = relationship("Enterprise", backref="services")
+    location = relationship("EnterpriseLocation", backref="services")
+
+    __table_args__ = (
+        Index("ix_services_tenant_enterprise", "tenant_id", "enterprise_id"),
+        Index("ix_services_enterprise_location", "enterprise_id", "location_id"),
+    )

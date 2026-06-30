@@ -1,35 +1,26 @@
 from uuid import UUID
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    Path,
-    status
-)
-
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-
+from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.service_schema import (
     ServiceCreate,
-    ServiceUpdate,
     ServiceDetailResponse,
-    ServiceListItemResponse,
-    ServiceResponse
+    ServicePaginatedResponse,
+    ServiceResponse,
+    ServiceUpdate,
 )
-
 from app.services.service_service import (
     create_service_service,
-    get_services_service,
+    delete_service_service,
     get_service_service,
+    get_services_service,
     update_service_service,
-    delete_service_service
 )
 
-router = APIRouter(
-    tags=["Services"]
-)
+router = APIRouter(tags=["Services"])
 
 
 @router.post(
@@ -37,51 +28,42 @@ router = APIRouter(
     response_model=ServiceResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create Service",
-    description="""
-Create a new service in the marketplace.
-
-Services represent offerings provided by an enterprise.
-
-Examples:
-- Website Development
-- Cloud Hosting
-- Technical Support
-- Digital Marketing
-""",
-    responses={
-        201: {"description": "Service created successfully"},
-        400: {"description": "Invalid request"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def create_service(
     service: ServiceCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    return create_service_service(
-        db,
-        service
-    )
+    return create_service_service(db, service)
 
 
 @router.get(
     "/",
-    response_model=list[ServiceListItemResponse],
+    response_model=ServicePaginatedResponse,
     status_code=status.HTTP_200_OK,
     summary="Get All Services",
-    description="""
-Retrieve all active services available in the system.
-""",
-    responses={
-        200: {"description": "Services retrieved successfully"},
-        500: {"description": "Internal server error"}
-    }
 )
 def get_services(
-    db: Session = Depends(get_db)
+    search: str | None = Query(None, description="Search across service fields."),
+    tenant_id: UUID | None = Query(None, description="Filter by tenant ID."),
+    enterprise_id: UUID | None = Query(None, description="Filter by enterprise ID."),
+    category: str | None = Query(None, description="Filter by category."),
+    location_id: UUID | None = Query(None, description="Filter by location ID."),
+    status_filter: str | None = Query(None, alias="status", description="Filter by status."),
+    page: int = Query(DEFAULT_PAGE, ge=1),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
 ):
-    return get_services_service(db)
+    return get_services_service(
+        db,
+        search=search,
+        tenant_id=tenant_id,
+        enterprise_id=enterprise_id,
+        category=category,
+        location_id=location_id,
+        status_filter=status_filter,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get(
@@ -89,27 +71,12 @@ def get_services(
     response_model=ServiceDetailResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Service By ID",
-    description="""
-Retrieve a specific service using its unique identifier.
-""",
-    responses={
-        200: {"description": "Service retrieved successfully"},
-        404: {"description": "Service not found"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def get_service(
-    service_id: UUID = Path(
-        ...,
-        description="Unique identifier of the service"
-    ),
-    db: Session = Depends(get_db)
+    service_id: UUID = Path(..., description="Unique identifier of the service"),
+    db: Session = Depends(get_db),
 ):
-    return get_service_service(
-        db,
-        service_id
-    )
+    return get_service_service(db, service_id)
 
 
 @router.put(
@@ -117,61 +84,23 @@ def get_service(
     response_model=ServiceResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Service",
-    description="""
-Update an existing service.
-
-Only the supplied fields will be updated.
-""",
-    responses={
-        200: {"description": "Service updated successfully"},
-        404: {"description": "Service not found"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def update_service(
     service: ServiceUpdate,
-    service_id: UUID = Path(
-        ...,
-        description="Unique identifier of the service"
-    ),
-    db: Session = Depends(get_db)
+    service_id: UUID = Path(..., description="Unique identifier of the service"),
+    db: Session = Depends(get_db),
 ):
-    return update_service_service(
-        db,
-        service_id,
-        service
-    )
+    return update_service_service(db, service_id, service)
 
 
 @router.delete(
     "/{service_id}",
     status_code=status.HTTP_200_OK,
     summary="Deactivate Service",
-    description="""
-Marks a service as inactive.
-
-This operation performs a soft delete and does not permanently remove the record.
-""",
-    responses={
-        200: {"description": "Service marked inactive successfully"},
-        404: {"description": "Service not found"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def delete_service(
-    service_id: UUID = Path(
-        ...,
-        description="Unique identifier of the service"
-    ),
-    db: Session = Depends(get_db)
+    service_id: UUID = Path(..., description="Unique identifier of the service"),
+    db: Session = Depends(get_db),
 ):
-    delete_service_service(
-        db,
-        service_id
-    )
-
-    return {
-        "message": "Service marked inactive successfully"
-    }
+    delete_service_service(db, service_id)
+    return {"message": "Service marked inactive successfully"}

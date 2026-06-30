@@ -1,23 +1,20 @@
-def test_health(client):
+from unittest.mock import patch
 
-    response = client.get(
-        "/api/health"
-    )
 
+@patch("app.api.v1.endpoints.system.health_check_service")
+def test_health(mock_health_check_service, client):
+    mock_health_check_service.return_value = {
+        "status": "healthy",
+        "database": "connected",
+        "message": "Application is running successfully",
+    }
+
+    response = client.get("/api/v1/health")
     assert response.status_code == 200
+    assert response.json()["status"] == "healthy"
 
-    data = response.json()
-
-    assert data["status"] == "healthy"
 
 def test_inventory(client):
-
-    response = client.get(
-        "/api/inventory"
-    )
-
+    response = client.get("/api/v1/inventory")
     assert response.status_code == 200
-
-    data = response.json()
-
-    assert "apis" in data
+    assert "apis" in response.json()

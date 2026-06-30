@@ -1,33 +1,25 @@
 from uuid import UUID
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    Query,
-    Path,
-    status
-)
-
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-
 from app.schemas.attribute_schema import (
     AttributeCreate,
+    AttributePaginatedResponse,
+    AttributeResponse,
     AttributeUpdate,
-    AttributeResponse
 )
-
+from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.services.attribute_service import (
     create_attribute_service,
+    delete_attribute_service,
+    get_attribute_service,
     get_attributes_service,
     update_attribute_service,
-    delete_attribute_service
 )
 
-router = APIRouter(
-    tags=["Dynamic Attributes"]
-)
+router = APIRouter(tags=["Dynamic Attributes"])
 
 
 @router.post(
@@ -35,78 +27,51 @@ router = APIRouter(
     response_model=AttributeResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create Dynamic Attribute",
-    description="""
-Create a new dynamic attribute for an entity.
-
-Dynamic attributes allow additional custom fields to be associated with:
-- Enterprise
-- Product
-- Service
-
-Example attributes:
-- Color
-- Size
-- Weight
-- Brand
-- Category
-""",
-    responses={
-        201: {"description": "Attribute created successfully"},
-        400: {"description": "Invalid request data"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def create_attribute(
     attribute: AttributeCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    return create_attribute_service(
-        db,
-        attribute
-    )
+    return create_attribute_service(db, attribute)
 
 
 @router.get(
     "",
-    response_model=list[AttributeResponse],
+    response_model=AttributePaginatedResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Dynamic Attributes",
-    description="""
-Retrieve all attributes associated with a specific entity.
-
-Supported entity types:
-- enterprise
-- product
-- service
-
-Returns a list of dynamic attributes attached to the provided entity.
-""",
-    responses={
-        200: {"description": "Attributes retrieved successfully"},
-        404: {"description": "Entity not found"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def get_attributes(
-    entity_type: str = Query(
-        ...,
-        description="Entity type (enterprise, product, service)",
-        example="product"
-    ),
-    entity_id: UUID = Query(
-        ...,
-        description="Unique identifier of the entity",
-        example="550e8400-e29b-41d4-a716-446655440000"
-    ),
-    db: Session = Depends(get_db)
+    tenant_id: UUID | None = Query(None, description="Filter by tenant ID."),
+    entity_type: str | None = Query(None, description="Filter by entity type."),
+    entity_id: UUID | None = Query(None, description="Filter by entity ID."),
+    status_filter: str | None = Query(None, alias="status", description="Filter by status."),
+    page: int = Query(DEFAULT_PAGE, ge=1),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
 ):
     return get_attributes_service(
         db,
-        entity_type,
-        entity_id
+        tenant_id=tenant_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        status_filter=status_filter,
+        page=page,
+        page_size=page_size,
     )
+
+
+@router.get(
+    "/{attribute_id}",
+    response_model=AttributeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get Dynamic Attribute By ID",
+)
+def get_attribute(
+    attribute_id: UUID = Path(..., description="Unique identifier of the attribute"),
+    db: Session = Depends(get_db),
+):
+    return get_attribute_service(db, attribute_id)
 
 
 @router.put(
@@ -114,66 +79,23 @@ def get_attributes(
     response_model=AttributeResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Dynamic Attribute",
-    description="""
-Update an existing dynamic attribute.
-
-Only the provided fields will be updated.
-""",
-    responses={
-        200: {"description": "Attribute updated successfully"},
-        404: {"description": "Attribute not found"},
-        422: {"description": "Validation error"},
-        500: {"description": "Internal server error"}
-    }
 )
 def update_attribute(
-    attribute_id: UUID = Path(
-        ...,
-        description="Unique identifier of the attribute",
-        example="550e8400-e29b-41d4-a716-446655440000"
-    ),
-    attribute: AttributeUpdate = ...,
-    db: Session = Depends(get_db)
+    attribute: AttributeUpdate,
+    attribute_id: UUID = Path(..., description="Unique identifier of the attribute"),
+    db: Session = Depends(get_db),
 ):
-    return update_attribute_service(
-        db,
-        attribute_id,
-        attribute
-    )
+    return update_attribute_service(db, attribute_id, attribute)
 
 
 @router.delete(
     "/{attribute_id}",
     status_code=status.HTTP_200_OK,
     summary="Delete Dynamic Attribute",
-    description="""
-Delete a dynamic attribute using its unique identifier.
-""",
-    responses={
-        200: {
-            "description": "Attribute deleted successfully"
-        },
-        404: {
-            "description": "Attribute not found"
-        },
-        500: {
-            "description": "Internal server error"
-        }
-    }
 )
 def delete_attribute(
-    attribute_id: UUID = Path(
-        ...,
-        description="Unique identifier of the attribute",
-        example="550e8400-e29b-41d4-a716-446655440000"
-    ),
-    db: Session = Depends(get_db)
+    attribute_id: UUID = Path(..., description="Unique identifier of the attribute"),
+    db: Session = Depends(get_db),
 ):
-    delete_attribute_service(
-        db,
-        attribute_id
-    )
-
-    return {
-        "message": "Attribute deleted successfully"
-    }
+    delete_attribute_service(db, attribute_id)
+    return {"message": "Attribute marked inactive successfully"}

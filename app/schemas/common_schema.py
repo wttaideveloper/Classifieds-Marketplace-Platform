@@ -1,8 +1,14 @@
-from typing import Literal
+from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-EnterpriseStatusLabel = Literal["active", "inactive", "pending"]
+EnterpriseStatusLabel = Literal["active", "inactive", "pending", "draft"]
+EntityStatus = Literal["draft", "active", "inactive"]
+LocationStatus = Literal["draft", "active", "inactive"]
+AttributeType = Literal["text", "number", "date", "boolean", "email", "phone", "dropdown"]
+EntityType = Literal["enterprise", "product", "service"]
+
+T = TypeVar("T")
 
 
 class AvailabilityScheduleEntry(BaseModel):
@@ -48,3 +54,22 @@ class ServiceAvailabilityDay(BaseModel):
         description="Time slot ranges for the day.",
         examples=[["09:00-10:00", "10:00-11:00"]],
     )
+
+
+class PaginationMeta(BaseModel):
+    total: int = Field(..., description="Total number of matching records.")
+    page: int = Field(..., description="Current page number (1-based).")
+    page_size: int = Field(..., description="Number of items per page.")
+    total_pages: int = Field(..., description="Total number of pages.")
+
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    model_config = ConfigDict(from_attributes=True)
+
+    items: list[T]
+    pagination: PaginationMeta
+
+
+DEFAULT_PAGE = 1
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
