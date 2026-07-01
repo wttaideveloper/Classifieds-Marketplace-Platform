@@ -25,6 +25,8 @@ class OnboardingForm(Base):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
     entity_type = Column(String(50), nullable=False, index=True)
+    enterprise_type = Column(String(100), nullable=True, index=True)
+    registration_type = Column(String(20), nullable=True, index=True)
     status = Column(String(20), default="draft", nullable=False, index=True)
     published_at = Column(DateTime, nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=False)
