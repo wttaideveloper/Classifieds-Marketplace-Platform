@@ -51,5 +51,38 @@ _safe_include(
     tags=["Onboarding Forms"],
 )
 
+# Chat system
+_safe_include("app.api.v1.endpoints.conversation", prefix="/conversations", tags=["Conversations"])
+_safe_include(
+    "app.api.v1.endpoints.conversation_messages",
+    prefix="/conversations",
+    tags=["Conversations"],
+)
+_safe_include(
+    "app.api.v1.endpoints.typing_indicator",
+    prefix="/conversations",
+    tags=["Typing Indicator"],
+)
+_safe_include("app.api.v1.endpoints.message", prefix="/messages", tags=["Messages"])
+_safe_include("app.api.v1.endpoints.attachment", prefix="/attachments", tags=["Attachments"])
+_safe_include(
+    "app.api.v1.endpoints.chat_notification",
+    prefix="/notifications",
+    tags=["Chat Notifications"],
+)
+_safe_include("app.api.v1.endpoints.device", prefix="/devices", tags=["Devices"])
+_safe_include(
+    "app.api.v1.endpoints.provider_assignment",
+    prefix="/providers",
+    tags=["Provider Assignment"],
+)
+_safe_include(
+    "app.api.v1.endpoints.chat_subscription",
+    prefix="/subscriptions",
+    tags=["Chat Subscriptions"],
+)
+_safe_include("app.api.v1.endpoints.presence", prefix="/presence", tags=["Presence"])
+_safe_include("app.api.v1.endpoints.chat_admin", prefix="/admin/chat", tags=["Chat Administration"])
+
 # System
 _safe_include("app.api.v1.endpoints.system", prefix="", tags=["System"])

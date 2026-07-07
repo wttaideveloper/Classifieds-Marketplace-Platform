@@ -1,13 +1,18 @@
 import logging
 
+import socketio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 
 from app.core.config import settings
 from app.db.database import Base, engine
 from app.api.v1.router import api_router
 from app.exceptions.custom_exception import CustomException
+from app.realtime.server import SOCKETIO_PATH, sio
+
+import app.realtime.events  # noqa: F401, E402 — register Socket.IO handlers
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +57,24 @@ def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 def startup():
-    if not settings.is_production:
-        Base.metadata.create_all(bind=engine)
+    if not settings.is_production and settings.AUTO_CREATE_TABLES:
+        try:
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database connected and tables verified.")
+        except OperationalError:
+            logger.warning(
+                "Database not reachable — start PostgreSQL with: docker compose up -d db"
+            )
 
 
 app.include_router(api_router, prefix="/api/v1")
+
+
+socket_app = socketio.ASGIApp(
+    sio,
+    other_asgi_app=app,
+    socketio_path=SOCKETIO_PATH,
+)
 
 
 @app.get("/health")

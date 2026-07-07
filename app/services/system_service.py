@@ -23,7 +23,7 @@ def health_check_service(db: Session):
 
 def inventory_service():
     return {
-        "total_apis": 41,
+        "total_apis": 71,
         "apis": [
             {"method": "POST", "endpoint": "/api/v1/enterprises", "description": "Create Enterprise"},
             {"method": "GET", "endpoint": "/api/v1/enterprises", "description": "Get Enterprise List"},
@@ -61,6 +61,22 @@ def inventory_service():
             {"method": "PUT", "endpoint": "/api/v1/onboarding-forms/{id}/unpublish", "description": "Unpublish Onboarding Form"},
             {"method": "POST", "endpoint": "/api/v1/onboarding-forms/{id}/duplicate", "description": "Duplicate Onboarding Form"},
             {"method": "DELETE", "endpoint": "/api/v1/onboarding-forms/{id}", "description": "Deactivate Onboarding Form"},
+            {"method": "POST", "endpoint": "/api/v1/conversations", "description": "Create/Open Conversation"},
+            {"method": "GET", "endpoint": "/api/v1/conversations", "description": "List User Conversations"},
+            {"method": "GET", "endpoint": "/api/v1/conversations/{id}", "description": "Get Conversation Details"},
+            {"method": "PATCH", "endpoint": "/api/v1/conversations/{id}/close", "description": "Close Conversation"},
+            {"method": "POST", "endpoint": "/api/v1/messages", "description": "Send Message"},
+            {"method": "GET", "endpoint": "/api/v1/conversations/{id}/messages", "description": "Get Messages"},
+            {"method": "PATCH", "endpoint": "/api/v1/messages/{id}/read", "description": "Mark Message Read"},
+            {"method": "GET", "endpoint": "/api/v1/messages/search", "description": "Search Messages"},
+            {"method": "POST", "endpoint": "/api/v1/attachments/upload", "description": "Upload Attachment"},
+            {"method": "GET", "endpoint": "/api/v1/attachments/{id}", "description": "Get/Download Attachment"},
+            {"method": "DELETE", "endpoint": "/api/v1/attachments/{id}", "description": "Delete Attachment"},
+            {"method": "POST", "endpoint": "/api/v1/providers/assign", "description": "Assign Provider"},
+            {"method": "GET", "endpoint": "/api/v1/notifications/unread-count", "description": "Unread Count"},
+            {"method": "POST", "endpoint": "/api/v1/devices/register", "description": "Register Device Token"},
+            {"method": "GET", "endpoint": "/api/v1/subscriptions/chat-eligibility", "description": "Validate Chat Access"},
+            {"method": "WS", "endpoint": "/socket.io", "description": "Socket.IO Real-time Chat (join_room, send_message, typing, mark_read)"},
             {"method": "GET", "endpoint": "/api/v1/health", "description": "Health Check"},
             {"method": "GET", "endpoint": "/api/v1/inventory", "description": "API Inventory"},
         ]

@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     # send email
     email_user: str
     email_pass: str
+    # Chat file uploads
+    UPLOAD_DIR: str = "uploads"
+    MAX_IMAGE_SIZE_MB: int = 10
+    MAX_DOCUMENT_SIZE_MB: int = 25
+    MAX_AUDIO_SIZE_MB: int = 25
+    MAX_VIDEO_SIZE_MB: int = 100
 
     class Config:
         env_file = ".env"
