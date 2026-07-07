@@ -5,6 +5,14 @@ from jose import JWTError, jwt
 from app.core.config import settings
 
 
+def get_dev_user() -> dict:
+    return {
+        "id": settings.DEV_DEFAULT_USER_ID,
+        "role": settings.DEV_DEFAULT_USER_ROLE,
+        "email": "dev@localhost",
+    }
+
+
 def authenticate_token(token: str | None) -> dict | None:
     if not token:
         return None

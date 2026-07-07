@@ -82,7 +82,10 @@ _safe_include(
     tags=["Chat Subscriptions"],
 )
 _safe_include("app.api.v1.endpoints.presence", prefix="/presence", tags=["Presence"])
+_safe_include("app.api.v1.endpoints.socket_io", prefix="/socket-io", tags=["Socket.IO"])
 _safe_include("app.api.v1.endpoints.chat_admin", prefix="/admin/chat", tags=["Chat Administration"])
 
 # System
-_safe_include("app.api.v1.endpoints.system", prefix="", tags=["System"])
+_safe_include("app.api.v1.endpoints.auth", prefix="/auth", tags=["Authentication"])
+
+# System

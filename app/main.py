@@ -16,9 +16,18 @@ import app.realtime.events  # noqa: F401, E402 — register Socket.IO handlers
 
 logger = logging.getLogger(__name__)
 
+_API_DESCRIPTION = """
+**Development mode:** Auth is optional. Chat and Socket.IO endpoints work without a token.
+
+Default dev user: `550e8400-e29b-41d4-a716-446655440000` (admin role).
+
+Use the **Socket.IO** tag to test real-time events from Swagger, or connect live at `/socket.io`.
+"""
+
 app = FastAPI(
     title="Classifieds Marketplace Platform API",
     version="1.0.0",
+    description=_API_DESCRIPTION,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",

@@ -3,8 +3,9 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.core.config import settings
 from app.db.database import SessionLocal
-from app.realtime.auth import authenticate_token, extract_token_from_environ
+from app.realtime.auth import authenticate_token, extract_token_from_environ, get_dev_user
 from app.realtime.emitters import (
     emit_conversation_updated,
     emit_message_read,
@@ -16,14 +17,14 @@ from app.realtime.emitters import (
 )
 from app.realtime.rooms import conversation_room, serialize, user_room
 from app.realtime.server import sio
-from app.repository import chat_repo as chat_repo
 from app.schemas.chat_schema import MessageCreate
-from app.services.chat_service import (
-    mark_conversation_read_service,
-    mark_message_read_service,
-    send_message_service,
-    update_presence_service,
-    update_typing_service,
+from app.services.chat_service import update_presence_service
+from app.services.socket_io_service import (
+    process_mark_read,
+    process_send_message,
+    process_typing,
+    validate_join_room,
+    validate_leave_room,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,9 @@ async def connect(sid, environ, auth):
     token = extract_token_from_environ(environ, auth)
     user = authenticate_token(token)
     if not user:
-        return False
+        if settings.is_production:
+            return False
+        user = get_dev_user()
 
     await sio.save_session(sid, {"user": user})
     await sio.enter_room(sid, user_room(user["id"]))
@@ -106,16 +109,9 @@ async def join_room(sid, data, db, user):
         return
 
     conv_id = UUID(str(conversation_id))
-    if not chat_repo.is_participant(db, conv_id, UUID(user["id"])):
-        await _emit_error(sid, "join_room", "Not authorized to join this conversation")
-        return
-
+    result = validate_join_room(db, user, conv_id)
     await sio.enter_room(sid, conversation_room(conv_id))
-    await sio.emit(
-        "joined_room",
-        serialize({"conversation_id": str(conv_id)}),
-        to=sid,
-    )
+    await sio.emit("joined_room", serialize(result), to=sid)
 
 
 @sio.on("leave_room")
@@ -127,12 +123,9 @@ async def leave_room(sid, data, db, user):
         return
 
     conv_id = UUID(str(conversation_id))
+    result = validate_leave_room(db, user, conv_id)
     await sio.leave_room(sid, conversation_room(conv_id))
-    await sio.emit(
-        "left_room",
-        serialize({"conversation_id": str(conv_id)}),
-        to=sid,
-    )
+    await sio.emit("left_room", serialize(result), to=sid)
 
 
 @sio.on("send_message")
@@ -144,24 +137,16 @@ async def send_message(sid, data, db, user):
         return
 
     conv_id = UUID(str(conversation_id))
-    payload = MessageCreate(
-        conversation_id=conv_id,
-        content=data.get("content"),
-        message_type=data.get("message_type", "text"),
-        attachment_id=UUID(str(data["attachment_id"])) if data.get("attachment_id") else None,
+    message_data, conversation_data = process_send_message(
+        db,
+        user,
+        MessageCreate(
+            conversation_id=conv_id,
+            content=data.get("content"),
+            message_type=data.get("message_type", "text"),
+            attachment_id=UUID(str(data["attachment_id"])) if data.get("attachment_id") else None,
+        ),
     )
-
-    message = send_message_service(db, user, payload)
-    message_data = serialize(message)
-
-    conversation = chat_repo.get_conversation_by_id(db, conv_id)
-    conversation_data = serialize({
-        "id": conversation.id,
-        "status": conversation.status,
-        "last_message_at": conversation.last_message_at,
-        "last_message_preview": conversation.last_message_preview,
-        "updated_at": conversation.updated_at,
-    })
 
     await emit_new_message(conv_id, message_data)
     await emit_conversation_updated(conv_id, conversation_data)
@@ -170,9 +155,8 @@ async def send_message(sid, data, db, user):
         conv_id,
         user["id"],
         message_data,
-        conversation.last_message_preview or "",
+        conversation_data.get("last_message_preview") or "",
     )
-
     return message_data
 
 
@@ -185,7 +169,7 @@ async def typing_start(sid, data, db, user):
         return
 
     conv_id = UUID(str(conversation_id))
-    update_typing_service(db, user, conv_id, True)
+    process_typing(db, user, conv_id, True)
     await emit_typing(conv_id, user["id"], True, skip_sid=sid)
 
 
@@ -198,7 +182,7 @@ async def typing_stop(sid, data, db, user):
         return
 
     conv_id = UUID(str(conversation_id))
-    update_typing_service(db, user, conv_id, False)
+    process_typing(db, user, conv_id, False)
     await emit_typing(conv_id, user["id"], False, skip_sid=sid)
 
 
@@ -208,23 +192,11 @@ async def mark_read(sid, data, db, user):
     message_id = data.get("message_id")
     conversation_id = data.get("conversation_id")
 
-    if message_id:
-        msg_id = UUID(str(message_id))
-        message = chat_repo.get_message_by_id(db, msg_id)
-        if not message:
-            await _emit_error(sid, "mark_read", "Message not found")
-            return
-
-        receipt = mark_message_read_service(db, user, msg_id)
-        read_payload = serialize(receipt.model_dump())
-        await emit_message_read(message.conversation_id, read_payload, skip_sid=sid)
-        return read_payload
-
-    if conversation_id:
-        conv_id = UUID(str(conversation_id))
-        result = mark_conversation_read_service(db, user, conv_id)
-        read_payload = serialize(result)
-        await emit_message_read(conv_id, read_payload, skip_sid=sid)
-        return read_payload
-
-    await _emit_error(sid, "mark_read", "message_id or conversation_id is required")
+    read_data, conv_id = process_mark_read(
+        db,
+        user,
+        message_id=UUID(str(message_id)) if message_id else None,
+        conversation_id=UUID(str(conversation_id)) if conversation_id else None,
+    )
+    await emit_message_read(conv_id, read_data, skip_sid=sid)
+    return read_data
