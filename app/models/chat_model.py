@@ -103,6 +103,8 @@ class Message(Base):
     attachment_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False)
     deleted_at = Column(DateTime, nullable=True)
+    is_edited = Column(Boolean, default=False, nullable=False)
+    edited_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(
         DateTime,

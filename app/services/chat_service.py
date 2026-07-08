@@ -23,6 +23,7 @@ from app.schemas.chat_schema import (
     MessageReadResponse,
     MessageReadStatusResponse,
     MessageResponse,
+    MessageUpdate,
     MonthlyLimitResponse,
     OnlineUsersResponse,
     ParticipantResponse,
@@ -41,6 +42,7 @@ def _map_conversation_detail(db: Session, conversation: Conversation, user_id: U
     unread = chat_repo.count_unread_messages(
         db, conversation.id, user_id, participant.last_read_at if participant else None
     )
+    preview, preview_at = chat_repo.resolve_conversation_preview(db, conversation)
     return {
         "id": conversation.id,
         "tenant_id": conversation.tenant_id,
@@ -52,8 +54,8 @@ def _map_conversation_detail(db: Session, conversation: Conversation, user_id: U
         "context_id": conversation.context_id,
         "assigned_provider_id": conversation.assigned_provider_id,
         "expires_at": conversation.expires_at,
-        "last_message_at": conversation.last_message_at,
-        "last_message_preview": conversation.last_message_preview,
+        "last_message_at": preview_at,
+        "last_message_preview": preview,
         "created_by": conversation.created_by,
         "unread_count": unread,
         "participants": [
@@ -65,18 +67,30 @@ def _map_conversation_detail(db: Session, conversation: Conversation, user_id: U
     }
 
 
-def _map_conversation_list_item(db: Session, conversation: Conversation, user_id: UUID) -> dict:
+def _map_conversation_list_item(
+    db: Session,
+    conversation: Conversation,
+    user_id: UUID,
+    *,
+    latest_messages: dict | None = None,
+) -> dict:
     participant = chat_repo.get_participant(db, conversation.id, user_id)
     unread = chat_repo.count_unread_messages(
         db, conversation.id, user_id, participant.last_read_at if participant else None
     )
+    latest = (latest_messages or {}).get(conversation.id)
+    if latest is not None:
+        preview = chat_repo.message_list_preview(latest)
+        preview_at = latest.created_at
+    else:
+        preview, preview_at = chat_repo.resolve_conversation_preview(db, conversation)
     return {
         "id": conversation.id,
         "status": conversation.status,
         "conversation_type": conversation.conversation_type,
         "subject": conversation.subject,
-        "last_message_at": conversation.last_message_at,
-        "last_message_preview": conversation.last_message_preview,
+        "last_message_at": preview_at,
+        "last_message_preview": preview,
         "unread_count": unread,
         "assigned_provider_id": conversation.assigned_provider_id,
         "updated_at": conversation.updated_at,
@@ -169,10 +183,13 @@ def list_conversations_service(
     items, total = chat_repo.get_user_conversations(
         db, user_id, status=status_filter, search=search, page=page, page_size=page_size
     )
+    latest_messages = chat_repo.get_latest_messages_for_conversations(
+        db, [item.id for item in items]
+    )
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
-                _map_conversation_list_item(db, item, user_id)
+                _map_conversation_list_item(db, item, user_id, latest_messages=latest_messages)
             )
             for item in items
         ],
@@ -192,10 +209,13 @@ def list_provider_conversations_service(
     items, total = chat_repo.get_provider_conversations(
         db, user_id, status=status_filter, page=page, page_size=page_size
     )
+    latest_messages = chat_repo.get_latest_messages_for_conversations(
+        db, [item.id for item in items]
+    )
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
-                _map_conversation_list_item(db, item, user_id)
+                _map_conversation_list_item(db, item, user_id, latest_messages=latest_messages)
             )
             for item in items
         ],
@@ -262,10 +282,13 @@ def search_conversations_service(
     items, total = chat_repo.search_conversations(
         db, user_id, search=search, provider_id=provider_id, page=page, page_size=page_size
     )
+    latest_messages = chat_repo.get_latest_messages_for_conversations(
+        db, [item.id for item in items]
+    )
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
-                _map_conversation_list_item(db, item, user_id)
+                _map_conversation_list_item(db, item, user_id, latest_messages=latest_messages)
             )
             for item in items
         ],
@@ -352,6 +375,8 @@ def _map_message(db: Session, message) -> dict:
         "message_type": message.message_type,
         "attachment_id": message.attachment_id,
         "is_deleted": message.is_deleted,
+        "is_edited": bool(getattr(message, "is_edited", False)),
+        "edited_at": getattr(message, "edited_at", None),
         "created_at": message.created_at,
         "read_by": [r.user_id for r in receipts],
     }
@@ -419,6 +444,27 @@ def delete_message_service(db: Session, current_user: dict, message_id: UUID):
         is_deleted=message.is_deleted,
         deleted_at=message.deleted_at,
     )
+
+
+def edit_message_service(db: Session, current_user: dict, message_id: UUID, content: str):
+    user_id = _parse_user_id(current_user)
+    message = chat_repo.get_message_by_id(db, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if message.sender_id != user_id and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized to edit this message")
+    if message.is_deleted:
+        raise HTTPException(status_code=400, detail="Deleted messages cannot be edited")
+    if message.message_type != "text":
+        raise HTTPException(status_code=400, detail="Only text messages can be edited")
+
+    message = chat_repo.update_message(db, message, content=content.strip())
+
+    latest = chat_repo.get_latest_conversation_message(db, message.conversation_id)
+    if latest and latest.id == message.id:
+        chat_repo.sync_conversation_last_message(db, message.conversation_id)
+
+    return _map_message(db, message)
 
 
 def search_messages_service(

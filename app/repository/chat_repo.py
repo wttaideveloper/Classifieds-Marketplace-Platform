@@ -26,7 +26,7 @@ from app.repository.query_utils import (
     paginate_query,
 )
 
-DELETED_MESSAGE_PREVIEW = "This message was deleted"
+DELETED_MESSAGE_PREVIEW = "deleted this message"
 
 
 def _uuid(value) -> UUID:
@@ -53,6 +53,32 @@ def get_latest_conversation_message(
         .order_by(Message.created_at.desc(), Message.id.desc())
         .first()
     )
+
+
+def resolve_conversation_preview(
+    db: Session,
+    conversation: Conversation,
+) -> tuple[str | None, datetime | None]:
+    """Derive preview from the latest message (handles deleted/stale stored previews)."""
+    latest = get_latest_conversation_message(db, conversation.id)
+    if latest:
+        return message_list_preview(latest), latest.created_at
+    return conversation.last_message_preview, conversation.last_message_at
+
+
+def get_latest_messages_for_conversations(
+    db: Session,
+    conversation_ids: list[UUID],
+) -> dict[UUID, Message]:
+    if not conversation_ids:
+        return {}
+
+    latest_by_conversation: dict[UUID, Message] = {}
+    for conversation_id in conversation_ids:
+        message = get_latest_conversation_message(db, conversation_id)
+        if message:
+            latest_by_conversation[conversation_id] = message
+    return latest_by_conversation
 
 
 def sync_conversation_last_message(db: Session, conversation_id: UUID) -> Conversation | None:
@@ -393,6 +419,16 @@ def get_message_read_receipts(
 def soft_delete_message(db: Session, message: Message) -> Message:
     message.is_deleted = True
     message.deleted_at = datetime.utcnow()
+    db.commit()
+    db.refresh(message)
+    return message
+
+
+def update_message(db: Session, message: Message, *, content: str) -> Message:
+    message.content = content
+    message.is_edited = True
+    message.edited_at = datetime.utcnow()
+    message.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(message)
     return message

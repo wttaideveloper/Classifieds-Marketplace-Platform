@@ -17,6 +17,7 @@ from app.schemas.socket_schema import (
     CLIENT_EVENTS_CATALOG,
     SERVER_EVENTS_CATALOG,
     ServerEventsCatalogResponse,
+    SocketAuthInfo,
     SocketConversationRequest,
     SocketEventResult,
     SocketJoinRoomResponse,
@@ -24,6 +25,7 @@ from app.schemas.socket_schema import (
     SocketMarkReadRequest,
     SocketSendMessageRequest,
     SocketTypingRequest,
+    build_events_catalog_swagger_example,
 )
 from app.services.socket_connection_service import build_socket_connection_info
 from app.services.socket_io_service import (
@@ -63,6 +65,16 @@ def get_socket_connection_info():
     response_model=ServerEventsCatalogResponse,
     summary="Socket.IO Events Catalog",
     description="Full reference of client and server Socket.IO events with payload shapes.",
+    responses={
+        200: {
+            "description": "Successful Response",
+            "content": {
+                "application/json": {
+                    "example": build_events_catalog_swagger_example(),
+                }
+            },
+        }
+    },
 )
 def get_socket_events_catalog():
     connection = build_socket_connection_info()
@@ -70,7 +82,7 @@ def get_socket_events_catalog():
         connection_url=connection["connection_url"],
         connection_path=connection["connection_path"],
         polling_test_url=connection["polling_test_url"],
-        auth=connection["auth"],
+        auth=SocketAuthInfo.model_validate(connection["auth"]),
         deployment_notes=connection["deployment_notes"],
         client_events=CLIENT_EVENTS_CATALOG,
         server_events=SERVER_EVENTS_CATALOG,

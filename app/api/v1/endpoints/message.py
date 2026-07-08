@@ -13,9 +13,11 @@ from app.schemas.chat_schema import (
     MessageReadResponse,
     MessageReadStatusResponse,
     MessageResponse,
+    MessageUpdate,
 )
 from app.services.chat_service import (
     delete_message_service,
+    edit_message_service,
     get_messages_service,
     get_read_status_service,
     mark_conversation_read_service,
@@ -96,6 +98,25 @@ def get_read_status(
     return get_read_status_service(db, current_user, message_id)
 
 
+@router.patch(
+    "/{message_id}",
+    response_model=MessageResponse,
+    summary="Edit Message",
+    description=(
+        "Edit a text message. Only the sender or admin can edit. "
+        "Deleted messages cannot be edited. If the edited message is the latest, "
+        "conversation last_message_preview is updated."
+    ),
+)
+def edit_message(
+    message_id: UUID = Path(...),
+    payload: MessageUpdate = Body(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return edit_message_service(db, current_user, message_id, payload.content)
+
+
 @router.delete(
     "/{message_id}",
     response_model=MessageDeleteResponse,
@@ -104,7 +125,7 @@ def get_read_status(
         "Soft-delete a message (sets is_deleted=true). Deleted messages remain in "
         "GET /conversations/{id}/messages with is_deleted=true. If the deleted message "
         "was the latest, conversation last_message_preview becomes "
-        "'This message was deleted'. Only the sender or admin can delete."
+        "'deleted this message'. Only the sender or admin can delete."
     ),
 )
 def delete_message(

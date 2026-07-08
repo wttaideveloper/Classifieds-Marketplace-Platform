@@ -142,6 +142,18 @@ class MessageCreate(BaseModel):
     attachment_id: UUID | None = Field(None, description="Pre-uploaded attachment ID.")
 
 
+class MessageUpdate(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "content": "Updated message text.",
+            }
+        }
+    )
+
+    content: str = Field(..., min_length=1, description="New message text.")
+
+
 class MessageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -152,6 +164,8 @@ class MessageResponse(BaseModel):
     message_type: MessageType
     attachment_id: UUID | None = None
     is_deleted: bool
+    is_edited: bool = False
+    edited_at: datetime | None = None
     created_at: datetime
     read_by: list[UUID] = Field(default_factory=list)
 
