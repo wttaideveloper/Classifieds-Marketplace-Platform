@@ -17,7 +17,7 @@ RUN pip install --upgrade pip \
 COPY . .
 
 RUN addgroup --system app && adduser --system --ingroup app app \
-    && chmod +x /app/scripts/entrypoint.sh \
+    && chmod +x /app/scripts/*.sh \
     && chown -R app:app /app
 
 USER app
