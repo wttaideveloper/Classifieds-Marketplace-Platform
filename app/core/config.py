@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     SOCKETIO_PATH: str = "/socket.io"
     SOCKETIO_STANDALONE: bool = False
     PUBLIC_API_BASE_URL: str = ""
+    # Optional Redis URL for Socket.IO when WEB_CONCURRENCY > 1 (e.g. redis://localhost:6379/0)
+    SOCKETIO_REDIS_URL: str = ""
+    # Gunicorn workers. Use 1 unless SOCKETIO_REDIS_URL is set (sessions are in-memory per worker).
+    WEB_CONCURRENCY: int = 1
 
     class Config:
         env_file = ".env"
@@ -59,6 +63,16 @@ class Settings(BaseSettings):
             self.SOCKETIO_PATH = "/api/socket.io"
         else:
             self.SOCKETIO_PATH = self.normalize_socketio_path(self.SOCKETIO_PATH)
+        return self
+
+    @model_validator(mode="after")
+    def validate_socketio_worker_config(self):
+        if self.WEB_CONCURRENCY > 1 and not self.SOCKETIO_REDIS_URL.strip():
+            raise ValueError(
+                "WEB_CONCURRENCY > 1 requires SOCKETIO_REDIS_URL — Engine.IO sessions "
+                "are stored in memory per worker; without Redis, polling POST returns 400 "
+                "'Invalid session' when requests hit different workers."
+            )
         return self
 
     @model_validator(mode="after")

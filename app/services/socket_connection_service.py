@@ -15,6 +15,21 @@ def build_socket_connection_info() -> dict:
         f"Configured SOCKETIO_PATH={path}",
     ]
 
+    if settings.WEB_CONCURRENCY > 1:
+        if settings.SOCKETIO_REDIS_URL.strip():
+            notes.append(
+                f"Multi-worker ({settings.WEB_CONCURRENCY}) with Redis session sharing enabled."
+            )
+        else:
+            notes.append(
+                "WARNING: WEB_CONCURRENCY > 1 without SOCKETIO_REDIS_URL causes polling POST 400 "
+                "('Invalid session'). Use WEB_CONCURRENCY=1 or set SOCKETIO_REDIS_URL."
+            )
+    else:
+        notes.append(
+            "WEB_CONCURRENCY=1 (required for in-memory Engine.IO sessions without Redis)."
+        )
+
     if path == "/api/socket.io":
         notes.append(
             "Production uses /api/socket.io because only /api/* is proxied to the backend."

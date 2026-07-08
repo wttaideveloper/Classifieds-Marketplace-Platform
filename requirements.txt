@@ -13,3 +13,4 @@ psycopg2-binary
 alembic
 gunicorn
 python-socketio
+redis
