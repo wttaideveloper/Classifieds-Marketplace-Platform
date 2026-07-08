@@ -1,7 +1,11 @@
+from pathlib import Path
 from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+# Project root (directory that contains `app/`), independent of process CWD.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -22,7 +26,8 @@ class Settings(BaseSettings):
     # send email
     email_user: str
     email_pass: str
-    # Chat file uploads
+    # Chat file uploads — relative paths resolve under the project root (e.g. /app/uploads in Docker).
+    # Override with an absolute path when mounting a host volume (e.g. UPLOAD_DIR=/app/uploads).
     UPLOAD_DIR: str = "uploads"
     MAX_IMAGE_SIZE_MB: int = 10
     MAX_DOCUMENT_SIZE_MB: int = 25
@@ -100,6 +105,14 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
+
+    @property
+    def upload_dir_path(self) -> Path:
+        """Absolute path where chat attachments are stored (always writable target for the app)."""
+        path = Path(self.UPLOAD_DIR)
+        if not path.is_absolute():
+            path = _PROJECT_ROOT / path
+        return path.resolve()
 
     @property
     def cors_origins_list(self) -> list[str]:

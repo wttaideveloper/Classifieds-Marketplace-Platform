@@ -1,7 +1,6 @@
 import mimetypes
 import os
 import uuid
-from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -9,7 +8,7 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.chat_model import ChatAttachment, Conversation, ConversationParticipant, Message
+from app.models.chat_model import ChatAttachment
 from app.repository import chat_repo as chat_repo
 
 ALLOWED_MIME_TYPES: dict[str, set[str]] = {
@@ -53,6 +52,37 @@ def _detect_attachment_type(mime_type: str) -> str | None:
     return None
 
 
+def _resolved_upload_subdir(conversation_id: UUID) -> Path:
+    """Return a conversation upload path that stays under the configured upload root."""
+    base = settings.upload_dir_path
+    upload_dir = (base / str(conversation_id)).resolve()
+    try:
+        upload_dir.relative_to(base)
+    except ValueError as exc:
+        raise OSError("Resolved upload path escapes the configured UPLOAD_DIR") from exc
+    return upload_dir
+
+
+def _store_upload_file(conversation_id: UUID, file: UploadFile, content: bytes) -> tuple[str, Path]:
+    """Create the upload directory and write the file. Raises OSError on filesystem failures."""
+    upload_dir = _resolved_upload_subdir(conversation_id)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # Basename only — strip any client-supplied directory components.
+    safe_name = Path(file.filename or "upload").name or "upload"
+    stored_name = f"{uuid.uuid4()}_{safe_name}"
+    file_path = (upload_dir / stored_name).resolve()
+    try:
+        file_path.relative_to(upload_dir)
+    except ValueError as exc:
+        raise OSError("Resolved file path escapes the conversation upload directory") from exc
+
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    return safe_name, file_path
+
+
 def upload_attachment_service(
     db: Session,
     current_user: dict,
@@ -88,15 +118,7 @@ def upload_attachment_service(
             detail=f"File exceeds maximum size of {max_size // (1024 * 1024)}MB for {detected_type}",
         )
 
-    upload_dir = Path(settings.UPLOAD_DIR) / str(conversation_id)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
-    safe_name = file.filename or "upload"
-    stored_name = f"{uuid.uuid4()}_{safe_name}"
-    file_path = upload_dir / stored_name
-
-    with open(file_path, "wb") as f:
-        f.write(content)
+    safe_name, file_path = _store_upload_file(conversation_id, file, content)
 
     attachment = ChatAttachment(
         conversation_id=conversation_id,

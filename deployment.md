@@ -99,11 +99,17 @@ sudo apt install -y docker.io nginx certbot python3-certbot-nginx
 sudo usermod -aG docker $USER
 ```
 
-Create upload directory:
+Create upload directory (host bind mount for `/app/uploads` in the container):
 
 ```bash
 sudo mkdir -p /data/uploads
 sudo chown -R 1000:1000 /data/uploads
+```
+
+Set in `.env` (never use a host home path such as `/home/ubuntu/...` inside the container):
+
+```env
+UPLOAD_DIR=/app/uploads
 ```
 
 ## 7. Nginx reverse proxy

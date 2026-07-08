@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
@@ -26,6 +26,20 @@ router = APIRouter(tags=["Attachments"])
         "Upload an image, document, audio, or video file. "
         "Validates file type, size, and user permissions."
     ),
+    responses={
+        500: {
+            "description": "Filesystem / storage failure",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": False,
+                        "message": "Failed to upload attachment",
+                        "detail": "Permission denied",
+                    }
+                }
+            },
+        }
+    },
 )
 async def upload_attachment(
     conversation_id: UUID = Form(..., description="Conversation to attach the file to."),
@@ -37,13 +51,23 @@ async def upload_attachment(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return upload_attachment_service(
-        db,
-        current_user,
-        conversation_id=conversation_id,
-        file=file,
-        attachment_type=attachment_type,
-    )
+    try:
+        return upload_attachment_service(
+            db,
+            current_user,
+            conversation_id=conversation_id,
+            file=file,
+            attachment_type=attachment_type,
+        )
+    except OSError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "success": False,
+                "message": "Failed to upload attachment",
+                "detail": str(exc),
+            },
+        )
 
 
 @router.get(
