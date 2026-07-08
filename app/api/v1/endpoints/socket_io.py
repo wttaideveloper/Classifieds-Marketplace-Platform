@@ -25,6 +25,7 @@ from app.schemas.socket_schema import (
     SocketSendMessageRequest,
     SocketTypingRequest,
 )
+from app.services.socket_connection_service import build_socket_connection_info
 from app.services.socket_io_service import (
     process_mark_read,
     process_send_message,
@@ -37,13 +38,28 @@ router = APIRouter(tags=["Socket.IO"])
 
 
 @router.get(
+    "/connection-info",
+    summary="Socket.IO connection info",
+    description="Deployment diagnostics: base URL, path, and polling probe URL.",
+)
+def get_socket_connection_info():
+    return build_socket_connection_info()
+
+
+@router.get(
     "/events",
     response_model=ServerEventsCatalogResponse,
     summary="Socket.IO Events Catalog",
     description="Full reference of client and server Socket.IO events with payload shapes.",
 )
 def get_socket_events_catalog():
+    connection = build_socket_connection_info()
     return ServerEventsCatalogResponse(
+        connection_url=connection["connection_url"],
+        connection_path=connection["connection_path"],
+        polling_test_url=connection["polling_test_url"],
+        auth=connection["auth"],
+        deployment_notes=connection["deployment_notes"],
         client_events=CLIENT_EVENTS_CATALOG,
         server_events=SERVER_EVENTS_CATALOG,
     )

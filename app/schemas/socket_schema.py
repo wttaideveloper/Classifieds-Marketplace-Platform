@@ -22,8 +22,8 @@ class SocketJoinRoomResponse(BaseModel):
     room: str = Field(..., description="Socket.IO room name used by join_room.")
     authorized: bool = True
     note: str = (
-        "Authorization verified. Connect via Socket.IO at /socket.io and emit "
-        "`join_room` with the same payload to join the live room."
+        "Authorization verified. Connect via Socket.IO using the path from "
+        "GET /api/v1/socket-io/events (`connection_path`) and emit `join_room`."
     )
 
 
@@ -91,13 +91,25 @@ class ServerEventSchema(BaseModel):
 
 
 class ServerEventsCatalogResponse(BaseModel):
-    connection_url: str = "/socket.io"
+    connection_url: str = Field(
+        ...,
+        description="Public base URL for Socket.IO (no trailing slash).",
+    )
+    connection_path: str = Field(
+        ...,
+        description="Socket.IO path passed to the client `path` option.",
+    )
+    polling_test_url: str = Field(
+        ...,
+        description="Engine.IO polling probe URL for deployment verification.",
+    )
     auth: dict = Field(
         default_factory=lambda: {
             "type": "JWT Bearer",
-            "connect": 'io(url, { auth: { token: "<JWT access token>" } })',
+            "connect": 'io(url, { path: "<connection_path>", auth: { token: "<JWT>" } })',
         }
     )
+    deployment_notes: list[str] = Field(default_factory=list)
     client_events: list[ServerEventSchema]
     server_events: list[ServerEventSchema]
 

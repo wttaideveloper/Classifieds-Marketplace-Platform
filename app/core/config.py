@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     DEV_DEFAULT_USER_ROLE: str = "admin"
     # Allow /auth/dev-token on staging/production test servers
     ENABLE_DEV_TOKEN: bool = False
+    # Socket.IO mount path. Use /api/socket.io when nginx/frontend only proxies /api to the API.
+    SOCKETIO_PATH: str = "/socket.io"
+    PUBLIC_API_BASE_URL: str = ""
 
     class Config:
         env_file = ".env"

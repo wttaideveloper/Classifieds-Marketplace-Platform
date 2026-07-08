@@ -1,0 +1,51 @@
+# Nginx snippet when frontend (Next.js) and API share the same domain.
+# Only /api/* is proxied to the backend today — Socket.IO must use SOCKETIO_PATH=/api/socket.io
+# OR add the /socket.io block below.
+
+upstream marketplace_api {
+    server 127.0.0.1:8000;
+}
+
+server {
+    listen 80;
+    server_name 13.207.85.164;
+
+    # REST API (already working)
+    location /api/ {
+        proxy_pass http://marketplace_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Option A (recommended for current setup): mount Socket.IO under /api in backend .env
+    #   SOCKETIO_PATH=/api/socket.io
+    # Frontend: io("http://13.207.85.164", { path: "/api/socket.io", auth: { token } })
+    # No extra nginx block needed — covered by location /api/ above.
+
+    # Option B: keep SOCKETIO_PATH=/socket.io and proxy WebSocket separately
+    location /socket.io/ {
+        proxy_pass http://marketplace_api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+
+    # Next.js frontend — must be AFTER /api/ and /socket.io/
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

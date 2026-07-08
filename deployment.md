@@ -108,7 +108,33 @@ sudo chown -R 1000:1000 /data/uploads
 
 ## 7. Nginx reverse proxy
 
-`/etc/nginx/sites-available/marketplace-api`:
+See `deploy/nginx-marketplace.conf.example` for a combined frontend + API + Socket.IO setup.
+
+**Important:** If only `/api/*` is proxied to the backend (common with Next.js on the same domain),
+set in production `.env`:
+
+```env
+SOCKETIO_PATH=/api/socket.io
+PUBLIC_API_BASE_URL=http://13.207.85.164
+```
+
+Frontend Socket.IO client:
+
+```javascript
+io("http://13.207.85.164", {
+  path: "/api/socket.io",
+  auth: { token: "<JWT>" },
+});
+```
+
+Verify deployment:
+
+```bash
+curl "http://13.207.85.164/api/socket.io?EIO=4&transport=polling"
+# Expected: Engine.IO open packet (starts with 0{...}), NOT a Next.js 404 page
+```
+
+`/etc/nginx/sites-available/marketplace-api` (API-only subdomain example):
 
 ```nginx
 server {
@@ -117,13 +143,21 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
     }
 }
 ```
+
+With API-only nginx, keep `SOCKETIO_PATH=/socket.io`.
+
+Ensure Gunicorn serves **`app.main:socket_app`** (not `app.main:app`). The Docker entrypoint already does this.
 
 Enable and test:
 
@@ -189,7 +223,7 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
 alembic upgrade head
-uvicorn app.main:app --reload
+uvicorn app.main:socket_app --reload
 ```
 
 With `ENVIRONMENT=development`, tables are auto-created on startup if migrations have not been applied yet.

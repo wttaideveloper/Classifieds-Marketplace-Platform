@@ -24,7 +24,10 @@ def test_socket_events_catalog():
     body = response.json()
     assert len(body["client_events"]) == 6
     assert len(body["server_events"]) == 8
-    assert body["connection_url"] == "/socket.io"
+    assert "connection_url" in body
+    assert "connection_path" in body
+    assert "polling_test_url" in body
+    assert body["connection_path"].startswith("/")
 
 
 @patch("app.api.v1.endpoints.socket_io.validate_join_room")
