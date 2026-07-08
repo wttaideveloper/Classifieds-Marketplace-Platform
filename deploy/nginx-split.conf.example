@@ -1,0 +1,50 @@
+# Nginx — split API (8000, multi-worker) + Socket.IO (8001, single worker)
+# Combined single-port deploy: proxy all /api/ to 8000 with SOCKET_WORKERS=1 only.
+
+upstream marketplace_api {
+    server 127.0.0.1:8000;
+}
+
+upstream marketplace_socket {
+    server 127.0.0.1:8001;
+}
+
+server {
+    listen 80;
+    server_name 13.207.85.164;
+
+    # Socket.IO — dedicated single-worker process (required for polling)
+    location /api/socket.io {
+        proxy_pass http://marketplace_socket;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+
+    # REST API — can use multiple Gunicorn workers
+    location /api/ {
+        proxy_pass http://marketplace_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+    }
+}
+
+# COMBINED MODE (simpler): one process on :8000, SOCKET_WORKERS=1
+#   location /api/ { proxy_pass http://127.0.0.1:8000; ... }
+# Do NOT run WEB_CONCURRENCY=4 on combined socket_app — polling will fail.

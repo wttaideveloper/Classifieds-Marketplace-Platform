@@ -21,23 +21,21 @@ def ping_redis(redis_url: str) -> bool:
 def build_client_manager() -> socketio.AsyncRedisManager | None:
     redis_url = settings.SOCKETIO_REDIS_URL.strip()
     if not redis_url:
-        if settings.WEB_CONCURRENCY > 1:
-            raise RuntimeError(
-                "WEB_CONCURRENCY > 1 requires SOCKETIO_REDIS_URL for shared Socket.IO sessions"
-            )
-        logger.info("Socket.IO using in-memory sessions (WEB_CONCURRENCY=1)")
+        logger.info(
+            "Socket.IO in-process mode (SOCKET_WORKERS=1). "
+            "Set SOCKETIO_REDIS_URL only for split/multi-instance event broadcast."
+        )
         return None
 
     if not ping_redis(redis_url):
         raise RuntimeError(
             f"Cannot connect to Redis at {redis_url}. "
-            "Start Redis before the API when using multiple workers."
+            "Start Redis before enabling SOCKETIO_REDIS_URL."
         )
 
     manager = socketio.AsyncRedisManager(redis_url)
     logger.info(
-        "Socket.IO Redis manager ready at %s (WEB_CONCURRENCY=%s)",
+        "Socket.IO Redis pub/sub enabled at %s (cross-process event broadcast)",
         redis_url,
-        settings.WEB_CONCURRENCY,
     )
     return manager

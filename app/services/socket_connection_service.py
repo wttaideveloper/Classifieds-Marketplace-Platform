@@ -1,4 +1,9 @@
+import os
+
+import redis
+
 from app.core.config import settings
+from app.realtime.client_manager import ping_redis
 from app.realtime.server import SOCKETIO_PATH
 
 
@@ -9,38 +14,34 @@ def build_socket_connection_info() -> dict:
 
     path = SOCKETIO_PATH if SOCKETIO_PATH.startswith("/") else f"/{SOCKETIO_PATH}"
     polling_test_url = f"{base_url}{path}?EIO=4&transport=polling"
+    redis_url = settings.SOCKETIO_REDIS_URL.strip()
 
     notes = [
         "Socket.IO is mounted on the same Gunicorn app as FastAPI (`app.main:socket_app`).",
         f"Configured SOCKETIO_PATH={path}",
+        (
+            "Engine.IO polling sessions are in-memory per worker. "
+            "Combined deploy requires SOCKET_WORKERS=1 (WEB_CONCURRENCY=1)."
+        ),
     ]
 
-    if settings.WEB_CONCURRENCY > 1:
-        if settings.SOCKETIO_REDIS_URL.strip():
-            notes.append(
-                f"Multi-worker ({settings.WEB_CONCURRENCY}) with Redis session sharing enabled."
-            )
-        else:
-            notes.append(
-                "WARNING: WEB_CONCURRENCY > 1 without SOCKETIO_REDIS_URL causes polling POST 400 "
-                "('Invalid session'). Use WEB_CONCURRENCY=1 or set SOCKETIO_REDIS_URL."
-            )
-    else:
+    if redis_url:
         notes.append(
-            "WEB_CONCURRENCY=1 (required for in-memory Engine.IO sessions without Redis)."
+            f"Redis ({redis_url}) is used for Socket.IO event pub/sub across processes — "
+            "NOT for Engine.IO sid stickiness on the same Gunicorn port."
+        )
+    else:
+        notes.append("Redis not configured (fine for single-worker combined deploy).")
+
+    if settings.WEB_CONCURRENCY > 1 or settings.SOCKET_WORKERS > 1:
+        notes.append(
+            "ERROR: Multiple workers detected — polling will return 400 Invalid session. "
+            "Set SOCKET_WORKERS=1 and restart."
         )
 
     if path == "/api/socket.io":
         notes.append(
-            "Production uses /api/socket.io because only /api/* is proxied to the backend."
-        )
-        notes.append(
             "Frontend: io(baseUrl, { path: '/api/socket.io', auth: { token } })"
-        )
-    else:
-        notes.append(
-            "If /socket.io returns a frontend 404, set SOCKETIO_PATH=/api/socket.io "
-            "or add an nginx location for /socket.io with WebSocket upgrade headers."
         )
 
     return {
@@ -48,7 +49,10 @@ def build_socket_connection_info() -> dict:
         "connection_path": path,
         "polling_test_url": polling_test_url,
         "web_concurrency": settings.WEB_CONCURRENCY,
-        "redis_enabled": bool(settings.SOCKETIO_REDIS_URL.strip()),
+        "socket_workers": settings.SOCKET_WORKERS,
+        "redis_enabled": bool(redis_url),
+        "redis_reachable": ping_redis(redis_url) if redis_url else None,
+        "process_pid": os.getpid(),
         "auth": {
             "type": "JWT Bearer",
             "connect": f"io('{base_url}', {{ path: '{path}', auth: {{ token: '<JWT>' }} }})",

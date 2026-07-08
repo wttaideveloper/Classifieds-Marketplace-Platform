@@ -38,6 +38,18 @@ router = APIRouter(tags=["Socket.IO"])
 
 
 @router.get(
+    "/diagnostics",
+    summary="Socket.IO runtime diagnostics",
+    description=(
+        "Returns process pid, worker config, and Redis reachability. "
+        "Call multiple times — if pid values differ while socket_workers=1, a proxy is load-balancing incorrectly."
+    ),
+)
+def get_socket_diagnostics():
+    return build_socket_connection_info()
+
+
+@router.get(
     "/connection-info",
     summary="Socket.IO connection info",
     description="Deployment diagnostics: base URL, path, and polling probe URL.",

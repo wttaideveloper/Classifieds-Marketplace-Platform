@@ -38,10 +38,12 @@ class Settings(BaseSettings):
     SOCKETIO_PATH: str = "/socket.io"
     SOCKETIO_STANDALONE: bool = False
     PUBLIC_API_BASE_URL: str = ""
-    # Optional Redis URL for Socket.IO when WEB_CONCURRENCY > 1 (e.g. redis://localhost:6379/0)
+    # Optional Redis URL — for split deploy / multiple socket server instances (event pub/sub).
+    # Does NOT share Engine.IO polling sessions between Gunicorn workers on the same port.
     SOCKETIO_REDIS_URL: str = ""
-    # Gunicorn workers. Use 1 unless SOCKETIO_REDIS_URL is set (sessions are in-memory per worker).
+    # Gunicorn workers for combined socket_app entrypoint. Must stay 1 for polling to work.
     WEB_CONCURRENCY: int = 1
+    SOCKET_WORKERS: int = 1
 
     class Config:
         env_file = ".env"
@@ -67,11 +69,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_socketio_worker_config(self):
-        if self.WEB_CONCURRENCY > 1 and not self.SOCKETIO_REDIS_URL.strip():
+        if self.WEB_CONCURRENCY > 1 or self.SOCKET_WORKERS > 1:
             raise ValueError(
-                "WEB_CONCURRENCY > 1 requires SOCKETIO_REDIS_URL — Engine.IO sessions "
-                "are stored in memory per worker; without Redis, polling POST returns 400 "
-                "'Invalid session' when requests hit different workers."
+                "WEB_CONCURRENCY and SOCKET_WORKERS must be 1 for combined Socket.IO deployment. "
+                "Engine.IO polling sessions are stored in memory per worker — Redis does not fix "
+                "this on a single Gunicorn port. Use WEB_CONCURRENCY=1 / SOCKET_WORKERS=1, or run "
+                "split mode: scripts/entrypoint-api.sh (port 8000) + entrypoint-socket.sh (port 8001)."
             )
         return self
 
