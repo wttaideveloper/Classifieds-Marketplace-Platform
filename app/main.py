@@ -17,11 +17,25 @@ import app.realtime.events  # noqa: F401, E402 — register Socket.IO handlers
 logger = logging.getLogger(__name__)
 
 _API_DESCRIPTION = """
-**Development mode:** Auth is optional. Chat and Socket.IO endpoints work without a token.
+## Auth for web testing
 
-Default dev user: `550e8400-e29b-41d4-a716-446655440000` (admin role).
+| Environment | Auth |
+|-------------|------|
+| `ENVIRONMENT=development` | Optional — or use `GET /api/v1/auth/dev-token` |
+| Production / staging | Set `ENABLE_DEV_TOKEN=true`, then call `GET /api/v1/auth/dev-token` |
 
-Use the **Socket.IO** tag to test real-time events from Swagger, or connect live at `/socket.io`.
+**Static test user IDs** — see `GET /api/v1/auth/test-users`
+
+| User | ID | Use for |
+|------|----|---------|
+| Provider | `550e8400-e29b-41d4-a716-446655440020` | **`/admin/messages`** |
+| Customer | `550e8400-e29b-41d4-a716-446655440030` | Customer chat UI |
+| Admin | `550e8400-e29b-41d4-a716-446655440000` | Admin dashboards |
+
+Seed sample data: `python scripts/seed_chat.py`
+
+**`/admin/messages`** should use a **provider** token.  
+`GET /api/v1/conversations/provider` returns conversations for the logged-in token user.
 """
 
 app = FastAPI(
