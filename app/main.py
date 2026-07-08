@@ -80,6 +80,13 @@ def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 def startup():
+    redis_url = settings.SOCKETIO_REDIS_URL.strip()
+    if settings.WEB_CONCURRENCY > 1:
+        logger.info(
+            "Multi-worker mode: WEB_CONCURRENCY=%s redis=%s",
+            settings.WEB_CONCURRENCY,
+            redis_url or "MISSING",
+        )
     logger.info("Socket.IO mounted at %s (socket_app entrypoint)", SOCKETIO_PATH)
     if not settings.is_production and settings.AUTO_CREATE_TABLES:
         try:

@@ -1,26 +1,12 @@
-import logging
-
 import socketio
 
 from app.core.config import settings
+from app.realtime.client_manager import build_client_manager
 
-logger = logging.getLogger(__name__)
+_client_manager = build_client_manager()
 
 _cors_origins = settings.cors_origins_list
-if _cors_origins == ["*"]:
-    _cors_allowed = "*"
-else:
-    _cors_allowed = _cors_origins
-
-_client_manager = None
-_redis_url = settings.SOCKETIO_REDIS_URL.strip()
-if _redis_url:
-    try:
-        _client_manager = socketio.AsyncRedisManager(_redis_url)
-        logger.info("Socket.IO using Redis client manager at %s", _redis_url)
-    except Exception:
-        logger.exception("Failed to initialize Socket.IO Redis manager")
-        raise
+_cors_allowed = "*" if _cors_origins == ["*"] else _cors_origins
 
 sio = socketio.AsyncServer(
     async_mode="asgi",

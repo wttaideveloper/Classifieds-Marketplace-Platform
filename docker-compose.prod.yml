@@ -1,0 +1,35 @@
+# Production compose: API + Redis for multi-worker Socket.IO
+# Usage: docker compose -f docker-compose.prod.yml up -d --build
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: marketplace-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    container_name: marketplace-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SOCKETIO_REDIS_URL: redis://redis:6379/0
+      WEB_CONCURRENCY: "4"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  uploads_data:

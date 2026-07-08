@@ -47,6 +47,8 @@ def build_socket_connection_info() -> dict:
         "connection_url": base_url,
         "connection_path": path,
         "polling_test_url": polling_test_url,
+        "web_concurrency": settings.WEB_CONCURRENCY,
+        "redis_enabled": bool(settings.SOCKETIO_REDIS_URL.strip()),
         "auth": {
             "type": "JWT Bearer",
             "connect": f"io('{base_url}', {{ path: '{path}', auth: {{ token: '<JWT>' }} }})",
