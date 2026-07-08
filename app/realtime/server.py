@@ -15,4 +15,4 @@ sio = socketio.AsyncServer(
     engineio_logger=False,
 )
 
-SOCKETIO_PATH = settings.SOCKETIO_PATH.rstrip("/") or "/socket.io"
+SOCKETIO_PATH = settings.normalize_socketio_path(settings.SOCKETIO_PATH)

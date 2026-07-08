@@ -33,12 +33,33 @@ class Settings(BaseSettings):
     DEV_DEFAULT_USER_ROLE: str = "admin"
     # Allow /auth/dev-token on staging/production test servers
     ENABLE_DEV_TOKEN: bool = False
-    # Socket.IO mount path. Use /api/socket.io when nginx/frontend only proxies /api to the API.
+    # Socket.IO mount path. Production same-host deployments use /api/socket.io.
+    # Set SOCKETIO_STANDALONE=true when the API has its own domain and /socket.io is proxied at root.
     SOCKETIO_PATH: str = "/socket.io"
+    SOCKETIO_STANDALONE: bool = False
     PUBLIC_API_BASE_URL: str = ""
 
     class Config:
         env_file = ".env"
+
+    @staticmethod
+    def normalize_socketio_path(path: str) -> str:
+        normalized = (path or "/socket.io").strip()
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        return normalized.rstrip("/") or "/socket.io"
+
+    @model_validator(mode="after")
+    def resolve_socketio_path(self):
+        if (
+            self.ENVIRONMENT == "production"
+            and not self.SOCKETIO_STANDALONE
+            and self.normalize_socketio_path(self.SOCKETIO_PATH) == "/socket.io"
+        ):
+            self.SOCKETIO_PATH = "/api/socket.io"
+        else:
+            self.SOCKETIO_PATH = self.normalize_socketio_path(self.SOCKETIO_PATH)
+        return self
 
     @model_validator(mode="after")
     def validate_production_settings(self):

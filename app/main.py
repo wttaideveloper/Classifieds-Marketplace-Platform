@@ -80,6 +80,7 @@ def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 def startup():
+    logger.info("Socket.IO mounted at %s (socket_app entrypoint)", SOCKETIO_PATH)
     if not settings.is_production and settings.AUTO_CREATE_TABLES:
         try:
             Base.metadata.create_all(bind=engine)
