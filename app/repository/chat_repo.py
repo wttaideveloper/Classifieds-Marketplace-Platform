@@ -26,11 +26,49 @@ from app.repository.query_utils import (
     paginate_query,
 )
 
+DELETED_MESSAGE_PREVIEW = "This message was deleted"
+
 
 def _uuid(value) -> UUID:
     if isinstance(value, UUID):
         return value
     return UUID(str(value))
+
+
+def message_list_preview(message: Message | None) -> str | None:
+    if not message:
+        return None
+    if message.is_deleted:
+        return DELETED_MESSAGE_PREVIEW
+    return (message.content or "")[:500]
+
+
+def get_latest_conversation_message(
+    db: Session,
+    conversation_id: UUID,
+) -> Message | None:
+    return (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .first()
+    )
+
+
+def sync_conversation_last_message(db: Session, conversation_id: UUID) -> Conversation | None:
+    conversation = get_conversation_by_id(db, conversation_id)
+    if not conversation:
+        return None
+
+    latest = get_latest_conversation_message(db, conversation_id)
+    if latest:
+        conversation.last_message_preview = message_list_preview(latest)
+        conversation.last_message_at = latest.created_at
+    else:
+        conversation.last_message_preview = None
+        conversation.last_message_at = None
+
+    return save_conversation(db, conversation)
 
 
 def get_conversation_by_id(
@@ -211,10 +249,7 @@ def get_conversation_messages(
 ):
     query = (
         db.query(Message)
-        .filter(
-            Message.conversation_id == conversation_id,
-            Message.is_deleted.is_(False),
-        )
+        .filter(Message.conversation_id == conversation_id)
         .order_by(Message.created_at.desc(), Message.id.desc())
     )
 

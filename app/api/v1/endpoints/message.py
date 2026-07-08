@@ -100,7 +100,12 @@ def get_read_status(
     "/{message_id}",
     response_model=MessageDeleteResponse,
     summary="Delete Message",
-    description="Soft-delete a message. Only the sender or admin can delete.",
+    description=(
+        "Soft-delete a message (sets is_deleted=true). Deleted messages remain in "
+        "GET /conversations/{id}/messages with is_deleted=true. If the deleted message "
+        "was the latest, conversation last_message_preview becomes "
+        "'This message was deleted'. Only the sender or admin can delete."
+    ),
 )
 def delete_message(
     message_id: UUID = Path(...),

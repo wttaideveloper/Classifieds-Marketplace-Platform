@@ -306,7 +306,7 @@ def send_message_service(db: Session, current_user: dict, data: MessageCreate):
             attachment.message_id = message.id
             db.commit()
 
-    preview = (data.content or "")[:500]
+    preview = chat_repo.message_list_preview(message)
     conversation.last_message_at = message.created_at
     conversation.last_message_preview = preview
     chat_repo.save_conversation(db, conversation)
@@ -413,6 +413,7 @@ def delete_message_service(db: Session, current_user: dict, message_id: UUID):
         raise HTTPException(status_code=403, detail="Not authorized to delete this message")
 
     message = chat_repo.soft_delete_message(db, message)
+    chat_repo.sync_conversation_last_message(db, message.conversation_id)
     return MessageDeleteResponse(
         id=message.id,
         is_deleted=message.is_deleted,
