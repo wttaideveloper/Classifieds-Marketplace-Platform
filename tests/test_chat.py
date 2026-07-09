@@ -56,6 +56,51 @@ def test_list_provider_archived_conversations(mock_service):
     assert mock_service.call_args.kwargs["status_filter"] == "archived"
 
 
+@patch("app.api.v1.endpoints.conversation.archive_conversation_service")
+def test_archive_conversation(mock_service):
+    mock_service.return_value = {
+        "id": _CONV_ID,
+        "status": "archived",
+        "is_archived": True,
+        "archived_at": _NOW,
+        "updated_at": _NOW,
+    }
+
+    response = client.patch(
+        f"/conversations/{_CONV_ID}/archive",
+        json={"archived": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["is_archived"] is True
+    assert response.json()["status"] == "archived"
+    mock_service.assert_called_once()
+    assert mock_service.call_args.kwargs["archived"] is True
+
+
+@patch("app.api.v1.endpoints.conversation.archive_conversation_service")
+def test_unarchive_conversation(mock_service):
+    mock_service.return_value = {
+        "id": _CONV_ID,
+        "status": "open",
+        "is_archived": False,
+        "archived_at": None,
+        "updated_at": _NOW,
+    }
+
+    response = client.patch(
+        f"/conversations/{_CONV_ID}/archive",
+        json={"archived": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["is_archived"] is False
+    assert response.json()["status"] == "open"
+    assert response.json()["archived_at"] is None
+    mock_service.assert_called_once()
+    assert mock_service.call_args.kwargs["archived"] is False
+
+
 @patch("app.api.v1.endpoints.conversation.create_conversation_service")
 def test_create_conversation(mock_service):
     mock_service.return_value = {

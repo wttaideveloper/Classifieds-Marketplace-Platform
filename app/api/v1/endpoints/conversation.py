@@ -7,6 +7,8 @@ from app.core.dependencies import get_current_admin, get_current_user
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.chat_schema import (
+    ConversationArchiveRequest,
+    ConversationArchiveResponse,
     ConversationCreate,
     ConversationPaginatedResponse,
     ConversationResponse,
@@ -197,13 +199,20 @@ def reopen_conversation(
 
 @router.patch(
     "/{conversation_id}/archive",
-    response_model=ConversationStatusUpdateResponse,
-    summary="Archive Conversation",
-    description="Move a conversation to archived status. List archived chats via `GET /conversations/archived`.",
+    response_model=ConversationArchiveResponse,
+    summary="Archive or Unarchive Conversation",
+    description=(
+        "Toggle archive state with `{ \"archived\": true }` to archive or "
+        "`{ \"archived\": false }` to restore to normal lists. "
+        "Messages and history are unchanged."
+    ),
 )
 def archive_conversation(
     conversation_id: UUID = Path(...),
+    payload: ConversationArchiveRequest = Body(...),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return archive_conversation_service(db, current_user, conversation_id)
+    return archive_conversation_service(
+        db, current_user, conversation_id, archived=payload.archived
+    )

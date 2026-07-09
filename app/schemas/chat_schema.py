@@ -110,11 +110,34 @@ class ConversationListItemResponse(BaseModel):
     last_message_preview: str | None = None
     unread_count: int = 0
     assigned_provider_id: UUID | None = None
+    is_archived: bool = False
+    archived_at: datetime | None = None
     updated_at: datetime
 
 
 class ConversationPaginatedResponse(PaginatedResponse[ConversationListItemResponse]):
     pass
+
+
+class ConversationArchiveRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"archived": True},
+                {"archived": False},
+            ]
+        }
+    )
+
+    archived: bool = Field(..., description="Set true to archive, false to unarchive.")
+
+
+class ConversationArchiveResponse(BaseModel):
+    id: UUID
+    status: ConversationStatus
+    is_archived: bool
+    archived_at: datetime | None = None
+    updated_at: datetime
 
 
 class ConversationStatusUpdateResponse(BaseModel):
@@ -203,6 +226,8 @@ class AttachmentResponse(BaseModel):
     file_size: int
     attachment_type: AttachmentType
     download_url: str
+    transcript: str | None = None
+    transcribed_at: datetime | None = None
     created_at: datetime
 
 
@@ -210,6 +235,44 @@ class AttachmentDeleteResponse(BaseModel):
     id: UUID
     is_deleted: bool
     message: str
+
+
+class TranscribeRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
+                "message_id": "550e8400-e29b-41d4-a716-446655440010",
+                "attachment_id": "550e8400-e29b-41d4-a716-446655440011",
+            }
+        }
+    )
+
+    conversation_id: UUID | None = Field(
+        None,
+        description="Optional conversation ID for extra validation.",
+    )
+    message_id: UUID | None = Field(
+        None,
+        description="Optional message ID linked to the audio attachment.",
+    )
+    attachment_id: UUID | None = Field(
+        None,
+        description="Audio attachment to transcribe. Required for message route if message has no attachment_id.",
+    )
+
+
+class TranscribeResponse(BaseModel):
+    transcript: str = Field(..., description="Speech-to-text result.")
+    conversation_id: UUID
+    message_id: UUID | None = None
+    attachment_id: UUID
+    mime_type: str
+    already_transcribed: bool = Field(
+        False,
+        description="True when an existing saved transcript was returned without re-processing.",
+    )
+    transcribed_at: datetime | None = None
 
 
 # --- Provider Assignment ---

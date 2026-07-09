@@ -11,6 +11,7 @@ from app.schemas.chat_schema import (
     ChatEligibilityResponse,
     ChatExportResponse,
     ChatDashboardResponse,
+    ConversationArchiveResponse,
     ConversationCreate,
     ConversationListItemResponse,
     ConversationPaginatedResponse,
@@ -35,6 +36,14 @@ from app.schemas.chat_schema import (
 
 def _parse_user_id(current_user: dict) -> UUID:
     return UUID(str(current_user["id"]))
+
+
+def _conversation_archive_fields(conversation: Conversation) -> dict:
+    is_archived = conversation.status == "archived"
+    return {
+        "is_archived": is_archived,
+        "archived_at": conversation.archived_at if is_archived else None,
+    }
 
 
 def _map_conversation_detail(db: Session, conversation: Conversation, user_id: UUID) -> dict:
@@ -93,6 +102,7 @@ def _map_conversation_list_item(
         "last_message_preview": preview,
         "unread_count": unread,
         "assigned_provider_id": conversation.assigned_provider_id,
+        **_conversation_archive_fields(conversation),
         "updated_at": conversation.updated_at,
     }
 
@@ -265,8 +275,36 @@ def reopen_conversation_service(db: Session, current_user: dict, conversation_id
     return _update_conversation_status(db, current_user, conversation_id, "open")
 
 
-def archive_conversation_service(db: Session, current_user: dict, conversation_id: UUID):
-    return _update_conversation_status(db, current_user, conversation_id, "archived")
+def archive_conversation_service(
+    db: Session,
+    current_user: dict,
+    conversation_id: UUID,
+    *,
+    archived: bool,
+) -> ConversationArchiveResponse:
+    user_id = _parse_user_id(current_user)
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not chat_repo.is_participant(db, conversation_id, user_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    if archived:
+        conversation.status = "archived"
+        conversation.archived_at = datetime.utcnow()
+    else:
+        conversation.status = "open"
+        conversation.archived_at = None
+
+    conversation = chat_repo.save_conversation(db, conversation)
+    archive_fields = _conversation_archive_fields(conversation)
+    return ConversationArchiveResponse(
+        id=conversation.id,
+        status=conversation.status,
+        is_archived=archive_fields["is_archived"],
+        archived_at=archive_fields["archived_at"],
+        updated_at=conversation.updated_at,
+    )
 
 
 def search_conversations_service(

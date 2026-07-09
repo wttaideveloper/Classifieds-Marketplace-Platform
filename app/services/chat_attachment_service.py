@@ -22,7 +22,16 @@ ALLOWED_MIME_TYPES: dict[str, set[str]] = {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "text/plain",
     },
-    "audio": {"audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4", "audio/webm"},
+    "audio": {
+        "audio/mpeg",
+        "audio/wav",
+        "audio/ogg",
+        "audio/mp4",
+        "audio/webm",
+        "audio/m4a",
+        "audio/x-m4a",
+        "audio/aac",
+    },
     "video": {"video/mp4", "video/webm", "video/quicktime"},
 }
 
@@ -119,6 +128,8 @@ def upload_attachment_service(
         "file_size": attachment.file_size,
         "attachment_type": attachment.attachment_type,
         "download_url": f"/api/v1/attachments/{attachment.id}",
+        "transcript": attachment.transcript,
+        "transcribed_at": attachment.transcribed_at,
         "created_at": attachment.created_at,
     }
 
@@ -141,6 +152,8 @@ def get_attachment_service(db: Session, current_user: dict, attachment_id: UUID)
         "file_size": attachment.file_size,
         "attachment_type": attachment.attachment_type,
         "download_url": f"/api/v1/attachments/{attachment.id}",
+        "transcript": attachment.transcript,
+        "transcribed_at": attachment.transcribed_at,
         "created_at": attachment.created_at,
     }
 

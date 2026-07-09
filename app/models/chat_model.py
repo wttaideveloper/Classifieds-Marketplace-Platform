@@ -32,6 +32,7 @@ class Conversation(Base):
     context_id = Column(UUID(as_uuid=True), nullable=True)
     assigned_provider_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     expires_at = Column(DateTime, nullable=True)
+    archived_at = Column(DateTime, nullable=True)
     last_message_at = Column(DateTime, nullable=True)
     last_message_preview = Column(String(500), nullable=True)
     created_by = Column(UUID(as_uuid=True), nullable=False, index=True)
@@ -162,6 +163,8 @@ class ChatAttachment(Base):
     file_size = Column(Integer, nullable=False)
     attachment_type = Column(String(20), nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)
+    transcript = Column(Text, nullable=True)
+    transcribed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
