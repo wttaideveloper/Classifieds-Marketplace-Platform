@@ -28,6 +28,34 @@ app.dependency_overrides[get_current_user] = lambda: {
 client = TestClient(app)
 
 
+@patch("app.api.v1.endpoints.conversation.list_conversations_service")
+def test_list_archived_conversations(mock_service):
+    mock_service.return_value = {
+        "items": [],
+        "pagination": {"total": 0, "page": 1, "page_size": 20, "total_pages": 0},
+    }
+
+    response = client.get("/conversations/archived")
+
+    assert response.status_code == 200
+    mock_service.assert_called_once()
+    assert mock_service.call_args.kwargs["status_filter"] == "archived"
+
+
+@patch("app.api.v1.endpoints.conversation.list_provider_conversations_service")
+def test_list_provider_archived_conversations(mock_service):
+    mock_service.return_value = {
+        "items": [],
+        "pagination": {"total": 0, "page": 1, "page_size": 20, "total_pages": 0},
+    }
+
+    response = client.get("/conversations/provider/archived")
+
+    assert response.status_code == 200
+    mock_service.assert_called_once()
+    assert mock_service.call_args.kwargs["status_filter"] == "archived"
+
+
 @patch("app.api.v1.endpoints.conversation.create_conversation_service")
 def test_create_conversation(mock_service):
     mock_service.return_value = {
