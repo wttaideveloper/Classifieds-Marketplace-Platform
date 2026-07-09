@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.models.chat_model import Conversation, ConversationParticipant
 from app.repository import chat_repo as chat_repo
+from app.services.chat_notification_service import (
+    create_message_notifications,
+    mark_conversation_notifications_read_service,
+)
 from app.repository.query_utils import build_pagination_meta
 from app.schemas.chat_schema import (
     ChatEligibilityResponse,
@@ -17,6 +21,8 @@ from app.schemas.chat_schema import (
     ConversationPaginatedResponse,
     ConversationResponse,
     ConversationStatusUpdateResponse,
+    ProviderConversationListItemResponse,
+    ProviderConversationPaginatedResponse,
     CursorPaginatedResponse,
     CursorPaginationMeta,
     MessageCreate,
@@ -82,6 +88,7 @@ def _map_conversation_list_item(
     user_id: UUID,
     *,
     latest_messages: dict | None = None,
+    other_participant_user_id: UUID | None = None,
 ) -> dict:
     participant = chat_repo.get_participant(db, conversation.id, user_id)
     unread = chat_repo.count_unread_messages(
@@ -93,7 +100,7 @@ def _map_conversation_list_item(
         preview_at = latest.created_at
     else:
         preview, preview_at = chat_repo.resolve_conversation_preview(db, conversation)
-    return {
+    item = {
         "id": conversation.id,
         "status": conversation.status,
         "conversation_type": conversation.conversation_type,
@@ -105,6 +112,9 @@ def _map_conversation_list_item(
         **_conversation_archive_fields(conversation),
         "updated_at": conversation.updated_at,
     }
+    if other_participant_user_id is not None:
+        item["other_participant_user_id"] = other_participant_user_id
+    return item
 
 
 def _validate_chat_rules(conversation: Conversation) -> None:
@@ -173,6 +183,17 @@ def create_conversation_service(db: Session, current_user: dict, data: Conversat
 
     if data.provider_id:
         chat_repo.assign_provider(db, conversation.id, data.provider_id, user_id)
+        conversation.assigned_provider_id = data.provider_id
+        chat_repo.save_conversation(db, conversation)
+        if not chat_repo.get_participant(db, conversation.id, data.provider_id):
+            db.add(
+                ConversationParticipant(
+                    conversation_id=conversation.id,
+                    user_id=data.provider_id,
+                    role="provider",
+                )
+            )
+            db.commit()
 
     conversation = chat_repo.get_conversation_by_id(db, conversation.id, with_participants=True)
     return ConversationResponse.model_validate(
@@ -222,10 +243,19 @@ def list_provider_conversations_service(
     latest_messages = chat_repo.get_latest_messages_for_conversations(
         db, [item.id for item in items]
     )
-    return ConversationPaginatedResponse(
+    other_participants = chat_repo.get_other_participant_ids_for_conversations(
+        db, [item.id for item in items], user_id
+    )
+    return ProviderConversationPaginatedResponse(
         items=[
-            ConversationListItemResponse.model_validate(
-                _map_conversation_list_item(db, item, user_id, latest_messages=latest_messages)
+            ProviderConversationListItemResponse.model_validate(
+                _map_conversation_list_item(
+                    db,
+                    item,
+                    user_id,
+                    latest_messages=latest_messages,
+                    other_participant_user_id=other_participants.get(item.id),
+                )
             )
             for item in items
         ],
@@ -375,6 +405,15 @@ def send_message_service(db: Session, current_user: dict, data: MessageCreate):
     if conversation.conversation_type == "preview":
         chat_repo.increment_message_usage(db, user_id)
 
+    create_message_notifications(
+        db,
+        conversation_id=data.conversation_id,
+        sender_id=user_id,
+        message_id=message.id,
+        title=conversation.subject or "New message",
+        body=preview,
+    )
+
     return _map_message(db, message)
 
 
@@ -441,6 +480,7 @@ def mark_conversation_read_service(db: Session, current_user: dict, conversation
     if not chat_repo.is_participant(db, conversation_id, user_id):
         raise HTTPException(status_code=403, detail="Not authorized")
     chat_repo.mark_conversation_read(db, conversation_id, user_id)
+    mark_conversation_notifications_read_service(db, current_user, conversation_id)
     return {"conversation_id": conversation_id, "read_at": datetime.utcnow()}
 
 

@@ -110,12 +110,45 @@ class ConversationListItemResponse(BaseModel):
     last_message_preview: str | None = None
     unread_count: int = 0
     assigned_provider_id: UUID | None = None
+    other_participant_user_id: UUID | None = Field(
+        None,
+        description=(
+            "The other person in the conversation (customer/user/patient for provider lists). "
+            "Use with `GET /api/v1/presence/online` for online status."
+        ),
+    )
     is_archived: bool = False
     archived_at: datetime | None = None
     updated_at: datetime
 
 
+_PROVIDER_CONVERSATION_LIST_ITEM_EXAMPLE = {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "open",
+    "conversation_type": "standard",
+    "subject": "Question about training section",
+    "last_message_at": "2026-07-09T01:54:35.338Z",
+    "last_message_preview": "hello",
+    "unread_count": 2,
+    "assigned_provider_id": "550e8400-e29b-41d4-a716-446655440020",
+    "other_participant_user_id": "550e8400-e29b-41d4-a716-446655440030",
+    "is_archived": False,
+    "archived_at": None,
+    "updated_at": "2026-07-09T01:54:35.338Z",
+}
+
+
+class ProviderConversationListItemResponse(ConversationListItemResponse):
+    model_config = ConfigDict(
+        json_schema_extra={"example": _PROVIDER_CONVERSATION_LIST_ITEM_EXAMPLE}
+    )
+
+
 class ConversationPaginatedResponse(PaginatedResponse[ConversationListItemResponse]):
+    pass
+
+
+class ProviderConversationPaginatedResponse(PaginatedResponse[ProviderConversationListItemResponse]):
     pass
 
 
@@ -372,6 +405,28 @@ class NotificationResponse(BaseModel):
 
 class NotificationPaginatedResponse(PaginatedResponse[NotificationResponse]):
     pass
+
+
+class NotificationReadAllResponse(BaseModel):
+    marked_read: int = Field(..., description="Number of notifications marked as read.")
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"marked_read": 3}}
+    )
+
+
+class ConversationNotificationsReadResponse(BaseModel):
+    conversation_id: UUID
+    marked_read: int = Field(..., description="Number of notifications marked as read.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
+                "marked_read": 2,
+            }
+        }
+    )
 
 
 # --- Presence ---

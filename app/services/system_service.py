@@ -23,7 +23,7 @@ def health_check_service(db: Session):
 
 def inventory_service():
     return {
-        "total_apis": 71,
+        "total_apis": 78,
         "apis": [
             {"method": "POST", "endpoint": "/api/v1/enterprises", "description": "Create Enterprise"},
             {"method": "GET", "endpoint": "/api/v1/enterprises", "description": "Get Enterprise List"},
@@ -74,6 +74,13 @@ def inventory_service():
             {"method": "DELETE", "endpoint": "/api/v1/attachments/{id}", "description": "Delete Attachment"},
             {"method": "POST", "endpoint": "/api/v1/providers/assign", "description": "Assign Provider"},
             {"method": "GET", "endpoint": "/api/v1/notifications/unread-count", "description": "Unread Count"},
+            {"method": "GET", "endpoint": "/api/v1/notifications/history", "description": "Notification History"},
+            {"method": "PATCH", "endpoint": "/api/v1/notifications/{id}/read", "description": "Mark Notification Read"},
+            {"method": "PATCH", "endpoint": "/api/v1/notifications/read-all", "description": "Mark All Notifications Read"},
+            {"method": "PATCH", "endpoint": "/api/v1/notifications/conversation/{id}/read", "description": "Mark Conversation Notifications Read"},
+            {"method": "GET", "endpoint": "/api/v1/notifications/preferences", "description": "Get Notification Preferences"},
+            {"method": "PUT", "endpoint": "/api/v1/notifications/preferences", "description": "Update Notification Preferences"},
+            {"method": "GET", "endpoint": "/api/v1/conversations/provider", "description": "List Provider Conversations (includes other_participant_user_id)"},
             {"method": "POST", "endpoint": "/api/v1/devices/register", "description": "Register Device Token"},
             {"method": "GET", "endpoint": "/api/v1/subscriptions/chat-eligibility", "description": "Validate Chat Access"},
             {"method": "WS", "endpoint": "/socket.io", "description": "Socket.IO Real-time Chat (join_room, send_message, typing, mark_read)"},
