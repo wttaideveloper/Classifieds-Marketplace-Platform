@@ -48,10 +48,17 @@ def create_conversation(
     "/",
     response_model=ConversationPaginatedResponse,
     summary="List User Conversations",
-    description="List all conversations for the authenticated user with unread counts.",
+    description=(
+        "List conversations for the authenticated user. "
+        "Use `status=archived` for archived chats, or call `GET /conversations/archived`."
+    ),
 )
 def list_conversations(
-    status_filter: str | None = Query(None, alias="status", description="Filter by status."),
+    status_filter: str | None = Query(
+        None,
+        alias="status",
+        description="Filter by status: open, closed, or archived.",
+    ),
     search: str | None = Query(None, description="Search by subject or last message."),
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
@@ -64,13 +71,43 @@ def list_conversations(
 
 
 @router.get(
+    "/archived",
+    response_model=ConversationPaginatedResponse,
+    summary="List Archived Conversations",
+    description="List archived conversations for the authenticated user (same as `GET /conversations?status=archived`).",
+)
+def list_archived_conversations(
+    search: str | None = Query(None, description="Search by subject or last message."),
+    page: int = Query(DEFAULT_PAGE, ge=1),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return list_conversations_service(
+        db,
+        current_user,
+        status_filter="archived",
+        search=search,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
     "/provider",
     response_model=ConversationPaginatedResponse,
     summary="List Provider Conversations",
-    description="List conversations assigned to or involving the authenticated provider.",
+    description=(
+        "List conversations for the authenticated provider. "
+        "Use `status=archived` for archived chats, or call `GET /conversations/provider/archived`."
+    ),
 )
 def list_provider_conversations(
-    status_filter: str | None = Query(None, alias="status"),
+    status_filter: str | None = Query(
+        None,
+        alias="status",
+        description="Filter by status: open, closed, or archived.",
+    ),
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
@@ -78,6 +115,26 @@ def list_provider_conversations(
 ):
     return list_provider_conversations_service(
         db, current_user, status_filter=status_filter, page=page, page_size=page_size
+    )
+
+
+@router.get(
+    "/provider/archived",
+    response_model=ConversationPaginatedResponse,
+    summary="List Provider Archived Conversations",
+    description=(
+        "List archived conversations for the authenticated provider "
+        "(same as `GET /conversations/provider?status=archived`)."
+    ),
+)
+def list_provider_archived_conversations(
+    page: int = Query(DEFAULT_PAGE, ge=1),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return list_provider_conversations_service(
+        db, current_user, status_filter="archived", page=page, page_size=page_size
     )
 
 
@@ -142,6 +199,7 @@ def reopen_conversation(
     "/{conversation_id}/archive",
     response_model=ConversationStatusUpdateResponse,
     summary="Archive Conversation",
+    description="Move a conversation to archived status. List archived chats via `GET /conversations/archived`.",
 )
 def archive_conversation(
     conversation_id: UUID = Path(...),
