@@ -128,6 +128,8 @@ def get_user_conversations(
 
     if status:
         query = query.filter(Conversation.status == status)
+    else:
+        query = query.filter(Conversation.status != "archived")
     if search:
         query = apply_ilike_search(
             query,
@@ -164,6 +166,8 @@ def get_provider_conversations(
 
     if status:
         query = query.filter(Conversation.status == status)
+    else:
+        query = query.filter(Conversation.status != "archived")
 
     query = query.order_by(Conversation.updated_at.desc())
     return paginate_query(query, page, page_size)
@@ -454,6 +458,18 @@ def get_attachment_by_id(db: Session, attachment_id: UUID) -> ChatAttachment | N
 
 def soft_delete_attachment(db: Session, attachment: ChatAttachment) -> ChatAttachment:
     attachment.is_deleted = True
+    db.commit()
+    db.refresh(attachment)
+    return attachment
+
+
+def save_attachment_transcript(
+    db: Session,
+    attachment: ChatAttachment,
+    transcript: str,
+) -> ChatAttachment:
+    attachment.transcript = transcript.strip()
+    attachment.transcribed_at = datetime.utcnow()
     db.commit()
     db.refresh(attachment)
     return attachment

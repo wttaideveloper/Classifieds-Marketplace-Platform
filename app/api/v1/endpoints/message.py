@@ -14,6 +14,8 @@ from app.schemas.chat_schema import (
     MessageReadStatusResponse,
     MessageResponse,
     MessageUpdate,
+    TranscribeRequest,
+    TranscribeResponse,
 )
 from app.services.chat_service import (
     delete_message_service,
@@ -25,6 +27,7 @@ from app.services.chat_service import (
     search_messages_service,
     send_message_service,
 )
+from app.services.transcription_service import transcribe_message_service
 
 router = APIRouter(tags=["Messages"])
 
@@ -96,6 +99,32 @@ def get_read_status(
     current_user=Depends(get_current_user),
 ):
     return get_read_status_service(db, current_user, message_id)
+
+
+@router.post(
+    "/{message_id}/transcribe",
+    response_model=TranscribeResponse,
+    summary="Transcribe Voice Message",
+    description=(
+        "Convert the audio attachment linked to a voice message into text. "
+        "Supports audio/webm and audio/m4a. Returns cached transcript if already converted. "
+        "Does not create a new chat message."
+    ),
+)
+def transcribe_message(
+    message_id: UUID = Path(...),
+    payload: TranscribeRequest | None = Body(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    body = payload or TranscribeRequest()
+    return transcribe_message_service(
+        db,
+        current_user,
+        message_id,
+        conversation_id=body.conversation_id,
+        attachment_id=body.attachment_id,
+    )
 
 
 @router.patch(
