@@ -1,5 +1,3 @@
-import os
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -8,6 +6,10 @@ from sqlalchemy.orm import Session
 from app.models.chat_model import ChatAttachment
 from app.repository import chat_repo as chat_repo
 from app.schemas.chat_schema import TranscribeResponse
+from app.services.attachment_storage import (
+    raise_attachment_file_unavailable,
+    resolve_attachment_file_path,
+)
 from app.services.speech_to_text_service import is_transcribable_audio, transcribe_audio_file
 
 
@@ -33,8 +35,9 @@ def _validate_attachment_for_transcription(attachment: ChatAttachment) -> None:
             status_code=400,
             detail=f"Unsupported audio type for transcription: {attachment.mime_type}",
         )
-    if not os.path.exists(attachment.file_path):
-        raise HTTPException(status_code=404, detail="Audio file not found on disk")
+    file_path = resolve_attachment_file_path(attachment)
+    if not file_path.is_file():
+        raise_attachment_file_unavailable()
 
 
 def _build_transcribe_response(
@@ -86,7 +89,8 @@ def transcribe_attachment_service(
         return _build_transcribe_response(attachment, already_transcribed=True)
 
     _validate_attachment_for_transcription(attachment)
-    transcript = transcribe_audio_file(attachment.file_path, attachment.mime_type)
+    file_path = resolve_attachment_file_path(attachment)
+    transcript = transcribe_audio_file(str(file_path), attachment.mime_type)
     attachment = chat_repo.save_attachment_transcript(db, attachment, transcript)
     return _build_transcribe_response(attachment, already_transcribed=False)
 

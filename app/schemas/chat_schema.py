@@ -226,6 +226,7 @@ class AttachmentResponse(BaseModel):
     file_size: int
     attachment_type: AttachmentType
     download_url: str
+    file_available: bool | None = None
     transcript: str | None = None
     transcribed_at: datetime | None = None
     created_at: datetime

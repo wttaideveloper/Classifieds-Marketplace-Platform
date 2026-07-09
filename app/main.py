@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import socketio
 from fastapi import FastAPI, Request
@@ -11,6 +12,7 @@ from app.db.database import Base, engine
 from app.api.v1.router import api_router
 from app.exceptions.custom_exception import CustomException
 from app.realtime.server import SOCKETIO_PATH, sio
+from app.services.attachment_storage import ensure_upload_directory
 
 import app.realtime.events  # noqa: F401, E402 — register Socket.IO handlers
 
@@ -88,6 +90,14 @@ def startup():
             redis_url or "MISSING",
         )
     logger.info("Socket.IO mounted at %s (socket_app entrypoint)", SOCKETIO_PATH)
+    upload_dir = ensure_upload_directory()
+    logger.info("Chat attachment storage directory: %s", upload_dir)
+    if settings.is_production and not Path(settings.UPLOAD_DIR).is_absolute():
+        logger.warning(
+            "UPLOAD_DIR is relative (%s). In production, set UPLOAD_DIR=/app/uploads "
+            "and mount a persistent volume (e.g. -v /data/uploads:/app/uploads).",
+            settings.UPLOAD_DIR,
+        )
     if not settings.is_production and settings.AUTO_CREATE_TABLES:
         try:
             Base.metadata.create_all(bind=engine)

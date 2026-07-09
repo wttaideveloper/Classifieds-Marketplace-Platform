@@ -80,6 +80,21 @@ async def upload_attachment(
     "/{attachment_id}",
     summary="Get or Download Attachment",
     description="Returns attachment metadata. Append ?download=true to download the file.",
+    responses={
+        410: {
+            "description": "Attachment metadata exists but the file is missing from storage",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": {
+                            "message": "Attachment file is no longer available",
+                            "code": "attachment_file_unavailable",
+                        }
+                    }
+                }
+            },
+        }
+    },
 )
 def get_attachment(
     attachment_id: UUID = Path(...),
@@ -88,9 +103,9 @@ def get_attachment(
     current_user=Depends(get_current_user),
 ):
     if download:
-        attachment = download_attachment_service(db, current_user, attachment_id)
+        attachment, file_path = download_attachment_service(db, current_user, attachment_id)
         return FileResponse(
-            path=attachment.file_path,
+            path=str(file_path),
             filename=attachment.file_name,
             media_type=attachment.mime_type,
         )

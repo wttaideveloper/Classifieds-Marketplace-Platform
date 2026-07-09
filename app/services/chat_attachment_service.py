@@ -1,5 +1,4 @@
 import mimetypes
-import os
 import uuid
 from pathlib import Path
 from uuid import UUID
@@ -10,6 +9,12 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.chat_model import ChatAttachment
 from app.repository import chat_repo as chat_repo
+from app.services.attachment_storage import (
+    attachment_file_is_available,
+    raise_attachment_file_unavailable,
+    resolve_attachment_file_path,
+    storage_relative_key,
+)
 
 ALLOWED_MIME_TYPES: dict[str, set[str]] = {
     "image": {"image/jpeg", "image/png", "image/gif", "image/webp"},
@@ -89,7 +94,7 @@ def _store_upload_file(conversation_id: UUID, file: UploadFile, content: bytes) 
     with open(file_path, "wb") as f:
         f.write(content)
 
-    return safe_name, file_path
+    return safe_name, storage_relative_key(conversation_id, stored_name)
 
 
 def upload_attachment_service(
@@ -127,13 +132,13 @@ def upload_attachment_service(
             detail=f"File exceeds maximum size of {max_size // (1024 * 1024)}MB for {detected_type}",
         )
 
-    safe_name, file_path = _store_upload_file(conversation_id, file, content)
+    safe_name, storage_key = _store_upload_file(conversation_id, file, content)
 
     attachment = ChatAttachment(
         conversation_id=conversation_id,
         uploaded_by=user_id,
         file_name=safe_name,
-        file_path=str(file_path),
+        file_path=storage_key,
         mime_type=mime_type,
         file_size=file_size,
         attachment_type=detected_type,
@@ -150,6 +155,7 @@ def upload_attachment_service(
         "file_size": attachment.file_size,
         "attachment_type": attachment.attachment_type,
         "download_url": f"/api/v1/attachments/{attachment.id}",
+        "file_available": True,
         "transcript": attachment.transcript,
         "transcribed_at": attachment.transcribed_at,
         "created_at": attachment.created_at,
@@ -174,6 +180,7 @@ def get_attachment_service(db: Session, current_user: dict, attachment_id: UUID)
         "file_size": attachment.file_size,
         "attachment_type": attachment.attachment_type,
         "download_url": f"/api/v1/attachments/{attachment.id}",
+        "file_available": attachment_file_is_available(attachment),
         "transcript": attachment.transcript,
         "transcribed_at": attachment.transcribed_at,
         "created_at": attachment.created_at,
@@ -188,10 +195,11 @@ def download_attachment_service(db: Session, current_user: dict, attachment_id: 
 
     _ensure_participant(db, attachment.conversation_id, user_id)
 
-    if not os.path.exists(attachment.file_path):
-        raise HTTPException(status_code=404, detail="Attachment file not found on disk")
+    file_path = resolve_attachment_file_path(attachment)
+    if not file_path.is_file():
+        raise_attachment_file_unavailable()
 
-    return attachment
+    return attachment, file_path
 
 
 def delete_attachment_service(db: Session, current_user: dict, attachment_id: UUID):
