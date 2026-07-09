@@ -13,6 +13,7 @@ from app.schemas.chat_schema import (
     ConversationPaginatedResponse,
     ConversationResponse,
     ConversationStatusUpdateResponse,
+    ProviderConversationPaginatedResponse,
 )
 from app.services.chat_service import (
     archive_conversation_service,
@@ -97,10 +98,12 @@ def list_archived_conversations(
 
 @router.get(
     "/provider",
-    response_model=ConversationPaginatedResponse,
+    response_model=ProviderConversationPaginatedResponse,
     summary="List Provider Conversations",
     description=(
         "List conversations for the authenticated provider. "
+        "Each item includes `other_participant_user_id` (customer/user/patient) "
+        "for mapping to `GET /api/v1/presence/online`. "
         "Use `status=archived` for archived chats, or call `GET /conversations/provider/archived`."
     ),
 )
@@ -122,11 +125,12 @@ def list_provider_conversations(
 
 @router.get(
     "/provider/archived",
-    response_model=ConversationPaginatedResponse,
+    response_model=ProviderConversationPaginatedResponse,
     summary="List Provider Archived Conversations",
     description=(
-        "List archived conversations for the authenticated provider "
-        "(same as `GET /conversations/provider?status=archived`)."
+        "List archived conversations for the authenticated provider. "
+        "Each item includes `other_participant_user_id` for presence lookup. "
+        "Same as `GET /conversations/provider?status=archived`."
     ),
 )
 def list_provider_archived_conversations(

@@ -243,6 +243,35 @@ def get_participant(
     )
 
 
+def get_other_participant_ids_for_conversations(
+    db: Session,
+    conversation_ids: list[UUID],
+    exclude_user_id: UUID,
+) -> dict[UUID, UUID]:
+    if not conversation_ids:
+        return {}
+
+    rows = (
+        db.query(
+            ConversationParticipant.conversation_id,
+            ConversationParticipant.user_id,
+            ConversationParticipant.role,
+        )
+        .filter(
+            ConversationParticipant.conversation_id.in_(conversation_ids),
+            ConversationParticipant.user_id != exclude_user_id,
+        )
+        .all()
+    )
+
+    result: dict[UUID, UUID] = {}
+    for conversation_id, participant_user_id, role in rows:
+        existing = result.get(conversation_id)
+        if existing is None or role == "customer":
+            result[conversation_id] = participant_user_id
+    return result
+
+
 def count_unread_messages(
     db: Session,
     conversation_id: UUID,
@@ -617,6 +646,89 @@ def get_notification_history(
         .order_by(ChatNotification.created_at.desc())
     )
     return paginate_query(query, page, page_size)
+
+
+def get_notification_by_id(db: Session, notification_id: UUID) -> ChatNotification | None:
+    return (
+        db.query(ChatNotification)
+        .filter(ChatNotification.id == notification_id)
+        .first()
+    )
+
+
+def create_notification(
+    db: Session,
+    *,
+    user_id: UUID,
+    notification_type: str,
+    title: str,
+    body: str,
+    data: dict | None = None,
+) -> ChatNotification:
+    notification = ChatNotification(
+        user_id=user_id,
+        notification_type=notification_type,
+        title=title,
+        body=body,
+        data=data or {},
+    )
+    db.add(notification)
+    db.commit()
+    db.refresh(notification)
+    return notification
+
+
+def mark_notification_read(
+    db: Session,
+    notification_id: UUID,
+    user_id: UUID,
+) -> ChatNotification | None:
+    notification = (
+        db.query(ChatNotification)
+        .filter(
+            ChatNotification.id == notification_id,
+            ChatNotification.user_id == user_id,
+        )
+        .first()
+    )
+    if not notification:
+        return None
+    if not notification.is_read:
+        notification.is_read = True
+        db.commit()
+        db.refresh(notification)
+    return notification
+
+
+def mark_all_notifications_read(db: Session, user_id: UUID) -> int:
+    marked = (
+        db.query(ChatNotification)
+        .filter(
+            ChatNotification.user_id == user_id,
+            ChatNotification.is_read.is_(False),
+        )
+        .update({"is_read": True}, synchronize_session=False)
+    )
+    db.commit()
+    return marked
+
+
+def mark_conversation_notifications_read(
+    db: Session,
+    user_id: UUID,
+    conversation_id: UUID,
+) -> int:
+    marked = (
+        db.query(ChatNotification)
+        .filter(
+            ChatNotification.user_id == user_id,
+            ChatNotification.is_read.is_(False),
+            ChatNotification.data["conversation_id"].astext == str(conversation_id),
+        )
+        .update({"is_read": True}, synchronize_session=False)
+    )
+    db.commit()
+    return marked
 
 
 def get_or_create_subscription(
