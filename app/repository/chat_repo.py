@@ -449,6 +449,25 @@ def get_message_read_receipts(
     )
 
 
+def get_read_receipt_user_ids_for_messages(
+    db: Session,
+    message_ids: list[UUID],
+) -> dict[UUID, list[UUID]]:
+    """Batch-load read receipt user IDs keyed by message_id."""
+    if not message_ids:
+        return {}
+
+    receipts = (
+        db.query(MessageReadReceipt)
+        .filter(MessageReadReceipt.message_id.in_(message_ids))
+        .all()
+    )
+    result: dict[UUID, list[UUID]] = {message_id: [] for message_id in message_ids}
+    for receipt in receipts:
+        result.setdefault(receipt.message_id, []).append(receipt.user_id)
+    return result
+
+
 def soft_delete_message(db: Session, message: Message) -> Message:
     message.is_deleted = True
     message.deleted_at = datetime.utcnow()

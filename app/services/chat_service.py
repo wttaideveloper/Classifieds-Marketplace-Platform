@@ -88,6 +88,7 @@ def _map_conversation_list_item(
     user_id: UUID,
     *,
     latest_messages: dict | None = None,
+    last_message_read_by: dict | None = None,
     other_participant_user_id: UUID | None = None,
 ) -> dict:
     participant = chat_repo.get_participant(db, conversation.id, user_id)
@@ -95,11 +96,23 @@ def _map_conversation_list_item(
         db, conversation.id, user_id, participant.last_read_at if participant else None
     )
     latest = (latest_messages or {}).get(conversation.id)
+    if latest is None:
+        latest = chat_repo.get_latest_conversation_message(db, conversation.id)
+
     if latest is not None:
         preview = chat_repo.message_list_preview(latest)
         preview_at = latest.created_at
+        read_by = (last_message_read_by or {}).get(latest.id)
+        if read_by is None:
+            read_by = [r.user_id for r in chat_repo.get_message_read_receipts(db, latest.id)]
+        last_message = {
+            "sender_id": latest.sender_id,
+            "read_by": read_by,
+        }
     else:
-        preview, preview_at = chat_repo.resolve_conversation_preview(db, conversation)
+        preview, preview_at = conversation.last_message_preview, conversation.last_message_at
+        last_message = None
+
     item = {
         "id": conversation.id,
         "status": conversation.status,
@@ -107,6 +120,7 @@ def _map_conversation_list_item(
         "subject": conversation.subject,
         "last_message_at": preview_at,
         "last_message_preview": preview,
+        "last_message": last_message,
         "unread_count": unread,
         "assigned_provider_id": conversation.assigned_provider_id,
         **_conversation_archive_fields(conversation),
@@ -217,10 +231,19 @@ def list_conversations_service(
     latest_messages = chat_repo.get_latest_messages_for_conversations(
         db, [item.id for item in items]
     )
+    last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
+        db, [message.id for message in latest_messages.values()]
+    )
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
-                _map_conversation_list_item(db, item, user_id, latest_messages=latest_messages)
+                _map_conversation_list_item(
+                    db,
+                    item,
+                    user_id,
+                    latest_messages=latest_messages,
+                    last_message_read_by=last_message_read_by,
+                )
             )
             for item in items
         ],
@@ -243,6 +266,9 @@ def list_provider_conversations_service(
     latest_messages = chat_repo.get_latest_messages_for_conversations(
         db, [item.id for item in items]
     )
+    last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
+        db, [message.id for message in latest_messages.values()]
+    )
     other_participants = chat_repo.get_other_participant_ids_for_conversations(
         db, [item.id for item in items], user_id
     )
@@ -254,6 +280,7 @@ def list_provider_conversations_service(
                     item,
                     user_id,
                     latest_messages=latest_messages,
+                    last_message_read_by=last_message_read_by,
                     other_participant_user_id=other_participants.get(item.id),
                 )
             )
@@ -353,10 +380,19 @@ def search_conversations_service(
     latest_messages = chat_repo.get_latest_messages_for_conversations(
         db, [item.id for item in items]
     )
+    last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
+        db, [message.id for message in latest_messages.values()]
+    )
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
-                _map_conversation_list_item(db, item, user_id, latest_messages=latest_messages)
+                _map_conversation_list_item(
+                    db,
+                    item,
+                    user_id,
+                    latest_messages=latest_messages,
+                    last_message_read_by=last_message_read_by,
+                )
             )
             for item in items
         ],
@@ -732,22 +768,46 @@ def admin_list_conversations_service(
     items, total = chat_repo.get_admin_conversations(
         db, status=status_filter, page=page, page_size=page_size
     )
+    latest_messages = chat_repo.get_latest_messages_for_conversations(
+        db, [item.id for item in items]
+    )
+    last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
+        db, [message.id for message in latest_messages.values()]
+    )
 
-    return ConversationPaginatedResponse(
-        items=[
+    mapped_items = []
+    for item in items:
+        latest = latest_messages.get(item.id)
+        if latest is not None:
+            last_message = {
+                "sender_id": latest.sender_id,
+                "read_by": last_message_read_by.get(latest.id, []),
+            }
+            preview = chat_repo.message_list_preview(latest)
+            preview_at = latest.created_at
+        else:
+            last_message = None
+            preview = item.last_message_preview
+            preview_at = item.last_message_at
+
+        mapped_items.append(
             ConversationListItemResponse.model_validate({
                 "id": item.id,
                 "status": item.status,
                 "conversation_type": item.conversation_type,
                 "subject": item.subject,
-                "last_message_at": item.last_message_at,
-                "last_message_preview": item.last_message_preview,
+                "last_message_at": preview_at,
+                "last_message_preview": preview,
+                "last_message": last_message,
                 "unread_count": 0,
                 "assigned_provider_id": item.assigned_provider_id,
+                **_conversation_archive_fields(item),
                 "updated_at": item.updated_at,
             })
-            for item in items
-        ],
+        )
+
+    return ConversationPaginatedResponse(
+        items=mapped_items,
         pagination=build_pagination_meta(total, page, page_size),
     )
 

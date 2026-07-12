@@ -99,6 +99,13 @@ class ConversationResponse(BaseModel):
     updated_at: datetime
 
 
+class ConversationLastMessageSummary(BaseModel):
+    """Minimal last-message fields for conversation list read receipts."""
+
+    sender_id: UUID
+    read_by: list[UUID] = Field(default_factory=list)
+
+
 class ConversationListItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -108,6 +115,7 @@ class ConversationListItemResponse(BaseModel):
     subject: str | None = None
     last_message_at: datetime | None = None
     last_message_preview: str | None = None
+    last_message: ConversationLastMessageSummary | None = None
     unread_count: int = 0
     assigned_provider_id: UUID | None = None
     other_participant_user_id: UUID | None = Field(
@@ -129,6 +137,10 @@ _PROVIDER_CONVERSATION_LIST_ITEM_EXAMPLE = {
     "subject": "Question about training section",
     "last_message_at": "2026-07-09T01:54:35.338Z",
     "last_message_preview": "hello",
+    "last_message": {
+        "sender_id": "550e8400-e29b-41d4-a716-446655440030",
+        "read_by": ["550e8400-e29b-41d4-a716-446655440020"],
+    },
     "unread_count": 2,
     "assigned_provider_id": "550e8400-e29b-41d4-a716-446655440020",
     "other_participant_user_id": "550e8400-e29b-41d4-a716-446655440030",
