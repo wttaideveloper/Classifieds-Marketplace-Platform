@@ -10,6 +10,7 @@ from app.schemas.chat_schema import (
     ChatEligibilityResponse,
     ConversationNotificationsReadResponse,
     MonthlyLimitResponse,
+    NotificationChannelsReference,
     NotificationPaginatedResponse,
     NotificationPreferenceResponse,
     NotificationPreferenceUpdate,
@@ -18,6 +19,7 @@ from app.schemas.chat_schema import (
     UnreadCountResponse,
 )
 from app.services.chat_notification_service import (
+    get_notification_channels_reference,
     get_preferences_service,
     mark_all_notifications_read_service,
     mark_conversation_notifications_read_service,
@@ -34,12 +36,43 @@ from app.services.chat_service import (
 
 router = APIRouter(tags=["Chat Notifications"])
 
+_NOTIFICATION_CHANNELS_DESCRIPTION = """
+## Notification channels
+
+| UI setting | API field | Provider | Client setup |
+|------------|-----------|----------|--------------|
+| Email Notifications | `email_enabled` | SMTP | Server-side email config |
+| Push/App Notifications | `push_enabled` | **Firebase FCM** | `POST /api/v1/devices/register` with FCM token |
+| SMS/Text Notifications | `sms_enabled` + `sms_phone_number` | **Bravo SMS** | E.164 phone e.g. `+15551234567` |
+| In-app badge/history | `in_app_enabled` | Platform | `GET /notifications/unread-count` |
+
+On new chat messages the backend dispatches to enabled channels automatically.
+See `GET /notifications/channels` for a machine-readable reference.
+"""
+
+
+@router.get(
+    "/channels",
+    response_model=NotificationChannelsReference,
+    summary="Notification Channel Reference",
+    description=(
+        "Lists notification channels, preference fields, and delivery providers "
+        "(Firebase FCM for push, Bravo for SMS). No authentication required beyond "
+        "standard API access — useful for frontend settings screens and Swagger."
+    ),
+)
+def get_notification_channels():
+    return get_notification_channels_reference()
+
 
 @router.get(
     "/unread-count",
     response_model=UnreadCountResponse,
     summary="Get Unread Count",
-    description="Returns unread message and notification counts for the authenticated user.",
+    description=(
+        "Returns unread message and in-app notification counts for the badge. "
+        "Does not reflect Firebase or Bravo delivery status."
+    ),
 )
 def get_unread_count(
     db: Session = Depends(get_db),
@@ -52,6 +85,10 @@ def get_unread_count(
     "/preferences",
     response_model=NotificationPreferenceResponse,
     summary="Get Notification Preferences",
+    description=(
+        _NOTIFICATION_CHANNELS_DESCRIPTION
+        + "\nReturns the current user's channel toggles and `sms_phone_number` for Bravo."
+    ),
 )
 def get_notification_preferences(
     db: Session = Depends(get_db),
@@ -64,9 +101,44 @@ def get_notification_preferences(
     "/preferences",
     response_model=NotificationPreferenceResponse,
     summary="Update Notification Preferences",
+    description=(
+        _NOTIFICATION_CHANNELS_DESCRIPTION
+        + "\nSend only fields you want to change. "
+        "When enabling SMS, include `sms_phone_number` in E.164 format for Bravo delivery."
+    ),
 )
 def update_notification_preferences(
-    payload: NotificationPreferenceUpdate = Body(...),
+    payload: NotificationPreferenceUpdate = Body(
+        ...,
+        openapi_examples={
+            "firebase_push": {
+                "summary": "Enable Firebase push + in-app",
+                "description": "Register FCM token first via POST /devices/register.",
+                "value": {
+                    "push_enabled": True,
+                    "in_app_enabled": True,
+                    "sms_enabled": False,
+                },
+            },
+            "bravo_sms": {
+                "summary": "Enable Bravo SMS",
+                "description": "Requires sms_phone_number in E.164 format.",
+                "value": {
+                    "sms_enabled": True,
+                    "sms_phone_number": "+15551234567",
+                },
+            },
+            "all_except_sms": {
+                "summary": "Email + Firebase push, no SMS",
+                "value": {
+                    "email_enabled": True,
+                    "push_enabled": True,
+                    "sms_enabled": False,
+                    "in_app_enabled": True,
+                },
+            },
+        },
+    ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):

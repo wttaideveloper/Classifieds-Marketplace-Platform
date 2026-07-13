@@ -360,17 +360,37 @@ class DeviceRegisterRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "token": "fcm-device-token-here",
+                "token": "dK3fX9...:APA91bH...firebase-fcm-token",
                 "platform": "android",
             }
         }
     )
 
-    token: str = Field(..., min_length=1, max_length=500)
-    platform: DevicePlatform
+    token: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Firebase Cloud Messaging (FCM) device token from the mobile/web Firebase SDK.",
+    )
+    platform: DevicePlatform = Field(
+        ...,
+        description="Device platform: ios, android, or web.",
+    )
 
 
 class DeviceTokenResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "550e8400-e29b-41d4-a716-446655440040",
+                "token": "dK3fX9...:APA91bH...firebase-fcm-token",
+                "platform": "android",
+                "is_active": True,
+                "created_at": "2026-07-13T06:26:00Z",
+            }
+        }
+    )
+
     id: UUID
     token: str
     platform: DevicePlatform
@@ -378,21 +398,79 @@ class DeviceTokenResponse(BaseModel):
     created_at: datetime
 
 
-class NotificationPreferenceResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+_NOTIFICATION_PREFERENCES_EXAMPLE = {
+    "email_enabled": True,
+    "push_enabled": True,
+    "sms_enabled": False,
+    "sms_phone_number": "+15551234567",
+    "in_app_enabled": True,
+    "quiet_hours_start": "22:00",
+    "quiet_hours_end": "07:00",
+    "updated_at": "2026-07-13T06:26:00Z",
+}
 
-    push_enabled: bool
-    email_enabled: bool
-    in_app_enabled: bool
-    quiet_hours_start: str | None = None
-    quiet_hours_end: str | None = None
+
+class NotificationPreferenceResponse(BaseModel):
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"example": _NOTIFICATION_PREFERENCES_EXAMPLE},
+    )
+
+    email_enabled: bool = Field(..., description="Email Notifications — chat alerts sent to the user's email.")
+    push_enabled: bool = Field(
+        ...,
+        description="Push/App Notifications — Firebase Cloud Messaging (FCM) via registered device tokens.",
+    )
+    sms_enabled: bool = Field(
+        ...,
+        description="SMS/Text Notifications — Bravo SMS to `sms_phone_number`.",
+    )
+    sms_phone_number: str | None = Field(
+        None,
+        description="E.164 phone number for Bravo SMS when SMS notifications are enabled (e.g. +15551234567).",
+    )
+    in_app_enabled: bool = Field(
+        ...,
+        description="In-app notifications — badge count and notification history inside the app.",
+    )
+    quiet_hours_start: str | None = Field(None, description="Optional quiet hours start (HH:MM, 24h).")
+    quiet_hours_end: str | None = Field(None, description="Optional quiet hours end (HH:MM, 24h).")
     updated_at: datetime
 
 
 class NotificationPreferenceUpdate(BaseModel):
-    push_enabled: bool | None = None
-    email_enabled: bool | None = None
-    in_app_enabled: bool | None = None
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "summary": "Email + Firebase push",
+                    "value": {
+                        "email_enabled": True,
+                        "push_enabled": True,
+                        "sms_enabled": False,
+                        "in_app_enabled": True,
+                    },
+                },
+                {
+                    "summary": "Bravo SMS",
+                    "value": {
+                        "sms_enabled": True,
+                        "sms_phone_number": "+15551234567",
+                    },
+                },
+            ]
+        }
+    )
+
+    email_enabled: bool | None = Field(None, description="Toggle Email Notifications.")
+    push_enabled: bool | None = Field(None, description="Toggle Push/App Notifications (Firebase FCM).")
+    sms_enabled: bool | None = Field(None, description="Toggle SMS/Text Notifications (Bravo).")
+    sms_phone_number: str | None = Field(
+        None,
+        max_length=20,
+        description="Phone number for Bravo SMS (E.164 format recommended).",
+    )
+    in_app_enabled: bool | None = Field(None, description="Toggle in-app badge and history notifications.")
     quiet_hours_start: str | None = Field(None, pattern=r"^\d{2}:\d{2}$")
     quiet_hours_end: str | None = Field(None, pattern=r"^\d{2}:\d{2}$")
 
@@ -401,6 +479,62 @@ class UnreadCountResponse(BaseModel):
     unread_messages: int
     unread_notifications: int
     total_unread: int
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "unread_messages": 2,
+                "unread_notifications": 1,
+                "total_unread": 3,
+            }
+        }
+    )
+
+
+class NotificationChannelInfo(BaseModel):
+    """Reference for notification delivery providers shown in Swagger."""
+
+    channel: str = Field(..., description="UI label shown in settings.")
+    preference_field: str = Field(..., description="Field on GET/PUT /notifications/preferences.")
+    provider: str = Field(..., description="Backend delivery provider.")
+    setup: str = Field(..., description="What the client must configure.")
+
+
+class NotificationChannelsReference(BaseModel):
+    channels: list[NotificationChannelInfo] = Field(default_factory=list)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "channels": [
+                    {
+                        "channel": "Email Notifications",
+                        "preference_field": "email_enabled",
+                        "provider": "SMTP",
+                        "setup": "Uses server email configuration.",
+                    },
+                    {
+                        "channel": "Push/App Notifications",
+                        "preference_field": "push_enabled",
+                        "provider": "Firebase Cloud Messaging (FCM)",
+                        "setup": "Register FCM token via POST /api/v1/devices/register.",
+                    },
+                    {
+                        "channel": "SMS/Text Notifications",
+                        "preference_field": "sms_enabled + sms_phone_number",
+                        "provider": "Bravo SMS",
+                        "setup": "Set sms_phone_number in E.164 format when enabling SMS.",
+                    },
+                    {
+                        "channel": "In-app Notifications",
+                        "preference_field": "in_app_enabled",
+                        "provider": "Platform",
+                        "setup": "Badge count and GET /notifications/history.",
+                    },
+                ]
+            }
+        }
+    )
 
 
 class NotificationResponse(BaseModel):

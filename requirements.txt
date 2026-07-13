@@ -14,3 +14,4 @@ alembic
 gunicorn
 python-socketio
 redis
+firebase-admin

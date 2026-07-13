@@ -78,3 +78,55 @@ def test_unread_count(mock_service):
 
     assert response.status_code == 200
     assert response.json()["total_unread"] == 3
+
+
+@patch("app.api.v1.endpoints.chat_notification.get_preferences_service")
+def test_get_notification_preferences(mock_service):
+    mock_service.return_value = {
+        "email_enabled": True,
+        "push_enabled": True,
+        "sms_enabled": False,
+        "in_app_enabled": True,
+        "quiet_hours_start": None,
+        "quiet_hours_end": None,
+        "updated_at": _NOW,
+    }
+
+    response = client.get("/notifications/preferences")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email_enabled"] is True
+    assert body["push_enabled"] is True
+    assert body["sms_enabled"] is False
+
+
+@patch("app.api.v1.endpoints.chat_notification.update_preferences_service")
+def test_update_notification_preferences(mock_service):
+    mock_service.return_value = {
+        "email_enabled": True,
+        "push_enabled": False,
+        "sms_enabled": True,
+        "in_app_enabled": True,
+        "quiet_hours_start": None,
+        "quiet_hours_end": None,
+        "updated_at": _NOW,
+    }
+
+    response = client.put(
+        "/notifications/preferences",
+        json={"email_enabled": True, "push_enabled": False, "sms_enabled": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sms_enabled"] is True
+
+
+def test_get_notification_channels():
+    response = client.get("/notifications/channels")
+
+    assert response.status_code == 200
+    channels = response.json()["channels"]
+    providers = {item["channel"]: item["provider"] for item in channels}
+    assert providers["Push/App Notifications"] == "Firebase Cloud Messaging (FCM)"
+    assert providers["SMS/Text Notifications"] == "Bravo SMS"

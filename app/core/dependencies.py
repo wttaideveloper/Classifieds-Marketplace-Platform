@@ -4,7 +4,7 @@ from jose import ExpiredSignatureError, JWTError, jwt
 
 from app.core.config import settings
 
-bearer_scheme = HTTPBearer(auto_error=False)
+bearer_scheme = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
 
 def get_dev_user() -> dict:

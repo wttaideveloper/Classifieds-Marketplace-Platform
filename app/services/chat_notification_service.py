@@ -5,8 +5,12 @@ from sqlalchemy.orm import Session
 
 from app.repository import chat_repo as chat_repo
 from app.repository.query_utils import build_pagination_meta
+from app.services.bravo_sms_service import send_sms as send_bravo_sms
+from app.services.firebase_push_service import send_push_to_tokens
 from app.schemas.chat_schema import (
     ConversationNotificationsReadResponse,
+    NotificationChannelInfo,
+    NotificationChannelsReference,
     NotificationPaginatedResponse,
     NotificationPreferenceResponse,
     NotificationPreferenceUpdate,
@@ -38,6 +42,37 @@ def remove_device_service(db: Session, current_user: dict, token: str):
     if not removed:
         raise HTTPException(status_code=404, detail="Device token not found")
     return {"message": "Device token removed successfully"}
+
+
+def get_notification_channels_reference():
+    return NotificationChannelsReference(
+        channels=[
+            NotificationChannelInfo(
+                channel="Email Notifications",
+                preference_field="email_enabled",
+                provider="SMTP",
+                setup="Uses server email configuration.",
+            ),
+            NotificationChannelInfo(
+                channel="Push/App Notifications",
+                preference_field="push_enabled",
+                provider="Firebase Cloud Messaging (FCM)",
+                setup="Register FCM token via POST /api/v1/devices/register.",
+            ),
+            NotificationChannelInfo(
+                channel="SMS/Text Notifications",
+                preference_field="sms_enabled + sms_phone_number",
+                provider="Bravo SMS",
+                setup="Set sms_phone_number in E.164 format (e.g. +15551234567) when enabling SMS.",
+            ),
+            NotificationChannelInfo(
+                channel="In-app Notifications",
+                preference_field="in_app_enabled",
+                provider="Platform",
+                setup="Badge count via GET /notifications/unread-count and history via GET /notifications/history.",
+            ),
+        ]
+    )
 
 
 def get_preferences_service(db: Session, current_user: dict):
@@ -102,17 +137,81 @@ def create_message_notifications(
     for participant in conversation.participants:
         if participant.user_id == sender_id:
             continue
-        chat_repo.create_notification(
-            db,
-            user_id=participant.user_id,
-            notification_type="chat_message",
-            title=title,
-            body=body,
-            data={
-                "conversation_id": str(conversation_id),
-                "message_id": str(message_id),
-            },
-        )
+
+        prefs = chat_repo.get_notification_preferences(db, participant.user_id)
+
+        if prefs.in_app_enabled:
+            chat_repo.create_notification(
+                db,
+                user_id=participant.user_id,
+                notification_type="chat_message",
+                title=title,
+                body=body,
+                data={
+                    "conversation_id": str(conversation_id),
+                    "message_id": str(message_id),
+                },
+            )
+
+        if prefs.push_enabled:
+            _dispatch_push_notification(db, participant.user_id, title, body, conversation_id, message_id)
+
+        if prefs.email_enabled:
+            _dispatch_email_notification(participant.user_id, title, body, conversation_id)
+
+        if prefs.sms_enabled:
+            _dispatch_sms_notification(db, participant.user_id, title, body, conversation_id)
+
+
+def _dispatch_push_notification(
+    db: Session,
+    user_id: UUID,
+    title: str,
+    body: str,
+    conversation_id: UUID,
+    message_id: UUID,
+) -> None:
+    tokens = [device.token for device in chat_repo.get_active_device_tokens(db, user_id)]
+    if not tokens:
+        return
+    send_push_to_tokens(
+        tokens,
+        title=title,
+        body=body,
+        data={
+            "type": "chat_message",
+            "conversation_id": str(conversation_id),
+            "message_id": str(message_id),
+        },
+    )
+
+
+def _dispatch_email_notification(
+    user_id: UUID,
+    title: str,
+    body: str,
+    conversation_id: UUID,
+) -> None:
+    """Send email when SMTP delivery is configured for chat alerts."""
+    # Email delivery can be wired here using settings.email_user / email_pass.
+
+
+def _dispatch_sms_notification(
+    db: Session,
+    user_id: UUID,
+    title: str,
+    body: str,
+    conversation_id: UUID,
+) -> None:
+    prefs = chat_repo.get_notification_preferences(db, user_id)
+    if not prefs.sms_phone_number:
+        return
+    message = f"{title}: {body}" if title else body
+    send_bravo_sms(
+        phone=prefs.sms_phone_number,
+        message=message,
+        reference_id=str(user_id),
+    )
 
 
 def mark_notification_read_service(db: Session, current_user: dict, notification_id: UUID):

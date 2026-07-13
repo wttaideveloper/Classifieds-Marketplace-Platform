@@ -597,6 +597,14 @@ def deactivate_device_token(db: Session, user_id: UUID, token: str) -> bool:
     return True
 
 
+def get_active_device_tokens(db: Session, user_id: UUID) -> list[DeviceToken]:
+    return (
+        db.query(DeviceToken)
+        .filter(DeviceToken.user_id == user_id, DeviceToken.is_active.is_(True))
+        .all()
+    )
+
+
 def get_notification_preferences(
     db: Session,
     user_id: UUID,

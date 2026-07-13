@@ -14,6 +14,10 @@ router = APIRouter(tags=["Devices"])
     response_model=DeviceTokenResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register Device Token",
+    description=(
+        "Register a Firebase Cloud Messaging (FCM) device token for push notifications. "
+        "Mobile apps should pass the FCM token from Firebase SDK."
+    ),
 )
 def register_device(
     payload: DeviceRegisterRequest = Body(...),
@@ -26,6 +30,7 @@ def register_device(
 @router.delete(
     "/{token}",
     summary="Remove Device Token",
+    description="Deactivate an FCM device token so Firebase push is no longer sent to that device.",
 )
 def remove_device(
     token: str = Path(...),
