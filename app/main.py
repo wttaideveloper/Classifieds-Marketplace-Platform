@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
 from app.core.config import settings
+from app.core.openapi import OPENAPI_TAGS, configure_openapi, register_docs_routes
 from app.db.database import Base, engine
 from app.api.v1.router import api_router
 from app.exceptions.custom_exception import CustomException
@@ -17,35 +18,51 @@ import app.realtime.events  # noqa: F401, E402 — register Socket.IO handlers
 logger = logging.getLogger(__name__)
 
 _API_DESCRIPTION = """
-## Auth for web testing
+Classifieds Marketplace Platform REST API.
 
-| Environment | Auth |
-|-------------|------|
-| `ENVIRONMENT=development` | Optional — or use `GET /api/v1/auth/dev-token` |
-| Production / staging | Set `ENABLE_DEV_TOKEN=true`, then call `GET /api/v1/auth/dev-token` |
+## Authentication
 
-**Static test user IDs** — see `GET /api/v1/auth/test-users`
+Protected endpoints require a **JWT Bearer token**.
+
+1. Call `GET /api/v1/auth/dev-token` (development/staging with `ENABLE_DEV_TOKEN=true`).
+2. Copy `access_token` from the response.
+3. Click **Authorize** (top right) and paste the token.
+
+See `GET /api/v1/auth/test-users` for static test user IDs.
+
+## Quick reference
+
+| Area | Key endpoints |
+|------|----------------|
+| Provider inbox | `GET /api/v1/conversations/provider` |
+| Presence | `GET /api/v1/presence/online` + `other_participant_user_id` on provider list |
+| Badge count | `GET /api/v1/notifications/unread-count` |
+| Mark read | `PATCH /api/v1/conversations/{id}/read` |
+| Real-time chat | Socket.IO — see **Socket.IO** tag |
+
+## Test users
 
 | User | ID | Use for |
 |------|----|---------|
-| Provider | `550e8400-e29b-41d4-a716-446655440020` | **`/admin/messages`** |
+| Provider | `550e8400-e29b-41d4-a716-446655440020` | Provider web / `/admin/messages` |
 | Customer | `550e8400-e29b-41d4-a716-446655440030` | Customer chat UI |
 | Admin | `550e8400-e29b-41d4-a716-446655440000` | Admin dashboards |
 
 Seed sample data: `python scripts/seed_chat.py`
-
-**`/admin/messages`** should use a **provider** token.  
-`GET /api/v1/conversations/provider` returns conversations for the logged-in token user.
 """
 
 app = FastAPI(
     title="Classifieds Marketplace Platform API",
     version="1.0.0",
     description=_API_DESCRIPTION,
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    openapi_tags=OPENAPI_TAGS,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
+
+configure_openapi(app)
+register_docs_routes(app)
 
 app.add_middleware(
     CORSMiddleware,
