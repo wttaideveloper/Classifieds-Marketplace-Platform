@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     # Speech-to-text (OpenAI Whisper). Set OPENAI_API_KEY to enable transcription.
     OPENAI_API_KEY: str = ""
     SPEECH_TO_TEXT_MODEL: str = "whisper-1"
+    # Push notifications — Firebase Cloud Messaging (FCM)
+    FIREBASE_CREDENTIALS_PATH: str = ""
+    FIREBASE_CREDENTIALS_JSON: str = ""
+    # SMS — Bravo provider
+    BRAVO_SMS_API_URL: str = ""
+    BRAVO_API_KEY: str = ""
+    BRAVO_SMS_TIMEOUT_SECONDS: int = 15
 
     class Config:
         env_file = ".env"
@@ -54,6 +61,16 @@ class Settings(BaseSettings):
     @property
     def speech_to_text_enabled(self) -> bool:
         return bool(self.OPENAI_API_KEY.strip())
+
+    @property
+    def firebase_configured(self) -> bool:
+        return bool(
+            self.FIREBASE_CREDENTIALS_PATH.strip() or self.FIREBASE_CREDENTIALS_JSON.strip()
+        )
+
+    @property
+    def bravo_sms_configured(self) -> bool:
+        return bool(self.BRAVO_SMS_API_URL.strip() and self.BRAVO_API_KEY.strip())
 
     @staticmethod
     def normalize_socketio_path(path: str) -> str:

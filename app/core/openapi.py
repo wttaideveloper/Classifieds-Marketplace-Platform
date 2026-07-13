@@ -46,8 +46,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Chat Notifications",
         "description": (
-            "Unread badge counts, notification history, and mark-read endpoints. "
-            "Opening a conversation also clears related notifications."
+            "Unread badge counts, notification history, mark-read endpoints, and user preferences "
+            "for **Email Notifications**, **Push/App Notifications** (Firebase FCM), "
+            "and **SMS/Text Notifications** (Bravo). "
+            "Register device tokens under **Devices** for Firebase push delivery."
         ),
     },
     {
@@ -76,7 +78,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     },
     {
         "name": "Devices",
-        "description": "Push notification device token registration.",
+        "description": (
+            "Register **Firebase Cloud Messaging (FCM)** device tokens for Push/App Notifications. "
+            "Call `POST /devices/register` after the Firebase SDK provides a token. "
+            "Pair with `push_enabled` on `PUT /notifications/preferences`."
+        ),
     },
     {
         "name": "Enterprise",
@@ -125,6 +131,7 @@ PUBLIC_OPERATIONS: set[tuple[str, str]] = {
     ("get", "/api/v1/auth/test-users"),
     ("get", "/api/v1/auth/dev-token"),
     ("post", "/api/v1/auth/dev-token"),
+    ("get", "/api/v1/notifications/channels"),
     ("get", "/api/v1/health"),
     ("get", "/api/v1/inventory"),
     ("get", "/health"),

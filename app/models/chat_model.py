@@ -192,6 +192,8 @@ class NotificationPreference(Base):
     user_id = Column(UUID(as_uuid=True), nullable=False, unique=True, index=True)
     push_enabled = Column(Boolean, default=True, nullable=False)
     email_enabled = Column(Boolean, default=True, nullable=False)
+    sms_enabled = Column(Boolean, default=False, nullable=False)
+    sms_phone_number = Column(String(20), nullable=True)
     in_app_enabled = Column(Boolean, default=True, nullable=False)
     quiet_hours_start = Column(String(5), nullable=True)
     quiet_hours_end = Column(String(5), nullable=True)

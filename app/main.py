@@ -40,6 +40,17 @@ See `GET /api/v1/auth/test-users` for static test user IDs.
 | Mark read | `PATCH /api/v1/conversations/{id}/read` |
 | Real-time chat | Socket.IO — see **Socket.IO** tag |
 
+## Notification channels
+
+| UI setting | API | Provider |
+|------------|-----|----------|
+| Email Notifications | `email_enabled` | SMTP |
+| Push/App Notifications | `push_enabled` + `POST /devices/register` | **Firebase FCM** |
+| SMS/Text Notifications | `sms_enabled` + `sms_phone_number` | **Bravo SMS** |
+| In-app badge | `in_app_enabled` | Platform |
+
+See **Chat Notifications** → `GET /notifications/channels` for full reference.
+
 ## Test users
 
 | User | ID | Use for |

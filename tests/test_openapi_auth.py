@@ -37,6 +37,11 @@ def test_openapi_tags_have_descriptions():
     assert "Chat Notifications" in names
     assert all(t.get("description") for t in tags)
 
+    devices_tag = next(t for t in tags if t["name"] == "Devices")
+    assert "Firebase" in devices_tag["description"]
+    chat_tag = next(t for t in tags if t["name"] == "Chat Notifications")
+    assert "Bravo" in chat_tag["description"]
+
 
 def test_swagger_docs_routes_registered():
     from starlette.routing import Route
