@@ -56,3 +56,13 @@ def test_swagger_docs_routes_registered():
     assert "/api/docs" in paths
     assert "/openapi.json" in paths
     assert "/api/openapi.json" in paths
+
+
+def test_api_docs_uses_api_openapi_json():
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    response = client.get("/api/docs")
+    assert response.status_code == 200
+    assert "/api/openapi.json" in response.text
+    assert 'url: "/openapi.json"' not in response.text
