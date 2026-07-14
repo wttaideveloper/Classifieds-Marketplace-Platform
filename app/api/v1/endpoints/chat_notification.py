@@ -28,6 +28,7 @@ from app.services.chat_notification_service import (
     mark_notification_read_service,
     notification_history_service,
     test_push_service,
+    push_diagnostics_service,
     unread_count_service,
     update_preferences_service,
 )
@@ -106,6 +107,21 @@ def send_test_push(
     current_user=Depends(get_current_user),
 ):
     return test_push_service(db, current_user, payload)
+
+
+@router.get(
+    "/push-diagnostics",
+    summary="Push Notification Diagnostics",
+    description=(
+        "Checks Firebase credential loading/initialization and how many device tokens "
+        "are registered for the authenticated user. Use before POST /notifications/test-push."
+    ),
+)
+def push_diagnostics(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return push_diagnostics_service(db, current_user)
 
 
 @router.get(

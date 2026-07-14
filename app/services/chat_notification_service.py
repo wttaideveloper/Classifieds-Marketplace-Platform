@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.repository import chat_repo as chat_repo
 from app.repository.query_utils import build_pagination_meta
 from app.services.bravo_sms_service import send_sms as send_bravo_sms
-from app.services.firebase_push_service import send_push_to_tokens
+from app.services.firebase_push_service import get_firebase_diagnostics, send_push_to_tokens
 from app.schemas.chat_schema import (
     ConversationNotificationsReadResponse,
     NotificationChannelInfo,
@@ -57,6 +57,19 @@ def _chat_message_push_data(conversation_id: UUID, message_id: UUID | None = Non
     return data
 
 
+def push_diagnostics_service(db: Session, current_user: dict) -> dict:
+    user_id = _parse_user_id(current_user)
+    devices = chat_repo.get_active_device_tokens(db, user_id)
+    diagnostics = get_firebase_diagnostics()
+    diagnostics["authenticated_user_id"] = str(user_id)
+    diagnostics["registered_device_count"] = len(devices)
+    diagnostics["registered_device_prefixes"] = [device.token[:12] for device in devices]
+    diagnostics["projects_match"] = diagnostics.get("firebase_project_id") == diagnostics.get(
+        "expected_mobile_project_id"
+    )
+    return diagnostics
+
+
 def test_push_service(db: Session, current_user: dict, payload: TestPushRequest) -> TestPushResponse:
     user_id = _parse_user_id(current_user)
     registered = {device.token for device in chat_repo.get_active_device_tokens(db, user_id)}
@@ -80,17 +93,22 @@ def test_push_service(db: Session, current_user: dict, payload: TestPushRequest)
     if payload.conversation_id:
         data["conversationId"] = str(payload.conversation_id)
 
-    sent = send_push_to_tokens(
+    push_result = send_push_to_tokens(
         tokens,
         title=payload.title,
         body=payload.body,
         data=data,
     )
 
-    if settings.firebase_configured and sent == 0:
+    if settings.firebase_configured and push_result.sent_count == 0:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Firebase is configured but FCM delivery failed for all targeted tokens.",
+            detail={
+                "message": "Firebase is configured but FCM delivery failed for all targeted tokens.",
+                "tokens_targeted": len(tokens),
+                "firebase_project_id": push_result.firebase_project_id,
+                "failures": push_result.failures,
+            },
         )
 
     if not settings.firebase_configured:
@@ -104,7 +122,7 @@ def test_push_service(db: Session, current_user: dict, payload: TestPushRequest)
         )
 
     return TestPushResponse(
-        sent_count=sent,
+        sent_count=push_result.sent_count,
         tokens_targeted=len(tokens),
         firebase_configured=True,
         data=data,
