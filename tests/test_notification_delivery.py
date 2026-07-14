@@ -66,4 +66,7 @@ def test_create_message_notifications_dispatches_channels(mock_repo, mock_push, 
 
     mock_repo.create_notification.assert_called_once()
     mock_push.assert_called_once()
+    push_data = mock_push.call_args.kwargs["data"]
+    assert push_data["type"] == "chat_message"
+    assert "conversationId" in push_data
     mock_sms.assert_called_once()

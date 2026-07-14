@@ -385,6 +385,42 @@ class DeviceTokenResponse(BaseModel):
     created_at: datetime
 
 
+class TestPushRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "title": "New message",
+                "body": "Test push from backend",
+                "conversation_id": "7d365b31-9922-4219-92f3-8254d3d6e2e5",
+            }
+        }
+    )
+
+    token: str | None = Field(
+        default=None,
+        description=(
+            "Optional FCM token. Must already be registered to the authenticated user "
+            "via POST /devices/register. Omit to send to all active registered devices."
+        ),
+    )
+    title: str = Field(default="New message", max_length=200)
+    body: str = Field(default="Test push from backend", max_length=500)
+    conversation_id: UUID | None = Field(
+        default=None,
+        description="Included in FCM data as camelCase `conversationId` for mobile tap navigation.",
+    )
+
+
+class TestPushResponse(BaseModel):
+    sent_count: int = Field(..., description="Number of FCM messages accepted by Firebase.")
+    tokens_targeted: int = Field(..., description="Device tokens attempted.")
+    firebase_configured: bool = Field(
+        ...,
+        description="Whether FIREBASE_CREDENTIALS_PATH or FIREBASE_CREDENTIALS_JSON is set on the server.",
+    )
+    data: dict[str, str] = Field(..., description="FCM data payload sent to the device.")
+
+
 _NOTIFICATION_PREFERENCES_EXAMPLE = {
     "email_enabled": True,
     "push_enabled": True,

@@ -1,8 +1,8 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import ExpiredSignatureError, JWTError, jwt
 
 from app.core.config import settings
+from app.core.token_auth import resolve_user_from_token_or_raise
 
 bearer_scheme = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
@@ -26,26 +26,7 @@ def get_current_user(
             )
         return get_dev_user()
 
-    token = credentials.credentials
-    try:
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM],
-        )
-    except ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user_id = payload.get("id") or payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-    return {
-        "id": user_id,
-        "role": payload.get("role"),
-        "email": payload.get("email"),
-    }
+    return resolve_user_from_token_or_raise(credentials.credentials)
 
 
 def require_roles(allowed_roles: list):

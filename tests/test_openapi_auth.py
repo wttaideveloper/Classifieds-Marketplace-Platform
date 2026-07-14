@@ -41,6 +41,8 @@ def test_openapi_tags_have_descriptions():
     assert "Firebase" in devices_tag["description"]
     chat_tag = next(t for t in tags if t["name"] == "Chat Notifications")
     assert "Bravo" in chat_tag["description"]
+    auth_tag = next(t for t in tags if t["name"] == "Authentication")
+    assert "Invigorate" in auth_tag["description"]
 
 
 def test_swagger_docs_routes_registered():

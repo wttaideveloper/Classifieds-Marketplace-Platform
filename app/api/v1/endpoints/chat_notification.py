@@ -16,6 +16,8 @@ from app.schemas.chat_schema import (
     NotificationPreferenceUpdate,
     NotificationReadAllResponse,
     NotificationResponse,
+    TestPushRequest,
+    TestPushResponse,
     UnreadCountResponse,
 )
 from app.services.chat_notification_service import (
@@ -25,6 +27,7 @@ from app.services.chat_notification_service import (
     mark_conversation_notifications_read_service,
     mark_notification_read_service,
     notification_history_service,
+    test_push_service,
     unread_count_service,
     update_preferences_service,
 )
@@ -63,6 +66,46 @@ See `GET /notifications/channels` for a machine-readable reference.
 )
 def get_notification_channels():
     return get_notification_channels_reference()
+
+
+@router.post(
+    "/test-push",
+    response_model=TestPushResponse,
+    summary="Send Test Push Notification",
+    description=(
+        "Sends a Firebase FCM test notification to the authenticated user's registered device(s). "
+        "Register first via `POST /devices/register`. "
+        "FCM `data` uses camelCase keys (`conversationId`, `type=chat_message`) for mobile tap navigation. "
+        "Requires Firebase service account credentials on the server."
+    ),
+)
+def send_test_push(
+    payload: TestPushRequest = Body(
+        ...,
+        openapi_examples={
+            "default": {
+                "summary": "Test chat message push",
+                "value": {
+                    "title": "New message",
+                    "body": "Test push from backend",
+                    "conversation_id": "7d365b31-9922-4219-92f3-8254d3d6e2e5",
+                },
+            },
+            "specific_token": {
+                "summary": "Target one registered device",
+                "value": {
+                    "token": "cnLJ9RUyS6GEafhAN_qkV3:APA91bH...",
+                    "title": "New message",
+                    "body": "Test push from backend",
+                    "conversation_id": "7d365b31-9922-4219-92f3-8254d3d6e2e5",
+                },
+            },
+        },
+    ),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return test_push_service(db, current_user, payload)
 
 
 @router.get(

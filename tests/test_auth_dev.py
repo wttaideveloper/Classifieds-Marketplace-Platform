@@ -17,6 +17,19 @@ def test_list_test_users():
     body = response.json()
     assert body["provider_user_id"] == TEST_PROVIDER_USER_ID
     assert body["recommended_for_admin_messages"] == "provider"
+    assert any("Invigorate" in note or "auth/login" in note for note in body["notes"])
+
+
+def test_auth_integration_reference():
+    response = client.get("/auth/integration")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["algorithm"] == "RS256"
+    assert body["audience"] == "invigorate-api"
+    assert "invigorate-healthcare" in body["issuer"]
+    assert body["token_response_path"] == "tokens.access_token"
+    assert body["user_id_claim"] == "sub"
+    assert len(body["role_mapping"]) >= 4
 
 
 def test_get_dev_token():
