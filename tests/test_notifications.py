@@ -130,3 +130,29 @@ def test_get_notification_channels():
     providers = {item["channel"]: item["provider"] for item in channels}
     assert providers["Push/App Notifications"] == "Firebase Cloud Messaging (FCM)"
     assert providers["SMS/Text Notifications"] == "Bravo SMS"
+
+
+@patch("app.api.v1.endpoints.chat_notification.test_push_service")
+def test_send_test_push(mock_service):
+    mock_service.return_value = {
+        "sent_count": 1,
+        "tokens_targeted": 1,
+        "firebase_configured": True,
+        "data": {
+            "type": "chat_message",
+            "conversationId": "7d365b31-9922-4219-92f3-8254d3d6e2e5",
+        },
+    }
+
+    response = client.post(
+        "/notifications/test-push",
+        json={
+            "title": "New message",
+            "body": "Test push from backend",
+            "conversation_id": "7d365b31-9922-4219-92f3-8254d3d6e2e5",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sent_count"] == 1
+    assert response.json()["data"]["conversationId"] == "7d365b31-9922-4219-92f3-8254d3d6e2e5"

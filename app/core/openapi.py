@@ -7,22 +7,39 @@ BEARER_AUTH_SCHEME = "BearerAuth"
 
 BEARER_AUTH_DESCRIPTION = """JWT **access token** for authenticated API requests.
 
-**Quick start (development / staging):**
-1. Call `GET /api/v1/auth/dev-token` (no body required) when `ENVIRONMENT=development` or `ENABLE_DEV_TOKEN=true`.
-2. Copy `access_token` from the response.
-3. Click **Authorize** above and paste the token — Swagger adds `Bearer ` automatically.
+## Primary — Invigorate Auth (Production)
 
-**Provider web / admin messages:** use `GET /api/v1/auth/test-users` for static IDs, or POST `/api/v1/auth/dev-token` with:
-```json
-{ "user_id": "550e8400-e29b-41d4-a716-446655440020", "role": "provider" }
-```
+1. Login: `POST https://p6wvqog202.execute-api.us-east-1.amazonaws.com/api/v1/auth/login`
+2. Copy: `tokens.access_token` from the response
+3. Click **Authorize** above and paste the token (Swagger adds `Bearer ` automatically)
+4. Call any protected endpoint on this marketplace API
 
-**Production:** use your standard login flow when available; until then enable `ENABLE_DEV_TOKEN=true` on staging servers."""
+| Setting | Value |
+|---------|-------|
+| Algorithm | RS256 |
+| Issuer (`iss`) | `https://auth-dev.onruyl.com/realms/invigorate-healthcare` |
+| Audience (`aud`) | `invigorate-api` |
+| JWKS | `https://auth-dev.onruyl.com/realms/invigorate-healthcare/protocol/openid-connect/certs` |
+| User ID claim | `sub` (Keycloak user ID) |
+| App User UUID | `GET /api/v1/auth/me` on auth API (different from `sub`) |
+
+**Role claims:** `tenant_role`, `user_role`, `tenant_rbac_roles`, `tenant_permissions`
+
+See **Authentication** → `GET /api/v1/auth/integration` for full reference.
+
+## Fallback — Local dev token (Testing only)
+
+`GET /api/v1/auth/dev-token` when `ENABLE_DEV_TOKEN=true` — local HS256 token, not Invigorate auth."""
 
 OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Authentication",
-        "description": "JWT dev tokens and static test user IDs for Swagger, web, and Socket.IO.",
+        "description": (
+            "**Invigorate auth integration** — login via auth team API, use `tokens.access_token` "
+            "as `Authorization: Bearer <token>` on this marketplace API. "
+            "Start with `GET /auth/integration` for issuer, audience, JWKS, and role mapping. "
+            "`/auth/dev-token` is for local testing only."
+        ),
     },
     {
         "name": "System",
@@ -128,6 +145,7 @@ SWAGGER_UI_PARAMETERS: dict = {
 
 # Routes that do not require a token (OpenAPI `security: []`).
 PUBLIC_OPERATIONS: set[tuple[str, str]] = {
+    ("get", "/api/v1/auth/integration"),
     ("get", "/api/v1/auth/test-users"),
     ("get", "/api/v1/auth/dev-token"),
     ("post", "/api/v1/auth/dev-token"),

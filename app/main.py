@@ -24,13 +24,30 @@ Classifieds Marketplace Platform REST API.
 
 ## Authentication
 
-Protected endpoints require a **JWT Bearer token**.
+Protected endpoints require:
+`Authorization: Bearer <tokens.access_token>`
 
-1. Call `GET /api/v1/auth/dev-token` (development/staging with `ENABLE_DEV_TOKEN=true`).
-2. Copy `access_token` from the response.
-3. Click **Authorize** (top right) and paste the token.
+**Invigorate auth (primary)**
+1. Login: `POST https://p6wvqog202.execute-api.us-east-1.amazonaws.com/api/v1/auth/login`
+2. Use `tokens.access_token` from response
+3. Paste in Swagger **Authorize** button
 
-See `GET /api/v1/auth/test-users` for static test user IDs.
+| | |
+|---|---|
+| Issuer | `https://auth-dev.onruyl.com/realms/invigorate-healthcare` |
+| Audience | `invigorate-api` |
+| Algorithm | RS256 |
+| User ID | JWT `sub` claim |
+
+Full details: **Authentication** → `GET /api/v1/auth/integration`
+
+**Local testing only:** `GET /api/v1/auth/dev-token` (requires `ENABLE_DEV_TOKEN=true`)
+
+Server `.env` required:
+```
+KEYCLOAK_ISSUER=https://auth-dev.onruyl.com/realms/invigorate-healthcare
+KEYCLOAK_AUDIENCE=invigorate-api
+```
 
 ## Quick reference
 

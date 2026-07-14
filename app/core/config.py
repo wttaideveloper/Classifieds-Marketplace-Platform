@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     BRAVO_SMS_API_URL: str = ""
     BRAVO_API_KEY: str = ""
     BRAVO_SMS_TIMEOUT_SECONDS: int = 15
+    # Keycloak / Invigorate login tokens (RS256)
+    KEYCLOAK_ISSUER: str = ""
+    KEYCLOAK_AUDIENCE: str = ""
+    KEYCLOAK_JWKS_URL: str = ""
 
     class Config:
         env_file = ".env"
@@ -76,6 +80,17 @@ class Settings(BaseSettings):
     @property
     def bravo_sms_configured(self) -> bool:
         return bool(self.BRAVO_SMS_API_URL.strip() and self.BRAVO_API_KEY.strip())
+
+    @property
+    def keycloak_configured(self) -> bool:
+        return bool(self.KEYCLOAK_ISSUER.strip())
+
+    @property
+    def keycloak_jwks_url(self) -> str:
+        if self.KEYCLOAK_JWKS_URL.strip():
+            return self.KEYCLOAK_JWKS_URL.strip()
+        issuer = self.KEYCLOAK_ISSUER.rstrip("/")
+        return f"{issuer}/protocol/openid-connect/certs"
 
     @staticmethod
     def normalize_socketio_path(path: str) -> str:

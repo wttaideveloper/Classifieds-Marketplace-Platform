@@ -1,8 +1,7 @@
 from urllib.parse import parse_qs
 
-from jose import JWTError, jwt
-
 from app.core.config import settings
+from app.core.token_auth import resolve_user_from_token
 
 
 def get_dev_user() -> dict:
@@ -14,26 +13,7 @@ def get_dev_user() -> dict:
 
 
 def authenticate_token(token: str | None) -> dict | None:
-    if not token:
-        return None
-    try:
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM],
-        )
-    except JWTError:
-        return None
-
-    user_id = payload.get("id") or payload.get("sub")
-    if not user_id:
-        return None
-
-    return {
-        "id": str(user_id),
-        "role": payload.get("role"),
-        "email": payload.get("email"),
-    }
+    return resolve_user_from_token(token)
 
 
 def extract_token_from_environ(environ: dict, auth: dict | None) -> str | None:

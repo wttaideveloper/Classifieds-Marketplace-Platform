@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.repository import chat_repo as chat_repo
 from app.repository.query_utils import build_pagination_meta
 from app.services.bravo_sms_service import send_sms as send_bravo_sms
@@ -16,6 +17,8 @@ from app.schemas.chat_schema import (
     NotificationPreferenceUpdate,
     NotificationReadAllResponse,
     NotificationResponse,
+    TestPushRequest,
+    TestPushResponse,
     UnreadCountResponse,
 )
 
@@ -42,6 +45,70 @@ def remove_device_service(db: Session, current_user: dict, token: str):
     if not removed:
         raise HTTPException(status_code=404, detail="Device token not found")
     return {"message": "Device token removed successfully"}
+
+
+def _chat_message_push_data(conversation_id: UUID, message_id: UUID | None = None) -> dict[str, str]:
+    data = {
+        "type": "chat_message",
+        "conversationId": str(conversation_id),
+    }
+    if message_id is not None:
+        data["messageId"] = str(message_id)
+    return data
+
+
+def test_push_service(db: Session, current_user: dict, payload: TestPushRequest) -> TestPushResponse:
+    user_id = _parse_user_id(current_user)
+    registered = {device.token for device in chat_repo.get_active_device_tokens(db, user_id)}
+
+    if payload.token:
+        if payload.token not in registered:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Device token not registered for this user. Call POST /devices/register first.",
+            )
+        tokens = [payload.token]
+    elif registered:
+        tokens = list(registered)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active device tokens for this user. Call POST /devices/register first.",
+        )
+
+    data = {"type": "chat_message"}
+    if payload.conversation_id:
+        data["conversationId"] = str(payload.conversation_id)
+
+    sent = send_push_to_tokens(
+        tokens,
+        title=payload.title,
+        body=payload.body,
+        data=data,
+    )
+
+    if settings.firebase_configured and sent == 0:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Firebase is configured but FCM delivery failed for all targeted tokens.",
+        )
+
+    if not settings.firebase_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Firebase is not configured on the server. Set FIREBASE_CREDENTIALS_PATH "
+                "or FIREBASE_CREDENTIALS_JSON in .env (service account from the same Firebase "
+                "project as the mobile app)."
+            ),
+        )
+
+    return TestPushResponse(
+        sent_count=sent,
+        tokens_targeted=len(tokens),
+        firebase_configured=True,
+        data=data,
+    )
 
 
 def get_notification_channels_reference():
@@ -178,11 +245,7 @@ def _dispatch_push_notification(
         tokens,
         title=title,
         body=body,
-        data={
-            "type": "chat_message",
-            "conversation_id": str(conversation_id),
-            "message_id": str(message_id),
-        },
+        data=_chat_message_push_data(conversation_id, message_id),
     )
 
 

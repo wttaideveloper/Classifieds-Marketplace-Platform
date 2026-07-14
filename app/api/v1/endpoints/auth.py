@@ -5,12 +5,14 @@ from app.core.security import create_access_token
 from app.schemas.auth_schema import (
     DEFAULT_DEV_USER_ID,
     DevTokenRequest,
+    AuthIntegrationResponse,
     TEST_ADMIN_USER_ID,
     TEST_CUSTOMER_USER_ID,
     TEST_PROVIDER_USER_ID,
     TestUsersResponse,
     TokenResponse,
 )
+from app.services.auth_integration_service import get_auth_integration_info
 
 router = APIRouter(tags=["Authentication"])
 
@@ -53,10 +55,27 @@ def _issue_dev_token(data: DevTokenRequest | None = None) -> TokenResponse:
 
 
 @router.get(
+    "/integration",
+    response_model=AuthIntegrationResponse,
+    summary="Auth Integration Reference",
+    description=(
+        "Documents how to authenticate with the **Invigorate auth team** login API "
+        "and use the returned JWT on this marketplace API. "
+        "Use this as the Swagger reference for frontend integration."
+    ),
+)
+def auth_integration_reference():
+    return get_auth_integration_info()
+
+
+@router.get(
     "/test-users",
     response_model=TestUsersResponse,
     summary="List Static Test User IDs",
-    description="Reference IDs for dev tokens and seeded chat conversations.",
+    description=(
+        "Reference IDs for **local dev tokens** and seeded chat conversations. "
+        "For real users, login via Invigorate `POST /api/v1/auth/login` — see `GET /auth/integration`."
+    ),
 )
 def list_test_users():
     return TestUsersResponse(
@@ -65,11 +84,12 @@ def list_test_users():
         customer_user_id=TEST_CUSTOMER_USER_ID,
         recommended_for_admin_messages="provider",
         notes=[
-            "Use GET /api/v1/auth/dev-token for a default provider token (no body required).",
-            "POST /api/v1/auth/dev-token body is optional — omit it or send {}.",
-            f"For /admin/messages, use role=provider and user_id={TEST_PROVIDER_USER_ID}.",
+            "Production auth: POST https://p6wvqog202.execute-api.us-east-1.amazonaws.com/api/v1/auth/login",
+            "Use tokens.access_token as Authorization: Bearer <token> on this marketplace API.",
+            "See GET /api/v1/auth/integration for full Invigorate auth details.",
+            "Use GET /api/v1/auth/dev-token only for local/testing when ENABLE_DEV_TOKEN=true.",
+            f"For /admin/messages testing, use role=provider and user_id={TEST_PROVIDER_USER_ID}.",
             "GET /api/v1/conversations/provider returns conversations for the token user.",
-            "Run scripts/seed_chat.py to create sample conversations on the server DB.",
         ],
     )
 
@@ -79,8 +99,9 @@ def list_test_users():
     response_model=TokenResponse,
     summary="Generate Default Development JWT (GET)",
     description=(
-        "Returns a provider JWT using static test user "
-        f"`{TEST_PROVIDER_USER_ID}`. No request body required."
+        "**Testing only.** Returns a local marketplace JWT (HS256), not an Invigorate auth token. "
+        f"For production integration use Invigorate login — see `GET /auth/integration`. "
+        f"Default user: `{TEST_PROVIDER_USER_ID}`."
     ),
 )
 def create_dev_token_get():
@@ -99,9 +120,8 @@ def create_dev_token_get():
     response_model=TokenResponse,
     summary="Generate Development JWT (POST)",
     description=(
-        "Creates a JWT for Swagger, web, and Socket.IO testing. "
-        "Request body is **optional** — send `{}` or omit fields for defaults. "
-        "Available when `ENVIRONMENT=development` or `ENABLE_DEV_TOKEN=true`."
+        "**Testing only.** Creates a local marketplace JWT (HS256) for Swagger/Socket.IO testing. "
+        "For Invigorate auth use `POST /api/v1/auth/login` on the auth API — see `GET /auth/integration`."
     ),
 )
 def create_dev_token(payload: DevTokenRequest | None = Body(default=None)):
