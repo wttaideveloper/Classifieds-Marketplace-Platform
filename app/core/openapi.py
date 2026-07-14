@@ -200,19 +200,32 @@ def register_docs_routes(app: FastAPI) -> None:
     """Serve Swagger/ReDoc/OpenAPI at both root and /api/* paths."""
 
     @app.get("/docs", include_in_schema=False)
-    @app.get("/api/docs", include_in_schema=False)
-    async def swagger_ui():
+    async def swagger_ui_root():
         return get_swagger_ui_html(
             openapi_url="/openapi.json",
             title=f"{app.title} - Swagger UI",
             swagger_ui_parameters=SWAGGER_UI_PARAMETERS,
         )
 
+    @app.get("/api/docs", include_in_schema=False)
+    async def swagger_ui_api():
+        return get_swagger_ui_html(
+            openapi_url="/api/openapi.json",
+            title=f"{app.title} - Swagger UI",
+            swagger_ui_parameters=SWAGGER_UI_PARAMETERS,
+        )
+
     @app.get("/redoc", include_in_schema=False)
-    @app.get("/api/redoc", include_in_schema=False)
-    async def redoc_ui():
+    async def redoc_ui_root():
         return get_redoc_html(
             openapi_url="/openapi.json",
+            title=f"{app.title} - ReDoc",
+        )
+
+    @app.get("/api/redoc", include_in_schema=False)
+    async def redoc_ui_api():
+        return get_redoc_html(
+            openapi_url="/api/openapi.json",
             title=f"{app.title} - ReDoc",
         )
 
