@@ -34,6 +34,36 @@ def _decode_local_token(token: str) -> dict:
     )
 
 
+def _normalize_audience_list(aud) -> list[str]:
+    if aud is None:
+        return []
+    if isinstance(aud, str):
+        return [aud]
+    if isinstance(aud, (list, tuple)):
+        return [str(item) for item in aud]
+    return [str(aud)]
+
+
+def _validate_keycloak_audience(payload: dict) -> None:
+    """Accept tokens where aud or azp matches KEYCLOAK_AUDIENCE.
+
+    Keycloak access tokens often use aud=[account, broker, realm-management]
+    while azp identifies the OAuth client (e.g. invigorate-api).
+    """
+    expected = settings.KEYCLOAK_AUDIENCE.strip()
+    if not expected:
+        return
+
+    audiences = _normalize_audience_list(payload.get("aud"))
+    azp = payload.get("azp")
+    if expected in audiences or azp == expected:
+        return
+
+    raise JWTError(
+        f"Token audience mismatch: expected aud or azp '{expected}', got aud={audiences} azp={azp!r}"
+    )
+
+
 def _decode_keycloak_token(token: str) -> dict:
     if not settings.keycloak_configured:
         raise JWTError("Keycloak is not configured")
@@ -46,15 +76,15 @@ def _decode_keycloak_token(token: str) -> dict:
         raise JWTError("Unable to find matching Keycloak signing key")
 
     public_key = jwk.construct(key_data)
-    decode_options = {"verify_aud": bool(settings.KEYCLOAK_AUDIENCE.strip())}
-    return jwt.decode(
+    payload = jwt.decode(
         token,
         public_key,
         algorithms=["RS256"],
-        audience=settings.KEYCLOAK_AUDIENCE or None,
         issuer=settings.KEYCLOAK_ISSUER,
-        options=decode_options,
+        options={"verify_aud": False},
     )
+    _validate_keycloak_audience(payload)
+    return payload
 
 
 def _normalize_slug(value: str | None) -> str | None:
@@ -176,7 +206,7 @@ def resolve_user_from_token_or_raise(token: str) -> dict:
         detail = "Invalid token"
         if settings.keycloak_configured:
             detail = (
-                "Invalid token. Marketplace tokens use local JWT; "
-                "Invigorate/Keycloak tokens require KEYCLOAK_ISSUER to be configured on the server."
+                "Invalid token. Verify issuer, signature, expiry, and that aud or azp "
+                f"matches KEYCLOAK_AUDIENCE ({settings.KEYCLOAK_AUDIENCE or 'not set'})."
             )
         raise HTTPException(status_code=401, detail=detail) from exc
