@@ -1,10 +1,11 @@
 import pytest
 
 from app.services.firebase_push_service import (
-    PushSendResult,
     _hint_for_fcm_error,
+    _load_firebase_credentials_payload,
     _normalize_firebase_credentials_payload,
     get_firebase_diagnostics,
+    send_push_to_tokens,
 )
 
 
@@ -15,6 +16,26 @@ def test_normalize_private_key_from_env():
     normalized = _normalize_firebase_credentials_payload(payload)
     assert "\n" in normalized["private_key"]
     assert "\\n" not in normalized["private_key"]
+
+
+def test_load_credentials_reports_missing_file(monkeypatch):
+    monkeypatch.setattr("app.services.firebase_push_service.settings.FIREBASE_CREDENTIALS_JSON", "")
+    monkeypatch.setattr(
+        "app.services.firebase_push_service.settings.FIREBASE_CREDENTIALS_PATH",
+        "/missing/firebase.json",
+    )
+    payload, error = _load_firebase_credentials_payload()
+    assert payload is None
+    assert "not found" in (error or "").lower()
+
+
+def test_send_push_reports_credentials_error(monkeypatch):
+    monkeypatch.setattr("app.services.firebase_push_service.settings.FIREBASE_CREDENTIALS_JSON", "{bad json")
+    monkeypatch.setattr("app.services.firebase_push_service.settings.FIREBASE_CREDENTIALS_PATH", "")
+    result = send_push_to_tokens(["abc"], title="t", body="b")
+    assert result.sent_count == 0
+    assert result.credentials_error
+    assert len(result.failures) == 1
 
 
 def test_get_firebase_diagnostics_without_config(monkeypatch):
