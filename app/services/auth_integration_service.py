@@ -45,7 +45,8 @@ def get_auth_integration_info() -> AuthIntegrationResponse:
         notes=[
             "Primary login: POST https://p6wvqog202.execute-api.us-east-1.amazonaws.com/api/v1/auth/login",
             "Use tokens.access_token from the login response in the Authorize button above.",
-            "This marketplace API validates RS256 tokens using issuer, audience, and JWKS.",
+            "This marketplace API validates RS256 tokens using issuer, JWKS, and KEYCLOAK_AUDIENCE.",
+            "Audience check accepts aud=invigorate-api OR azp=invigorate-api (Keycloak access tokens often use azp).",
             "JWT sub is used as user_id here. Application User UUID is available via GET /api/v1/auth/me on the auth API.",
             "Dev token endpoints are for local/testing only when ENABLE_DEV_TOKEN=true.",
         ],

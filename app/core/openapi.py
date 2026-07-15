@@ -18,7 +18,7 @@ BEARER_AUTH_DESCRIPTION = """JWT **access token** for authenticated API requests
 |---------|-------|
 | Algorithm | RS256 |
 | Issuer (`iss`) | `https://auth-dev.onruyl.com/realms/invigorate-healthcare` |
-| Audience (`aud`) | `invigorate-api` |
+| Audience (`aud`) | `invigorate-api` **or** `azp=invigorate-api` |
 | JWKS | `https://auth-dev.onruyl.com/realms/invigorate-healthcare/protocol/openid-connect/certs` |
 | User ID claim | `sub` (Keycloak user ID) |
 | App User UUID | `GET /api/v1/auth/me` on auth API (different from `sub`) |
