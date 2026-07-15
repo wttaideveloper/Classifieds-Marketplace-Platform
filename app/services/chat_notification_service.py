@@ -107,6 +107,7 @@ def test_push_service(db: Session, current_user: dict, payload: TestPushRequest)
                 "message": "Firebase is configured but FCM delivery failed for all targeted tokens.",
                 "tokens_targeted": len(tokens),
                 "firebase_project_id": push_result.firebase_project_id,
+                "credentials_error": push_result.credentials_error,
                 "failures": push_result.failures,
             },
         )
