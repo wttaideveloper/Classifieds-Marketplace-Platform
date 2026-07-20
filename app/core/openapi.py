@@ -70,6 +70,21 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "Platform Notifications",
+        "description": (
+            "Multi-tenant platform notifications — CRUD, manual broadcast, scheduling, "
+            "tenant admin and super admin sends."
+        ),
+    },
+    {
+        "name": "User Notifications",
+        "description": "User inbox at `/users/me/notifications` with read/unread count APIs.",
+    },
+    {
+        "name": "Notification Templates",
+        "description": "Reusable templates for manual and automatic platform notifications.",
+    },
+    {
         "name": "Presence",
         "description": "Online/offline status — pair with `other_participant_user_id` on provider conversation lists.",
     },

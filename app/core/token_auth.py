@@ -163,6 +163,10 @@ def payload_to_user(payload: dict) -> dict:
     if rbac_roles is not None:
         user["tenant_rbac_roles"] = rbac_roles
 
+    tenant_id = payload.get("tenant_id") or payload.get("org_id") or payload.get("organization_id")
+    if tenant_id is not None:
+        user["tenant_id"] = str(tenant_id)
+
     return user
 
 
