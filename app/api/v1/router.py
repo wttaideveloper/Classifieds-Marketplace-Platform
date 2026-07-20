@@ -66,9 +66,20 @@ _safe_include(
 _safe_include("app.api.v1.endpoints.message", prefix="/messages", tags=["Messages"])
 _safe_include("app.api.v1.endpoints.attachment", prefix="/attachments", tags=["Attachments"])
 _safe_include(
+    "app.api.v1.endpoints.platform_notification",
+    prefix="/notifications",
+    tags=["Platform Notifications"],
+)
+_safe_include(
     "app.api.v1.endpoints.chat_notification",
     prefix="/notifications",
     tags=["Chat Notifications"],
+)
+_safe_include("app.api.v1.endpoints.user_notification", prefix="/users", tags=["User Notifications"])
+_safe_include(
+    "app.api.v1.endpoints.notification_template",
+    prefix="/notification-templates",
+    tags=["Notification Templates"],
 )
 _safe_include("app.api.v1.endpoints.device", prefix="/devices", tags=["Devices"])
 _safe_include(

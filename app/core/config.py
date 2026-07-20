@@ -58,9 +58,37 @@ class Settings(BaseSettings):
     KEYCLOAK_ISSUER: str = ""
     KEYCLOAK_AUDIENCE: str = ""
     KEYCLOAK_JWKS_URL: str = ""
+    # Invigorate Auth internal API (tenant user lookup for bulk notifications)
+    INVIGORATE_AUTH_BASE_URL: str = "https://p6wvqog202.execute-api.us-east-1.amazonaws.com"
+    INVIGORATE_INTERNAL_API_KEY: str = ""
+    # Celery / Redis background jobs
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
 
     class Config:
         env_file = ".env"
+
+    @property
+    def celery_broker_url(self) -> str:
+        if self.CELERY_BROKER_URL.strip():
+            return self.CELERY_BROKER_URL.strip()
+        if self.SOCKETIO_REDIS_URL.strip():
+            return self.SOCKETIO_REDIS_URL.strip()
+        return "redis://localhost:6379/0"
+
+    @property
+    def celery_result_backend(self) -> str:
+        return self.CELERY_RESULT_BACKEND.strip() or self.celery_broker_url
+
+    @property
+    def invigorate_internal_api_configured(self) -> bool:
+        return bool(
+            self.INVIGORATE_AUTH_BASE_URL.strip() and self.INVIGORATE_INTERNAL_API_KEY.strip()
+        )
+
+    @property
+    def celery_configured(self) -> bool:
+        return bool(self.celery_broker_url)
 
     @property
     def speech_to_text_enabled(self) -> bool:
