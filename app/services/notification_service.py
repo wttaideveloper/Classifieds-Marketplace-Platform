@@ -71,19 +71,49 @@ def create_notification_service(db: Session, current_user: dict, payload: Notifi
     if current_user.get("role") == "provider" and tenant_id != _parse_tenant_id(current_user):
         raise HTTPException(status_code=403, detail="Cannot create notifications for another tenant.")
 
-    row = notification_repo.create_notification(
+    if tenant_id is None:
+        # No tenant context to resolve recipients from (e.g. platform super admin) -
+        # fall back to a recipient-less draft, matching prior behavior.
+        row = notification_repo.create_notification(
+            db,
+            tenant_id=tenant_id,
+            created_by=_parse_user_id(current_user),
+            title=payload.title,
+            message=payload.message,
+            notification_type=payload.notification_type,
+            category=payload.category,
+            delivery_type=payload.delivery_type,
+            scheduled_at=payload.scheduled_at,
+            status="scheduled" if payload.scheduled_at else "draft",
+            metadata=payload.metadata,
+        )
+        return notification_repo._map_notification(row)
+
+    user_ids = list_tenant_user_ids(tenant_id)
+    if not user_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No tenant users resolved. Configure INVIGORATE_AUTH_BASE_URL and "
+                "INVIGORATE_INTERNAL_API_KEY, or use POST /notifications/send-to-users."
+            ),
+        )
+
+    result = _dispatch_notification(
         db,
-        tenant_id=tenant_id,
-        created_by=_parse_user_id(current_user),
+        current_user,
         title=payload.title,
         message=payload.message,
         notification_type=payload.notification_type,
         category=payload.category,
+        user_ids=user_ids,
+        tenant_id=tenant_id,
+        channels=["in_app", "push"],
+        metadata=payload.metadata,
         delivery_type=payload.delivery_type,
         scheduled_at=payload.scheduled_at,
-        status="scheduled" if payload.scheduled_at else "draft",
-        metadata=payload.metadata,
     )
+    row = notification_repo.get_notification_by_id(db, result["notification_id"])
     return notification_repo._map_notification(row)
 
 

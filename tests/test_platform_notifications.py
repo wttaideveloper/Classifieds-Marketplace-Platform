@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -37,6 +37,78 @@ def user_client():
     }
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def provider_client():
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": ADMIN_ID,
+        "role": "provider",
+        "tenant_id": TENANT_ID,
+    }
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+@patch("app.services.notification_service.notification_repo")
+@patch("app.services.notification_service.deliver_notification_to_users")
+@patch("app.services.notification_service.list_tenant_user_ids")
+def test_create_notification_delivers_to_tenant_users(
+    mock_list_users, mock_deliver, mock_repo, provider_client
+):
+    """A provider POSTing to /notifications must resolve tenant recipients and
+    deliver to them, so the notification becomes visible via GET /me/notifications
+    instead of being an orphaned, recipient-less row."""
+    recipient_id = uuid4()
+    mock_list_users.return_value = [recipient_id]
+    mock_deliver.return_value = 1
+
+    created_row = MagicMock(id=NOTIF_ID)
+    mock_repo.create_notification.return_value = created_row
+    mock_repo.update_notification.return_value = created_row
+    mock_repo.get_notification_by_id.return_value = created_row
+    mock_repo._map_notification.return_value = {
+        "id": NOTIF_ID,
+        "tenant_id": TENANT_ID,
+        "created_by": ADMIN_ID,
+        "title": "Hello",
+        "message": "Body",
+        "notification_type": "manual",
+        "category": "general",
+        "delivery_type": "immediate",
+        "scheduled_at": None,
+        "status": "sent",
+        "metadata": {},
+        "created_at": "2026-07-21T00:00:00",
+        "updated_at": "2026-07-21T00:00:00",
+    }
+
+    response = provider_client.post(
+        "/notifications",
+        json={"title": "Hello", "message": "Body"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "sent"
+
+    mock_list_users.assert_called_once_with(UUID(TENANT_ID))
+    mock_deliver.assert_called_once()
+    assert mock_deliver.call_args.kwargs["user_ids"] == [recipient_id]
+    assert mock_deliver.call_args.kwargs["notification_id"] == NOTIF_ID
+
+
+@patch("app.services.notification_service.notification_repo")
+@patch("app.services.notification_service.list_tenant_user_ids")
+def test_create_notification_no_recipients_raises_400(mock_list_users, mock_repo, provider_client):
+    mock_list_users.return_value = []
+
+    response = provider_client.post(
+        "/notifications",
+        json={"title": "Hello", "message": "Body"},
+    )
+
+    assert response.status_code == 400
+    mock_repo.create_notification.assert_not_called()
 
 
 @patch("app.api.v1.endpoints.platform_notification.send_to_users_service")
