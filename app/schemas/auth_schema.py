@@ -3,6 +3,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+
+class TenantListItem(BaseModel):
+    id: UUID
+    name: str
+    slug: str
+
 # Fixed test user IDs — use these in dev tokens and seed data.
 TEST_ADMIN_USER_ID = "550e8400-e29b-41d4-a716-446655440000"
 TEST_PROVIDER_USER_ID = "550e8400-e29b-41d4-a716-446655440020"

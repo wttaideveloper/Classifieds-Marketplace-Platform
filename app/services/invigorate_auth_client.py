@@ -8,6 +8,25 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def list_tenants() -> list[dict]:
+    """Fetch all tenants from the Invigorate internal API."""
+    if not settings.invigorate_internal_api_configured:
+        return []
+
+    url = f"{settings.INVIGORATE_AUTH_BASE_URL.rstrip('/')}/api/v1/internal/tenants"
+    headers = {"X-Internal-Api-Key": settings.INVIGORATE_INTERNAL_API_KEY}
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        logger.exception("Failed to fetch tenants from Invigorate internal API")
+        return []
+
+    items = payload.get("items") or payload.get("data") or payload
+    return items if isinstance(items, list) else []
+
+
 def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
     """Resolve tenant members via Invigorate internal API when configured."""
     if not settings.invigorate_internal_api_configured:

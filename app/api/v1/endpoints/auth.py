@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Body, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from app.core.config import settings
+from app.core.dependencies import get_current_user
 from app.core.security import create_access_token
 from app.schemas.auth_schema import (
     DEFAULT_DEV_USER_ID,
     DevTokenRequest,
     AuthIntegrationResponse,
+    TenantListItem,
     TEST_ADMIN_USER_ID,
     TEST_CUSTOMER_USER_ID,
     TEST_PROVIDER_USER_ID,
@@ -13,6 +15,7 @@ from app.schemas.auth_schema import (
     TokenResponse,
 )
 from app.services.auth_integration_service import get_auth_integration_info
+from app.services.invigorate_auth_client import list_tenants
 
 router = APIRouter(tags=["Authentication"])
 
@@ -127,3 +130,30 @@ def create_dev_token_get():
 def create_dev_token(payload: DevTokenRequest | None = Body(default=None)):
     _guard_dev_token()
     return _issue_dev_token(payload)
+
+
+@router.get(
+    "/tenants",
+    response_model=list[TenantListItem],
+    status_code=status.HTTP_200_OK,
+    summary="List Tenants",
+    description=(
+        "Returns all tenants from the Invigorate Authentication service. "
+        "Use the returned `id` as `tenant_id` when creating an Enterprise. "
+        "Returns an empty list when `INVIGORATE_AUTH_BASE_URL` / `INVIGORATE_INTERNAL_API_KEY` are not configured."
+    ),
+)
+def list_tenants_endpoint(
+    current_user: dict = Depends(get_current_user),
+) -> list[TenantListItem]:
+    tenants = list_tenants()
+    if tenants is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Tenant service is currently unavailable. Please try again later.",
+        )
+    return [
+        TenantListItem(id=t["id"], name=t["name"], slug=t["slug"])
+        for t in tenants
+        if t.get("id") and t.get("name") and t.get("slug")
+    ]
