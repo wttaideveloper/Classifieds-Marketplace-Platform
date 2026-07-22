@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from uuid import UUID
 
@@ -10,6 +11,14 @@ from app.models.notification_model import (
     UserNotification,
 )
 from app.repository.query_utils import apply_pagination, build_pagination_meta
+
+logger = logging.getLogger("notification_debug")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(_handler)
+    logger.propagate = False
 
 
 def _map_notification(row: Notification) -> dict:
@@ -36,6 +45,10 @@ def create_notification(db: Session, **fields) -> Notification:
     db.add(row)
     db.commit()
     db.refresh(row)
+    logger.info(
+        "[NOTIF_DEBUG] created notification id=%s tenant_id=%s created_by=%s status=%s",
+        row.id, row.tenant_id, row.created_by, row.status,
+    )
     return row
 
 
@@ -91,6 +104,10 @@ def create_user_notifications(
     notification_id: UUID,
     user_ids: list[UUID],
 ) -> list[UserNotification]:
+    logger.info(
+        "[NOTIF_DEBUG] create_user_notifications called notification_id=%s requested_user_ids=%s",
+        notification_id, [str(u) for u in user_ids],
+    )
     existing = {
         row.user_id
         for row in db.query(UserNotification.user_id)
@@ -115,6 +132,14 @@ def create_user_notifications(
     db.commit()
     for row in created:
         db.refresh(row)
+    logger.info(
+        "[NOTIF_DEBUG] create_user_notifications committed notification_id=%s "
+        "already_existing=%s newly_inserted=%s inserted_ids=%s",
+        notification_id,
+        [str(u) for u in existing],
+        len(created),
+        [str(row.id) for row in created],
+    )
     return created
 
 
@@ -136,6 +161,10 @@ def list_user_notifications(
     query = query.order_by(Notification.created_at.desc())
     total = query.count()
     rows = apply_pagination(query, page, page_size).all()
+    logger.info(
+        "[NOTIF_DEBUG] list_user_notifications user_id=%s page=%s page_size=%s total_matched=%s",
+        user_id, page, page_size, total,
+    )
     return rows, total
 
 

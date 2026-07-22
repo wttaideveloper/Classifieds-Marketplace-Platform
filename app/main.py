@@ -104,6 +104,25 @@ app.add_middleware(
 )
 
 
+_notification_debug_logger = logging.getLogger("notification_debug")
+
+
+@app.middleware("http")
+async def notification_debug_status_middleware(request: Request, call_next):
+    """TEMPORARY diagnostic: records the literal outbound HTTP status code for
+    every /notifications* and /users/*/notifications request, so a silent
+    frontend failure can't be mistaken for a backend one. Remove once the
+    notification delivery investigation is closed."""
+    response = await call_next(request)
+    path = request.url.path
+    if "notification" in path:
+        _notification_debug_logger.info(
+            "[NOTIF_DEBUG] HTTP %s %s -> status=%s",
+            request.method, path, response.status_code,
+        )
+    return response
+
+
 @app.exception_handler(CustomException)
 def custom_exception_handler(request, exc: CustomException):
     return JSONResponse(

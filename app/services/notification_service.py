@@ -22,6 +22,7 @@ from app.services.invigorate_auth_client import list_tenant_user_ids
 from app.services.notification_delivery_service import deliver_notification_to_users
 
 logger = logging.getLogger(__name__)
+debug_logger = logging.getLogger("notification_debug")
 
 
 def _parse_user_id(current_user: dict) -> UUID:
@@ -66,6 +67,10 @@ def _map_user_notification(row, notification) -> dict:
 
 
 def create_notification_service(db: Session, current_user: dict, payload: NotificationCreate):
+    debug_logger.info(
+        "[NOTIF_DEBUG] POST /notifications (create) called by user_id=%s role=%s tenant_id_claim=%s payload_tenant_id=%s",
+        current_user.get("id"), current_user.get("role"), current_user.get("tenant_id"), payload.tenant_id,
+    )
     _require_tenant_admin(current_user)
     tenant_id = payload.tenant_id or _parse_tenant_id(current_user)
     if current_user.get("role") == "provider" and tenant_id != _parse_tenant_id(current_user):
@@ -90,6 +95,10 @@ def create_notification_service(db: Session, current_user: dict, payload: Notifi
         return notification_repo._map_notification(row)
 
     user_ids = list_tenant_user_ids(tenant_id)
+    debug_logger.info(
+        "[NOTIF_DEBUG] create_notification_service resolved tenant_id=%s recipient_user_ids=%s (count=%s)",
+        tenant_id, [str(u) for u in user_ids], len(user_ids),
+    )
     if not user_ids:
         raise HTTPException(
             status_code=400,
@@ -204,6 +213,13 @@ def _dispatch_notification(
     delivery_type: str = "immediate",
     scheduled_at: datetime | None = None,
 ):
+    debug_logger.info(
+        "[NOTIF_DEBUG] _dispatch_notification called by user_id=%s title=%r tenant_id=%s "
+        "user_ids=%s (count=%s) delivery_type=%s scheduled_at=%s channels=%s",
+        current_user.get("id"), title, tenant_id,
+        [str(u) for u in user_ids], len(user_ids),
+        delivery_type, scheduled_at, channels,
+    )
     if not user_ids:
         raise HTTPException(status_code=400, detail="No recipients resolved for this notification.")
 
@@ -267,6 +283,10 @@ def _dispatch_notification(
 
 
 def send_notification_service(db: Session, current_user: dict, payload: SendNotificationRequest):
+    debug_logger.info(
+        "[NOTIF_DEBUG] POST /notifications/send called by user_id=%s payload_user_ids=%s",
+        current_user.get("id"), [str(u) for u in payload.user_ids],
+    )
     _require_tenant_admin(current_user)
     tenant_id = payload.tenant_id or _parse_tenant_id(current_user)
     return _dispatch_notification(
@@ -303,6 +323,10 @@ def schedule_notification_service(db: Session, current_user: dict, payload: Sche
 
 
 def send_to_tenant_service(db: Session, current_user: dict, payload: SendToTenantRequest):
+    debug_logger.info(
+        "[NOTIF_DEBUG] POST /notifications/send-to-tenant called by user_id=%s tenant_id=%s",
+        current_user.get("id"), payload.tenant_id,
+    )
     if current_user.get("role") == "provider":
         own_tenant = _parse_tenant_id(current_user)
         if own_tenant and own_tenant != payload.tenant_id:
@@ -334,6 +358,10 @@ def send_to_tenant_service(db: Session, current_user: dict, payload: SendToTenan
 
 
 def send_to_users_service(db: Session, current_user: dict, payload: SendToUsersRequest):
+    debug_logger.info(
+        "[NOTIF_DEBUG] POST /notifications/send-to-users called by user_id=%s payload_user_ids=%s",
+        current_user.get("id"), [str(u) for u in payload.user_ids],
+    )
     _require_tenant_admin(current_user)
     tenant_id = payload.tenant_id or _parse_tenant_id(current_user)
     return _dispatch_notification(
@@ -351,6 +379,10 @@ def send_to_users_service(db: Session, current_user: dict, payload: SendToUsersR
 
 
 def send_to_groups_service(db: Session, current_user: dict, payload: SendToGroupsRequest):
+    debug_logger.info(
+        "[NOTIF_DEBUG] POST /notifications/send-to-groups called by user_id=%s payload_group_user_ids=%s",
+        current_user.get("id"), [str(u) for u in payload.group_user_ids],
+    )
     _require_tenant_admin(current_user)
     tenant_id = payload.tenant_id or _parse_tenant_id(current_user)
     return _dispatch_notification(
@@ -375,6 +407,10 @@ def list_my_notifications_service(
     page_size: int,
 ):
     user_id = _parse_user_id(current_user)
+    debug_logger.info(
+        "[NOTIF_DEBUG] GET /users/me/notifications called raw_current_user=%s parsed_user_id=%s",
+        {k: v for k, v in current_user.items() if k != "email"}, user_id,
+    )
     rows, total = notification_repo.list_user_notifications(
         db,
         user_id,
