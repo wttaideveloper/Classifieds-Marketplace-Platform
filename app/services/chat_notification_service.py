@@ -220,6 +220,8 @@ def create_message_notifications(
     if not conversation:
         return
 
+    platform_recipient_ids: list[UUID] = []
+
     for participant in conversation.participants:
         if participant.user_id == sender_id:
             continue
@@ -238,6 +240,7 @@ def create_message_notifications(
                     "message_id": str(message_id),
                 },
             )
+            platform_recipient_ids.append(participant.user_id)
 
         if prefs.push_enabled:
             _dispatch_push_notification(db, participant.user_id, title, body, conversation_id, message_id)
@@ -247,6 +250,29 @@ def create_message_notifications(
 
         if prefs.sms_enabled:
             _dispatch_sms_notification(db, participant.user_id, title, body, conversation_id)
+
+    if platform_recipient_ids:
+        # Chat messages have their own history table (ChatNotification, above) for the
+        # chat-specific inbox/badge. GET /api/v1/users/me/notifications reads a separate
+        # table (UserNotification) that nothing in the chat flow used to populate, so chat
+        # messages never showed up there. Bridge into it via the existing platform
+        # notification pipeline (already used by manual admin/provider sends) — channels
+        # limited to "in_app" only, since push/email/sms for this message were already
+        # dispatched above per-preference and must not fire twice.
+        from app.services.notification_service import create_automatic_notification
+
+        create_automatic_notification(
+            db,
+            title=title,
+            message=body,
+            category="chat_message",
+            user_ids=platform_recipient_ids,
+            metadata={
+                "conversation_id": str(conversation_id),
+                "message_id": str(message_id),
+            },
+            channels=["in_app"],
+        )
 
 
 def _dispatch_push_notification(

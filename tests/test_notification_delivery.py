@@ -36,10 +36,13 @@ def test_send_sms_bravo(mock_post, mock_settings):
     assert payload["reference_id"] == "user-1"
 
 
+@patch("app.services.notification_service.create_automatic_notification")
 @patch("app.services.chat_notification_service.send_bravo_sms")
 @patch("app.services.chat_notification_service.send_push_to_tokens")
 @patch("app.services.chat_notification_service.chat_repo")
-def test_create_message_notifications_dispatches_channels(mock_repo, mock_push, mock_sms):
+def test_create_message_notifications_dispatches_channels(
+    mock_repo, mock_push, mock_sms, mock_create_automatic
+):
     participant = MagicMock(user_id="550e8400-e29b-41d4-a716-446655440030")
     sender_id = "550e8400-e29b-41d4-a716-446655440020"
     conversation = MagicMock(participants=[participant])
@@ -70,3 +73,46 @@ def test_create_message_notifications_dispatches_channels(mock_repo, mock_push, 
     assert push_data["type"] == "chat_message"
     assert "conversationId" in push_data
     mock_sms.assert_called_once()
+
+    # Bridges into the platform notifications table (UserNotification) that
+    # GET /api/v1/users/me/notifications reads, for the in_app-enabled participant only,
+    # restricted to the "in_app" channel so push/email/sms aren't dispatched twice.
+    mock_create_automatic.assert_called_once()
+    assert mock_create_automatic.call_args.kwargs["user_ids"] == [participant.user_id]
+    assert mock_create_automatic.call_args.kwargs["channels"] == ["in_app"]
+    assert mock_create_automatic.call_args.kwargs["category"] == "chat_message"
+
+
+@patch("app.services.notification_service.create_automatic_notification")
+@patch("app.services.chat_notification_service.send_bravo_sms")
+@patch("app.services.chat_notification_service.send_push_to_tokens")
+@patch("app.services.chat_notification_service.chat_repo")
+def test_create_message_notifications_skips_platform_bridge_when_in_app_disabled(
+    mock_repo, mock_push, mock_sms, mock_create_automatic
+):
+    """A participant who disabled in-app notifications must not get a UserNotification row."""
+    participant = MagicMock(user_id="550e8400-e29b-41d4-a716-446655440030")
+    sender_id = "550e8400-e29b-41d4-a716-446655440020"
+    conversation = MagicMock(participants=[participant])
+    prefs = MagicMock(
+        in_app_enabled=False,
+        push_enabled=False,
+        email_enabled=False,
+        sms_enabled=False,
+        sms_phone_number=None,
+    )
+
+    mock_repo.get_conversation_by_id.return_value = conversation
+    mock_repo.get_notification_preferences.return_value = prefs
+
+    create_message_notifications(
+        MagicMock(),
+        conversation_id="550e8400-e29b-41d4-a716-446655440000",
+        sender_id=sender_id,
+        message_id="550e8400-e29b-41d4-a716-446655440001",
+        title="New message",
+        body="Hello",
+    )
+
+    mock_repo.create_notification.assert_not_called()
+    mock_create_automatic.assert_not_called()
