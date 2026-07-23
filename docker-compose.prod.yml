@@ -1,0 +1,58 @@
+# Split deploy: REST API (multi-worker) + Socket.IO (single worker) + Redis (REST→socket emits)
+# Usage on EC2:
+#   Terminal 1: SOCKET_PORT=8001 ./scripts/entrypoint-socket.sh
+#   Terminal 2: API_PORT=8000 WEB_CONCURRENCY=4 ./scripts/entrypoint-api.sh
+#   nginx routes /api/socket.io -> 8001, /api/ -> 8000
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  socket:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SOCKET_WORKERS: "1"
+      SOCKET_PORT: "8001"
+      SOCKETIO_REDIS_URL: redis://redis:6379/0
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - uploads_data:/app/uploads
+    command: ["/app/scripts/entrypoint-socket.sh"]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      WEB_CONCURRENCY: "4"
+      API_PORT: "8000"
+      SOCKETIO_REDIS_URL: redis://redis:6379/0
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - uploads_data:/app/uploads
+    command: ["/app/scripts/entrypoint-api.sh"]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  uploads_data:

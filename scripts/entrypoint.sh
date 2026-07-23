@@ -1,8 +1,10 @@
 #!/bin/sh
+# Default production entrypoint — combined REST + Socket.IO on one port, single worker.
 set -e
 
-echo "Running database migrations..."
-alembic upgrade head
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
-echo "Starting application..."
-exec gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
+export SOCKET_WORKERS=1
+export WEB_CONCURRENCY=1
+
+exec "$SCRIPT_DIR/entrypoint-socket.sh"

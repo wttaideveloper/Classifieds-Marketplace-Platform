@@ -32,13 +32,7 @@ from app.schemas.onboarding_form_schema import (
     OnboardingSectionResponse,
 )
 
-ENTERPRISE_LOCKED_FIELD_KEYS = {
-    "business_legal_name",
-    "business_short_name",
-}
-
-
-def _validate_sections_structure(sections: list, entity_type: str) -> None:
+def _validate_sections_structure(sections: list) -> None:
     section_orders: set[int] = set()
     all_field_keys: set[str] = set()
 
@@ -78,25 +72,6 @@ def _validate_sections_structure(sections: list, entity_type: str) -> None:
                     ),
                 )
 
-    if entity_type == "enterprise":
-        missing_locked = ENTERPRISE_LOCKED_FIELD_KEYS - all_field_keys
-        if missing_locked:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Enterprise onboarding forms must include locked fields: "
-                    + ", ".join(sorted(missing_locked))
-                ),
-            )
-
-        for section in sections:
-            for field in section.fields:
-                if field.field_key in ENTERPRISE_LOCKED_FIELD_KEYS and not field.locked:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Field '{field.field_key}' must remain locked",
-                    )
-
 
 def _map_field(field) -> dict:
     options = field.options if isinstance(field.options, list) else []
@@ -133,6 +108,8 @@ def _map_form_detail(form: OnboardingForm) -> dict:
         "name": form.name,
         "description": form.description,
         "entity_type": form.entity_type,
+        "enterprise_type": form.enterprise_type,
+        "registration_type": form.registration_type,
         "status": form.status,
         "sections": [
             OnboardingSectionResponse.model_validate(_map_section(section)).model_dump()
@@ -151,6 +128,8 @@ def _map_form_list_item(form: OnboardingForm) -> dict:
         "name": form.name,
         "description": form.description,
         "entity_type": form.entity_type,
+        "enterprise_type": form.enterprise_type,
+        "registration_type": form.registration_type,
         "status": form.status,
         "sections_count": sections_count,
         "fields_count": fields_count,
@@ -171,12 +150,14 @@ def _get_form_or_404(db: Session, form_id: UUID) -> OnboardingForm:
 
 
 def create_onboarding_form_service(db: Session, data: OnboardingFormCreate):
-    _validate_sections_structure(data.sections, data.entity_type)
+    _validate_sections_structure(data.sections)
 
     form = OnboardingForm(
         name=data.name,
         description=data.description,
         entity_type=data.entity_type,
+        enterprise_type=data.enterprise_type,
+        registration_type=data.registration_type,
         status=data.status,
     )
     create_form(db, form)
@@ -226,11 +207,13 @@ def update_onboarding_form_service(
     data: OnboardingFormUpdate,
 ):
     form = _get_form_or_404(db, form_id)
-    _validate_sections_structure(data.sections, data.entity_type)
+    _validate_sections_structure(data.sections)
 
     form.name = data.name
     form.description = data.description
     form.entity_type = data.entity_type
+    form.enterprise_type = data.enterprise_type
+    form.registration_type = data.registration_type
     form.status = data.status
     form = replace_form_sections(db, form, data.sections)
 
@@ -293,6 +276,8 @@ def duplicate_onboarding_form_service(
         name=new_name,
         description=source.description,
         entity_type=source.entity_type,
+        enterprise_type=source.enterprise_type,
+        registration_type=source.registration_type,
         status="draft",
         sections=[
             OnboardingSectionInput(
