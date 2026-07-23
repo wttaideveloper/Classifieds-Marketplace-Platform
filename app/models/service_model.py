@@ -71,6 +71,8 @@ class Service(Base):
 
     provider_name = Column(String(255))
 
+    provider_user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
     instructor_name = Column(String(255))
 
     delivery_format = Column(String(100))

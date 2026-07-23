@@ -331,6 +331,7 @@ def _service_base_fields(service: Service) -> dict:
         "service_status": service.service_status,
         "max_participants": service.max_participants,
         "provider_name": service.provider_name,
+        "provider_user_id": service.provider_user_id,
         "instructor_name": service.instructor_name,
         "delivery_format": service.delivery_format,
         "package_price": service.package_price,

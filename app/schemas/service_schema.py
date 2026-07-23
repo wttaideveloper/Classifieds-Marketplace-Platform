@@ -68,6 +68,10 @@ class ServiceCreate(BaseModel):
     service_status: bool | None = None
     max_participants: int | None = None
     provider_name: str | None = None
+    provider_user_id: UUID | None = Field(
+        None,
+        description="Identifier of the tenant internal user assigned as provider/instructor.",
+    )
     instructor_name: str | None = None
     delivery_format: str | None = None
     package_price: float | None = None
@@ -122,6 +126,7 @@ class ServiceCreate(BaseModel):
             "banner_image": self.banner_image,
             "max_participants": self.max_participants,
             "provider_name": self.provider_name,
+            "provider_user_id": self.provider_user_id,
             "instructor_name": self.instructor_name,
             "delivery_format": self.delivery_format,
             "package_price": self.package_price,
@@ -150,6 +155,10 @@ class ServiceUpdate(BaseModel):
     service_status: bool | None = None
     max_participants: int | None = None
     provider_name: str | None = None
+    provider_user_id: UUID | None = Field(
+        None,
+        description="Identifier of the tenant internal user assigned as provider/instructor.",
+    )
     instructor_name: str | None = None
     delivery_format: str | None = None
     package_price: float | None = None
@@ -235,6 +244,7 @@ class ServiceResponse(BaseModel):
     service_status: bool | None = None
     max_participants: int | None = None
     provider_name: str | None = None
+    provider_user_id: UUID | None = None
     instructor_name: str | None = None
     delivery_format: str | None = None
     package_price: float | None = None

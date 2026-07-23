@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException
@@ -77,6 +77,43 @@ def test_create_service(
 
     assert data["service_name"] == "Business Consulting"
     assert data["category"] == "Consulting"
+
+@patch(
+    "app.api.v1.endpoints.service.create_service_service"
+)
+def test_create_service_accepts_provider_user_id(
+    mock_create_service_service
+):
+    service_id = str(uuid4())
+    enterprise_id = str(uuid4())
+    provider_user_id = str(uuid4())
+
+    mock_create_service_service.return_value = _service_response(
+        id=service_id,
+        enterprise_id=enterprise_id,
+        provider_user_id=provider_user_id,
+    )
+
+    payload = {
+        "enterprise_id": enterprise_id,
+        "service_name": "Business Consulting",
+        "service_description": "Professional consulting",
+        "service_category": "Consulting",
+        "service_price": 2500.00,
+        "duration": 120,
+        "availability_status": True,
+        "provider_user_id": provider_user_id,
+    }
+
+    response = client.post(
+        "/services/",
+        json=payload,
+    )
+
+    assert response.status_code == 201
+    created_service = mock_create_service_service.call_args.args[1]
+    assert created_service.provider_user_id == UUID(provider_user_id)
+
 
 def test_create_service_validation_error():
 
@@ -182,6 +219,28 @@ def test_get_service_not_found(
         "detail": "Service not found"
     }
 
+@patch(
+    "app.api.v1.endpoints.service.get_service_service"
+)
+def test_get_service_returns_provider_user_id(
+    mock_get_service_service
+):
+    service_id = str(uuid4())
+    provider_user_id = str(uuid4())
+
+    mock_get_service_service.return_value = _service_response(
+        id=service_id,
+        provider_user_id=provider_user_id,
+    )
+
+    response = client.get(
+        f"/services/{service_id}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider_user_id"] == provider_user_id
+
+
 def test_get_service_invalid_uuid():
 
     response = client.get(
@@ -247,6 +306,32 @@ def test_update_service_not_found(
     assert response.json() == {
         "detail": "Service not found"
     }
+
+@patch(
+    "app.api.v1.endpoints.service.update_service_service"
+)
+def test_update_service_accepts_provider_user_id(
+    mock_update_service_service
+):
+    service_id = str(uuid4())
+    provider_user_id = str(uuid4())
+
+    mock_update_service_service.return_value = _service_response(
+        id=service_id,
+        provider_user_id=provider_user_id,
+    )
+
+    response = client.put(
+        f"/services/{service_id}",
+        json={
+            "provider_user_id": provider_user_id,
+        },
+    )
+
+    assert response.status_code == 200
+    updated_service = mock_update_service_service.call_args.args[2]
+    assert updated_service.provider_user_id == UUID(provider_user_id)
+
 
 def test_update_service_invalid_uuid():
 
