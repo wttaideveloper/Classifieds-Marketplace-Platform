@@ -2,7 +2,7 @@ from http.cookies import CookieError, SimpleCookie
 from urllib.parse import parse_qs
 
 from app.core.config import settings
-from app.core.token_auth import resolve_user_from_token
+from app.core.token_auth import resolve_chat_user_from_token_or_raise
 
 
 def get_dev_user() -> dict:
@@ -14,7 +14,12 @@ def get_dev_user() -> dict:
 
 
 def authenticate_token(token: str | None) -> dict | None:
-    return resolve_user_from_token(token)
+    if not token:
+        return None
+    try:
+        return resolve_chat_user_from_token_or_raise(token)
+    except Exception:
+        return None
 
 
 def extract_token_from_environ(environ: dict, auth: dict | None) -> str | None:

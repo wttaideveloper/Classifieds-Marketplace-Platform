@@ -214,3 +214,30 @@ def resolve_user_from_token_or_raise(token: str) -> dict:
                 f"matches KEYCLOAK_AUDIENCE ({settings.KEYCLOAK_AUDIENCE or 'not set'})."
             )
         raise HTTPException(status_code=401, detail=detail) from exc
+
+
+def resolve_chat_user_from_token_or_raise(token: str) -> dict:
+    """Resolve a regular access token or a correctly scoped chat token."""
+    try:
+        payload = decode_access_token(token)
+        if payload.get("token_use") == "chat":
+            scopes = payload.get("scope") or []
+            if isinstance(scopes, str):
+                scopes = scopes.split()
+            if "chat" not in scopes:
+                raise HTTPException(status_code=403, detail="Chat token scope is invalid")
+        return payload_to_user(payload)
+    except HTTPException:
+        raise
+    except ExpiredSignatureError as exc:
+        raise HTTPException(status_code=401, detail="Token expired") from exc
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
+
+
+def is_chat_scoped_token(token: str) -> bool:
+    """Return true only for locally issued tokens explicitly marked for chat."""
+    try:
+        return decode_access_token(token).get("token_use") == "chat"
+    except (ExpiredSignatureError, JWTError, HTTPException):
+        return False

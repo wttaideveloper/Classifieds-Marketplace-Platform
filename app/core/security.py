@@ -37,6 +37,7 @@
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
+from uuid import uuid4
 from app.core.config import settings
 import bcrypt as _bcrypt
 
@@ -67,3 +68,20 @@ def create_refresh_token(data: dict):
         settings.SECRET_KEY,
         algorithm=settings.ALGORITHM
     )
+
+
+def create_chat_access_token(user: dict) -> str:
+    """Issue a short-lived token usable only by marketplace chat endpoints."""
+    now = datetime.utcnow()
+    payload = {
+        "id": str(user["id"]),
+        "sub": str(user["id"]),
+        "role": user.get("role"),
+        "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
+        "token_use": "chat",
+        "scope": ["chat"],
+        "iat": now,
+        "exp": now + timedelta(seconds=settings.CHAT_TOKEN_EXPIRE_SECONDS),
+        "jti": str(uuid4()),
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)

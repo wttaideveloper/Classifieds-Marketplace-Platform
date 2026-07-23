@@ -2,9 +2,27 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
-from app.core.token_auth import resolve_user_from_token_or_raise
+from app.core.token_auth import (
+    is_chat_scoped_token,
+    resolve_chat_user_from_token_or_raise,
+    resolve_user_from_token_or_raise,
+)
 
 bearer_scheme = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+
+_CHAT_PATH_PREFIXES = (
+    "/api/v1/conversations",
+    "/api/v1/messages",
+    "/api/v1/attachments",
+    "/api/v1/notifications",
+    "/api/v1/users",
+    "/api/v1/devices",
+    "/api/v1/providers",
+    "/api/v1/subscriptions",
+    "/api/v1/presence",
+    "/api/v1/socket-io",
+    "/api/v1/admin/chat",
+)
 
 
 def get_dev_user() -> dict:
@@ -31,6 +49,24 @@ def get_current_user(
             )
         return get_dev_user()
 
+    if is_chat_scoped_token(token):
+        if not request.url.path.startswith(_CHAT_PATH_PREFIXES):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Chat-scoped token cannot access this endpoint",
+            )
+        return resolve_chat_user_from_token_or_raise(token)
+    return resolve_user_from_token_or_raise(token)
+
+
+def get_current_web_session_user(request: Request) -> dict:
+    """Authenticate only from the HttpOnly cookie set by Web complete-login."""
+    token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Web session cookie is required",
+        )
     return resolve_user_from_token_or_raise(token)
 
 

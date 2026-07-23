@@ -53,6 +53,15 @@ class TokenResponse(BaseModel):
     user: dict = Field(..., description="User claims embedded in the token.")
 
 
+class ChatTokenResponse(BaseModel):
+    access_token: str = Field(..., description="Short-lived token restricted to chat endpoints.")
+    token_type: str = "bearer"
+    expires_in: int = Field(..., description="Token lifetime in seconds.")
+    scope: str = "chat"
+    user_id: UUID
+    tenant_id: UUID | None = None
+
+
 class TestUsersResponse(BaseModel):
     admin_user_id: str
     provider_user_id: str

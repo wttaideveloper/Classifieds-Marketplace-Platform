@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    CHAT_TOKEN_EXPIRE_SECONDS: int = 300
     FRONTEND_URL: str = "http://localhost:3000"
     CORS_ORIGINS: str = "http://localhost:3000"
     # Allow browser requests from localhost (any port) for local frontend dev.

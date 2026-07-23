@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from app.core.config import settings
-from app.core.dependencies import get_current_user
-from app.core.security import create_access_token
+from app.core.dependencies import get_current_user, get_current_web_session_user
+from app.core.security import create_access_token, create_chat_access_token
 from app.schemas.auth_schema import (
     DEFAULT_DEV_USER_ID,
     DevTokenRequest,
@@ -13,6 +13,7 @@ from app.schemas.auth_schema import (
     TEST_PROVIDER_USER_ID,
     TestUsersResponse,
     TokenResponse,
+    ChatTokenResponse,
 )
 from app.services.auth_integration_service import get_auth_integration_info
 from app.services.invigorate_auth_client import list_tenants
@@ -54,6 +55,26 @@ def _issue_dev_token(data: DevTokenRequest | None = None) -> TokenResponse:
             "role": payload_in.role,
             "email": email,
         },
+    )
+
+
+@router.post(
+    "/chat-token",
+    response_model=ChatTokenResponse,
+    summary="Issue Web Session Chat Token",
+    description=(
+        "Uses the HttpOnly Web session cookie to issue a chat-scoped token. "
+        "The token is valid for a short period and may be renewed while the Web session remains active."
+    ),
+)
+def issue_chat_token(
+    current_user: dict = Depends(get_current_web_session_user),
+) -> ChatTokenResponse:
+    return ChatTokenResponse(
+        access_token=create_chat_access_token(current_user),
+        expires_in=settings.CHAT_TOKEN_EXPIRE_SECONDS,
+        user_id=current_user["id"],
+        tenant_id=current_user.get("tenant_id"),
     )
 
 
