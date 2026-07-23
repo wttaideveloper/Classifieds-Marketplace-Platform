@@ -1,7 +1,7 @@
 """add provider user linkage to services
 
-Revision ID: e5f6a7b8c9d0
-Revises: d4e5f6a7b8c9
+Revision ID: m3n4o5p6q7r8
+Revises: l2m3n4o5p6q7
 Create Date: 2026-07-23 16:15:00.000000
 
 """
@@ -12,8 +12,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 
-revision: str = "e5f6a7b8c9d0"
-down_revision: Union[str, None] = "d4e5f6a7b8c9"
+revision: str = "m3n4o5p6q7r8"
+down_revision: Union[str, None] = "l2m3n4o5p6q7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
