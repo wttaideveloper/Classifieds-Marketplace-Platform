@@ -54,8 +54,9 @@ def build_socket_connection_info() -> dict:
         "redis_reachable": ping_redis(redis_url) if redis_url else None,
         "process_pid": os.getpid(),
         "auth": {
-            "type": "JWT Bearer",
-            "connect": f"io('{base_url}', {{ path: '{path}', auth: {{ token: '<JWT>' }} }})",
+            "type": "HttpOnly web-session cookie or JWT Bearer",
+            "connect": f"io('{base_url}', {{ path: '{path}', withCredentials: true }})",
+            "bearer_fallback": f"io('{base_url}', {{ path: '{path}', auth: {{ token: '<JWT>' }} }})",
         },
         "deployment_notes": notes,
     }

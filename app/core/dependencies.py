@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
@@ -16,9 +16,14 @@ def get_dev_user() -> dict:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ):
-    if credentials is None or not credentials.credentials:
+    token = credentials.credentials if credentials and credentials.credentials else None
+    if not token:
+        token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+
+    if not token:
         if settings.is_production:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -26,7 +31,7 @@ def get_current_user(
             )
         return get_dev_user()
 
-    return resolve_user_from_token_or_raise(credentials.credentials)
+    return resolve_user_from_token_or_raise(token)
 
 
 def require_roles(allowed_roles: list):

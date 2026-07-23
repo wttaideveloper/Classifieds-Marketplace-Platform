@@ -56,3 +56,11 @@ def test_extract_token_from_query_string():
     environ = {"QUERY_STRING": f"token={token}&foo=bar"}
     result = extract_token_from_environ(environ, None)
     assert result == token
+
+
+def test_extract_token_from_web_session_cookie():
+    result = extract_token_from_environ(
+        {"HTTP_COOKIE": f"{settings.WEB_SESSION_COOKIE_NAME}=cookie-token; theme=dark"},
+        None,
+    )
+    assert result == "cookie-token"

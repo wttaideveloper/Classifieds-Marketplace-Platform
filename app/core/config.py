@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     KEYCLOAK_ISSUER: str = ""
     KEYCLOAK_AUDIENCE: str = ""
     KEYCLOAK_JWKS_URL: str = ""
+    # Name of the HttpOnly cookie set by the Web login flow.  The cookie value
+    # is a Keycloak access token and is accepted by REST and Socket.IO in
+    # addition to Authorization: Bearer for mobile/API clients.
+    WEB_SESSION_COOKIE_NAME: str = "access_token"
     # Invigorate Auth internal API (tenant user lookup for bulk notifications)
     INVIGORATE_AUTH_BASE_URL: str = "https://p6wvqog202.execute-api.us-east-1.amazonaws.com"
     INVIGORATE_INTERNAL_API_KEY: str = ""

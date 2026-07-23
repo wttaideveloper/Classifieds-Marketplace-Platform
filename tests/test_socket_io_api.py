@@ -26,7 +26,7 @@ def test_socket_events_catalog():
     assert len(body["server_events"]) == 8
     assert body["client_events"][0]["event"] == "join_room"
     assert body["server_events"][0]["event"] == "new_message"
-    assert body["auth"]["type"] == "JWT Bearer"
+    assert body["auth"]["type"] == "HttpOnly web-session cookie or JWT Bearer"
     assert "connection_url" in body
     assert "connection_path" in body
     assert "polling_test_url" in body
