@@ -2,9 +2,9 @@ from app.core.config import settings
 from app.schemas.auth_schema import AuthIntegrationResponse, AuthRoleMapping
 
 INVIGORATE_LOGIN_BASE_URL = "https://p6wvqog202.execute-api.us-east-1.amazonaws.com"
-INVIGORATE_ISSUER = "https://auth-dev.onruyl.com/realms/invigorate-healthcare"
+INVIGORATE_ISSUER = "https://auth.invigor8.app/realms/invigorate-healthcare"
 INVIGORATE_JWKS_URL = (
-    "https://auth-dev.onruyl.com/realms/invigorate-healthcare/protocol/openid-connect/certs"
+    "https://auth.invigor8.app/realms/invigorate-healthcare/protocol/openid-connect/certs"
 )
 INVIGORATE_AUDIENCE = "invigorate-api"
 

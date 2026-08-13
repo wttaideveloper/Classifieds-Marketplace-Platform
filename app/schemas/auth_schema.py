@@ -85,9 +85,9 @@ class AuthIntegrationResponse(BaseModel):
                 "token_response_path": "tokens.access_token",
                 "authorization_header": "Authorization: Bearer <tokens.access_token>",
                 "algorithm": "RS256",
-                "issuer": "https://auth-dev.onruyl.com/realms/invigorate-healthcare",
+                "issuer": "https://auth.invigor8.app/realms/invigorate-healthcare",
                 "audience": "invigorate-api",
-                "jwks_url": "https://auth-dev.onruyl.com/realms/invigorate-healthcare/protocol/openid-connect/certs",
+                "jwks_url": "https://auth.invigor8.app/realms/invigorate-healthcare/protocol/openid-connect/certs",
                 "user_id_claim": "sub",
                 "application_user_uuid_endpoint": "GET /api/v1/auth/me",
                 "role_claims": [
