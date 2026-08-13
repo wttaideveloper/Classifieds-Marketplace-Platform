@@ -34,7 +34,7 @@ Protected endpoints require:
 
 | | |
 |---|---|
-| Issuer | `https://auth-dev.onruyl.com/realms/invigorate-healthcare` |
+| Issuer | `https://auth.invigor8.app/realms/invigorate-healthcare` |
 | Audience | `invigorate-api` |
 | Algorithm | RS256 |
 | User ID | JWT `sub` claim |
@@ -45,7 +45,7 @@ Full details: **Authentication** → `GET /api/v1/auth/integration`
 
 Server `.env` required:
 ```
-KEYCLOAK_ISSUER=https://auth-dev.onruyl.com/realms/invigorate-healthcare
+KEYCLOAK_ISSUER=https://auth.invigor8.app/realms/invigorate-healthcare
 KEYCLOAK_AUDIENCE=invigorate-api
 ```
 
