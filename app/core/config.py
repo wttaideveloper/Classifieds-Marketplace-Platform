@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     # addition to Authorization: Bearer for mobile/API clients.
     WEB_SESSION_COOKIE_NAME: str = "access_token"
     # Invigorate Auth internal API (tenant user lookup for bulk notifications)
-    INVIGORATE_AUTH_BASE_URL: str = "https://p6wvqog202.execute-api.us-east-1.amazonaws.com"
+    INVIGORATE_AUTH_BASE_URL: str = "https://admin.apis.invigor8.app"
     INVIGORATE_INTERNAL_API_KEY: str = ""
     # Celery / Redis background jobs
     CELERY_BROKER_URL: str = ""

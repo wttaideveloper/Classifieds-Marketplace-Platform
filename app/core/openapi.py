@@ -9,7 +9,7 @@ BEARER_AUTH_DESCRIPTION = """JWT **access token** for authenticated API requests
 
 ## Primary — Invigorate Auth (Production)
 
-1. Login: `POST https://p6wvqog202.execute-api.us-east-1.amazonaws.com/api/v1/auth/login`
+1. Login: `POST https://admin.apis.invigor8.app/api/v1/auth/login`
 2. Copy: `tokens.access_token` from the response
 3. Click **Authorize** above and paste the token (Swagger adds `Bearer ` automatically)
 4. Call any protected endpoint on this marketplace API

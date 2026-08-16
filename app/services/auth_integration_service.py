@@ -1,7 +1,7 @@
 from app.core.config import settings
 from app.schemas.auth_schema import AuthIntegrationResponse, AuthRoleMapping
 
-INVIGORATE_LOGIN_BASE_URL = "https://p6wvqog202.execute-api.us-east-1.amazonaws.com"
+INVIGORATE_LOGIN_BASE_URL = "https://admin.apis.invigor8.app"
 INVIGORATE_ISSUER = "https://auth.invigor8.app/realms/invigorate-healthcare"
 INVIGORATE_JWKS_URL = (
     "https://auth.invigor8.app/realms/invigorate-healthcare/protocol/openid-connect/certs"
@@ -43,7 +43,7 @@ def get_auth_integration_info() -> AuthIntegrationResponse:
         dev_token_endpoint="GET /api/v1/auth/dev-token",
         dev_token_enabled=dev_enabled,
         notes=[
-            "Primary login: POST https://p6wvqog202.execute-api.us-east-1.amazonaws.com/api/v1/auth/login",
+            "Primary login: POST https://admin.apis.invigor8.app/api/v1/auth/login",
             "Use tokens.access_token from the login response in the Authorize button above.",
             "This marketplace API validates RS256 tokens using issuer, JWKS, and KEYCLOAK_AUDIENCE.",
             "Audience check accepts aud=invigorate-api OR azp=invigorate-api (Keycloak access tokens often use azp).",

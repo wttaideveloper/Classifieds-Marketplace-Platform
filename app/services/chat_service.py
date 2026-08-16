@@ -172,6 +172,13 @@ def create_conversation_service(db: Session, current_user: dict, data: Conversat
             _map_conversation_detail(db, existing, user_id)
         )
 
+    provider_id = data.provider_id
+    if provider_id is None:
+        provider_id = next(
+            (p.user_id for p in data.participant_ids if p.role == "provider"),
+            None,
+        )
+
     conversation = Conversation(
         tenant_id=data.tenant_id,
         subject=data.subject,
@@ -179,7 +186,7 @@ def create_conversation_service(db: Session, current_user: dict, data: Conversat
         context_type=data.context_type,
         context_id=data.context_id,
         created_by=user_id,
-        assigned_provider_id=data.provider_id,
+        assigned_provider_id=provider_id,
     )
 
     if data.conversation_type == "preview":
@@ -195,15 +202,15 @@ def create_conversation_service(db: Session, current_user: dict, data: Conversat
     conversation.participants = participants
     conversation = chat_repo.create_conversation(db, conversation)
 
-    if data.provider_id:
-        chat_repo.assign_provider(db, conversation.id, data.provider_id, user_id)
-        conversation.assigned_provider_id = data.provider_id
+    if provider_id:
+        chat_repo.assign_provider(db, conversation.id, provider_id, user_id)
+        conversation.assigned_provider_id = provider_id
         chat_repo.save_conversation(db, conversation)
-        if not chat_repo.get_participant(db, conversation.id, data.provider_id):
+        if not chat_repo.get_participant(db, conversation.id, provider_id):
             db.add(
                 ConversationParticipant(
                     conversation_id=conversation.id,
-                    user_id=data.provider_id,
+                    user_id=provider_id,
                     role="provider",
                 )
             )
