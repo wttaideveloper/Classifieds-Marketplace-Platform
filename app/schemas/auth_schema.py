@@ -80,7 +80,7 @@ class AuthIntegrationResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "auth_provider": "Invigorate Healthcare Auth (Keycloak RS256)",
-                "login_base_url": "https://p6wvqog202.execute-api.us-east-1.amazonaws.com",
+                "login_base_url": "https://admin.apis.invigor8.app",
                 "login_endpoint": "POST /api/v1/auth/login",
                 "token_response_path": "tokens.access_token",
                 "authorization_header": "Authorization: Bearer <tokens.access_token>",

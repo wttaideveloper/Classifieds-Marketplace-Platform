@@ -108,7 +108,7 @@ def list_test_users():
         customer_user_id=TEST_CUSTOMER_USER_ID,
         recommended_for_admin_messages="provider",
         notes=[
-            "Production auth: POST https://p6wvqog202.execute-api.us-east-1.amazonaws.com/api/v1/auth/login",
+            "Production auth: POST https://admin.apis.invigor8.app/api/v1/auth/login",
             "Use tokens.access_token as Authorization: Bearer <token> on this marketplace API.",
             "See GET /api/v1/auth/integration for full Invigorate auth details.",
             "Use GET /api/v1/auth/dev-token only for local/testing when ENABLE_DEV_TOKEN=true.",

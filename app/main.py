@@ -28,7 +28,7 @@ Protected endpoints require:
 `Authorization: Bearer <tokens.access_token>`
 
 **Invigorate auth (primary)**
-1. Login: `POST https://p6wvqog202.execute-api.us-east-1.amazonaws.com/api/v1/auth/login`
+1. Login: `POST https://admin.apis.invigor8.app/api/v1/auth/login`
 2. Use `tokens.access_token` from response
 3. Paste in Swagger **Authorize** button
 
