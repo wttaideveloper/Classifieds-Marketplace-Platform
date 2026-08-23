@@ -1,0 +1,82 @@
+import uuid
+from datetime import datetime
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import relationship
+
+from app.db.database import Base
+
+
+class Training(Base):
+    __tablename__ = "trainings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    enterprise_id = Column(UUID(as_uuid=True), ForeignKey("enterprises.id"), nullable=False, index=True)
+    location_id = Column(UUID(as_uuid=True), ForeignKey("enterprise_locations.id"), nullable=True, index=True)
+
+    title = Column(String(255), nullable=False, index=True)
+    description = Column(Text)
+    category = Column(String(100), nullable=False, index=True)
+    subcategory = Column(String(100))
+    tags = Column(JSONB, default=list)
+    instructor_id = Column(UUID(as_uuid=True), nullable=True)
+    requirements = Column(Text)
+
+    primary_image = Column(Text)
+    gallery_images = Column(JSONB, default=list)
+    promotional_video = Column(Text)
+    documents = Column(JSONB, default=list)
+
+    delivery_mode = Column(String(20), default="self_paced", index=True)  # self_paced|instructor_led|blended
+    course_type = Column(String(50))  # one_day|workshop|virtual|certification
+    start_date = Column(DateTime)
+    end_date = Column(DateTime)
+    enrolment_start = Column(DateTime)
+    enrolment_end = Column(DateTime)
+    time_zone = Column(String(100), default="Asia/Kolkata")
+    capacity = Column(String(50))
+    price = Column(String(50))
+    currency = Column(String(3), default="INR")
+    promo_price = Column(String(50))
+    coupon_code = Column(String(50))
+
+    # JSONB builders
+    sections = Column(JSONB, default=list)  # [{id, title, order, lessons:[]}]
+    assessments = Column(JSONB, default=list)
+    assignments = Column(JSONB, default=list)
+
+    status = Column(String(20), default="draft", nullable=False, index=True)
+    is_deleted = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    enterprise = relationship("Enterprise", backref="trainings")
+    location = relationship("EnterpriseLocation", backref="trainings")
+
+    __table_args__ = (
+        Index("ix_trainings_tenant_enterprise", "tenant_id", "enterprise_id"),
+    )
+
+
+class TrainingEnrolment(Base):
+    __tablename__ = "training_enrolments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    participant_name = Column(String(255), nullable=False)
+    participant_email = Column(String(255), nullable=False, index=True)
+    group_enrol = Column(Boolean, default=False)
+    status = Column(String(20), default="enrolled")  # enrolled|cancelled|waitlisted
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class TrainingWaitlist(Base):
+    __tablename__ = "training_waitlist"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    participant_name = Column(String(255), nullable=False)
+    participant_email = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

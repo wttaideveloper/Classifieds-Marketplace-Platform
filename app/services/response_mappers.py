@@ -307,6 +307,100 @@ def map_service_write(service: Service) -> dict:
     return _service_base_fields(service)
 
 
+def map_event_list_item(event) -> dict:
+    return _event_base_fields(event)
+
+
+def map_event_detail(event) -> dict:
+    enterprise_name = None
+    if getattr(event, "enterprise", None) is not None:
+        enterprise_name = event.enterprise.business_short_name
+    base = _event_base_fields(event)
+    base["enterprise_name"] = enterprise_name
+    return base
+
+
+def map_event_write(event) -> dict:
+    return _event_base_fields(event)
+
+
+def map_program_list_item(p) -> dict:
+    return _program_base_fields(p)
+def map_program_detail(p) -> dict:
+    name=None
+    if getattr(p,"enterprise",None) is not None: name=p.enterprise.business_short_name
+    b=_program_base_fields(p); b["enterprise_name"]=name; return b
+def map_program_write(p) -> dict:
+    return _program_base_fields(p)
+def _program_base_fields(p) -> dict:
+    return {"id":p.id,"tenant_id":p.tenant_id,"enterprise_id":p.enterprise_id,"location_id":p.location_id,"title":p.title,"description":p.description,"category":p.category,"provider_id":p.provider_id,"duration_weeks":p.duration_weeks,"eligibility":p.eligibility,"start_date":p.start_date,"end_date":p.end_date,"enrolment_start":p.enrolment_start,"enrolment_end":p.enrolment_end,"enrol_type":p.enrol_type,"delivery_mode":p.delivery_mode,"price":p.price,"currency":p.currency,"capacity":p.capacity,"status":p.status,"is_deleted":p.is_deleted,"created_at":p.created_at,"updated_at":p.updated_at,"phases":p.phases}
+def map_training_list_item(t) -> dict:
+    return _training_base_fields(t)
+
+def map_training_detail(t) -> dict:
+    name = None
+    if getattr(t, "enterprise", None) is not None:
+        name = t.enterprise.business_short_name
+    b = _training_base_fields(t); b["enterprise_name"] = name; return b
+
+def map_training_write(t) -> dict:
+    return _training_base_fields(t)
+
+def _training_base_fields(t) -> dict:
+    return {
+        "id": t.id, "tenant_id": t.tenant_id, "enterprise_id": t.enterprise_id, "location_id": t.location_id,
+        "title": t.title, "description": t.description, "category": t.category, "subcategory": t.subcategory,
+        "tags": t.tags, "instructor_id": t.instructor_id, "requirements": t.requirements,
+        "primary_image": t.primary_image, "gallery_images": t.gallery_images, "promotional_video": t.promotional_video,
+        "documents": t.documents, "delivery_mode": t.delivery_mode, "course_type": t.course_type,
+        "start_date": t.start_date, "end_date": t.end_date, "enrolment_start": t.enrolment_start, "enrolment_end": t.enrolment_end,
+        "time_zone": t.time_zone, "capacity": t.capacity, "price": t.price, "currency": t.currency, "promo_price": t.promo_price,
+        "status": t.status, "is_deleted": t.is_deleted, "created_at": t.created_at, "updated_at": t.updated_at,
+        "sections": t.sections, "assessments": t.assessments, "assignments": t.assignments,
+    }
+
+def _event_base_fields(event) -> dict:
+    return {
+        "id": event.id,
+        "tenant_id": event.tenant_id,
+        "enterprise_id": event.enterprise_id,
+        "location_id": event.location_id,
+        "title": event.title,
+        "description": event.description,
+        "category": event.category,
+        "subcategory": event.subcategory,
+        "tags": event.tags,
+        "organiser_name": event.organiser_name,
+        "organiser_contact": event.organiser_contact,
+        "start_date": event.start_date,
+        "end_date": event.end_date,
+        "time_zone": event.time_zone,
+        "registration_cutoff": event.registration_cutoff,
+        "primary_image": event.primary_image,
+        "gallery_images": event.gallery_images,
+        "videos": event.videos,
+        "documents": event.documents,
+        "delivery_mode": event.delivery_mode,
+        "venue": event.venue,
+        "meeting_link": event.meeting_link,
+        "meeting_provider": event.meeting_provider,
+        "price": event.price,
+        "currency": event.currency,
+        "ticket_types": event.ticket_types,
+        "capacity": event.capacity,
+        "min_participants": event.min_participants,
+        "max_participants": event.max_participants,
+        "registration_open_at": event.registration_open_at,
+        "registration_close_at": event.registration_close_at,
+        "custom_fields": event.custom_fields,
+        "sessions": event.sessions,
+        "status": event.status,
+        "is_deleted": event.is_deleted,
+        "created_at": event.created_at,
+        "updated_at": event.updated_at,
+    }
+
+
 def _service_base_fields(service: Service) -> dict:
     return {
         "id": service.id,

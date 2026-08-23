@@ -41,6 +41,11 @@ _safe_include(
     tags=["Dynamic Attributes (Legacy)"],
 )
 
+# Events
+_safe_include("app.api.v1.endpoints.event", prefix="/events", tags=["Events"])
+_safe_include("app.api.v1.endpoints.training", prefix="/trainings", tags=["Trainings"])
+_safe_include("app.api.v1.endpoints.program", prefix="/programs", tags=["Programs"])
+
 # Search APIs
 _safe_include("app.api.v1.endpoints.search", prefix="/search", tags=["Search"])
 

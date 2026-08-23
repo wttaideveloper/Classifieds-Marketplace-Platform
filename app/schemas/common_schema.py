@@ -4,9 +4,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 EnterpriseStatusLabel = Literal["active", "inactive", "pending", "draft"]
 EntityStatus = Literal["draft", "active", "inactive"]
+EventStatus = Literal[
+    "draft",
+    "pending_approval",
+    "approved",
+    "published",
+    "cancelled",
+    "completed",
+    "suspended",
+    "active",
+    "inactive",
+]
 LocationStatus = Literal["draft", "active", "inactive"]
 AttributeType = Literal["text", "number", "date", "boolean", "email", "phone", "dropdown"]
-EntityType = Literal["enterprise", "product", "service"]
+EntityType = Literal["enterprise", "product", "service", "event", "training", "program"]
 
 T = TypeVar("T")
 
