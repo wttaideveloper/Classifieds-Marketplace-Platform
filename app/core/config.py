@@ -146,11 +146,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_socketio_worker_config(self):
-        if self.WEB_CONCURRENCY > 1 or self.SOCKET_WORKERS > 1:
+        if self.SOCKET_WORKERS > 1:
             raise ValueError(
-                "WEB_CONCURRENCY and SOCKET_WORKERS must be 1 for combined Socket.IO deployment. "
+                "SOCKET_WORKERS must be 1 for combined Socket.IO deployment. "
                 "Engine.IO polling sessions are stored in memory per worker — Redis does not fix "
-                "this on a single Gunicorn port. Use WEB_CONCURRENCY=1 / SOCKET_WORKERS=1, or run "
+                "this on a single Gunicorn port. Use SOCKET_WORKERS=1, or run "
                 "split mode: scripts/entrypoint-api.sh (port 8000) + entrypoint-socket.sh (port 8001)."
             )
         return self
