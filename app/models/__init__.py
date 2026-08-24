@@ -5,6 +5,7 @@ Import all model modules so metadata is registered on ``Base``.
 
 from . import (  # noqa: F401
     attribute_model,
+    cart_model,
     chat_model,
     enterprise_model,
     event_aux_models,

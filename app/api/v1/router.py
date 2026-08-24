@@ -101,6 +101,9 @@ _safe_include("app.api.v1.endpoints.presence", prefix="/presence", tags=["Presen
 _safe_include("app.api.v1.endpoints.socket_io", prefix="/socket-io", tags=["Socket.IO"])
 _safe_include("app.api.v1.endpoints.chat_admin", prefix="/admin/chat", tags=["Chat Administration"])
 
+# Cart + Orders (full cart: add multiple → view → checkout together)
+_safe_include("app.api.v1.endpoints.cart", prefix="/cart", tags=["Cart"])
+
 # Authentication + system
 _safe_include("app.api.v1.endpoints.auth", prefix="/auth", tags=["Authentication"])
 _safe_include("app.api.v1.endpoints.system", prefix="", tags=["System"])
