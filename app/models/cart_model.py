@@ -55,6 +55,15 @@ class Order(Base):
     status = Column(String(20), default="pending", nullable=False, index=True)
     total = Column(Float, nullable=False, default=0)
     currency = Column(String(3), default="USD", nullable=False)
+    # Shipping address snapshot (structured object)
+    shipping_full_name = Column(String(120), nullable=True)
+    shipping_phone = Column(String(20), nullable=True)
+    shipping_line1 = Column(String(255), nullable=True)
+    shipping_line2 = Column(String(255), nullable=True)
+    shipping_city = Column(String(100), nullable=True)
+    shipping_state = Column(String(100), nullable=True)
+    shipping_zip = Column(String(20), nullable=True)
+    shipping_country = Column(String(100), nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -64,6 +73,21 @@ class Order(Base):
     __table_args__ = (
         Index("ix_orders_user_created", "user_id", "created_at"),
     )
+
+    @property
+    def shipping_address(self):
+        if not self.shipping_full_name:
+            return None
+        return {
+            "full_name": self.shipping_full_name,
+            "phone": self.shipping_phone,
+            "line1": self.shipping_line1,
+            "line2": self.shipping_line2,
+            "city": self.shipping_city,
+            "state": self.shipping_state,
+            "zip": self.shipping_zip,
+            "country": self.shipping_country,
+        }
 
 
 class OrderItem(Base):

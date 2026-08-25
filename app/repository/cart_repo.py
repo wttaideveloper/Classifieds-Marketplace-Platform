@@ -60,8 +60,23 @@ def create_order(
     tenant_id: UUID | None,
     total: float,
     currency: str,
+    shipping_address: dict | None = None,
 ) -> Order:
-    order = Order(user_id=user_id, tenant_id=tenant_id, status="pending", total=total, currency=currency)
+    order = Order(
+        user_id=user_id,
+        tenant_id=tenant_id,
+        status="pending",
+        total=total,
+        currency=currency,
+        shipping_full_name=shipping_address.get("full_name") if shipping_address else None,
+        shipping_phone=shipping_address.get("phone") if shipping_address else None,
+        shipping_line1=shipping_address.get("line1") if shipping_address else None,
+        shipping_line2=shipping_address.get("line2") if shipping_address else None,
+        shipping_city=shipping_address.get("city") if shipping_address else None,
+        shipping_state=shipping_address.get("state") if shipping_address else None,
+        shipping_zip=shipping_address.get("zip") if shipping_address else None,
+        shipping_country=shipping_address.get("country") if shipping_address else None,
+    )
     db.add(order)
     db.flush()
     return order

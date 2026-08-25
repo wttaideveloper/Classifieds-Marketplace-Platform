@@ -97,13 +97,11 @@ def clear_cart(
     summary="Checkout Cart",
 )
 def checkout(
-    payload: CheckoutRequest | None = None,
+    payload: CheckoutRequest,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     user_id = UUID(str(current_user["id"]))
-    if payload is None:
-        payload = CheckoutRequest()
     return checkout_service(db, user_id, payload)
 
 

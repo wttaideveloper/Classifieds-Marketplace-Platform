@@ -42,8 +42,19 @@ class CartResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class ShippingAddress(BaseModel):
+    full_name: str = Field(..., min_length=1, max_length=120, description="Recipient full name")
+    phone: str = Field(..., min_length=7, max_length=20, description="Contact phone")
+    line1: str = Field(..., min_length=1, max_length=255, description="Address line 1")
+    line2: str | None = Field(default=None, max_length=255, description="Address line 2")
+    city: str = Field(..., min_length=1, max_length=100)
+    state: str = Field(..., min_length=1, max_length=100)
+    zip: str = Field(..., min_length=1, max_length=20, description="ZIP / postal code")
+    country: str = Field(..., min_length=1, max_length=100)
+
+
 class CheckoutRequest(BaseModel):
-    shipping_address: str | None = Field(None, description="Optional shipping address")
+    shipping_address: ShippingAddress = Field(..., description="Shipping address object")
 
 
 class OrderItemResponse(BaseModel):
@@ -68,6 +79,7 @@ class OrderResponse(BaseModel):
     status: str
     total: float
     currency: str | None = "USD"
+    shipping_address: ShippingAddress | None = None
     items: list[OrderItemResponse] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None

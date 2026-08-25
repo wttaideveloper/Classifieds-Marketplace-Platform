@@ -198,7 +198,22 @@ def clear_cart_service(db: Session, user_id: UUID) -> dict:
     return {"message": "Cart cleared"}
 
 
-def checkout_service(db: Session, user_id: UUID, payload: CheckoutRequest | None = None) -> OrderResponse:
+def _order_shipping_address(order) -> dict | None:
+    if not order.shipping_full_name:
+        return None
+    return {
+        "full_name": order.shipping_full_name,
+        "phone": order.shipping_phone,
+        "line1": order.shipping_line1,
+        "line2": order.shipping_line2,
+        "city": order.shipping_city,
+        "state": order.shipping_state,
+        "zip": order.shipping_zip,
+        "country": order.shipping_country,
+    }
+
+
+def checkout_service(db: Session, user_id: UUID, payload: CheckoutRequest) -> OrderResponse:
     cart = get_active_cart_with_items(db, user_id)
     if not cart or not cart.items:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cart is empty")
@@ -219,7 +234,8 @@ def checkout_service(db: Session, user_id: UUID, payload: CheckoutRequest | None
         total += unit_price * it.quantity
 
     total = round(total, 2)
-    order = create_order(db, user_id, cart.tenant_id, total, currency)
+    shipping_dict = payload.shipping_address.model_dump() if payload and payload.shipping_address else None
+    order = create_order(db, user_id, cart.tenant_id, total, currency, shipping_address=shipping_dict)
     db.flush()
 
     for it in cart.items:
@@ -269,6 +285,7 @@ def checkout_service(db: Session, user_id: UUID, payload: CheckoutRequest | None
         status=order.status,
         total=order.total,
         currency=order.currency,
+        shipping_address=_order_shipping_address(order),  # type: ignore
         items=items,  # type: ignore
         created_at=order.created_at,
         updated_at=order.updated_at,
@@ -328,6 +345,7 @@ def get_order_service(db: Session, user_id: UUID, order_id: UUID) -> OrderRespon
         status=order.status,
         total=order.total,
         currency=order.currency,
+        shipping_address=_order_shipping_address(order),  # type: ignore
         items=items,  # type: ignore
         created_at=order.created_at,
         updated_at=order.updated_at,
