@@ -209,14 +209,41 @@ def get_sessions_service(db: Session, event_id: UUID):
     return event.sessions or []
 
 
+def _validate_session_date(event, session_date):
+    if session_date is None:
+        return
+    ev_start = event.start_date.date() if hasattr(event.start_date, "date") else event.start_date
+    ev_end = event.end_date.date() if hasattr(event.end_date, "date") else event.end_date
+    if not (ev_start <= session_date <= ev_end):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"session_date {session_date} must be within Event {ev_start}..{ev_end}",
+        )
+
+
+def _sort_sessions(sessions: list) -> list:
+    def _key(s):
+        sd = s.get("session_date") or ""
+        # normalize date string for sorting
+        st = s.get("start_time") or ""
+        return (str(sd), str(st))
+
+    return sorted(sessions, key=_key)
+
+
 def add_session_service(db: Session, event_id: UUID, payload):
     import uuid
 
     event = _get_event_or_404(db, event_id)
+    _validate_session_date(event, payload.session_date)
     sessions = list(event.sessions or [])
-    new = {"id": str(uuid.uuid4()), **payload.model_dump()}
+    # model_dump will serialize date as date object; convert to ISO string for JSONB
+    data = payload.model_dump()
+    if data.get("session_date"):
+        data["session_date"] = str(data["session_date"])
+    new = {"id": str(uuid.uuid4()), **data}
     sessions.append(new)
-    event.sessions = sessions
+    event.sessions = _sort_sessions(sessions)
     db.commit()
     db.refresh(event)
     return new
@@ -227,9 +254,13 @@ def update_session_service(db: Session, event_id: UUID, session_id: str, payload
     sessions = list(event.sessions or [])
     for s in sessions:
         if s.get("id") == session_id:
-            for k, v in payload.model_dump(exclude_unset=True).items():
+            updates = payload.model_dump(exclude_unset=True)
+            if "session_date" in updates and updates["session_date"] is not None:
+                _validate_session_date(event, updates["session_date"])
+                updates["session_date"] = str(updates["session_date"])
+            for k, v in updates.items():
                 s[k] = v
-            event.sessions = sessions
+            event.sessions = _sort_sessions(sessions)
             db.commit()
             return s
     raise HTTPException(status_code=404, detail="Session not found")

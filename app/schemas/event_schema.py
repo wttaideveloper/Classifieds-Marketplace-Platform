@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -200,6 +200,7 @@ class EventRegistrationCreate(BaseModel):
 
 
 class EventSessionCreate(BaseModel):
+    session_date: date = Field(..., description="Session date (YYYY-MM-DD), must be within Event start_date..end_date", examples=["2026-09-02"])
     title: str
     speaker: str | None = None
     start_time: str | None = None
@@ -209,7 +210,19 @@ class EventSessionCreate(BaseModel):
 
 
 class EventSessionUpdate(BaseModel):
+    session_date: date | None = Field(None, description="Session date (YYYY-MM-DD)")
     title: str | None = None
+    speaker: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    location: str | None = None
+    meeting_link: str | None = None
+
+
+class EventSessionResponse(BaseModel):
+    id: str
+    session_date: date | None = None
+    title: str
     speaker: str | None = None
     start_time: str | None = None
     end_time: str | None = None
