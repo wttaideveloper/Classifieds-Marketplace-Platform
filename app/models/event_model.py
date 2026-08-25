@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, Column, DateTime, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy import ForeignKey
+from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
@@ -86,7 +87,7 @@ class Event(Base):
     custom_fields = Column(JSONB, default=list)
 
     # Schedule
-    sessions = Column(JSONB, default=list)
+    sessions = Column(MutableList.as_mutable(JSONB), default=list)
 
     status = Column(String(20), default="draft", nullable=False, index=True)
 

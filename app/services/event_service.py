@@ -232,11 +232,14 @@ def _sort_sessions(sessions: list) -> list:
 
 
 def add_session_service(db: Session, event_id: UUID, payload):
+    import copy
     import uuid
+
+    from sqlalchemy.orm.attributes import flag_modified
 
     event = _get_event_or_404(db, event_id)
     _validate_session_date(event, payload.session_date)
-    sessions = list(event.sessions or [])
+    sessions = copy.deepcopy(event.sessions or [])
     # model_dump will serialize date as date object; convert to ISO string for JSONB
     data = payload.model_dump()
     if data.get("session_date"):
@@ -244,14 +247,19 @@ def add_session_service(db: Session, event_id: UUID, payload):
     new = {"id": str(uuid.uuid4()), **data}
     sessions.append(new)
     event.sessions = _sort_sessions(sessions)
+    flag_modified(event, "sessions")
     db.commit()
     db.refresh(event)
     return new
 
 
 def update_session_service(db: Session, event_id: UUID, session_id: str, payload):
+    import copy
+
+    from sqlalchemy.orm.attributes import flag_modified
+
     event = _get_event_or_404(db, event_id)
-    sessions = list(event.sessions or [])
+    sessions = copy.deepcopy(event.sessions or [])
     for s in sessions:
         if s.get("id") == session_id:
             updates = payload.model_dump(exclude_unset=True)
@@ -261,16 +269,26 @@ def update_session_service(db: Session, event_id: UUID, session_id: str, payload
             for k, v in updates.items():
                 s[k] = v
             event.sessions = _sort_sessions(sessions)
+            flag_modified(event, "sessions")
             db.commit()
+            db.refresh(event)
+            # return persisted version, not in-memory stale reference
+            for updated in event.sessions:
+                if updated.get("id") == session_id:
+                    return updated
             return s
     raise HTTPException(status_code=404, detail="Session not found")
 
 
 def delete_session_service(db: Session, event_id: UUID, session_id: str):
+    from sqlalchemy.orm.attributes import flag_modified
+
     event = _get_event_or_404(db, event_id)
     sessions = [s for s in (event.sessions or []) if s.get("id") != session_id]
     event.sessions = sessions
+    flag_modified(event, "sessions")
     db.commit()
+    db.refresh(event)
     return {"message": "Session deleted"}
 
 
