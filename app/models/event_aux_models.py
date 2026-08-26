@@ -19,6 +19,9 @@ class EventRegistration(Base):
     ticket_type_id = Column(String(100))
     status = Column(String(20), default="confirmed", index=True)  # confirmed|cancelled|attended|no_show
     qr_code = Column(String(255))
+    checked_in_at = Column(DateTime, nullable=True)
+    checked_in_by = Column(UUID(as_uuid=True), nullable=True)
+    session_id = Column(String(100), nullable=True)  # For per-session attendance tracking
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     event = relationship("Event", backref="registrations")

@@ -144,6 +144,29 @@ def update_event_status_service(db: Session, event_id: UUID, status: str):
     event = get_event_by_id(db, event_id, include_deleted=True)
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    # State machine: define valid transitions
+    VALID_TRANSITIONS = {
+        "draft": ["pending_approval", "cancelled"],
+        "pending_approval": ["approved", "cancelled"],
+        "approved": ["published", "cancelled"],
+        "published": ["cancelled", "completed", "suspended"],
+        "suspended": ["published", "cancelled"],
+        "completed": [],
+        "cancelled": ["draft"],
+        "active": ["cancelled", "completed", "inactive"],
+        "inactive": ["active", "cancelled"],
+    }
+
+    current_status = event.status
+    allowed_next = VALID_TRANSITIONS.get(current_status, [])
+
+    if status not in allowed_next:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot transition from '{current_status}' to '{status}'. Allowed: {allowed_next}"
+        )
+
     event.status = status
     db.commit()
     db.refresh(event)
@@ -162,9 +185,25 @@ def _get_event_or_404(db: Session, event_id: UUID):
 
 
 def create_registration_service(db: Session, event_id: UUID, payload):
-    _get_event_or_404(db, event_id)
+    event = _get_event_or_404(db, event_id)
     from app.models.event_aux_models import EventRegistration
     import uuid
+
+    # Capacity enforcement
+    if event.capacity:
+        try:
+            max_capacity = int(event.capacity)
+            current_count = db.query(EventRegistration).filter(
+                EventRegistration.event_id == event_id,
+                EventRegistration.status.in_(["confirmed", "attended"])
+            ).count()
+            if current_count >= max_capacity:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Event is at full capacity ({max_capacity} participants). Registration closed."
+                )
+        except ValueError:
+            pass  # capacity is not a valid integer, skip enforcement
 
     reg = EventRegistration(
         event_id=event_id,
@@ -341,9 +380,44 @@ def delete_session_service(db: Session, event_id: UUID, session_id: str):
 
 def get_event_attendance_service(db: Session, event_id: UUID):
     from app.models.event_aux_models import EventRegistration
+    from app.schemas.event_schema import EventAttendanceItem, EventAttendanceResponse
 
     regs = db.query(EventRegistration).filter(EventRegistration.event_id == event_id).all()
-    return {"total": len(regs), "attended": len([r for r in regs if r.status == "attended"]), "no_show": len([r for r in regs if r.status == "confirmed"])}
+    attended = [r for r in regs if r.status == "attended"]
+    no_show = [r for r in regs if r.status == "confirmed"]
+
+    # Build per-session attendance breakdown
+    by_session: dict[str, dict] = {}
+    for r in regs:
+        if r.session_id:
+            if r.session_id not in by_session:
+                by_session[r.session_id] = {"total": 0, "attended": 0}
+            by_session[r.session_id]["total"] += 1
+            if r.status == "attended":
+                by_session[r.session_id]["attended"] += 1
+
+    participants = [
+        EventAttendanceItem(
+            registration_id=r.id,
+            participant_name=r.participant_name,
+            participant_email=r.participant_email,
+            status=r.status,
+            checked_in_at=r.checked_in_at.isoformat() if r.checked_in_at else None,
+            checked_in_by=r.checked_in_by,
+            session_id=r.session_id,
+            ticket_type_id=r.ticket_type_id
+        )
+        for r in regs
+    ]
+
+    return EventAttendanceResponse(
+        event_id=event_id,
+        total_registered=len(regs),
+        total_attended=len(attended),
+        total_no_show=len(no_show),
+        attendance_by_session=by_session if by_session else None,
+        participants=participants
+    )
 
 
 def send_announcement_service(db: Session, event_id: UUID, message: str):

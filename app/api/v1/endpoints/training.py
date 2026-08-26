@@ -1,6 +1,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
+from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.training_schema import LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingPaginatedResponse, TrainingResponse, TrainingStatusUpdate, TrainingUpdate
@@ -9,7 +10,7 @@ from app.services.training_service import create_training_service, delete_traini
 router = APIRouter(tags=["Trainings"])
 
 @router.post("/", response_model=TrainingResponse, status_code=201)
-def create_training(data: TrainingCreate, db: Session = Depends(get_db)):
+def create_training(data: TrainingCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_training_service(db, data)
 
 @router.get("/", response_model=TrainingPaginatedResponse)
@@ -17,32 +18,42 @@ def list_trainings(search: str | None = Query(None), category: str | None = Quer
     return get_trainings_service(db, search=search, category=category, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, page=page, page_size=page_size)
 
 @router.get("/{training_id}", response_model=TrainingDetailResponse)
-def get_training(training_id: UUID = Path(...), db: Session = Depends(get_db)):
+def get_training(training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return get_training_service(db, training_id)
 
 @router.put("/{training_id}", response_model=TrainingResponse)
-def update_training(data: TrainingUpdate, training_id: UUID = Path(...), db: Session = Depends(get_db)):
+def update_training(data: TrainingUpdate, training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return update_training_service(db, training_id, data)
 
 @router.delete("/{training_id}")
-def delete_training(training_id: UUID = Path(...), db: Session = Depends(get_db)):
+def delete_training(training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     delete_training_service(db, training_id); return {"message":"Training deleted"}
 
 @router.post("/{training_id}/duplicate", response_model=TrainingResponse, status_code=201)
-def duplicate(training_id: UUID = Path(...), db: Session = Depends(get_db)):
+def duplicate(training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return duplicate_training_service(db, training_id)
 
 @router.patch("/{training_id}/status", response_model=TrainingResponse)
-def update_status(training_id: UUID, payload: TrainingStatusUpdate, db: Session = Depends(get_db)):
+def update_status(training_id: UUID, payload: TrainingStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return update_training_status_service(db, training_id, payload.status)
+
+
+@router.post("/{training_id}/unpublish", response_model=TrainingResponse, status_code=200)
+def unpublish_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_training_status_service(db, training_id, "draft")
+
+
+@router.post("/{training_id}/archive", response_model=TrainingResponse, status_code=200)
+def archive_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_training_status_service(db, training_id, "archived")
 
 # Builder - sections / lessons (T7) - stored as JSONB on training
 @router.get("/{training_id}/sections")
-def list_sections(training_id: UUID, db: Session = Depends(get_db)):
+def list_sections(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     t = get_training_service(db, training_id); return t.sections or []
 
 @router.post("/{training_id}/sections", status_code=201)
-def add_section(training_id: UUID, payload: SectionCreate, db: Session = Depends(get_db)):
+def add_section(training_id: UUID, payload: SectionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     import uuid
     obj = get_training_by_id(db, training_id)
@@ -50,7 +61,7 @@ def add_section(training_id: UUID, payload: SectionCreate, db: Session = Depends
     secs = list(obj.sections or []); new={"id": str(uuid.uuid4()), **payload.model_dump()}; secs.append(new); obj.sections=secs; db.commit(); return new
 
 @router.put("/{training_id}/sections/{section_id}")
-def update_section(training_id: UUID, section_id: str, payload: SectionCreate, db: Session = Depends(get_db)):
+def update_section(training_id: UUID, section_id: str, payload: SectionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
@@ -60,7 +71,7 @@ def update_section(training_id: UUID, section_id: str, payload: SectionCreate, d
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
 @router.post("/{training_id}/sections/reorder")
-def reorder_sections(training_id: UUID, payload: dict, db: Session = Depends(get_db)):
+def reorder_sections(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
@@ -70,7 +81,7 @@ def reorder_sections(training_id: UUID, payload: dict, db: Session = Depends(get
     db.commit(); return obj.sections
 
 @router.post("/{training_id}/sections/{section_id}/lessons", status_code=201)
-def add_lesson(training_id: UUID, section_id: str, payload: LessonCreate, db: Session = Depends(get_db)):
+def add_lesson(training_id: UUID, section_id: str, payload: LessonCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     import uuid
     obj = get_training_by_id(db, training_id)
@@ -81,7 +92,7 @@ def add_lesson(training_id: UUID, section_id: str, payload: LessonCreate, db: Se
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
 @router.put("/{training_id}/sections/{section_id}/lessons/{lesson_id}")
-def update_lesson(training_id: UUID, section_id: str, lesson_id: str, payload: LessonCreate, db: Session = Depends(get_db)):
+def update_lesson(training_id: UUID, section_id: str, lesson_id: str, payload: LessonCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
@@ -93,7 +104,7 @@ def update_lesson(training_id: UUID, section_id: str, lesson_id: str, payload: L
     from fastapi import HTTPException; raise HTTPException(404, "Lesson not found")
 
 @router.delete("/{training_id}/sections/{section_id}/lessons/{lesson_id}")
-def delete_lesson(training_id: UUID, section_id: str, lesson_id: str, db: Session = Depends(get_db)):
+def delete_lesson(training_id: UUID, section_id: str, lesson_id: str, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
@@ -104,7 +115,7 @@ def delete_lesson(training_id: UUID, section_id: str, lesson_id: str, db: Sessio
 
 # Enrol, waitlist, assessments, assignments, progress, live-sessions, announcements - stubs that keep contract
 @router.post("/{training_id}/enrol", status_code=201)
-def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db)):
+def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.models.training_model import TrainingEnrolment
     import uuid
     # minimal enrol
@@ -114,18 +125,18 @@ def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db)):
     db.add(e); db.commit(); db.refresh(e); return e
 
 @router.get("/{training_id}/enrolments")
-def list_enrolments(training_id: UUID, db: Session = Depends(get_db)):
+def list_enrolments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.models.training_model import TrainingEnrolment
     return db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==training_id).all()
 
 @router.post("/{training_id}/waitlist", status_code=201)
-def join_waitlist(training_id: UUID, payload: dict, db: Session = Depends(get_db)):
+def join_waitlist(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.models.training_model import TrainingWaitlist
     w = TrainingWaitlist(training_id=training_id, participant_name=payload.get("participant_name","User"), participant_email=payload.get("participant_email","user@example.com"))
     db.add(w); db.commit(); db.refresh(w); return w
 
 @router.delete("/{training_id}/waitlist/{entry_id}")
-def leave_waitlist(training_id: UUID, entry_id: UUID, db: Session = Depends(get_db)):
+def leave_waitlist(training_id: UUID, entry_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.models.training_model import TrainingWaitlist
     from fastapi import HTTPException
     w = db.query(TrainingWaitlist).filter(TrainingWaitlist.id==entry_id).first()
@@ -133,7 +144,7 @@ def leave_waitlist(training_id: UUID, entry_id: UUID, db: Session = Depends(get_
     db.delete(w); db.commit(); return {"message":"Removed"}
 
 @router.post("/{training_id}/assessments", status_code=201)
-def create_assessment(training_id: UUID, payload: dict, db: Session = Depends(get_db)):
+def create_assessment(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     import uuid
     t = get_training_by_id(db, training_id)
@@ -141,40 +152,40 @@ def create_assessment(training_id: UUID, payload: dict, db: Session = Depends(ge
     arr = list(t.assessments or []); new={"id": str(uuid.uuid4()), **payload}; arr.append(new); t.assessments=arr; db.commit(); return new
 
 @router.get("/{training_id}/assessments")
-def list_assessments(training_id: UUID, db: Session = Depends(get_db)):
+def list_assessments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.repository.training_repo import get_training_by_id
     t = get_training_by_id(db, training_id)
     if not t: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
     return t.assessments or []
 
 @router.post("/{training_id}/assessments/{aid}/questions", status_code=201)
-def add_question(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db)):
+def add_question(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return {"message":"Question added", "assessment_id": aid, **payload}
 
 @router.post("/{training_id}/assessments/{aid}/submit", status_code=201)
-def submit_assessment(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db)):
+def submit_assessment(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return {"score": 80, "passed": True, "assessment_id": aid}
 
 @router.post("/{training_id}/assignments", status_code=201)
-def create_assignment(training_id: UUID, payload: dict, db: Session = Depends(get_db)):
+def create_assignment(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return {"id": str(__import__("uuid").uuid4()), **payload}
 
 @router.post("/{training_id}/assignments/{aid}/submit", status_code=201)
-def submit_assignment(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db)):
+def submit_assignment(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return {"message":"Submitted", "assignment_id": aid}
 
 @router.get("/{training_id}/progress")
-def progress(training_id: UUID, db: Session = Depends(get_db)):
+def progress(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return {"overall_percent": 0, "sections_done": 0, "certificate_url": None}
 
 @router.post("/{training_id}/live-sessions", status_code=201)
-def create_live(training_id: UUID, payload: dict, db: Session = Depends(get_db)):
+def create_live(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     import uuid; return {"id": str(uuid.uuid4()), "meeting_link": "https://zoom.us/j/xxx", **payload}
 
 @router.get("/{training_id}/live-sessions")
-def list_live(training_id: UUID, db: Session = Depends(get_db)):
+def list_live(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return []
 
 @router.post("/{training_id}/announcements")
-def announce(training_id: UUID, payload: dict, db: Session = Depends(get_db)):
+def announce(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return {"message":"Announcement queued"}

@@ -265,3 +265,51 @@ class EventSessionResponse(BaseModel):
     end_time: str | None = None
     location: str | None = None
     meeting_link: str | None = None
+
+
+class EventCheckInRequest(BaseModel):
+    registration_id: UUID | None = Field(None, description="Registration ID to check in")
+    qr_code: str | None = Field(None, description="QR code scanned from participant badge")
+    session_id: str | None = Field(None, description="Optional: specific session ID for per-session attendance")
+    method: str | None = Field("manual", description="Check-in method: manual, qr_code, nfc")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "registration_id": "550e8400-e29b-41d4-a716-446655440000",
+                "qr_code": None,
+                "session_id": "session_123",
+                "method": "manual"
+            }
+        }
+    )
+
+
+class EventCheckInResponse(BaseModel):
+    message: str
+    registration_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    checked_in_at: str | None = None
+    session_id: str | None = None
+
+
+class EventAttendanceItem(BaseModel):
+    registration_id: UUID
+    participant_name: str
+    participant_email: str
+    status: str
+    checked_in_at: str | None = None
+    checked_in_by: UUID | None = None
+    session_id: str | None = None
+    ticket_type_id: str | None = None
+
+
+class EventAttendanceResponse(BaseModel):
+    event_id: UUID
+    total_registered: int
+    total_attended: int
+    total_no_show: int
+    attendance_by_session: dict[str, dict] | None = None
+    participants: list[EventAttendanceItem]
