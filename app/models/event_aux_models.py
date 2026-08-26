@@ -21,6 +21,7 @@ class EventRegistration(Base):
     qr_code = Column(String(255))
     checked_in_at = Column(DateTime, nullable=True)
     checked_in_by = Column(UUID(as_uuid=True), nullable=True)
+    checked_out_at = Column(DateTime, nullable=True)
     session_id = Column(String(100), nullable=True)  # For per-session attendance tracking
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

@@ -404,6 +404,7 @@ def get_event_attendance_service(db: Session, event_id: UUID):
             status=r.status,
             checked_in_at=r.checked_in_at.isoformat() if r.checked_in_at else None,
             checked_in_by=r.checked_in_by,
+            checked_out_at=r.checked_out_at.isoformat() if r.checked_out_at else None,
             session_id=r.session_id,
             ticket_type_id=r.ticket_type_id
         )

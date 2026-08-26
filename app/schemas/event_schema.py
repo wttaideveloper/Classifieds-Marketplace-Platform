@@ -302,6 +302,7 @@ class EventAttendanceItem(BaseModel):
     status: str
     checked_in_at: str | None = None
     checked_in_by: UUID | None = None
+    checked_out_at: str | None = None
     session_id: str | None = None
     ticket_type_id: str | None = None
 
@@ -313,3 +314,47 @@ class EventAttendanceResponse(BaseModel):
     total_no_show: int
     attendance_by_session: dict[str, dict] | None = None
     participants: list[EventAttendanceItem]
+
+
+class EventUncheckInRequest(BaseModel):
+    registration_id: UUID | None = Field(None, description="Registration ID to uncheck")
+    qr_code: str | None = Field(None, description="QR code of registration to uncheck")
+    reason: str | None = Field(None, description="Reason for undoing check-in")
+
+
+class EventUncheckInResponse(BaseModel):
+    message: str
+    registration_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    restored_to: str
+
+
+class EventCheckOutRequest(BaseModel):
+    registration_id: UUID | None = Field(None, description="Registration ID to check out")
+    qr_code: str | None = Field(None, description="QR code of registration to check out")
+    session_id: str | None = Field(None, description="Optional: specific session ID for per-session check-out")
+
+
+class EventCheckOutResponse(BaseModel):
+    message: str
+    registration_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    checked_in_at: str | None = None
+    checked_out_at: str | None = None
+    session_id: str | None = None
+
+
+class EventQRValidateResponse(BaseModel):
+    valid: bool
+    registration_id: UUID | None = None
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str | None = None
+    event_id: UUID | None = None
+    event_title: str | None = None
+    ticket_type_id: str | None = None
+    message: str

@@ -16,3 +16,4 @@ python-socketio
 redis
 firebase-admin
 celery
+qrcode[pil]

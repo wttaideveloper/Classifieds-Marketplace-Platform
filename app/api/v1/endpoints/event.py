@@ -14,7 +14,18 @@ from app.schemas.event_schema import (
     EventStatusUpdate,
     EventUpdate,
 )
-from app.schemas.event_schema import EventCheckInRequest, EventCheckInResponse, EventRegistrationCreate, EventSessionCreate, EventSessionUpdate
+from app.schemas.event_schema import (
+    EventCheckInRequest,
+    EventCheckInResponse,
+    EventCheckOutRequest,
+    EventCheckOutResponse,
+    EventQRValidateResponse,
+    EventRegistrationCreate,
+    EventSessionCreate,
+    EventSessionUpdate,
+    EventUncheckInRequest,
+    EventUncheckInResponse,
+)
 from app.services.event_service import (
     add_session_service,
     create_event_service,
@@ -244,6 +255,166 @@ def check_in(event_id: UUID, payload: EventCheckInRequest, db: Session = Depends
         checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
         session_id=reg.session_id
     )
+
+
+@router.post("/{event_id}/uncheck-in", summary="Undo Check-in")
+def uncheck_in(event_id: UUID, payload: EventUncheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.models.event_aux_models import EventRegistration
+    from fastapi import HTTPException
+
+    reg = None
+    if payload.registration_id:
+        reg = db.query(EventRegistration).filter(
+            EventRegistration.id == payload.registration_id,
+            EventRegistration.event_id == event_id
+        ).first()
+    elif payload.qr_code:
+        reg = db.query(EventRegistration).filter(
+            EventRegistration.qr_code == payload.qr_code,
+            EventRegistration.event_id == event_id
+        ).first()
+    else:
+        raise HTTPException(status_code=400, detail="registration_id or qr_code is required")
+
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if reg.status != "attended":
+        raise HTTPException(status_code=400, detail=f"Cannot undo: registration status is '{reg.status}', not 'attended'")
+
+    reg.status = "confirmed"
+    reg.checked_in_at = None
+    reg.checked_in_by = None
+    reg.session_id = None
+    db.commit()
+    db.refresh(reg)
+
+    return EventUncheckInResponse(
+        message="Check-in undone",
+        registration_id=reg.id,
+        participant_name=reg.participant_name,
+        participant_email=reg.participant_email,
+        status=reg.status,
+        restored_to="confirmed"
+    )
+
+
+@router.post("/{event_id}/check-out", summary="Check-out Participant")
+def check_out(event_id: UUID, payload: EventCheckOutRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.models.event_aux_models import EventRegistration
+    from fastapi import HTTPException
+    from datetime import datetime
+
+    reg = None
+    if payload.registration_id:
+        reg = db.query(EventRegistration).filter(
+            EventRegistration.id == payload.registration_id,
+            EventRegistration.event_id == event_id
+        ).first()
+    elif payload.qr_code:
+        reg = db.query(EventRegistration).filter(
+            EventRegistration.qr_code == payload.qr_code,
+            EventRegistration.event_id == event_id
+        ).first()
+    else:
+        raise HTTPException(status_code=400, detail="registration_id or qr_code is required")
+
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if reg.status == "cancelled":
+        raise HTTPException(status_code=400, detail="Cannot check-out: registration is cancelled")
+    if reg.status == "no_show":
+        raise HTTPException(status_code=400, detail="Cannot check-out: registration is marked as no_show")
+    if reg.checked_out_at:
+        return EventCheckOutResponse(
+            message="Already checked out",
+            registration_id=reg.id,
+            participant_name=reg.participant_name,
+            participant_email=reg.participant_email,
+            status=reg.status,
+            checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
+            checked_out_at=reg.checked_out_at.isoformat() if reg.checked_out_at else None,
+            session_id=reg.session_id
+        )
+
+    reg.checked_out_at = datetime.utcnow()
+    db.commit()
+    db.refresh(reg)
+
+    return EventCheckOutResponse(
+        message="Checked out successfully",
+        registration_id=reg.id,
+        participant_name=reg.participant_name,
+        participant_email=reg.participant_email,
+        status=reg.status,
+        checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
+        checked_out_at=reg.checked_out_at.isoformat() if reg.checked_out_at else None,
+        session_id=reg.session_id
+    )
+
+
+@router.post("/{event_id}/validate-qr", summary="Validate QR Code")
+def validate_qr(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.models.event_aux_models import EventRegistration
+    from fastapi import HTTPException
+
+    qr_code = payload.get("qr_code")
+    if not qr_code:
+        raise HTTPException(status_code=400, detail="qr_code is required")
+
+    reg = db.query(EventRegistration).filter(
+        EventRegistration.qr_code == qr_code,
+        EventRegistration.event_id == event_id
+    ).first()
+
+    if not reg:
+        return EventQRValidateResponse(
+            valid=False,
+            message="QR code not found for this event"
+        )
+
+    from app.models.event_model import Event
+    event = db.query(Event).filter(Event.id == event_id).first()
+
+    return EventQRValidateResponse(
+        valid=True,
+        registration_id=reg.id,
+        participant_name=reg.participant_name,
+        participant_email=reg.participant_email,
+        status=reg.status,
+        event_id=event_id,
+        event_title=event.title if event else None,
+        ticket_type_id=reg.ticket_type_id,
+        message=f"Valid ticket: {reg.participant_name} ({reg.status})"
+    )
+
+
+@router.get("/{event_id}/registrations/{reg_id}/qr", summary="Get QR Code Image")
+def get_qr_image(event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.models.event_aux_models import EventRegistration
+    from fastapi import HTTPException
+    from fastapi.responses import StreamingResponse
+    import io
+
+    reg = db.query(EventRegistration).filter(
+        EventRegistration.id == reg_id,
+        EventRegistration.event_id == event_id
+    ).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+
+    try:
+        import qrcode
+        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr.add_data(reg.qr_code)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return StreamingResponse(buf, media_type="image/png", headers={"Content-Disposition": f"inline; filename=qr_{reg.qr_code}.png"})
+    except ImportError:
+        # Fallback: return QR code as text if qrcode not installed
+        return {"qr_code": reg.qr_code, "message": "Install 'qrcode' package for image generation"}
 
 
 @router.get("/{event_id}/attendance", summary="Attendance Report")
