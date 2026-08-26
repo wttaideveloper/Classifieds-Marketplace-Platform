@@ -164,6 +164,7 @@ PUBLIC_OPERATIONS: set[tuple[str, str]] = {
     ("get", "/api/v1/auth/test-users"),
     ("get", "/api/v1/auth/dev-token"),
     ("post", "/api/v1/auth/dev-token"),
+    ("get", "/api/v1/auth/session"),
     ("get", "/api/v1/notifications/channels"),
     ("get", "/api/v1/health"),
     ("get", "/api/v1/inventory"),

@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_current_web_session_user
 from app.core.security import create_access_token, create_chat_access_token
+from app.core.token_auth import resolve_user_from_token
 from app.schemas.auth_schema import (
     DEFAULT_DEV_USER_ID,
     DevTokenRequest,
@@ -178,3 +179,62 @@ def list_tenants_endpoint(
         for t in tenants
         if t.get("id") and t.get("name") and t.get("slug")
     ]
+
+
+@router.get(
+    "/session",
+    summary="Get Web Session (Frontend Auth Check)",
+    description="Returns `authenticated` flag for frontend `GET /api/v1/auth/session` with `credentials: include`. Supports both HttpOnly session cookie and Bearer token.",
+)
+def get_session(request: Request):
+    # Try cookie first, then Authorization header (same as get_current_user but non-throwing)
+    token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+    if not token:
+        auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+    # Also check Authorization via bearer_scheme header if present (case insensitive)
+    user = resolve_user_from_token(token) if token else None
+    # Dev fallback in non-production (mirrors get_current_user behavior)
+    if not user and not settings.is_production:
+        # If no token but dev mode, still consider authenticated as dev user for local testing
+        # Frontend will receive authenticated:true with dev user
+        from app.core.dependencies import get_dev_user
+
+        # Only return dev user if token was missing but we are in dev; otherwise respect unauthenticated
+        # To avoid masking real auth failures, only use dev user when token is None and dev mode
+        if token is None:
+            user = get_dev_user()
+
+    if not user:
+        # Return 200 with authenticated:false so frontend can handle gracefully (not 401)
+        return {
+            "authenticated": False,
+            "message": "Not authenticated",
+            "data": {"authenticated": False},
+        }
+
+    # Build frontend-compatible data: include both marketplace user fields and authenticated flag
+    # Frontend logs showed data keys: id, email, fullName, phone, country, address, preferredLocale, emailVerified, groups, modules, userModules, membership, roles, impersonation, userId
+    # We provide at least id/userId/email/role plus authenticated
+    data = {
+        "authenticated": True,
+        "id": user.get("id"),
+        "userId": user.get("id"),
+        "email": user.get("email"),
+        "role": user.get("role"),
+        "roles": [user.get("role")] if user.get("role") else [],
+        "tenant_id": user.get("tenant_id"),
+        "tenantId": user.get("tenant_id"),
+        # Pass through any extra claims that may exist from Keycloak
+        **{k: v for k, v in user.items() if k not in ("id", "email", "role", "tenant_id")},
+    }
+    # Ensure fullName compatibility if only email exists
+    if "fullName" not in data and user.get("email"):
+        data["fullName"] = user.get("email").split("@")[0]
+
+    return {
+        "authenticated": True,
+        "message": "Session active",
+        "data": data,
+    }
