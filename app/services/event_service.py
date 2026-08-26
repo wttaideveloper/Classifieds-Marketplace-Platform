@@ -109,6 +109,9 @@ def delete_event_service(db: Session, event_id: UUID):
 
 
 def duplicate_event_service(db: Session, event_id: UUID):
+    import copy
+    import uuid
+
     event = get_event_by_id(db, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -117,6 +120,16 @@ def duplicate_event_service(db: Session, event_id: UUID):
     payload = {c.key: getattr(event, c.key) for c in event.__table__.columns if c.key not in ("id", "created_at", "updated_at")}
     payload["status"] = "draft"
     payload["is_deleted"] = False
+    # Deep copy sessions and regenerate ids so cloned event sessions are independent and addressable
+    if payload.get("sessions"):
+        cloned_sessions = copy.deepcopy(payload["sessions"])
+        for s in cloned_sessions:
+            s["id"] = str(uuid.uuid4())
+            # normalize session_date to string if it's date object
+            sd = s.get("session_date")
+            if hasattr(sd, "isoformat"):
+                s["session_date"] = sd.isoformat()
+        payload["sessions"] = cloned_sessions
 
     from app.models.event_model import Event
 
@@ -206,7 +219,38 @@ def delete_waitlist_entry_service(db: Session, event_id: UUID, entry_id: UUID):
 
 def get_sessions_service(db: Session, event_id: UUID):
     event = _get_event_or_404(db, event_id)
-    return event.sessions or []
+    sessions = event.sessions or []
+    # Backfill missing ids for legacy embedded sessions created via POST /api/v1/events
+    # These were persisted without id before fix, so PUT/DELETE would 404 - generate and persist now
+    if sessions and any(not s.get("id") for s in sessions if isinstance(s, dict)):
+        import copy
+        import uuid
+
+        from sqlalchemy.orm.attributes import flag_modified
+
+        new_sessions = copy.deepcopy(sessions)
+        changed = False
+        for s in new_sessions:
+            if isinstance(s, dict) and not s.get("id"):
+                s["id"] = str(uuid.uuid4())
+                changed = True
+            # normalize date object to string for consistency
+            sd = s.get("session_date") if isinstance(s, dict) else None
+            if hasattr(sd, "isoformat"):
+                s["session_date"] = sd.isoformat()
+                changed = True
+        if changed:
+            # sort by (session_date, start_time) like add/update
+            try:
+                new_sessions = sorted(new_sessions, key=lambda x: (str(x.get("session_date") or ""), str(x.get("start_time") or "")))
+            except Exception:
+                pass
+            event.sessions = new_sessions
+            flag_modified(event, "sessions")
+            db.commit()
+            db.refresh(event)
+            return event.sessions or []
+    return sessions
 
 
 def _validate_session_date(event, session_date):
@@ -284,7 +328,10 @@ def delete_session_service(db: Session, event_id: UUID, session_id: str):
     from sqlalchemy.orm.attributes import flag_modified
 
     event = _get_event_or_404(db, event_id)
+    original_len = len(event.sessions or [])
     sessions = [s for s in (event.sessions or []) if s.get("id") != session_id]
+    if len(sessions) == original_len:
+        raise HTTPException(status_code=404, detail="Session not found")
     event.sessions = sessions
     flag_modified(event, "sessions")
     db.commit()

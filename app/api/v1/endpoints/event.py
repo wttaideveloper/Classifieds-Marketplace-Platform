@@ -267,6 +267,19 @@ def apply_template(template_id: UUID, payload: dict, db: Session = Depends(get_d
     data = dict(tmpl.template_data)
     data["enterprise_id"] = payload.get("enterprise_id") or data.get("enterprise_id")
     data["status"] = "draft"
+    # Regenerate session ids for cloned template so they are addressable via PUT/DELETE
+    if data.get("sessions"):
+        import copy
+        import uuid
+
+        cloned_sessions = copy.deepcopy(data["sessions"])
+        for s in cloned_sessions:
+            if isinstance(s, dict):
+                s["id"] = str(uuid.uuid4())
+                sd = s.get("session_date")
+                if hasattr(sd, "isoformat"):
+                    s["session_date"] = sd.isoformat()
+        data["sessions"] = cloned_sessions
     event = Event(**{k: v for k, v in data.items() if k in [c.key for c in Event.__table__.columns]})
     db.add(event)
     db.commit()

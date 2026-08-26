@@ -1,3 +1,4 @@
+import uuid
 from datetime import date, datetime
 from uuid import UUID
 
@@ -55,6 +56,26 @@ class EventCreate(BaseModel):
     sessions: list | None = Field(None, description="Agenda sessions")
     status: EventStatus = Field("draft", description="Event status.")
 
+    def _normalize_sessions(self) -> list:
+        # Ensure each embedded session has id and session_date string, sorted by (session_date, start_time)
+        normalized: list[dict] = []
+        for raw in self.sessions or []:
+            s = dict(raw) if isinstance(raw, dict) else {}
+            # generate id if missing
+            if not s.get("id"):
+                s["id"] = str(uuid.uuid4())
+            # normalize session_date date -> ISO string
+            sd = s.get("session_date")
+            if hasattr(sd, "isoformat"):
+                s["session_date"] = sd.isoformat()
+            elif sd is not None:
+                s["session_date"] = str(sd)
+            normalized.append(s)
+        # sort by (session_date, start_time) for consistency with dedicated add_session_service
+        def _key(x):
+            return (str(x.get("session_date") or ""), str(x.get("start_time") or ""))
+        return sorted(normalized, key=_key)
+
     def to_model_data(self) -> dict:
         return {
             "tenant_id": self.tenant_id,
@@ -88,7 +109,7 @@ class EventCreate(BaseModel):
             "registration_open_at": self.registration_open_at,
             "registration_close_at": self.registration_close_at,
             "custom_fields": self.custom_fields or [],
-            "sessions": self.sessions or [],
+            "sessions": self._normalize_sessions(),
             "status": self.status,
         }
 
@@ -128,7 +149,23 @@ class EventUpdate(BaseModel):
     status: EventStatus | None = None
 
     def to_model_data(self) -> dict:
-        return self.model_dump(exclude_unset=True)
+        data = self.model_dump(exclude_unset=True)
+        if "sessions" in data and data["sessions"] is not None:
+            normalized: list[dict] = []
+            for raw in data["sessions"] or []:
+                s = dict(raw) if isinstance(raw, dict) else {}
+                if not s.get("id"):
+                    s["id"] = str(uuid.uuid4())
+                sd = s.get("session_date")
+                if hasattr(sd, "isoformat"):
+                    s["session_date"] = sd.isoformat()
+                elif sd is not None:
+                    s["session_date"] = str(sd)
+                normalized.append(s)
+            def _key(x):
+                return (str(x.get("session_date") or ""), str(x.get("start_time") or ""))
+            data["sessions"] = sorted(normalized, key=_key)
+        return data
 
 
 class EventResponse(BaseModel):
