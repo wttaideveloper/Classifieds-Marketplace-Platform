@@ -296,6 +296,12 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     from app.models.event_aux_models import EventRegistration
     import uuid
 
+    # Block cancelled/completed/archived/suspended events
+    if event.status in ["cancelled", "completed", "archived", "suspended"]:
+        raise HTTPException(status_code=400, detail=f"Registrations are closed — event is {event.status}")
+    if event.status not in ["published"]:
+        raise HTTPException(status_code=400, detail=f"Event not open for registration (status: {event.status})")
+
     now = datetime.utcnow()
     # Registration window enforcement
     if event.registration_open_at and now < event.registration_open_at:
@@ -841,6 +847,10 @@ def _ticket_effective_price(ticket: dict, event) -> str:
 def create_event_checkout_service(db: Session, event_id: UUID, payload):
     from app.models.event_aux_models import EventOrder, EventRegistration
     event = _get_event_or_404(db, event_id)
+    if event.status in ["cancelled", "completed", "archived", "suspended"]:
+        raise HTTPException(status_code=400, detail=f"Checkout closed — event is {event.status}")
+    if event.status not in ["published"]:
+        raise HTTPException(status_code=400, detail=f"Event not open for checkout (status: {event.status})")
     ticket = _resolve_ticket(event, payload.ticket_type_id)
     if payload.ticket_type_id and not ticket:
         raise HTTPException(status_code=404, detail="Ticket type not found")

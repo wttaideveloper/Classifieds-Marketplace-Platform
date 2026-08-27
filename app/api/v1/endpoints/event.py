@@ -295,6 +295,11 @@ def check_in(event_id: UUID, payload: EventCheckInRequest, db: Session = Depends
 
     if not reg:
         raise HTTPException(status_code=404, detail="Registration not found")
+    # Block check-in if event itself is cancelled/completed/archived/suspended
+    from app.models.event_model import Event as Ev
+    ev_chk = db.query(Ev).filter(Ev.id == event_id).first()
+    if ev_chk and ev_chk.status in ["cancelled", "completed", "archived", "suspended"]:
+        raise HTTPException(status_code=400, detail=f"Cannot check-in: event is {ev_chk.status}")
     if reg.status == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot check-in: registration is cancelled")
     if reg.status == "attended":
