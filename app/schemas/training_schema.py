@@ -150,11 +150,14 @@ class TrainingStatusUpdate(BaseModel):
 
 
 class SectionCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
     title: str
     order: int | None = 0
-
+    instructor_id: UUID | None = Field(None, description="Section instructor allocation")
+    schedule: dict | None = Field(None, description="Schedule/agenda for section")
 
 class LessonCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
     type: str = Field("text", description="text|video|audio|webpage|pdf|live")
     title: str
     content_url: str | None = None
@@ -163,6 +166,7 @@ class LessonCreate(BaseModel):
     is_draft: bool | None = False
     prerequisites: list | None = None
     release_rule: dict | None = None
+    instructor_id: UUID | None = Field(None, description="Lesson instructor allocation")
 
 
 class AssessmentQuestionCreate(BaseModel):

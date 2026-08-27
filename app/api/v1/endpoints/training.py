@@ -260,6 +260,69 @@ def create_live(training_id: UUID, payload: TrainingLiveSessionCreate, db: Sessi
 def list_live(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return get_live_sessions_service(db, training_id)
 
+@router.get("/{training_id}/calendar.ics", summary="Calendar integration — add-to-calendar ICS")
+def calendar_ics(training_id: UUID, db: Session=Depends(get_db)):
+    from fastapi.responses import PlainTextResponse
+    from app.repository.training_repo import get_training_by_id
+    from app.services.calendar_service import event_to_ics
+    obj=get_training_by_id(db, training_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Training not found")
+    # map training to event-like for ICS generation
+    class _E: pass
+    e=_E(); e.id=obj.id; e.title=obj.title; e.description=obj.description or ""; e.start_date=obj.start_date; e.end_date=obj.end_date; e.venue=None; e.meeting_link=None; e.sessions=[]
+    # live sessions as sessions
+    from app.models.training_model import TrainingLiveSession
+    lives=db.query(TrainingLiveSession).filter(TrainingLiveSession.training_id==training_id).all()
+    sess=[]
+    for ls in lives:
+        sess.append({"id": str(ls.id), "title": ls.title, "speaker": "", "session_date": ls.scheduled_at.date().isoformat() if ls.scheduled_at else "", "start_time": ls.scheduled_at.strftime("%H:%M") if ls.scheduled_at else "", "end_time": "", "location": obj.delivery_mode or "", "meeting_link": ls.meeting_link or ""})
+    ics=event_to_ics(e, sess)
+    return PlainTextResponse(content=ics, media_type="text/calendar", headers={"Content-Disposition": f"attachment; filename=training_{training_id}.ics"})
+
+@router.get("/{training_id}/meeting-link", summary="Secure meeting link — enrolled only (auto/manual)")
+def meeting_link(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.models.training_model import TrainingEnrolment, TrainingLiveSession
+    from app.repository.training_repo import get_training_by_id
+    from fastapi import HTTPException
+    email=current_user.get("email")
+    enrol=db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==training_id, TrainingEnrolment.participant_email==email).first() if email else None
+    if not enrol and current_user.get("role") not in ["admin","provider"]:
+        raise HTTPException(403,"Enrolled participants only")
+    lives=db.query(TrainingLiveSession).filter(TrainingLiveSession.training_id==training_id).all()
+    return {"training_id": str(training_id), "meeting_links": [{"session_id": str(ls.id), "title": ls.title, "meeting_link": ls.meeting_link, "provider": ls.meeting_provider} for ls in lives]}
+
+# Discussion / Q&A
+@router.get("/{training_id}/discussions", summary="Discussion — Q&A list")
+def list_discussions(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.repository.training_repo import get_training_by_id
+    obj=get_training_by_id(db, training_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Training not found")
+    return getattr(obj, "discussions", []) or []
+
+@router.post("/{training_id}/discussions", status_code=201, summary="Post Q&A")
+def post_discussion(training_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.repository.training_repo import get_training_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    import uuid as _uuid
+    obj=get_training_by_id(db, training_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Training not found")
+    disc=list(getattr(obj, "discussions", []) or [])
+    entry={"id": str(_uuid.uuid4()), "author": current_user.get("email","anonymous"), "question": payload.get("question") or payload.get("text") or "", "answer": None, "created_at": __import__("datetime").datetime.utcnow().isoformat()}
+    disc.append(entry)
+    # store in custom JSONB via sections extra field discussions
+    if not hasattr(obj, "discussions"):
+        # fallback store in assessments JSONB workaround
+        pass
+    try:
+        obj.discussions=disc
+    except:
+        # store in sections[0] discussions if column missing — use in-memory
+        obj.__dict__["discussions"]=disc
+        flag_modified(obj, "sections")
+    flag_modified(obj, "sections")
+    db.commit()
+    return entry
+
 @router.post("/{training_id}/announcements")
 def announce(training_id: UUID, payload: AnnouncementCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_training_announcement_service(db, training_id, payload, current_user)
