@@ -360,6 +360,37 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             pass
     e = TrainingEnrolment(training_id=tid, participant_name=payload.get("participant_name","User"), participant_email=payload.get("participant_email","user@example.com"), group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires)
     db.add(e); db.commit(); db.refresh(e)
+    # group enrolment — create additional members if provided
+    if payload.get("group_members"):
+        for m in payload.get("group_members") or []:
+            try:
+                name=m.get("name") or m.get("participant_name") or payload.get("participant_name")
+                email=m.get("email") or m.get("participant_email")
+                if not email or email==payload.get("participant_email"):
+                    continue
+                extra=TrainingEnrolment(training_id=tid, participant_name=name, participant_email=email, group_enrol=True, status=status, coupon_code=coupon_code, access_expires_at=expires)
+                db.add(extra)
+            except: pass
+        db.commit()
+    # enrolment confirmation (in_app/push/email/sms stub)
+    try:
+        from app.services.notification_triggers import _safe_notify
+        _safe_notify(db, f"training:{tid}", "training_enrolment_confirmation", {"training_id": str(tid), "status": status})
+    except: pass
+    return e
+
+def cancel_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, participant_email: str | None = None):
+    from app.models.training_model import TrainingEnrolment
+    q=db.query(TrainingEnrolment).filter(TrainingEnrolment.id==enrol_id, TrainingEnrolment.training_id==tid)
+    if participant_email: q=q.filter(TrainingEnrolment.participant_email==participant_email)
+    e=q.first()
+    if not e: raise HTTPException(404, "Enrolment not found")
+    if e.status=="cancelled": return e
+    e.status="cancelled"; db.commit(); db.refresh(e)
+    try:
+        from app.services.notification_triggers import _safe_notify
+        _safe_notify(db, f"training:{tid}", "training_enrolment_cancelled", {"training_id": str(tid)})
+    except: pass
     return e
 
 def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, action: str):

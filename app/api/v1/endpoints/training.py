@@ -181,6 +181,15 @@ def secure_content(training_id: UUID, db: Session=Depends(get_db), current_user:
     if not obj: raise HTTPException(404, "Training not found")
     return {"training_id": str(training_id), "sections": obj.sections or [], "assessments": obj.assessments or []}
 
+@router.delete("/{training_id}/enrolments/{enrol_id}", summary="Cancel enrolment — access-expiry & waitlist")
+def cancel_enrol(training_id: UUID, enrol_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.training_service import cancel_training_enrol_service
+    email=current_user.get("email")
+    # allow provider/admin to cancel any, participant only own
+    if current_user.get("role") in ["admin","provider"]:
+        return cancel_training_enrol_service(db, training_id, enrol_id)
+    return cancel_training_enrol_service(db, training_id, enrol_id, participant_email=email)
+
 @router.post("/{training_id}/enrolments/{enrol_id}/approve", summary="Approve/Reject Enrolment")
 def approve_enrol(training_id: UUID, enrol_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.training_service import approve_training_enrol_service
