@@ -7,6 +7,61 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common_schema import EventStatus, PaginatedResponse
 
+DeliveryMode = str  # in_person|online|hybrid
+MeetingProvider = str  # zoom|google_meet|teams|other
+
+
+class EventTicketType(BaseModel):
+    id: str | None = Field(None, description="Ticket type ID (auto-generated if missing)")
+    name: str = Field(..., description="Ticket name e.g. Early Bird, Standard")
+    price: str = Field(..., description="Standard price")
+    currency: str | None = Field("INR", description="Currency")
+    capacity: int | None = Field(None, description="Capacity for this ticket type")
+    early_bird_price: str | None = Field(None, description="Early-bird price")
+    early_bird_until: datetime | None = Field(None, description="Early-bird deadline")
+    promo_price: str | None = Field(None, description="Promotional price")
+    description: str | None = None
+
+
+class EventCheckoutRequest(BaseModel):
+    participant_name: str = Field(..., description="Buyer name")
+    participant_email: str = Field(..., description="Buyer email")
+    ticket_type_id: str = Field(..., description="Ticket type ID")
+    quantity: int = Field(1, ge=1, description="Quantity")
+    payment_provider: str | None = Field("marketplace", description="marketplace|merchant")
+
+
+class EventOrderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    event_id: UUID
+    participant_name: str
+    participant_email: str
+    ticket_type_id: str | None = None
+    quantity: int
+    amount: str
+    currency: str
+    payment_status: str
+    status: str
+    created_at: datetime | None = None
+
+
+class EventRefundRequest(BaseModel):
+    reason: str | None = Field(None, description="Reason for refund")
+    amount: str | None = Field(None, description="Partial amount if partial refund")
+
+
+class EventVenue(BaseModel):
+    address: str | None = Field(None, description="Street address")
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    postal_code: str | None = None
+    latitude: float | None = Field(None, description="Map latitude")
+    longitude: float | None = Field(None, description="Map longitude")
+    instructions: str | None = Field(None, description="Venue instructions / how to reach")
+    map_url: str | None = Field(None, description="Map link")
+
 
 class EventCreate(BaseModel):
     model_config = ConfigDict(
@@ -35,19 +90,20 @@ class EventCreate(BaseModel):
     organiser_contact: str | None = Field(None, description="Organiser contact")
     start_date: datetime = Field(..., description="Event start date")
     end_date: datetime = Field(..., description="Event end date")
+    duration_type: str = Field("custom", description="one_day|half_day|custom")
     time_zone: str | None = Field("Asia/Kolkata", description="Time zone")
     registration_cutoff: datetime | None = Field(None, description="Registration cutoff")
     primary_image: str | None = Field(None, description="Primary image URL")
     gallery_images: list | None = Field(None, description="Gallery images")
     videos: list | None = Field(None, description="Videos")
     documents: list | None = Field(None, description="Documents")
-    delivery_mode: str | None = Field("in_person", description="In person, Online or Hybrid")
-    venue: dict | None = Field(None, description="Venue details")
-    meeting_link: str | None = Field(None, description="Meeting link")
-    meeting_provider: str | None = Field(None, description="Meeting provider")
+    delivery_mode: DeliveryMode = Field("in_person", description="in_person|online|hybrid — display as In Person/Online/Hybrid")
+    venue: EventVenue | dict | None = Field(None, description="Venue: address, city, latitude, longitude, instructions, map_url")
+    meeting_link: str | None = Field(None, description="Manual meeting link (auto-generated if delivery_mode online/hybrid and meeting_provider set)")
+    meeting_provider: MeetingProvider | None = Field(None, description="zoom|google_meet|teams|other")
     price: str | None = Field(None, description="Price")
     currency: str | None = Field("INR", description="Currency")
-    ticket_types: list | None = Field(None, description="Ticket types")
+    ticket_types: list[EventTicketType] | list | None = Field(None, description="Ticket types with price/capacity/early-bird/promo")
     capacity: str | None = Field(None, description="Capacity")
     min_participants: str | None = None
     max_participants: str | None = None
@@ -56,6 +112,21 @@ class EventCreate(BaseModel):
     custom_fields: list | None = None
     sessions: list | None = Field(None, description="Agenda sessions")
     status: EventStatus = Field("draft", description="Event status.")
+
+    def _normalize_ticket_types(self) -> list:
+        normalized: list[dict] = []
+        for raw in self.ticket_types or []:
+            if isinstance(raw, EventTicketType):
+                d = raw.model_dump()
+            elif isinstance(raw, dict):
+                d = dict(raw)
+            else:
+                continue
+            if not d.get("id"):
+                d["id"] = str(uuid.uuid4())
+            # coerce capacity to int if possible, keep as is
+            normalized.append(d)
+        return normalized
 
     def _normalize_sessions(self) -> list:
         # Ensure each embedded session has id and session_date string, sorted by (session_date, start_time)
@@ -77,6 +148,11 @@ class EventCreate(BaseModel):
             return (str(x.get("session_date") or ""), str(x.get("start_time") or ""))
         return sorted(normalized, key=_key)
 
+    def _venue_dict(self):
+        if isinstance(self.venue, EventVenue):
+            return self.venue.model_dump(exclude_none=True)
+        return self.venue
+
     def to_model_data(self) -> dict:
         return {
             "tenant_id": self.tenant_id,
@@ -91,6 +167,7 @@ class EventCreate(BaseModel):
             "organiser_contact": self.organiser_contact,
             "start_date": self.start_date,
             "end_date": self.end_date,
+            "duration_type": self.duration_type,
             "time_zone": self.time_zone,
             "registration_cutoff": self.registration_cutoff,
             "primary_image": self.primary_image,
@@ -98,12 +175,12 @@ class EventCreate(BaseModel):
             "videos": self.videos or [],
             "documents": self.documents or [],
             "delivery_mode": self.delivery_mode,
-            "venue": self.venue,
+            "venue": self._venue_dict(),
             "meeting_link": self.meeting_link,
             "meeting_provider": self.meeting_provider,
             "price": self.price,
             "currency": self.currency,
-            "ticket_types": self.ticket_types or [],
+            "ticket_types": self._normalize_ticket_types(),
             "capacity": self.capacity,
             "min_participants": self.min_participants,
             "max_participants": self.max_participants,
@@ -127,16 +204,17 @@ class EventUpdate(BaseModel):
     organiser_contact: str | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
+    duration_type: str | None = None
     time_zone: str | None = None
     registration_cutoff: datetime | None = None
     primary_image: str | None = None
     gallery_images: list | None = None
     videos: list | None = None
     documents: list | None = None
-    delivery_mode: str | None = None
-    venue: dict | None = None
+    delivery_mode: DeliveryMode | None = None
+    venue: EventVenue | dict | None = None
     meeting_link: str | None = None
-    meeting_provider: str | None = None
+    meeting_provider: MeetingProvider | None = None
     price: str | None = None
     currency: str | None = None
     ticket_types: list | None = None
@@ -185,6 +263,7 @@ class EventResponse(BaseModel):
     organiser_contact: str | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
+    duration_type: str | None = None
     time_zone: str | None = None
     registration_cutoff: datetime | None = None
     primary_image: str | None = None
@@ -192,6 +271,7 @@ class EventResponse(BaseModel):
     videos: list | None = None
     documents: list | None = None
     delivery_mode: str | None = None
+    delivery_mode_display: str | None = Field(None, description="In Person|Online|Hybrid")
     venue: dict | None = None
     meeting_link: str | None = None
     meeting_provider: str | None = None

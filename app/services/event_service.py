@@ -31,6 +31,12 @@ def _validate_references(db: Session, enterprise_id: UUID, location_id: UUID | N
     )
     if not enterprise:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enterprise not found")
+    # Must be under approved business/profile
+    if enterprise.status in ("draft", "pending", "inactive"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Enterprise not approved (status={enterprise.status}). Events can only be created under an approved business/profile.",
+        )
 
     if location_id:
         location = (
@@ -48,8 +54,27 @@ def _validate_references(db: Session, enterprise_id: UUID, location_id: UUID | N
             )
 
 
+def _auto_meeting_link(delivery_mode: str | None, provider: str | None, existing: str | None) -> str | None:
+    if existing:
+        return existing
+    if delivery_mode in ("online", "hybrid") and provider:
+        import uuid as _u, random, string
+        p = (provider or "").lower()
+        if p == "zoom":
+            return f"https://zoom.us/j/{random.randint(1000000000, 9999999999)}"
+        if p == "google_meet":
+            code = "".join(random.choices(string.ascii_lowercase, k=3)) + "-" + "".join(random.choices(string.ascii_lowercase, k=4)) + "-" + "".join(random.choices(string.ascii_lowercase, k=3))
+            return f"https://meet.google.com/{code}"
+        if p == "teams":
+            return f"https://teams.microsoft.com/l/meetup-join/{_u.uuid4()}"
+        return f"https://meet.example.com/{_u.uuid4()}"
+    return existing
+
 def create_event_service(db: Session, event_data):
     _validate_references(db, event_data.enterprise_id, event_data.location_id)
+    # auto-create meeting link if needed
+    if not event_data.meeting_link:
+        event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
     return EventResponse.model_validate(map_event_write(create_event(db, event_data)))
 
 
@@ -98,6 +123,19 @@ def update_event_service(db: Session, event_id: UUID, update_data):
 
     location_id = update_data.location_id if update_data.location_id is not None else event.location_id
     _validate_references(db, event.enterprise_id, location_id)
+
+    # auto-create meeting link on update if delivery_mode/provider changed and link missing
+    cur_mode = update_data.delivery_mode if getattr(update_data, "delivery_mode", None) is not None else event.delivery_mode
+    cur_provider = update_data.meeting_provider if getattr(update_data, "meeting_provider", None) is not None else event.meeting_provider
+    cur_link = update_data.meeting_link if getattr(update_data, "meeting_link", None) is not None else event.meeting_link
+    if not cur_link and cur_mode in ("online", "hybrid") and cur_provider:
+        auto = _auto_meeting_link(cur_mode, cur_provider, None)
+        # inject into update_data if it's a pydantic model with field
+        if hasattr(update_data, "meeting_link"):
+            try:
+                update_data.meeting_link = auto
+            except Exception:
+                pass
 
     return EventResponse.model_validate(map_event_write(update_event(db, event, update_data)))
 
@@ -615,3 +653,116 @@ def create_template_service(db: Session, payload: dict):
     db.commit()
     db.refresh(tmpl)
     return tmpl
+
+# ---- Free/Paid: checkout / orders / refund ----
+
+def _resolve_ticket(event, ticket_type_id: str | None):
+    if not ticket_type_id:
+        # free event or single price
+        return {"price": event.price or "0", "currency": event.currency or "INR", "capacity": event.capacity}
+    tickets = event.ticket_types or []
+    for t in tickets:
+        if isinstance(t, dict) and str(t.get("id")) == str(ticket_type_id):
+            return t
+    return None
+
+def _ticket_effective_price(ticket: dict, event) -> str:
+    from datetime import datetime
+    now = datetime.utcnow()
+    # early-bird
+    eb_price = ticket.get("early_bird_price")
+    eb_until = ticket.get("early_bird_until")
+    if eb_price and eb_until:
+        try:
+            # eb_until may be string
+            from datetime import datetime as _dt
+            dt = _dt.fromisoformat(str(eb_until).replace("Z", ""))
+            if now <= dt:
+                return str(eb_price)
+        except Exception:
+            pass
+    if ticket.get("promo_price"):
+        return str(ticket["promo_price"])
+    return str(ticket.get("price", event.price or "0"))
+
+def create_event_checkout_service(db: Session, event_id: UUID, payload):
+    from app.models.event_aux_models import EventOrder, EventRegistration
+    event = _get_event_or_404(db, event_id)
+    ticket = _resolve_ticket(event, payload.ticket_type_id)
+    if payload.ticket_type_id and not ticket:
+        raise HTTPException(status_code=404, detail="Ticket type not found")
+    # capacity per ticket type
+    if ticket and ticket.get("capacity"):
+        try:
+            cap = int(ticket["capacity"])
+            cnt = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.ticket_type_id==payload.ticket_type_id, EventOrder.status.in_(["confirmed"])).count()
+            cnt += db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).count()
+            if cnt + payload.quantity > cap:
+                raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
+        except ValueError:
+            pass
+    price = _ticket_effective_price(ticket or {}, event)
+    try:
+        total = float(price) * payload.quantity
+        amount = str(total)
+    except Exception:
+        amount = str(price)
+    currency = ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
+    # Free check
+    is_free = (price == "0" or price == "0.0" or not price)
+    payment_status = "confirmed" if is_free or price == "0" else "confirmed"  # stub: payment always confirmed (marketplace/merchant)
+    order = EventOrder(
+        event_id=event_id,
+        participant_name=payload.participant_name,
+        participant_email=payload.participant_email,
+        ticket_type_id=payload.ticket_type_id,
+        quantity=str(payload.quantity),
+        amount=amount,
+        currency=currency,
+        payment_status=payment_status,
+        status="confirmed",
+        payment_provider=payload.payment_provider or "marketplace",
+    )
+    db.add(order); db.commit(); db.refresh(order)
+    # also create registration for attendance tracking
+    try:
+        reg = EventRegistration(event_id=event_id, participant_name=payload.participant_name, participant_email=payload.participant_email, ticket_type_id=payload.ticket_type_id, status="confirmed", qr_code=str(__import__("uuid").uuid4())[:8].upper())
+        db.add(reg); db.commit()
+    except Exception:
+        pass
+    return order
+
+def get_event_orders_service(db: Session, event_id: UUID):
+    from app.models.event_aux_models import EventOrder
+    _get_event_or_404(db, event_id)
+    return db.query(EventOrder).filter(EventOrder.event_id==event_id).order_by(EventOrder.created_at.desc()).all()
+
+def create_event_refund_service(db: Session, event_id: UUID, reg_id: UUID, payload):
+    from app.models.event_aux_models import EventOrder, EventRegistration
+    _get_event_or_404(db, event_id)
+    # Try order first, then registration
+    order = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.id==reg_id).first()
+    if order:
+        if order.status in ("refunded",):
+            raise HTTPException(status_code=400, detail="Already refunded")
+        if order.payment_status == "refunded":
+            raise HTTPException(status_code=400, detail="Already refunded")
+        # if attended, no refund per spec
+        # check registration attended
+        reg = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==order.participant_email, EventRegistration.status=="attended").first()
+        if reg:
+            raise HTTPException(status_code=400, detail="Cannot refund after attendance (checked-in)")
+        order.status = "refund_requested"
+        order.payment_status = "refund_requested"
+        order.refund_reason = payload.reason if payload and getattr(payload, "reason", None) else None
+        db.commit(); db.refresh(order)
+        return order
+    # fallback: registration refund (free events)
+    reg = db.query(EventRegistration).filter(EventRegistration.id==reg_id, EventRegistration.event_id==event_id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration/Order not found")
+    if reg.status == "attended":
+        raise HTTPException(status_code=400, detail="Cannot refund after attendance")
+    reg.status = "cancelled"
+    db.commit()
+    return {"message": "Refund requested", "registration_id": str(reg.id), "status": reg.status}

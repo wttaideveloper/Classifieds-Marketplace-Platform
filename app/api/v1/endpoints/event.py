@@ -20,7 +20,10 @@ from app.schemas.event_schema import (
     EventCheckInResponse,
     EventCheckOutRequest,
     EventCheckOutResponse,
+    EventCheckoutRequest,
+    EventOrderResponse,
     EventQRValidateResponse,
+    EventRefundRequest,
     EventRegistrationCreate,
     EventSessionCreate,
     EventSessionUpdate,
@@ -29,6 +32,8 @@ from app.schemas.event_schema import (
 )
 from app.services.event_service import (
     add_session_service,
+    create_event_checkout_service,
+    create_event_refund_service,
     create_event_service,
     create_feedback_service,
     create_registration_service,
@@ -40,6 +45,7 @@ from app.services.event_service import (
     duplicate_event_service,
     get_event_attendance_service,
     get_event_feedbacks_service,
+    get_event_orders_service,
     get_event_registrations_service,
     get_event_reports_service,
     get_event_service,
@@ -179,6 +185,26 @@ def export_registrations(event_id: UUID, db: Session = Depends(get_db), current_
         writer.writerow([r.id, r.participant_name, r.participant_email, r.status, r.qr_code])
     output.seek(0)
     return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=event_{event_id}_registrations.csv"})
+
+
+@router.post("/{event_id}/checkout", response_model=EventOrderResponse, status_code=status.HTTP_201_CREATED, summary="Checkout — Paid Registration")
+def checkout(event_id: UUID, payload: EventCheckoutRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_event_checkout_service(db, event_id, payload)
+
+
+@router.get("/{event_id}/orders", summary="List Orders")
+def list_orders(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_event_orders_service(db, event_id)
+
+
+@router.post("/{event_id}/registrations/{reg_id}/refund", summary="Request Refund")
+def refund_registration(event_id: UUID, reg_id: UUID, payload: EventRefundRequest | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_event_refund_service(db, event_id, reg_id, payload)
+
+
+@router.post("/{event_id}/orders/{order_id}/refund", summary="Refund Order")
+def refund_order(event_id: UUID, order_id: UUID, payload: EventRefundRequest | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_event_refund_service(db, event_id, order_id, payload)
 
 
 @router.get("/{event_id}/waitlist", summary="List Waitlist")

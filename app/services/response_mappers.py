@@ -374,6 +374,8 @@ def _event_base_fields(event) -> dict:
         "organiser_contact": event.organiser_contact,
         "start_date": event.start_date,
         "end_date": event.end_date,
+        "duration_type": event.duration_type,
+        "delivery_mode_display": {"in_person": "In Person", "online": "Online", "hybrid": "Hybrid"}.get(event.delivery_mode, event.delivery_mode),
         "time_zone": event.time_zone,
         "registration_cutoff": event.registration_cutoff,
         "primary_image": event.primary_image,

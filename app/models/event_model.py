@@ -53,6 +53,8 @@ class Event(Base):
 
     end_date = Column(DateTime, nullable=False)
 
+    duration_type = Column(String(20), default="custom", index=True)  # one_day|half_day|custom
+
     time_zone = Column(String(100), default="Asia/Kolkata")
 
     registration_cutoff = Column(DateTime)

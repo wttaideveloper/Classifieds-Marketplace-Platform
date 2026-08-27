@@ -66,3 +66,24 @@ class EventFeedback(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     event = relationship("Event", backref="feedbacks")
+
+
+class EventOrder(Base):
+    __tablename__ = "event_orders"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False, index=True)
+    participant_name = Column(String(255), nullable=False)
+    participant_email = Column(String(255), nullable=False, index=True)
+    ticket_type_id = Column(String(100), index=True)
+    quantity = Column(String(20), default="1")
+    amount = Column(String(50))  # total amount
+    currency = Column(String(10), default="INR")
+    payment_status = Column(String(20), default="confirmed", index=True)  # pending|confirmed|failed|refunded
+    status = Column(String(20), default="confirmed", index=True)  # confirmed|cancelled|refunded|refund_requested
+    payment_provider = Column(String(50), default="marketplace")  # marketplace|merchant
+    refund_reason = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    event = relationship("Event", backref="orders")
