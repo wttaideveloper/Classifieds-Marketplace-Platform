@@ -600,8 +600,14 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
 
 def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_review: bool = False):
     _get_event_or_404(db, event_id)
-    from app.models.event_aux_models import EventFeedback
-
+    from app.models.event_aux_models import EventFeedback, EventRegistration
+    # Verified review: only registered participants (confirmed/attended) can submit ratings/reviews
+    if is_review:
+        email = payload.get("participant_email")
+        if email:
+            reg = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==email, EventRegistration.status.in_(["confirmed","attended"])).first()
+            if not reg:
+                raise HTTPException(status_code=403, detail="Only registered participants can submit verified reviews")
     fb = EventFeedback(
         event_id=event_id,
         participant_email=payload.get("participant_email"),
@@ -682,6 +688,23 @@ def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
                 revenue_by_type[r.ticket_type_id] = revenue_by_type.get(r.ticket_type_id, 0) + price
                 total_revenue += price
         data = {"total_revenue": total_revenue, "by_ticket_type": revenue_by_type, "currency": event.currency}
+    elif report_type == "cancellation":
+        cancelled = [r for r in regs if r.status == "cancelled"]
+        # also orders refund_requested
+        try:
+            from app.models.event_aux_models import EventOrder
+            refunds = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.status.in_(["refund_requested","refunded"])).all()
+            by_reason = {}
+            for o in refunds:
+                by_reason[o.refund_reason or "unknown"] = by_reason.get(o.refund_reason or "unknown", 0) + 1
+            data = {"total_cancelled": len(cancelled), "total_refunds": len(refunds), "by_reason": by_reason, "cancelled": [{"email": r.participant_email, "qr": r.qr_code} for r in cancelled[:20]]}
+        except Exception:
+            data = {"total_cancelled": len(cancelled), "cancelled": [{"email": r.participant_email} for r in cancelled[:20]]}
+    elif report_type == "completion":
+        total = len(regs)
+        attended = sum(1 for r in regs if r.status=="attended")
+        completion_rate = round(attended/total*100 if total else 0,2)
+        data = {"total": total, "completed": attended, "completion_rate": completion_rate, "event_status": event.status, "is_completed": event.status=="completed"}
     else:
         by_status = {}
         for r in regs:
