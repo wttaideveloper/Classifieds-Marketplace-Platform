@@ -29,10 +29,15 @@ def get_events(
     location_id: UUID | None = None,
     status: str | None = None,
     delivery_mode: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_price: str | None = None,
+    max_price: str | None = None,
     page: int = 1,
     page_size: int = 20,
     include_deleted: bool = False,
 ):
+    from datetime import datetime
     query = db.query(Event).options(joinedload(Event.enterprise))
     query = apply_soft_delete_filter(query, Event, include_deleted)
 
@@ -48,6 +53,28 @@ def get_events(
         query = query.filter(Event.status == status)
     if delivery_mode:
         query = query.filter(Event.delivery_mode == delivery_mode)
+    if date_from:
+        try:
+            dt = datetime.fromisoformat(date_from.replace("Z",""))
+            query = query.filter(Event.start_date >= dt)
+        except Exception:
+            pass
+    if date_to:
+        try:
+            dt = datetime.fromisoformat(date_to.replace("Z",""))
+            query = query.filter(Event.end_date <= dt)
+        except Exception:
+            pass
+    if min_price or max_price:
+        # price is string, try cast
+        try:
+            import sqlalchemy as sa
+            if min_price:
+                query = query.filter(sa.cast(Event.price, sa.Float) >= float(min_price))
+            if max_price:
+                query = query.filter(sa.cast(Event.price, sa.Float) <= float(max_price))
+        except Exception:
+            pass
     if search:
         query = apply_ilike_search(
             query,

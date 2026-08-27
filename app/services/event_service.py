@@ -88,6 +88,10 @@ def get_events_service(
     location_id: UUID | None = None,
     status_filter: str | None = None,
     delivery_mode: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_price: str | None = None,
+    max_price: str | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> EventPaginatedResponse:
@@ -100,6 +104,10 @@ def get_events_service(
         location_id=location_id,
         status=status_filter,
         delivery_mode=delivery_mode,
+        date_from=date_from,
+        date_to=date_to,
+        min_price=min_price,
+        max_price=max_price,
         page=page,
         page_size=page_size,
     )

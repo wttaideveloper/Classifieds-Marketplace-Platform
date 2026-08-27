@@ -77,6 +77,10 @@ def list_events(
     location_id: UUID | None = Query(None, description="Filter by location ID."),
     status_filter: str | None = Query(None, alias="status", description="Filter by status."),
     delivery_mode: str | None = Query(None, description="Filter by delivery mode."),
+    date_from: str | None = Query(None, description="Filter start_date >= YYYY-MM-DD"),
+    date_to: str | None = Query(None, description="Filter end_date <= YYYY-MM-DD"),
+    min_price: str | None = Query(None, description="Min price"),
+    max_price: str | None = Query(None, description="Max price"),
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
@@ -90,9 +94,32 @@ def list_events(
         location_id=location_id,
         status_filter=status_filter,
         delivery_mode=delivery_mode,
+        date_from=date_from,
+        date_to=date_to,
+        min_price=min_price,
+        max_price=max_price,
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/my/registrations", summary="My registrations — upcoming/completed/cancelled")
+def my_registrations(status: str | None = Query(None, description="Filter by registration status: confirmed|attended|cancelled"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.models.event_aux_models import EventRegistration
+    email = current_user.get("email")
+    if not email:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Email not found in token")
+    q = db.query(EventRegistration).filter(EventRegistration.participant_email==email)
+    if status:
+        q = q.filter(EventRegistration.status==status)
+    regs = q.order_by(EventRegistration.created_at.desc()).all()
+    from app.models.event_model import Event
+    out = []
+    for r in regs:
+        ev = db.query(Event).filter(Event.id==r.event_id).first()
+        out.append({"registration_id": str(r.id), "event_id": str(r.event_id), "event_title": ev.title if ev else None, "event_status": ev.status if ev else None, "event_start": ev.start_date.isoformat() if ev and ev.start_date else None, "registration_status": r.status, "qr_code": r.qr_code, "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None})
+    return out
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse, status_code=status.HTTP_200_OK, summary="Get Event by ID")
@@ -487,6 +514,43 @@ def session_calendar(event_id: UUID, session_id: str, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="Session not found")
     ics = event_to_ics(ev, sessions=[sess])
     return Response(content=ics, media_type="text/calendar", headers={"Content-Disposition": f"attachment; filename=event_{event_id}_session_{session_id}.ics"})
+
+
+@router.get("/{event_id}/meeting-link", summary="Get Meeting Link (registered only)")
+def get_meeting_link(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.models.event_aux_models import EventRegistration
+    from app.repository.event_repo import get_event_by_id
+    from fastapi import HTTPException
+    ev = get_event_by_id(db, event_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    # allow if admin/provider or registered participant
+    role = current_user.get("role")
+    email = current_user.get("email")
+    if role not in ("admin", "provider"):
+        reg = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==email, EventRegistration.status.in_(["confirmed","attended"])).first()
+        if not reg:
+            raise HTTPException(status_code=403, detail="Only registered participants can access meeting link")
+    return {"event_id": str(event_id), "meeting_link": ev.meeting_link, "meeting_provider": ev.meeting_provider, "delivery_mode": ev.delivery_mode}
+
+
+@router.post("/{event_id}/contact", summary="Contact Organiser")
+def contact_organiser(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.repository.event_repo import get_event_by_id
+    from fastapi import HTTPException
+    ev = get_event_by_id(db, event_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    msg = payload.get("message") or payload.get("text") or ""
+    if not msg:
+        raise HTTPException(status_code=400, detail="message is required")
+    # create notification to organiser (best-effort via notification_triggers audit)
+    try:
+        from app.services.notification_triggers import _safe_notify
+        _safe_notify(db, f"Message for {ev.title}", msg, "event_contact", ev.tenant_id, {"event_id": str(event_id), "from_email": current_user.get("email"), "from_name": current_user.get("name")}, participant_email=ev.organiser_contact)
+    except Exception:
+        pass
+    return {"message": "Message sent to organiser", "event_id": str(event_id), "organiser": ev.organiser_contact}
 
 
 @router.get("/{event_id}/attendance", summary="Attendance Report")
