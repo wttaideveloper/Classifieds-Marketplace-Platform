@@ -460,6 +460,35 @@ def get_qr_image(event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), cu
         return {"qr_code": reg.qr_code, "message": "Install 'qrcode' package for image generation"}
 
 
+@router.get("/{event_id}/calendar.ics", summary="Add to calendar — Event + Sessions (ICS)")
+def event_calendar(event_id: UUID, db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    from app.services.calendar_service import event_to_ics
+    from app.repository.event_repo import get_event_by_id
+    from fastapi import HTTPException
+    ev = get_event_by_id(db, event_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ics = event_to_ics(ev)
+    return Response(content=ics, media_type="text/calendar", headers={"Content-Disposition": f"attachment; filename=event_{event_id}.ics"})
+
+
+@router.get("/{event_id}/sessions/{session_id}/calendar.ics", summary="Add to calendar — Single Session (ICS)")
+def session_calendar(event_id: UUID, session_id: str, db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    from app.services.calendar_service import event_to_ics
+    from app.repository.event_repo import get_event_by_id
+    from fastapi import HTTPException
+    ev = get_event_by_id(db, event_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    sess = next((s for s in (ev.sessions or []) if isinstance(s, dict) and s.get("id")==session_id), None)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    ics = event_to_ics(ev, sessions=[sess])
+    return Response(content=ics, media_type="text/calendar", headers={"Content-Disposition": f"attachment; filename=event_{event_id}_session_{session_id}.ics"})
+
+
 @router.get("/{event_id}/attendance", summary="Attendance Report")
 def attendance(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return get_event_attendance_service(db, event_id)
