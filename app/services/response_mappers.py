@@ -320,6 +320,43 @@ def map_event_detail(event) -> dict:
     return base
 
 
+def _event_available_seats(event) -> int | None:
+    try:
+        if event.capacity is None:
+            return None
+        cap = int(str(event.capacity))
+        # count confirmed/attended if relationship loaded
+        regs = getattr(event, "registrations", None)
+        if regs is not None:
+            try:
+                cnt = sum(1 for r in regs if getattr(r, "status", None) in ("confirmed", "attended"))
+            except Exception:
+                cnt = len(regs)
+            return max(0, cap - cnt)
+        return None
+    except Exception:
+        return None
+
+def _event_is_full(event) -> bool | None:
+    av = _event_available_seats(event)
+    if av is None:
+        return None
+    return av <= 0
+
+def _event_registration_open(event) -> bool | None:
+    try:
+        from datetime import datetime
+        now = datetime.utcnow()
+        if event.registration_open_at and now < event.registration_open_at:
+            return False
+        if event.registration_close_at and now > event.registration_close_at:
+            return False
+        if event.registration_cutoff and now > event.registration_cutoff:
+            return False
+        return True
+    except Exception:
+        return None
+
 def map_event_write(event) -> dict:
     return _event_base_fields(event)
 
@@ -400,6 +437,9 @@ def _event_base_fields(event) -> dict:
         "is_deleted": event.is_deleted,
         "created_at": event.created_at,
         "updated_at": event.updated_at,
+        "available_seats": _event_available_seats(event),
+        "is_full": _event_is_full(event),
+        "registration_open": _event_registration_open(event),
     }
 
 

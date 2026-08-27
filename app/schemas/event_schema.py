@@ -289,6 +289,9 @@ class EventResponse(BaseModel):
     is_deleted: bool | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    available_seats: int | None = Field(None, description="Available seats (capacity - confirmed)")
+    is_full: bool | None = Field(None, description="Whether event is at capacity")
+    registration_open: bool | None = Field(None, description="Whether registration window is open")
 
 
 class EventListItemResponse(EventResponse):
@@ -313,8 +316,10 @@ class EventStatusUpdate(BaseModel):
 class EventRegistrationCreate(BaseModel):
     participant_name: str = Field(..., description="Participant name")
     participant_email: str = Field(..., description="Participant email")
-    custom_fields: dict | None = None
+    custom_fields: dict | None = Field(None, description="Custom fields / participant questions")
     ticket_type_id: str | None = None
+    group_size: int | None = Field(None, ge=1, description="Group size for group registration (1=individual)")
+    group_members: list[dict] | None = Field(None, description="List of {name, email} for group members")
 
 
 class EventSessionCreate(BaseModel):

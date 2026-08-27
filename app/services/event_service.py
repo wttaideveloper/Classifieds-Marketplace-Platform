@@ -231,11 +231,27 @@ def _get_event_or_404(db: Session, event_id: UUID):
 
 
 def create_registration_service(db: Session, event_id: UUID, payload):
+    from datetime import datetime
     event = _get_event_or_404(db, event_id)
     from app.models.event_aux_models import EventRegistration
     import uuid
 
-    # Capacity enforcement
+    now = datetime.utcnow()
+    # Registration window enforcement
+    if event.registration_open_at and now < event.registration_open_at:
+        raise HTTPException(status_code=400, detail=f"Registration not yet open (opens {event.registration_open_at})")
+    if event.registration_close_at and now > event.registration_close_at:
+        raise HTTPException(status_code=400, detail=f"Registration closed (closed {event.registration_close_at})")
+    if event.registration_cutoff and now > event.registration_cutoff:
+        raise HTTPException(status_code=400, detail=f"Registration cutoff passed ({event.registration_cutoff})")
+
+    # Group size handling
+    group_size = getattr(payload, "group_size", None) or 1
+    if group_size < 1:
+        group_size = 1
+
+    # Capacity enforcement (including group_size and per-ticket capacity)
+    need = group_size
     if event.capacity:
         try:
             max_capacity = int(event.capacity)
@@ -243,19 +259,49 @@ def create_registration_service(db: Session, event_id: UUID, payload):
                 EventRegistration.event_id == event_id,
                 EventRegistration.status.in_(["confirmed", "attended"])
             ).count()
-            if current_count >= max_capacity:
+            # For group, count includes group members already stored as separate rows? We count seats as rows + group_size from custom_fields?
+            # Simplified: current_count + need > max_capacity => full
+            if current_count + need > max_capacity:
+                # auto-suggest waitlist
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Event is at full capacity ({max_capacity} participants). Registration closed."
+                    status_code=400,
+                    detail=f"Event is at full capacity ({max_capacity} participants). Only {max_capacity - current_count} seats left. Please join waitlist."
                 )
         except ValueError:
-            pass  # capacity is not a valid integer, skip enforcement
+            pass
+    # Per-ticket capacity already handled in checkout, but also check here for ticket_type_id
+    if getattr(payload, "ticket_type_id", None) and event.ticket_types:
+        for t in event.ticket_types or []:
+            if isinstance(t, dict) and str(t.get("id")) == str(payload.ticket_type_id) and t.get("capacity"):
+                try:
+                    cap = int(t["capacity"])
+                    cnt = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).count()
+                    if cnt + need > cap:
+                        raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
+                except ValueError:
+                    pass
+    # Max participants check (alias of capacity)
+    if event.max_participants:
+        try:
+            max_p = int(event.max_participants)
+            current = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.status.in_(["confirmed","attended"])).count()
+            if current + need > max_p:
+                raise HTTPException(status_code=400, detail=f"Maximum participants reached ({max_p})")
+        except ValueError:
+            pass
+
+    # Build custom_fields with group info and participant questions
+    cf = dict(payload.custom_fields or {})
+    if getattr(payload, "group_members", None):
+        cf["group_members"] = payload.group_members
+    if group_size > 1:
+        cf["group_size"] = group_size
 
     reg = EventRegistration(
         event_id=event_id,
         participant_name=payload.participant_name,
         participant_email=payload.participant_email,
-        custom_fields=payload.custom_fields or {},
+        custom_fields=cf,
         ticket_type_id=payload.ticket_type_id,
         status="confirmed",
         qr_code=str(uuid.uuid4())[:8].upper(),
@@ -263,6 +309,30 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     db.add(reg)
     db.commit()
     db.refresh(reg)
+    # Group members: create additional registrations for each member
+    if getattr(payload, "group_members", None):
+        for m in payload.group_members or []:
+            try:
+                name = m.get("name") or m.get("participant_name") or payload.participant_name
+                email = m.get("email") or m.get("participant_email")
+                if not email or email == payload.participant_email:
+                    continue
+                extra = EventRegistration(
+                    event_id=event_id,
+                    participant_name=name,
+                    participant_email=email,
+                    custom_fields={"group_leader": payload.participant_email},
+                    ticket_type_id=payload.ticket_type_id,
+                    status="confirmed",
+                    qr_code=str(uuid.uuid4())[:8].upper(),
+                )
+                db.add(extra)
+            except Exception:
+                pass
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
     # best-effort confirmation notification (in_app, sync, no celery)
     try:
         from app.services.notification_triggers import notify_registration_confirmation
