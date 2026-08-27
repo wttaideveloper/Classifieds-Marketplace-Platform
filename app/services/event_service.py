@@ -242,13 +242,13 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str):
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
-    # State machine: define valid transitions (unpublish = published/approved -> draft)
+    # State machine: unpublish restores to approved (already super-admin approved)
     VALID_TRANSITIONS = {
         "draft": ["pending_approval", "cancelled"],
         "pending_approval": ["approved", "cancelled"],
         "approved": ["published", "cancelled", "draft"],
-        "published": ["cancelled", "completed", "suspended", "draft"],
-        "suspended": ["published", "cancelled", "draft"],
+        "published": ["cancelled", "completed", "suspended", "approved"],
+        "suspended": ["published", "cancelled", "approved"],
         "completed": [],
         "cancelled": ["draft"],
         "active": ["cancelled", "completed", "inactive"],

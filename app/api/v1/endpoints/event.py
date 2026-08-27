@@ -154,7 +154,7 @@ def update_status(event_id: UUID, payload: EventStatusUpdate, db: Session = Depe
 
 @router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Unpublish Event")
 def unpublish_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return update_event_status_service(db, event_id, "draft")
+    return update_event_status_service(db, event_id, "approved")
 
 
 @router.post("/{event_id}/archive", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Archive Event")
