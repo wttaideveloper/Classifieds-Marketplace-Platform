@@ -31,6 +31,7 @@ class Training(Base):
 
     delivery_mode = Column(String(20), default="self_paced", index=True)  # self_paced|instructor_led|blended
     course_type = Column(String(50))  # one_day|workshop|virtual|certification
+    duration = Column(String(50))  # e.g. 1 day, 2 weeks, custom
     start_date = Column(DateTime)
     end_date = Column(DateTime)
     enrolment_start = Column(DateTime)

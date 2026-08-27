@@ -25,13 +25,14 @@ class TrainingCreate(BaseModel):
     promotional_video: str | None = None
     documents: list | None = None
     delivery_mode: str | None = Field("self_paced", description="self_paced|instructor_led|blended")
-    course_type: str | None = None
+    course_type: str | None = Field(None, description="one_day|workshop|virtual|certification")
+    duration: str | None = Field(None, description="Duration e.g. 1 day, half_day, custom, 2 weeks")
     start_date: datetime | None = None
     end_date: datetime | None = None
     enrolment_start: datetime | None = None
     enrolment_end: datetime | None = None
-    time_zone: str | None = "Asia/Kolkata"
-    capacity: str | None = None
+    time_zone: str | None = Field("Asia/Kolkata", description="Time zone")
+    capacity: str | None = Field(None, description="Participant capacity")
     price: str | None = None
     currency: str | None = "INR"
     promo_price: str | None = None
@@ -58,6 +59,7 @@ class TrainingCreate(BaseModel):
             "documents": self.documents or [],
             "delivery_mode": self.delivery_mode,
             "course_type": self.course_type,
+            "duration": self.duration,
             "start_date": self.start_date,
             "end_date": self.end_date,
             "enrolment_start": self.enrolment_start,
