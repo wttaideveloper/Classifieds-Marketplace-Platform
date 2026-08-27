@@ -138,14 +138,28 @@ def update_event_service(db: Session, event_id: UUID, update_data):
     cur_link = update_data.meeting_link if getattr(update_data, "meeting_link", None) is not None else event.meeting_link
     if not cur_link and cur_mode in ("online", "hybrid") and cur_provider:
         auto = _auto_meeting_link(cur_mode, cur_provider, None)
-        # inject into update_data if it's a pydantic model with field
         if hasattr(update_data, "meeting_link"):
             try:
                 update_data.meeting_link = auto
             except Exception:
                 pass
 
-    return EventResponse.model_validate(map_event_write(update_event(db, event, update_data)))
+    # capture old values for schedule change detection
+    old_vals = {k: getattr(event, k) for k in ["start_date","end_date","venue","meeting_link","time_zone","duration_type"] if hasattr(event, k)}
+    updated = update_event(db, event, update_data)
+    # detect changes
+    changes = {}
+    for k, old in old_vals.items():
+        new = getattr(updated, k, None)
+        if old != new:
+            changes[k] = f"{old} -> {new}"
+    if changes:
+        try:
+            from app.services.notification_triggers import notify_schedule_change
+            notify_schedule_change(db, updated, changes)
+        except Exception:
+            pass
+    return EventResponse.model_validate(map_event_write(updated))
 
 
 def delete_event_service(db: Session, event_id: UUID):
@@ -802,6 +816,11 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
         payment_provider=payload.payment_provider or "marketplace",
     )
     db.add(order); db.commit(); db.refresh(order)
+    try:
+        from app.services.notification_triggers import notify_payment_success
+        notify_payment_success(db, event, order)
+    except Exception:
+        pass
     # also create registration for attendance tracking
     try:
         reg = EventRegistration(event_id=event_id, participant_name=payload.participant_name, participant_email=payload.participant_email, ticket_type_id=payload.ticket_type_id, status="confirmed", qr_code=str(__import__("uuid").uuid4())[:8].upper())
@@ -834,6 +853,11 @@ def create_event_refund_service(db: Session, event_id: UUID, reg_id: UUID, paylo
         order.payment_status = "refund_requested"
         order.refund_reason = payload.reason if payload and getattr(payload, "reason", None) else None
         db.commit(); db.refresh(order)
+        try:
+            from app.services.notification_triggers import notify_refund_status
+            notify_refund_status(db, event, order, "refund_requested")
+        except Exception:
+            pass
         return order
     # fallback: registration refund (free events)
     reg = db.query(EventRegistration).filter(EventRegistration.id==reg_id, EventRegistration.event_id==event_id).first()
@@ -843,4 +867,9 @@ def create_event_refund_service(db: Session, event_id: UUID, reg_id: UUID, paylo
         raise HTTPException(status_code=400, detail="Cannot refund after attendance")
     reg.status = "cancelled"
     db.commit()
+    try:
+        from app.services.notification_triggers import notify_refund_status
+        notify_refund_status(db, event, reg, "refund_requested")
+    except Exception:
+        pass
     return {"message": "Refund requested", "registration_id": str(reg.id), "status": reg.status}

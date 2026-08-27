@@ -566,6 +566,18 @@ def announce(event_id: UUID, payload: EventAnnouncementCreate, db: Session = Dep
     return send_announcement_service(db, event_id, payload, current_user)
 
 
+@router.post("/{event_id}/remind", status_code=status.HTTP_201_CREATED, summary="Send Event Reminder")
+def remind(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.event_repo import get_event_by_id
+    from fastapi import HTTPException
+    ev = get_event_by_id(db, event_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    from app.services.notification_triggers import notify_event_reminder
+    notify_event_reminder(db, ev)
+    return {"message": "Reminders sent", "event_id": str(event_id)}
+
+
 @router.post("/{event_id}/feedback", status_code=status.HTTP_201_CREATED, summary="Submit Feedback")
 def submit_feedback(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return create_feedback_service(db, event_id, payload, is_review=False)
