@@ -11,6 +11,8 @@ from app.services.response_mappers import map_program_detail, map_program_list_i
 def _validate(db, eid, lid):
     ent=db.query(Enterprise).filter(Enterprise.id==eid, Enterprise.is_deleted.is_(False)).first()
     if not ent: raise HTTPException(404, "Enterprise not found")
+    if ent.status in ("draft", "pending", "inactive"):
+        raise HTTPException(400, f"Enterprise not approved (status={ent.status}). Programs can only be created under an approved business/profile.")
     if lid:
         loc=db.query(EnterpriseLocation).filter(EnterpriseLocation.id==lid, EnterpriseLocation.enterprise_id==eid, EnterpriseLocation.is_deleted.is_(False)).first()
         if not loc: raise HTTPException(404, "Location not found")

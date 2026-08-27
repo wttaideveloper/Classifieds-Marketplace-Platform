@@ -11,6 +11,8 @@ from app.services.response_mappers import map_training_detail, map_training_list
 def _validate(db: Session, eid: UUID, lid: UUID | None):
     ent = db.query(Enterprise).filter(Enterprise.id==eid, Enterprise.is_deleted.is_(False)).first()
     if not ent: raise HTTPException(status_code=404, detail="Enterprise not found")
+    if ent.status in ("draft", "pending", "inactive"):
+        raise HTTPException(status_code=400, detail=f"Enterprise not approved (status={ent.status}). Trainings can only be created under an approved business/profile.")
     if lid:
         loc = db.query(EnterpriseLocation).filter(EnterpriseLocation.id==lid, EnterpriseLocation.enterprise_id==eid, EnterpriseLocation.is_deleted.is_(False)).first()
         if not loc: raise HTTPException(status_code=404, detail="Location not found for this enterprise")
