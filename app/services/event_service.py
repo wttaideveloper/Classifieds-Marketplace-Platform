@@ -237,18 +237,18 @@ def duplicate_event_service(db: Session, event_id: UUID):
     return EventResponse.model_validate(map_event_write(clone))
 
 
-def update_event_status_service(db: Session, event_id: UUID, status: str):
+def update_event_status_service(db: Session, event_id: UUID, new_status: str):
     event = get_event_by_id(db, event_id, include_deleted=True)
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
-    # State machine: define valid transitions
+    # State machine: define valid transitions (unpublish = published/approved -> draft)
     VALID_TRANSITIONS = {
         "draft": ["pending_approval", "cancelled"],
         "pending_approval": ["approved", "cancelled"],
-        "approved": ["published", "cancelled"],
-        "published": ["cancelled", "completed", "suspended"],
-        "suspended": ["published", "cancelled"],
+        "approved": ["published", "cancelled", "draft"],
+        "published": ["cancelled", "completed", "suspended", "draft"],
+        "suspended": ["published", "cancelled", "draft"],
         "completed": [],
         "cancelled": ["draft"],
         "active": ["cancelled", "completed", "inactive"],
@@ -258,18 +258,18 @@ def update_event_status_service(db: Session, event_id: UUID, status: str):
     current_status = event.status
     allowed_next = VALID_TRANSITIONS.get(current_status, [])
 
-    if status not in allowed_next:
+    if new_status not in allowed_next:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot transition from '{current_status}' to '{status}'. Allowed: {allowed_next}"
+            detail=f"Cannot transition from '{current_status}' to '{new_status}'. Allowed: {allowed_next}"
         )
 
     previous = event.status
-    event.status = status
+    event.status = new_status
     db.commit()
     db.refresh(event)
-    _log_audit(db, event.id, "status_change", {"status": previous}, {"status": status})
-    if status == "cancelled":
+    _log_audit(db, event.id, "status_change", {"status": previous}, {"status": new_status})
+    if new_status == "cancelled":
         try:
             from app.services.notification_triggers import notify_event_cancelled
             notify_event_cancelled(db, event, previous)
