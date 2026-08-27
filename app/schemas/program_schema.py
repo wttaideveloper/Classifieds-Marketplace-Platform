@@ -70,3 +70,113 @@ class PhaseCreate(BaseModel):
     title: str; type: str = "phase"; order: int | None = 0; prerequisites: list | None = None; completion_rule: str | None = None
 class ActivityCreate(BaseModel):
     type: str; title: str; content_url: str | None = None; release: dict | None = None
+
+
+class EnrolmentCreate(BaseModel):
+    participant_name: str = Field(..., description="Participant name")
+    participant_email: str = Field(..., description="Participant email")
+    group_enrol: bool = Field(False, description="Whether this is a group enrolment")
+
+
+class EnrolmentResponse(BaseModel):
+    id: str
+    program_id: str
+    participant_name: str
+    participant_email: str
+    status: str
+    created_at: str
+
+
+class CheckinCreate(BaseModel):
+    participant_email: str = Field(..., description="Participant email")
+    phase_id: str | None = Field(None, description="Phase ID")
+    notes: str | None = None
+
+
+class CheckinResponse(BaseModel):
+    id: str
+    program_id: str
+    participant_email: str
+    phase_id: str | None = None
+    notes: str | None = None
+    created_at: str
+
+
+class SurveyCreate(BaseModel):
+    title: str = Field(..., description="Survey title")
+    description: str | None = None
+    questions: list[dict] = Field(
+        ..., description="List of survey questions with text and type"
+    )
+
+
+class SurveyResponse(BaseModel):
+    id: str
+    program_id: str
+    title: str
+    description: str | None = None
+    answers: dict | None = None
+    created_at: str
+
+
+class ReviewCreate(BaseModel):
+    rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5")
+    comment: str | None = None
+    participant_email: str = Field(..., description="Participant email")
+
+
+class ReviewResponse(BaseModel):
+    id: str
+    program_id: str
+    rating: int
+    comment: str | None = None
+    participant_email: str
+    created_at: str
+
+
+class ProgressStage(BaseModel):
+    stage_number: int
+    stage_name: str
+    completion_percent: float
+    milestones_achieved: list[str]
+
+
+class MilestoneProgress(BaseModel):
+    milestone_id: str
+    milestone_name: str
+    achieved: bool
+    achieved_at: str | None = None
+
+
+class ProgressResponse(BaseModel):
+    overall: float
+    stage: list[ProgressStage]
+    milestone: list[MilestoneProgress]
+    milestones_achieved: bool
+
+
+class DashboardParticipantResponse(BaseModel):
+    program_id: str
+    enrolment_status: str
+    phases: list[dict]
+    recent_activities: list[dict]
+    overall_progress: float
+    certificate_url: str | None = None
+
+
+class DashboardProviderResponse(BaseModel):
+    program_id: str
+    total_enrolments: int
+    by_status: dict[str, int]
+    by_phase: dict[str, dict]
+    capacity_utilization: float
+    recent_enrolments: list[dict]
+
+
+class SummaryResponse(BaseModel):
+    total_programs: int
+    by_status: dict[str, int]
+    by_category: dict[str, int]
+    by_delivery_mode: dict[str, int]
+    total_enrolments: int
+    total_checkins: int

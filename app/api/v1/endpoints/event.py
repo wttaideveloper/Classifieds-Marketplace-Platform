@@ -15,6 +15,7 @@ from app.schemas.event_schema import (
     EventUpdate,
 )
 from app.schemas.event_schema import (
+    EventAnnouncementCreate,
     EventCheckInRequest,
     EventCheckInResponse,
     EventCheckOutRequest,
@@ -42,6 +43,7 @@ from app.services.event_service import (
     get_event_registrations_service,
     get_event_reports_service,
     get_event_service,
+    get_event_summary_service,
     get_event_waitlist_service,
     get_events_service,
     get_sessions_service,
@@ -426,8 +428,8 @@ def attendance(event_id: UUID, db: Session = Depends(get_db), current_user: dict
 
 
 @router.post("/{event_id}/announcements", status_code=status.HTTP_201_CREATED, summary="Send Announcement")
-def announce(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return send_announcement_service(db, event_id, payload.get("message", ""))
+def announce(event_id: UUID, payload: EventAnnouncementCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return send_announcement_service(db, event_id, payload, current_user)
 
 
 @router.post("/{event_id}/feedback", status_code=status.HTTP_201_CREATED, summary="Submit Feedback")
@@ -457,13 +459,7 @@ def reports(event_id: UUID, type: str = Query("registration"), format: str = Que
 
 @router.get("/reports/summary", summary="Performance Dashboard")
 def reports_summary(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.event_model import Event
-
-    q = db.query(Event).filter(Event.is_deleted.is_(False))
-    if enterprise_id:
-        q = q.filter(Event.enterprise_id == enterprise_id)
-    total = q.count()
-    return {"total_events": total, "by_status": {}}
+    return get_event_summary_service(db, enterprise_id)
 
 
 @router.post("/templates", status_code=status.HTTP_201_CREATED, summary="Create Template")

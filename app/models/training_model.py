@@ -80,3 +80,63 @@ class TrainingWaitlist(Base):
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class TrainingAssessmentSubmission(Base):
+    __tablename__ = "training_assessment_submissions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    assessment_id = Column(String(255), nullable=False, index=True)
+    participant_email = Column(String(255), nullable=False, index=True)
+    answers = Column(JSONB, default=list)
+    score = Column(String(20))
+    passed = Column(Boolean, default=False)
+    submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class TrainingAssignmentSubmission(Base):
+    __tablename__ = "training_assignment_submissions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    assignment_id = Column(String(255), nullable=False, index=True)
+    participant_email = Column(String(255), nullable=False, index=True)
+    file_url = Column(Text)
+    submission_text = Column(Text)
+    grade = Column(String(20))
+    feedback = Column(Text)
+    submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class TrainingProgress(Base):
+    __tablename__ = "training_progress"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    participant_email = Column(String(255), nullable=False, index=True)
+    sections_completed = Column(JSONB, default=list)
+    lessons_completed = Column(JSONB, default=list)
+    overall_percent = Column(String(20), default="0")
+    certificate_url = Column(Text)
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime)
+    last_accessed_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (Index("ix_training_progress_training_email", "training_id", "participant_email", unique=True),)
+
+
+class TrainingLiveSession(Base):
+    __tablename__ = "training_live_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text)
+    scheduled_at = Column(DateTime, nullable=False)
+    duration_minutes = Column(String(20))
+    meeting_link = Column(Text)
+    meeting_provider = Column(String(50), default="zoom")
+    status = Column(String(20), default="scheduled")
+    recording_url = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

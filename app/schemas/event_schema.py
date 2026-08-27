@@ -1,3 +1,4 @@
+import enum
 import uuid
 from datetime import date, datetime
 from uuid import UUID
@@ -358,3 +359,46 @@ class EventQRValidateResponse(BaseModel):
     event_title: str | None = None
     ticket_type_id: str | None = None
     message: str
+
+
+class EventAnnouncementCreate(BaseModel):
+    title: str | None = None
+    message: str = Field(..., description="Announcement message")
+    recipient_type: str = Field("all", description="all|registered|specific")
+    channels: list[str] = Field(["in_app"], description="in_app|push|email|sms")
+    metadata: dict | None = Field(None, description="Additional metadata")
+
+
+class EventAnnouncementResponse(BaseModel):
+    id: str
+    event_id: UUID
+    sent_by: str | None = None
+    recipient_count: int
+    created_at: str
+    title: str | None = None
+    message: str
+
+
+class EventReportType(str, enum.Enum):
+    registration = "registration"
+    attendance = "attendance"
+    feedback = "feedback"
+    revenue = "revenue"
+
+
+class EventReportResponse(BaseModel):
+    event_id: UUID
+    type: EventReportType
+    data: dict
+
+
+class EventSummaryResponse(BaseModel):
+    total_events: int
+    by_status: dict[str, int]
+    by_category: dict[str, int]
+    by_delivery_mode: dict[str, int]
+    upcoming_events: int
+    past_events: int
+    total_registrations: int
+    total_attended: int
+    average_rating: float | None = None

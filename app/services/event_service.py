@@ -1,5 +1,6 @@
 from uuid import UUID
 
+import sqlalchemy as sa
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -421,10 +422,37 @@ def get_event_attendance_service(db: Session, event_id: UUID):
     )
 
 
-def send_announcement_service(db: Session, event_id: UUID, message: str):
-    _get_event_or_404(db, event_id)
-    # Stub: would fan-out via notification service
-    return {"message": "Announcement queued", "recipients": 0}
+def send_announcement_service(db: Session, event_id: UUID, payload, current_user: dict | None = None):
+    from app.models.event_aux_models import EventRegistration
+
+    event = _get_event_or_404(db, event_id)
+    message = payload.message if hasattr(payload, "message") else payload.get("message", "") if isinstance(payload, dict) else str(payload)
+    title = payload.title if hasattr(payload, "title") and payload.title else f"Announcement: {event.title}"
+
+    regs = db.query(EventRegistration).filter(
+        EventRegistration.event_id == event_id,
+        EventRegistration.status.in_(["confirmed", "attended"])
+    ).all()
+    recipient_count = len(regs)
+
+    # Try to dispatch via notification service if available, otherwise just count
+    try:
+        from app.services.notification_service import _dispatch_notification
+        # best-effort dispatch
+        user_ids = [r.participant_email for r in regs]
+        if user_ids and current_user:
+            _dispatch_notification(
+                db, current_user, title=title, message=message,
+                notification_type="event_announcement", category="event",
+                user_ids=user_ids, tenant_id=str(event.tenant_id) if event.tenant_id else None,
+                metadata={"event_id": str(event_id)}
+            )
+    except Exception:
+        pass
+
+    return {"id": str(event_id), "event_id": str(event_id), "sent_by": current_user.get("id") if current_user else None,
+            "recipient_count": recipient_count, "created_at": __import__("datetime").datetime.utcnow().isoformat(),
+            "title": title, "message": message}
 
 
 def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_review: bool = False):
@@ -465,8 +493,105 @@ def moderate_review_service(db: Session, review_id: UUID, action: str):
 
 
 def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
-    _get_event_or_404(db, event_id)
-    return {"event_id": str(event_id), "type": report_type, "data": {}}
+    from app.models.event_aux_models import EventFeedback, EventRegistration
+
+    event = _get_event_or_404(db, event_id)
+    regs = db.query(EventRegistration).filter(EventRegistration.event_id == event_id).all()
+
+    if report_type == "registration":
+        by_status: dict = {}
+        by_ticket: dict = {}
+        for r in regs:
+            by_status[r.status] = by_status.get(r.status, 0) + 1
+            if r.ticket_type_id:
+                by_ticket[r.ticket_type_id] = by_ticket.get(r.ticket_type_id, 0) + 1
+        data = {"total_registrations": len(regs), "by_status": by_status, "by_ticket_type": by_ticket}
+    elif report_type == "attendance":
+        attended = sum(1 for r in regs if r.status == "attended")
+        no_show = sum(1 for r in regs if r.status == "confirmed")
+        cancelled = sum(1 for r in regs if r.status == "cancelled")
+        by_session: dict = {}
+        for r in regs:
+            if r.session_id:
+                by_session.setdefault(r.session_id, {"total": 0, "attended": 0})
+                by_session[r.session_id]["total"] += 1
+                if r.status == "attended":
+                    by_session[r.session_id]["attended"] += 1
+        data = {"total": len(regs), "attended": attended, "no_show": no_show, "cancelled": cancelled, "by_session": by_session}
+    elif report_type == "feedback":
+        feedbacks = db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review.is_(False)).all()
+        reviews = db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review.is_(True)).all()
+        ratings = [int(r.rating) for r in reviews if r.rating and str(r.rating).isdigit()]
+        avg_rating = sum(ratings)/len(ratings) if ratings else None
+        data = {"total_feedbacks": len(feedbacks), "total_reviews": len(reviews), "average_rating": avg_rating,
+                "feedbacks": [{"id": str(f.id), "rating": f.rating, "comment": f.comment} for f in feedbacks[:20]]}
+    elif report_type == "revenue":
+        ticket_prices = {tt.get("id"): float(tt.get("price", 0) or 0) for tt in (event.ticket_types or []) if isinstance(tt, dict)}
+        revenue_by_type: dict = {}
+        total_revenue = 0
+        for r in regs:
+            if r.ticket_type_id and r.status in ("confirmed", "attended"):
+                price = ticket_prices.get(r.ticket_type_id, 0)
+                try:
+                    price = float(price)
+                except Exception:
+                    price = 0
+                revenue_by_type[r.ticket_type_id] = revenue_by_type.get(r.ticket_type_id, 0) + price
+                total_revenue += price
+        data = {"total_revenue": total_revenue, "by_ticket_type": revenue_by_type, "currency": event.currency}
+    else:
+        by_status = {}
+        for r in regs:
+            by_status[r.status] = by_status.get(r.status, 0) + 1
+        data = {"total_registrations": len(regs), "by_status": by_status}
+
+    return {"event_id": str(event_id), "type": report_type, "data": data}
+
+
+def get_event_summary_service(db: Session, enterprise_id: UUID | None = None):
+    from sqlalchemy import func
+    from app.models.event_aux_models import EventFeedback, EventRegistration
+    from app.models.event_model import Event
+
+    q = db.query(Event).filter(Event.is_deleted.is_(False))
+    if enterprise_id:
+        q = q.filter(Event.enterprise_id == enterprise_id)
+
+    # by_status
+    status_rows = q.with_entities(Event.status, func.count(Event.id)).group_by(Event.status).all()
+    by_status = {row[0]: row[1] for row in status_rows}
+    total = sum(by_status.values())
+
+    # by_category
+    cat_rows = q.with_entities(Event.category, func.count(Event.id)).group_by(Event.category).all()
+    by_category = {row[0]: row[1] for row in cat_rows if row[0]}
+
+    # by_delivery_mode
+    del_rows = q.with_entities(Event.delivery_mode, func.count(Event.id)).group_by(Event.delivery_mode).all()
+    by_delivery_mode = {row[0]: row[1] for row in del_rows if row[0]}
+
+    from datetime import datetime
+    now = datetime.utcnow()
+    upcoming = q.filter(Event.start_date > now).count()
+    past = q.filter(Event.start_date <= now).count()
+
+    event_ids = [e.id for e in q.all()]
+    reg_count = 0
+    attended_count = 0
+    avg_rating = None
+    if event_ids:
+        reg_count = db.query(func.count(EventRegistration.id)).filter(EventRegistration.event_id.in_(event_ids)).scalar() or 0
+        attended_count = db.query(func.count(EventRegistration.id)).filter(EventRegistration.event_id.in_(event_ids), EventRegistration.status == "attended").scalar() or 0
+        # rating is String, cast attempt
+        try:
+            avg_rating = db.query(func.avg(EventFeedback.rating.cast(sa.Float))).filter(EventFeedback.event_id.in_(event_ids), EventFeedback.is_review.is_(True)).scalar()
+            if avg_rating is not None:
+                avg_rating = float(avg_rating)
+        except Exception:
+            pass
+
+    return {"total_events": total, "by_status": by_status, "by_category": by_category, "by_delivery_mode": by_delivery_mode,
+            "upcoming_events": upcoming, "past_events": past, "total_registrations": reg_count, "total_attended": attended_count, "average_rating": avg_rating}
 
 
 def create_template_service(db: Session, payload: dict):

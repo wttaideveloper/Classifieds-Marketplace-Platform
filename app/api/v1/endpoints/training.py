@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingPaginatedResponse, TrainingResponse, TrainingStatusUpdate, TrainingUpdate
-from app.services.training_service import create_training_service, delete_training_service, duplicate_training_service, get_training_service, get_trainings_service, update_training_service, update_training_status_service
+from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingStatusUpdate, TrainingUpdate
+from app.services.training_service import add_assessment_question_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, duplicate_training_service, get_live_sessions_service, get_training_progress_service, get_training_service, get_trainings_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service
 
 router = APIRouter(tags=["Trainings"])
 
@@ -159,33 +159,36 @@ def list_assessments(training_id: UUID, db: Session = Depends(get_db), current_u
     return t.assessments or []
 
 @router.post("/{training_id}/assessments/{aid}/questions", status_code=201)
-def add_question(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return {"message":"Question added", "assessment_id": aid, **payload}
+def add_question(training_id: UUID, aid: str, payload: AssessmentQuestionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return add_assessment_question_service(db, training_id, aid, payload)
 
 @router.post("/{training_id}/assessments/{aid}/submit", status_code=201)
-def submit_assessment(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return {"score": 80, "passed": True, "assessment_id": aid}
+def submit_assessment(training_id: UUID, aid: str, payload: AssessmentSubmitCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    email = current_user.get("email") if current_user else "user@example.com"
+    return submit_assessment_service(db, training_id, aid, payload, participant_email=email)
 
 @router.post("/{training_id}/assignments", status_code=201)
-def create_assignment(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return {"id": str(__import__("uuid").uuid4()), **payload}
+def create_assignment(training_id: UUID, payload: AssignmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_assignment_service(db, training_id, payload)
 
 @router.post("/{training_id}/assignments/{aid}/submit", status_code=201)
-def submit_assignment(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return {"message":"Submitted", "assignment_id": aid}
+def submit_assignment(training_id: UUID, aid: str, payload: AssignmentSubmitCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    email = current_user.get("email") if current_user else "user@example.com"
+    return submit_assignment_service(db, training_id, aid, payload, participant_email=email)
 
 @router.get("/{training_id}/progress")
 def progress(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return {"overall_percent": 0, "sections_done": 0, "certificate_url": None}
+    email = current_user.get("email") if current_user else None
+    return get_training_progress_service(db, training_id, participant_email=email)
 
 @router.post("/{training_id}/live-sessions", status_code=201)
-def create_live(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    import uuid; return {"id": str(uuid.uuid4()), "meeting_link": "https://zoom.us/j/xxx", **payload}
+def create_live(training_id: UUID, payload: TrainingLiveSessionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_live_session_service(db, training_id, payload)
 
 @router.get("/{training_id}/live-sessions")
 def list_live(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return []
+    return get_live_sessions_service(db, training_id)
 
 @router.post("/{training_id}/announcements")
-def announce(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return {"message":"Announcement queued"}
+def announce(training_id: UUID, payload: AnnouncementCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_training_announcement_service(db, training_id, payload, current_user)

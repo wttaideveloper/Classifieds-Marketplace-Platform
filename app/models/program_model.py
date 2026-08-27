@@ -52,3 +52,23 @@ class ProgramCheckin(Base):
     phase_id = Column(String(100))
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class ProgramSurvey(Base):
+    __tablename__ = "program_surveys"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    program_id = Column(UUID(as_uuid=True), ForeignKey("programs.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text)
+    questions = Column(JSONB, default=list)
+    created_by = Column(String(255))
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class ProgramReview(Base):
+    __tablename__ = "program_reviews"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    program_id = Column(UUID(as_uuid=True), ForeignKey("programs.id"), nullable=False, index=True)
+    participant_email = Column(String(255), nullable=False)
+    rating = Column(String(20), nullable=False)
+    comment = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

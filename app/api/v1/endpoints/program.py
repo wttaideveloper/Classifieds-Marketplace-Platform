@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.program_schema import ActivityCreate, PhaseCreate, ProgramCreate, ProgramDetailResponse, ProgramPaginatedResponse, ProgramResponse, ProgramStatusUpdate, ProgramUpdate
-from app.services.program_service import create_program_service, delete_program_service, duplicate_program_service, get_program_service, get_programs_service, update_program_service, update_program_status_service
+from app.schemas.program_schema import ActivityCreate, CheckinCreate, EnrolmentCreate, PhaseCreate, ProgramCreate, ProgramDetailResponse, ProgramPaginatedResponse, ProgramResponse, ProgramStatusUpdate, ProgramUpdate, ReviewCreate, SurveyCreate
+from app.services.program_service import create_program_checkin_service, create_program_service, create_review_service, create_survey_service, delete_program_service, duplicate_program_service, enrol_program_service, get_participant_dashboard_service, get_program_progress_service, get_program_reports_service, get_program_service, get_program_summary_service, get_provider_dashboard_service, get_programs_service, list_checkins_service, list_enrolments_service, update_program_service, update_program_status_service
 router=APIRouter(tags=["Programs"])
 @router.post("/", response_model=ProgramResponse, status_code=201)
 def create_program(data: ProgramCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return create_program_service(db, data)
@@ -59,36 +59,75 @@ def update_activity(program_id: UUID, phase_id: str, activity_id: str, payload: 
             for ac in ph.get("activities",[]):
                 if ac.get("id")==activity_id: ac.update(payload.model_dump(exclude_unset=True)); db.commit(); return ac
     from fastapi import HTTPException; raise HTTPException(404,"Activity not found")
-# Enrol, check-ins, progress, dashboards, surveys, reports (P7-P11)
+# Phases - missing delete/reorder
+@router.delete("/{program_id}/phases/{phase_id}")
+def delete_phase(program_id: UUID, phase_id: str, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    orig=len(obj.phases or [])
+    new=[p for p in (obj.phases or []) if p.get("id")!=phase_id]
+    if len(new)==orig: from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
+    obj.phases=new; flag_modified(obj,"phases"); db.commit(); return {"message":"Phase deleted"}
+
+@router.delete("/{program_id}/phases/{phase_id}/activities/{activity_id}")
+def delete_activity(program_id: UUID, phase_id: str, activity_id: str, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    for ph in obj.phases or []:
+        if ph.get("id")==phase_id:
+            acts=[a for a in ph.get("activities",[]) if a.get("id")!=activity_id]
+            if len(acts)==len(ph.get("activities",[])): from fastapi import HTTPException; raise HTTPException(404,"Activity not found")
+            ph["activities"]=acts; obj.phases=list(obj.phases); flag_modified(obj,"phases"); db.commit(); return {"message":"Activity deleted"}
+    from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
+
+@router.post("/{program_id}/phases/reorder")
+def reorder_phases(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    order=payload.get("ordered_ids",[])
+    mapping={p["id"]: p for p in (obj.phases or []) if p.get("id")}
+    obj.phases=[mapping[i] for i in order if i in mapping]
+    flag_modified(obj,"phases"); db.commit(); return obj.phases
+
+# Enrol, check-ins, progress, dashboards, surveys, reports
 @router.post("/{program_id}/enrol", status_code=201)
-def enrol(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.program_model import ProgramEnrolment
-    e=ProgramEnrolment(program_id=program_id, participant_name=payload.get("participant_name","User"), participant_email=payload.get("participant_email","user@example.com"))
-    db.add(e); db.commit(); db.refresh(e); return e
+def enrol(program_id: UUID, payload: EnrolmentCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return enrol_program_service(db, program_id, payload)
+@router.get("/{program_id}/enrolments")
+def list_enrolments(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return list_enrolments_service(db, program_id)
 @router.post("/{program_id}/check-ins", status_code=201)
-def checkin(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.program_model import ProgramCheckin
-    c=ProgramCheckin(program_id=program_id, participant_email=payload.get("participant_email","user@example.com"), phase_id=payload.get("phase_id"), notes=payload.get("notes"))
-    db.add(c); db.commit(); db.refresh(c); return c
+def checkin(program_id: UUID, payload: CheckinCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_program_checkin_service(db, program_id, payload)
 @router.get("/{program_id}/check-ins")
-def list_checkins(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.program_model import ProgramCheckin
-    return db.query(ProgramCheckin).filter(ProgramCheckin.program_id==program_id).all()
+def list_checkins(program_id: UUID, participant_email: str | None = Query(None), phase_id: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return list_checkins_service(db, program_id, participant_email=participant_email, phase_id=phase_id)
 @router.get("/{program_id}/progress")
-def progress(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)): return {"overall":0, "stage":0, "milestone":0}
+def progress(program_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    email = participant_email or (current_user.get("email") if current_user else None)
+    return get_program_progress_service(db, program_id, participant_email=email)
 @router.get("/{program_id}/dashboards/participant")
-def dash_participant(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)): return {"program_id":str(program_id), "role":"participant", "progress":0}
+def dash_participant(program_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    email = participant_email or (current_user.get("email") if current_user else None)
+    return get_participant_dashboard_service(db, program_id, participant_email=email)
 @router.get("/{program_id}/dashboards/provider")
-def dash_provider(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return {"program_id":str(program_id), "role":"provider", "progress":0}
+def dash_provider(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_provider_dashboard_service(db, program_id)
 @router.post("/{program_id}/surveys", status_code=201)
-def create_survey(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): import uuid; return {"id":str(uuid.uuid4()), **payload}
+def create_survey(program_id: UUID, payload: SurveyCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_survey_service(db, program_id, payload)
 @router.post("/{program_id}/reviews", status_code=201)
-def create_review(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)): import uuid; return {"id":str(uuid.uuid4()), **payload}
+def create_review(program_id: UUID, payload: ReviewCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_review_service(db, program_id, payload)
 @router.get("/{program_id}/reports")
-def reports(program_id: UUID, type: str=Query("enrolment"), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return {"program_id":str(program_id), "type":type, "data":{}}
+def reports(program_id: UUID, type: str=Query("enrolment"), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_program_reports_service(db, program_id, type)
 @router.get("/reports/summary")
 def summary(enterprise_id: UUID|None=None, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.program_model import Program
-    q=db.query(Program).filter(Program.is_deleted.is_(False))
-    if enterprise_id: q=q.filter(Program.enterprise_id==enterprise_id)
-    return {"total_programs": q.count(), "by_status":{}}
+    return get_program_summary_service(db, enterprise_id)

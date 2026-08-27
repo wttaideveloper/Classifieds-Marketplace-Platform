@@ -154,3 +154,106 @@ class LessonCreate(BaseModel):
     is_draft: bool | None = False
     prerequisites: list | None = None
     release_rule: dict | None = None
+
+
+class AssessmentQuestionCreate(BaseModel):
+    question_text: str = Field(..., description="The question text")
+    question_type: str = Field("mcq", description="mcq|true_false|short_answer|essay")
+    options: list[str] | None = Field(None, description="Multiple choice options (for mcq)")
+    correct_answer: str | None = Field(None, description="Correct answer (for mcq/true_false)")
+    points: int = Field(1, description="Points for correct answer")
+
+
+class AssessmentSubmitCreate(BaseModel):
+    answers: list[dict] = Field(..., description="List of answer selections, each with question_id and answer")
+
+
+class AssessmentSubmitResponse(BaseModel):
+    score: int
+    passed: bool
+    total_points: int
+    feedback: str | None = None
+
+
+class AssignmentCreate(BaseModel):
+    title: str = Field(..., description="Assignment title")
+    instructions: str | None = Field(None, description="Assignment instructions")
+    due_date: datetime | None = None
+    max_score: int | None = Field(None, description="Maximum possible score")
+    accepted_file_types: list[str] | None = Field(
+        None, description="Allowed file extensions, e.g. ['.pdf', '.docx']"
+    )
+    allow_late_submissions: bool = Field(
+        False, description="Allow submissions after due date"
+    )
+
+
+class AssignmentSubmitCreate(BaseModel):
+    file_url: str | None = Field(None, description="URL to uploaded file")
+    submission_text: str | None = Field(None, description="Text submission content")
+
+
+class AssignmentSubmitResponse(BaseModel):
+    id: str
+    submitted_at: str
+    grade: int | None = None
+    feedback: str | None = None
+
+
+class TrainingProgressSection(BaseModel):
+    section_id: str
+    section_title: str
+    lessons_done: int
+    total_lessons: int
+
+
+class TrainingProgressLesson(BaseModel):
+    lesson_id: str
+    lesson_title: str
+    is_completed: bool
+
+
+class TrainingProgressResponse(BaseModel):
+    overall_percent: float
+    sections_done: int
+    total_sections: int
+    lessons_done: int
+    total_lessons: int
+    certificate_url: str | None = None
+    sections_detail: list[TrainingProgressSection]
+    lessons_detail: list[TrainingProgressLesson]
+
+
+class TrainingLiveSessionCreate(BaseModel):
+    title: str = Field(..., description="Session title")
+    description: str | None = None
+    scheduled_at: datetime = Field(..., description="Scheduled date/time")
+    duration_minutes: int = Field(..., description="Duration in minutes")
+    meeting_link: str = Field(..., description="Meeting link (Zoom/Teams URL)")
+    meeting_provider: str = Field("zoom", description="zoom|teams|meet|other")
+
+
+class TrainingLiveSessionResponse(BaseModel):
+    id: str
+    title: str
+    scheduled_at: str
+    duration_minutes: int
+    meeting_link: str
+    meeting_provider: str
+    status: str = "scheduled"
+    recording_url: str | None = None
+
+
+class AnnouncementCreate(BaseModel):
+    title: str | None = None
+    message: str = Field(..., description="Announcement message")
+    channel: str = Field("in_app", description="in_app|email|sms|both")
+
+
+class AnnouncementResponse(BaseModel):
+    id: str
+    training_id: UUID
+    title: str | None = None
+    message: str
+    sent_at: str
+    channel: str
