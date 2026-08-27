@@ -46,9 +46,9 @@ def update_program_status_service(db, pid, st):
     VALID = {
         "draft": ["pending_approval", "cancelled", "archived"],
         "pending_approval": ["approved", "cancelled"],
-        "approved": ["published", "cancelled"],
+        "approved": ["published", "cancelled", "archived"],
         "published": ["cancelled", "completed", "suspended"],
-        "suspended": ["published", "cancelled"],
+        "suspended": ["published", "cancelled", "archived"],
         "completed": ["archived"], "cancelled": ["draft", "archived"], "archived": [],
     }
     allowed = VALID.get(obj.status, [])

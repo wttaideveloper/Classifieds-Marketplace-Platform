@@ -43,7 +43,7 @@ def update_status(training_id: UUID, payload: TrainingStatusUpdate, db: Session 
 
 @router.post("/{training_id}/unpublish", response_model=TrainingResponse, status_code=200)
 def unpublish_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return update_training_status_service(db, training_id, "draft")
+    return update_training_status_service(db, training_id, "approved")
 
 
 @router.post("/{training_id}/archive", response_model=TrainingResponse, status_code=200)
