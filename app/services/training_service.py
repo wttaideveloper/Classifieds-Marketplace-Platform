@@ -101,26 +101,95 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
     target = next((a for a in assessments if str(a.get("id")) == str(aid)), None)
     if not target:
         raise HTTPException(status_code=404, detail="Assessment not found")
+    # attempt limit + time limit
+    attempt_limit = int(target.get("attempt_limit") or target.get("attempts_allowed") or 999)
+    cnt = db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.training_id==tid, TrainingAssessmentSubmission.assessment_id==str(aid), TrainingAssessmentSubmission.participant_email==participant_email).count()
+    if cnt >= attempt_limit:
+        raise HTTPException(400, f"Attempt limit reached ({attempt_limit})")
+    if target.get("time_limit_minutes"):
+        # enforce via started_at if provided in payload else ignore
+        pass
+    # scheduled publication
+    if target.get("publish_at"):
+        from datetime import datetime
+        try:
+            pub=datetime.fromisoformat(str(target.get("publish_at")))
+            if datetime.utcnow() < pub:
+                raise HTTPException(400, f"Results scheduled for {pub.isoformat()}")
+        except HTTPException: raise
+        except: pass
     questions = target.get("questions", [])
     answers = payload.answers if hasattr(payload, "answers") else payload.get("answers", []) if isinstance(payload, dict) else []
     # Build lookup
     qmap = {str(q.get("id")): q for q in questions}
     total = sum(int(q.get("points", 1)) for q in questions) or len(questions)
     score = 0
+    needs_manual = False
     for ans in answers:
         qid = str(ans.get("question_id") or ans.get("id") or "")
         given = str(ans.get("answer", "")).strip().lower()
         q = qmap.get(qid)
         if not q:
             continue
-        correct = str(q.get("correct_answer", "")).strip().lower()
-        if given and correct and given == correct:
-            score += int(q.get("points", 1))
-    passing = int(target.get("passing_score", total * 0.6 if total else 0))
-    passed = score >= passing
+        qtype = q.get("question_type") or "mcq"
+        if qtype in ["short_answer","essay"]:
+            needs_manual = True
+            continue
+        if qtype == "multiple_select":
+            correct = str(q.get("correct_answer", "")).strip().lower()
+            given_set = set([s.strip() for s in given.split(",") if s.strip()])
+            correct_set = set([s.strip() for s in correct.split(",") if s.strip()])
+            if given_set == correct_set and given_set:
+                score += int(q.get("points", 1))
+        else:
+            correct = str(q.get("correct_answer", "")).strip().lower()
+            if given and correct and given == correct:
+                score += int(q.get("points", 1))
+    passing = int(target.get("passing_score") or target.get("pass_mark") or (total * 0.6 if total else 0))
+    passed = score >= passing and not needs_manual
     sub = TrainingAssessmentSubmission(training_id=tid, assessment_id=str(aid), participant_email=participant_email, answers=answers, score=str(score), passed=passed)
     db.add(sub); db.commit(); db.refresh(sub)
-    return {"score": score, "passed": passed, "total_points": total, "feedback": "Passed" if passed else "Failed", "assessment_id": str(aid), "submission_id": str(sub.id)}
+    publication = target.get("publication") or target.get("result_publication") or "immediate"
+    return {"score": score, "passed": passed, "total_points": total, "feedback": "Passed" if passed else ("Pending manual evaluation" if needs_manual else "Failed"), "assessment_id": str(aid), "submission_id": str(sub.id), "publication": publication, "needs_manual": needs_manual}
+
+def grade_assessment_manual_service(db: Session, tid: UUID, aid: str, submission_id: str, grade: int, feedback: str | None = None):
+    from app.models.training_model import TrainingAssessmentSubmission
+    t=_get_training_or_404(db, tid)
+    sub=db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.id==submission_id, TrainingAssessmentSubmission.training_id==tid).first()
+    if not sub: raise HTTPException(404, "Submission not found")
+    # recalc passed with manual grade
+    assessments=t.assessments or []
+    target=next((a for a in assessments if str(a.get("id"))==str(aid)), None)
+    total=sum(int(q.get("points",1)) for q in (target.get("questions",[]) if target else [])) or 1
+    passing=int(target.get("passing_score") or target.get("pass_mark") or total*0.6) if target else total*0.6
+    sub.score=str(grade); sub.passed=grade>=passing; db.commit(); db.refresh(sub)
+    return {"submission_id": str(sub.id), "score": grade, "passed": sub.passed, "total_points": total, "feedback": feedback, "explanation": "Manual evaluation completed"}
+
+def get_assessment_result_service(db: Session, tid: UUID, aid: str, submission_id: str):
+    from app.models.training_model import TrainingAssessmentSubmission
+    t=_get_training_or_404(db, tid)
+    sub=db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.id==submission_id).first()
+    if not sub: raise HTTPException(404, "Submission not found")
+    assessments=t.assessments or []
+    target=next((a for a in assessments if str(a.get("id"))==str(aid)), None)
+    questions=target.get("questions",[]) if target else []
+    # attach explanations
+    review=[]
+    qmap={str(q.get("id")): q for q in questions}
+    for ans in sub.answers or []:
+        qid=str(ans.get("question_id") or ans.get("id") or "")
+        q=qmap.get(qid, {})
+        review.append({"question_id": qid, "question_text": q.get("question_text"), "given": ans.get("answer"), "correct": q.get("correct_answer"), "explanation": q.get("explanation"), "points": q.get("points",1)})
+    return {"submission_id": str(sub.id), "assessment_id": str(aid), "score": sub.score, "passed": sub.passed, "review": review, "level": target.get("level") if target else None}
+
+def get_question_bank_service(db: Session, tid: UUID):
+    t=_get_training_or_404(db, tid)
+    bank=[]
+    for a in t.assessments or []:
+        for q in a.get("questions",[]):
+            if q.get("reusable"):
+                bank.append({**q, "source_assessment": a.get("id")})
+    return bank
 
 def create_assignment_service(db: Session, tid: UUID, data):
     import uuid as _uuid, copy

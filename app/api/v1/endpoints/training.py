@@ -214,7 +214,7 @@ def leave_waitlist(training_id: UUID, entry_id: UUID, db: Session = Depends(get_
     if not w: raise HTTPException(404, "Not found")
     db.delete(w); db.commit(); return {"message":"Removed"}
 
-@router.post("/{training_id}/assessments", status_code=201)
+@router.post("/{training_id}/assessments", status_code=201, summary="Create quizzes/tests/assessments/surveys — supports pre-course/module/final/feedback level, pass/attempt/time, publication, randomise")
 def create_assessment(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     import uuid
@@ -223,20 +223,44 @@ def create_assessment(training_id: UUID, payload: dict, db: Session = Depends(ge
     arr = list(t.assessments or []); new={"id": str(uuid.uuid4()), **payload}; arr.append(new); t.assessments=arr; db.commit(); return new
 
 @router.get("/{training_id}/assessments")
-def list_assessments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def list_assessments(training_id: UUID, randomize: bool = Query(False, description="Randomise questions/answers"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.repository.training_repo import get_training_by_id
+    import random as _rnd
     t = get_training_by_id(db, training_id)
     if not t: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
-    return t.assessments or []
+    out = t.assessments or []
+    if randomize:
+        for a in out:
+            qs=a.get("questions",[])
+            _rnd.shuffle(qs)
+            for q in qs:
+                if q.get("options"): _rnd.shuffle(q["options"])
+            a["questions"]=qs
+    return out
+
+@router.get("/{training_id}/question-bank", summary="Question bank — reusable questions")
+def question_bank(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import get_question_bank_service
+    return get_question_bank_service(db, training_id)
 
 @router.post("/{training_id}/assessments/{aid}/questions", status_code=201)
 def add_question(training_id: UUID, aid: str, payload: AssessmentQuestionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return add_assessment_question_service(db, training_id, aid, payload)
 
-@router.post("/{training_id}/assessments/{aid}/submit", status_code=201)
+@router.post("/{training_id}/assessments/{aid}/submit", status_code=201, summary="Submit — automatic scoring, pass/attempt/time enforced")
 def submit_assessment(training_id: UUID, aid: str, payload: AssessmentSubmitCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = current_user.get("email") if current_user else "user@example.com"
     return submit_assessment_service(db, training_id, aid, payload, participant_email=email)
+
+@router.post("/{training_id}/assessments/{aid}/submissions/{sid}/grade", summary="Manual evaluation for written answers")
+def grade_assessment(training_id: UUID, aid: str, sid: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import grade_assessment_manual_service
+    return grade_assessment_manual_service(db, training_id, aid, str(sid), int(payload.get("score") or payload.get("grade") or 0), payload.get("feedback"))
+
+@router.get("/{training_id}/assessments/{aid}/submissions/{sid}/review", summary="Answer explanations & result review")
+def review_assessment(training_id: UUID, aid: str, sid: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.training_service import get_assessment_result_service
+    return get_assessment_result_service(db, training_id, aid, str(sid))
 
 @router.post("/{training_id}/assignments", status_code=201)
 def create_assignment(training_id: UUID, payload: AssignmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):

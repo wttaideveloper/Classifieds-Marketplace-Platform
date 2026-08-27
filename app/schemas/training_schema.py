@@ -172,11 +172,14 @@ class LessonCreate(BaseModel):
 
 
 class AssessmentQuestionCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
     question_text: str = Field(..., description="The question text")
-    question_type: str = Field("mcq", description="mcq|true_false|short_answer|essay")
-    options: list[str] | None = Field(None, description="Multiple choice options (for mcq)")
-    correct_answer: str | None = Field(None, description="Correct answer (for mcq/true_false)")
+    question_type: str = Field("mcq", description="mcq|multiple_select|true_false|short_answer|essay")
+    options: list[str] | None = Field(None, description="Multiple choice options (for mcq/multiple_select)")
+    correct_answer: str | None = Field(None, description="Correct answer (for mcq/true_false) or comma-separated for multiple_select")
     points: int = Field(1, description="Points for correct answer")
+    explanation: str | None = Field(None, description="Answer explanation")
+    reusable: bool | None = Field(False, description="Store in question bank for reuse")
 
 
 class AssessmentSubmitCreate(BaseModel):
