@@ -5,7 +5,7 @@ from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingStatusUpdate, TrainingUpdate
-from app.services.training_service import add_assessment_question_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, duplicate_training_service, get_live_sessions_service, get_training_progress_service, get_training_service, get_trainings_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service
+from app.services.training_service import add_assessment_question_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service
 
 router = APIRouter(tags=["Trainings"])
 
@@ -242,10 +242,34 @@ def submit_assessment(training_id: UUID, aid: str, payload: AssessmentSubmitCrea
 def create_assignment(training_id: UUID, payload: AssignmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_assignment_service(db, training_id, payload)
 
-@router.post("/{training_id}/assignments/{aid}/submit", status_code=201)
+@router.post("/{training_id}/assignments/{aid}/submit", status_code=201, summary="Submit text/links/images/videos/documents — resubmission allowed")
 def submit_assignment(training_id: UUID, aid: str, payload: AssignmentSubmitCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = current_user.get("email") if current_user else "user@example.com"
     return submit_assignment_service(db, training_id, aid, payload, participant_email=email)
+
+@router.post("/{training_id}/assignments/{aid}/submissions/{sid}/grade", summary="Instructor feedback & grading")
+def grade_assignment(training_id: UUID, aid: str, sid: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import grade_assignment_service
+    return grade_assignment_service(db, training_id, aid, str(sid), payload.get("grade") or "0", payload.get("feedback"))
+
+@router.post("/{training_id}/progress/complete-lesson", summary="Track lesson/module progress & resume")
+def complete_lesson(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.training_service import complete_lesson_service
+    email = payload.get("participant_email") or (current_user.get("email") if current_user else None)
+    if not email: from fastapi import HTTPException; raise HTTPException(400, "participant_email required")
+    return complete_lesson_service(db, training_id, payload.get("lesson_id") or payload.get("id"), email)
+
+@router.post("/{training_id}/live-sessions/{session_id}/attendance", summary="Track attendance for live sessions")
+def live_attendance(training_id: UUID, session_id: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.training_service import record_live_attendance_service
+    email = payload.get("participant_email") or (current_user.get("email") if current_user else None)
+    if not email: from fastapi import HTTPException; raise HTTPException(400, "participant_email required")
+    return record_live_attendance_service(db, training_id, session_id, email)
+
+@router.get("/{training_id}/certificate", summary="Digital completion certificate")
+def get_certificate(training_id: UUID, participant_email: str = Query(...), db: Session=Depends(get_db)):
+    from app.services.training_service import get_certificate_service
+    return get_certificate_service(db, training_id, participant_email)
 
 @router.get("/{training_id}/progress")
 def progress(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

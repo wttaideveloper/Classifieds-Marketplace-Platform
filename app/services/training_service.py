@@ -202,6 +202,61 @@ def get_live_sessions_service(db: Session, tid: UUID):
     rows = db.query(TrainingLiveSession).filter(TrainingLiveSession.training_id == tid).order_by(TrainingLiveSession.scheduled_at).all()
     return [{"id": str(r.id), "title": r.title, "scheduled_at": r.scheduled_at.isoformat(), "duration_minutes": int(r.duration_minutes) if r.duration_minutes else None, "meeting_link": r.meeting_link, "meeting_provider": r.meeting_provider, "status": r.status, "recording_url": r.recording_url} for r in rows]
 
+def grade_assignment_service(db: Session, tid: UUID, aid: str, submission_id: str, grade: str, feedback: str | None = None):
+    from app.models.training_model import TrainingAssignmentSubmission
+    _get_training_or_404(db, tid)
+    sub=db.query(TrainingAssignmentSubmission).filter(TrainingAssignmentSubmission.id==submission_id, TrainingAssignmentSubmission.training_id==tid).first()
+    if not sub: raise HTTPException(404, "Submission not found")
+    sub.grade=str(grade); sub.feedback=feedback; db.commit(); db.refresh(sub)
+    return {"id": str(sub.id), "grade": sub.grade, "feedback": sub.feedback, "resubmission_allowed": True}
+
+def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_email: str):
+    from app.models.training_model import TrainingProgress
+    from datetime import datetime
+    t=_get_training_or_404(db, tid)
+    prog=db.query(TrainingProgress).filter(TrainingProgress.training_id==tid, TrainingProgress.participant_email==participant_email).first()
+    if not prog:
+        prog=TrainingProgress(training_id=tid, participant_email=participant_email, sections_completed=[], lessons_completed=[], overall_percent="0")
+        db.add(prog); db.commit(); db.refresh(prog)
+    lessons=set(prog.lessons_completed or [])
+    lessons.add(lesson_id)
+    prog.lessons_completed=list(lessons)
+    # mandatory check — count mandatory lessons
+    all_lessons=[]
+    mandatory_ids=set()
+    for s in t.sections or []:
+        for l in s.get("lessons",[]):
+            all_lessons.append(l.get("id"))
+            if l.get("is_mandatory") or l.get("completion_rule")=="mandatory":
+                mandatory_ids.add(l.get("id"))
+    # overall + mandatory rule
+    total=len(all_lessons) or 1
+    mandatory_done=len(mandatory_ids.intersection(lessons))
+    mandatory_total=len(mandatory_ids)
+    overall=round(len(lessons)/total*100,2)
+    prog.overall_percent=str(overall)
+    prog.last_accessed_at=datetime.utcnow()
+    # completion when 100% or mandatory done
+    if overall==100 or (mandatory_total and mandatory_done==mandatory_total):
+        prog.completed_at=datetime.utcnow()
+        prog.certificate_url=f"/api/v1/trainings/{tid}/certificate?participant_email={participant_email}"
+    db.commit(); db.refresh(prog)
+    # last completed for resume
+    return {"lesson_id": lesson_id, "overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url, "resume_lesson": lesson_id}
+
+def record_live_attendance_service(db: Session, tid: UUID, session_id: str, participant_email: str):
+    from app.models.training_model import TrainingProgress
+    from datetime import datetime
+    # reuse complete_lesson as attendance
+    return complete_lesson_service(db, tid, f"live:{session_id}", participant_email)
+
+def get_certificate_service(db: Session, tid: UUID, participant_email: str):
+    from app.models.training_model import TrainingProgress
+    prog=db.query(TrainingProgress).filter(TrainingProgress.training_id==tid, TrainingProgress.participant_email==participant_email).first()
+    if not prog or not prog.certificate_url:
+        raise HTTPException(400, "Certificate not yet available — complete mandatory lessons")
+    return {"training_id": str(tid), "participant_email": participant_email, "certificate_url": prog.certificate_url, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "overall_percent": prog.overall_percent}
+
 def create_training_announcement_service(db: Session, tid: UUID, data, current_user: dict | None = None):
     _get_training_or_404(db, tid)
     import uuid as _uuid, datetime

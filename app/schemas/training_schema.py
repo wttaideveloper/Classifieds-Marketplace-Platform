@@ -164,6 +164,8 @@ class LessonCreate(BaseModel):
     duration: int | None = None
     is_preview: bool | None = False
     is_draft: bool | None = False
+    is_mandatory: bool | None = Field(False, description="Mandatory lesson")
+    completion_rule: str | None = Field(None, description="Completion rule, e.g. mandatory")
     prerequisites: list | None = None
     release_rule: dict | None = None
     instructor_id: UUID | None = Field(None, description="Lesson instructor allocation")
@@ -189,7 +191,9 @@ class AssessmentSubmitResponse(BaseModel):
 
 
 class AssignmentCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
     title: str = Field(..., description="Assignment title")
+    type: str = Field("assignment", description="assignment|task|practical")
     instructions: str | None = Field(None, description="Assignment instructions")
     due_date: datetime | None = None
     max_score: int | None = Field(None, description="Maximum possible score")
