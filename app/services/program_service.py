@@ -108,7 +108,7 @@ def get_program_progress_service(db, pid, participant_email: str | None = None):
     phases=prog.phases or []
     total=len(phases)
     # checkins per phase
-    from app.models.program_model import ProgramCheckin
+    from app.models.program_model import ProgramCheckin, ProgramEnrolment, ProgramSurvey
     q=db.query(ProgramCheckin).filter(ProgramCheckin.program_id==pid)
     if participant_email: q=q.filter(ProgramCheckin.participant_email==participant_email)
     checkins=q.all()
@@ -116,8 +116,16 @@ def get_program_progress_service(db, pid, participant_email: str | None = None):
     done=len(checkin_phases)
     overall=round(done/total*100 if total else 0,2)
     stage=[{"stage_number": i+1, "stage_name": p.get("title", f"Stage {i+1}"), "completion_percent": 100 if p.get("id") in checkin_phases else 0, "milestones_achieved": [p.get("id")] if p.get("id") in checkin_phases else []} for i,p in enumerate(phases)]
-    milestone=[{"milestone_id": p.get("id"), "milestone_name": p.get("title"), "achieved": p.get("id") in checkin_phases, "achieved_at": None} for p in phases]
-    return {"overall": overall, "stage": stage, "milestone": milestone, "milestones_achieved": done==total and total>0}
+    milestone=[{"milestone_id": p.get("id"), "milestone_name": p.get("title"), "achieved": p.get("id") in checkin_phases, "achieved_at": next((c.created_at.isoformat() for c in checkins if c.phase_id==p.get("id")), None)} for p in phases]
+    # attendance / activities / assessments / missed
+    all_activity_ids = [a.get("id") for p in phases for a in p.get("activities",[]) if a.get("id")]
+    attendance = {"total_phases": total, "attended": done, "rate": overall}
+    activities = {"total_activities": len(all_activity_ids), "completed": done, "ids": all_activity_ids}
+    assessments = {"surveys": db.query(ProgramSurvey).filter(ProgramSurvey.program_id==pid).count()}
+    missed_tasks = [p.get("id") for p in phases if p.get("id") not in checkin_phases]
+    # certificate when complete
+    certificate_url = f"/api/v1/programs/{pid}/certificate?participant_email={participant_email}" if overall==100 and total>0 and participant_email else None
+    return {"overall": overall, "stage": stage, "milestone": milestone, "milestones_achieved": done==total and total>0, "attendance": attendance, "activities": activities, "assessments": assessments, "missed_tasks": missed_tasks, "certificate_url": certificate_url}
 
 def get_participant_dashboard_service(db, pid, participant_email: str | None = None):
     prog=_get_program_or_404(db, pid)
@@ -130,7 +138,7 @@ def get_participant_dashboard_service(db, pid, participant_email: str | None = N
     recent=db.query(ProgramCheckin).filter(ProgramCheckin.program_id==pid)
     if participant_email: recent=recent.filter(ProgramCheckin.participant_email==participant_email)
     recent=recent.order_by(ProgramCheckin.created_at.desc()).limit(5).all()
-    return {"program_id": str(pid), "enrolment_status": enrol.status if enrol else "not_enrolled", "phases": phases, "recent_activities": [{"phase_id": r.phase_id, "created_at": r.created_at.isoformat()} for r in recent], "overall_progress": prog_data["overall"], "certificate_url": None}
+    return {"program_id": str(pid), "enrolment_status": enrol.status if enrol else "not_enrolled", "phases": phases, "recent_activities": [{"phase_id": r.phase_id, "created_at": r.created_at.isoformat()} for r in recent], "overall_progress": prog_data["overall"], "stage": prog_data["stage"], "milestone": prog_data["milestone"], "attendance": prog_data["attendance"], "activities": prog_data["activities"], "assessments": prog_data["assessments"], "missed_tasks": prog_data["missed_tasks"], "certificate_url": prog_data["certificate_url"], "goals": prog.goals or {}, "surveys_pending": prog_data["assessments"]["surveys"]}
 
 def get_provider_dashboard_service(db, pid):
     prog=_get_program_or_404(db, pid)
@@ -205,6 +213,33 @@ def get_program_reports_service(db, pid, report_type: str = "enrolment"):
     else:
         data={}
     return {"program_id": str(pid), "type": report_type, "data": data}
+
+def update_enrolment_status_service(db, pid, enrol_id, new_status: str):
+    from app.models.program_model import ProgramEnrolment
+    _get_program_or_404(db, pid)
+    allowed = ["completed","withdrawn","cancelled","extended","enrolled","active"]
+    if new_status not in allowed:
+        raise HTTPException(400, f"Invalid status. Allowed: {allowed}")
+    row = db.query(ProgramEnrolment).filter(ProgramEnrolment.id==enrol_id, ProgramEnrolment.program_id==pid).first()
+    if not row: raise HTTPException(404, "Enrolment not found")
+    row.status=new_status; db.commit(); db.refresh(row)
+    return {"id": str(row.id), "program_id": str(row.program_id), "status": row.status, "participant_email": row.participant_email}
+
+def update_program_goals_service(db, pid, goals: dict):
+    prog=_get_program_or_404(db, pid)
+    prog.goals = goals or {}
+    db.commit(); db.refresh(prog)
+    return {"program_id": str(pid), "goals": prog.goals}
+
+def get_program_certificate_service(db, pid, participant_email: str):
+    prog=_get_program_or_404(db, pid)
+    from app.models.program_model import ProgramEnrolment
+    enrol=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid, ProgramEnrolment.participant_email==participant_email).first()
+    if not enrol: raise HTTPException(404, "Not enrolled")
+    progress=get_program_progress_service(db, pid, participant_email)
+    if progress["overall"] < 100:
+        raise HTTPException(400, f"Program not completed ({progress['overall']}%). Certificate only on 100%")
+    return {"program_id": str(pid), "participant_email": participant_email, "certificate_url": progress["certificate_url"], "overall": progress["overall"], "issued_at": prog.updated_at.isoformat() if prog.updated_at else None, "provider_acknowledgement": f"Acknowledged by provider {prog.provider_id}" if prog.provider_id else "Provider acknowledgement pending"}
 
 def get_program_summary_service(db, enterprise_id=None):
     from sqlalchemy import func

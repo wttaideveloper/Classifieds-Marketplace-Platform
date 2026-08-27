@@ -168,6 +168,18 @@ def dash_participant(program_id: UUID, participant_email: str | None = Query(Non
 @router.get("/{program_id}/dashboards/provider")
 def dash_provider(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return get_provider_dashboard_service(db, program_id)
+@router.put("/{program_id}/goals", summary="Goal & outcome — configurable fields")
+def update_goals(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.program_service import update_program_goals_service
+    return update_program_goals_service(db, program_id, payload.get("goals") or payload)
+@router.get("/{program_id}/certificate", summary="Completion certificate / provider acknowledgement")
+def get_certificate(program_id: UUID, participant_email: str = Query(...), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.program_service import get_program_certificate_service
+    return get_program_certificate_service(db, program_id, participant_email)
+@router.patch("/{program_id}/enrolments/{enrol_id}/status", summary="Completion/withdrawal/cancellation/extension")
+def update_enrol_status(program_id: UUID, enrol_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.program_service import update_enrolment_status_service
+    return update_enrolment_status_service(db, program_id, enrol_id, payload.get("status") or payload.get("new_status") or "completed")
 @router.post("/{program_id}/surveys", status_code=201)
 def create_survey(program_id: UUID, payload: SurveyCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_survey_service(db, program_id, payload)
