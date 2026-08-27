@@ -12,6 +12,7 @@ EventStatus = Literal[
     "cancelled",
     "completed",
     "suspended",
+    "archived",
     "active",
     "inactive",
 ]
