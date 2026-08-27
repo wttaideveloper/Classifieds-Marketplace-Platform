@@ -41,6 +41,8 @@ class Training(Base):
     currency = Column(String(3), default="INR")
     promo_price = Column(String(50))
     coupon_code = Column(String(50))
+    requires_approval = Column(Boolean, default=False)
+    access_duration_days = Column(String(20))  # e.g. "30" days expiry
 
     # JSONB builders
     sections = Column(JSONB, default=list)  # [{id, title, order, lessons:[]}]
@@ -68,7 +70,9 @@ class TrainingEnrolment(Base):
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False, index=True)
     group_enrol = Column(Boolean, default=False)
-    status = Column(String(20), default="enrolled")  # enrolled|cancelled|waitlisted
+    status = Column(String(20), default="enrolled")  # enrolled|pending_approval|cancelled|waitlisted|expired
+    coupon_code = Column(String(50))
+    access_expires_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -124,6 +128,22 @@ class TrainingProgress(Base):
     last_accessed_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (Index("ix_training_progress_training_email", "training_id", "participant_email", unique=True),)
+
+
+class TrainingOrder(Base):
+    __tablename__ = "training_orders"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    participant_name = Column(String(255), nullable=False)
+    participant_email = Column(String(255), nullable=False, index=True)
+    quantity = Column(String(20), default="1")
+    amount = Column(String(50))
+    currency = Column(String(10), default="INR")
+    payment_status = Column(String(20), default="confirmed", index=True)
+    status = Column(String(20), default="confirmed", index=True)
+    coupon_code = Column(String(50))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class TrainingLiveSession(Base):

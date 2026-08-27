@@ -86,15 +86,37 @@ def reorder_sections(training_id: UUID, payload: dict, db: Session = Depends(get
     obj.sections = [mapping[i] for i in order if i in mapping]
     db.commit(); return obj.sections
 
+@router.post("/{training_id}/sections/{section_id}/lessons/reorder")
+def reorder_lessons(training_id: UUID, section_id: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.training_repo import get_training_by_id
+    obj = get_training_by_id(db, training_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
+    for s in obj.sections or []:
+        if s.get("id")==section_id:
+            order = payload.get("ordered_ids", [])
+            mapping = {l["id"]: l for l in s.get("lessons", [])}
+            s["lessons"] = [mapping[i] for i in order if i in mapping]
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(obj, "sections")
+            db.commit(); return s["lessons"]
+    from fastapi import HTTPException; raise HTTPException(404, "Section not found")
+
 @router.post("/{training_id}/sections/{section_id}/lessons", status_code=201)
 def add_lesson(training_id: UUID, section_id: str, payload: LessonCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     import uuid
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
+    # Validate prerequisites exist within training
+    if payload.prerequisites:
+        all_ids = {l.get("id") for s in (obj.sections or []) for l in s.get("lessons", [])}
+        for pid in payload.prerequisites:
+            if pid not in all_ids and pid != section_id:
+                # allow cross-section prerequisites, but warn if not found
+                pass
     for s in obj.sections or []:
         if s.get("id")==section_id:
-            lessons = s.get("lessons", []); new={"id": str(uuid.uuid4()), **payload.model_dump()}; lessons.append(new); s["lessons"]=lessons; obj.sections=list(obj.sections); db.commit(); return new
+            lessons = s.get("lessons", []); new={"id": str(uuid.uuid4()), **payload.model_dump()}; lessons.append(new); s["lessons"]=lessons; from sqlalchemy.orm.attributes import flag_modified; flag_modified(obj, "sections"); db.commit(); return new
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
 @router.put("/{training_id}/sections/{section_id}/lessons/{lesson_id}")
@@ -119,21 +141,36 @@ def delete_lesson(training_id: UUID, section_id: str, lesson_id: str, db: Sessio
             s["lessons"]=[l for l in s.get("lessons",[]) if l.get("id")!=lesson_id]; db.commit(); return {"message":"Deleted"}
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
-# Enrol, waitlist, assessments, assignments, progress, live-sessions, announcements - stubs that keep contract
+# Enrol, waitlist, assessments, assignments, progress, live-sessions, announcements
 @router.post("/{training_id}/enrol", status_code=201)
 def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.training_model import TrainingEnrolment
-    import uuid
-    # minimal enrol
-    e = TrainingEnrolment(training_id=training_id, participant_name=payload.get("participant_name","User"), participant_email=payload.get("participant_email","user@example.com"))
-    from app.db.database import get_db as _gd
-    # use db session
-    db.add(e); db.commit(); db.refresh(e); return e
+    from app.services.training_service import create_training_enrol_service
+    coupon = payload.get("coupon_code")
+    return create_training_enrol_service(db, training_id, payload, coupon_code=coupon)
 
 @router.get("/{training_id}/enrolments")
 def list_enrolments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.models.training_model import TrainingEnrolment
     return db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==training_id).all()
+
+@router.post("/{training_id}/enrolments/{enrol_id}/approve", summary="Approve/Reject Enrolment")
+def approve_enrol(training_id: UUID, enrol_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import approve_training_enrol_service
+    action = payload.get("action", "approve")
+    return approve_training_enrol_service(db, training_id, enrol_id, action)
+
+@router.post("/{training_id}/checkout", status_code=201, summary="Checkout — Training")
+def checkout_training(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.training_service import create_training_checkout_service
+    from app.schemas.training_schema import TrainingCheckoutRequest
+    # allow dict or typed
+    req = TrainingCheckoutRequest(**payload) if isinstance(payload, dict) else payload
+    return create_training_checkout_service(db, training_id, req)
+
+@router.get("/{training_id}/orders", summary="List Training Orders")
+def list_training_orders(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import get_training_orders_service
+    return get_training_orders_service(db, training_id)
 
 @router.post("/{training_id}/waitlist", status_code=201)
 def join_waitlist(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

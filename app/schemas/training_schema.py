@@ -35,6 +35,9 @@ class TrainingCreate(BaseModel):
     price: str | None = None
     currency: str | None = "INR"
     promo_price: str | None = None
+    coupon_code: str | None = None
+    requires_approval: bool = Field(False, description="Provider must approve enrolment")
+    access_duration_days: str | None = Field(None, description="Access expiry days, e.g. 30")
     status: TrainingStatus = Field("draft")
 
     def to_model_data(self) -> dict:
@@ -64,6 +67,9 @@ class TrainingCreate(BaseModel):
             "price": self.price,
             "currency": self.currency,
             "promo_price": self.promo_price,
+            "coupon_code": self.coupon_code,
+            "requires_approval": self.requires_approval,
+            "access_duration_days": self.access_duration_days,
             "status": self.status,
         }
 
@@ -91,6 +97,9 @@ class TrainingUpdate(BaseModel):
     price: str | None = None
     currency: str | None = None
     promo_price: str | None = None
+    coupon_code: str | None = None
+    requires_approval: bool | None = None
+    access_duration_days: str | None = None
     status: TrainingStatus | None = None
 
     def to_model_data(self) -> dict:
@@ -222,6 +231,9 @@ class TrainingProgressResponse(BaseModel):
     certificate_url: str | None = None
     sections_detail: list[TrainingProgressSection]
     lessons_detail: list[TrainingProgressLesson]
+    expired: bool = False
+    status: str = Field("active", description="active|expired")
+    access_expires_at: str | None = None
 
 
 class TrainingLiveSessionCreate(BaseModel):
@@ -257,3 +269,30 @@ class AnnouncementResponse(BaseModel):
     message: str
     sent_at: str
     channel: str
+
+
+class TrainingCheckoutRequest(BaseModel):
+    participant_name: str
+    participant_email: str
+    quantity: int = Field(1, ge=1)
+    coupon_code: str | None = None
+    payment_provider: str | None = Field("marketplace", description="marketplace|merchant")
+
+
+class TrainingOrderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    training_id: UUID
+    participant_name: str
+    participant_email: str
+    quantity: str
+    amount: str | None = None
+    currency: str | None = None
+    payment_status: str
+    status: str
+    created_at: datetime | None = None
+
+
+class EnrolApprovalRequest(BaseModel):
+    action: str = Field(..., description="approve|reject")
+    reason: str | None = None
