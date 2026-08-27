@@ -140,12 +140,41 @@ def my_enrolments(status: str | None = Query(None, description="enrolled|complet
     rows = q.order_by(ProgramEnrolment.created_at.desc()).all()
     return [{"program_id": str(r.program_id), "status": r.status, "enrolment_id": str(r.id), "created_at": r.created_at.isoformat()} for r in rows]
 
-@router.post("/{program_id}/enrol", status_code=201)
+@router.post("/{program_id}/enrol", status_code=201, summary="Enrol — fixed-date & enrol-anytime, free/paid, capacity/waitlist")
 def enrol(program_id: UUID, payload: EnrolmentCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     return enrol_program_service(db, program_id, payload)
 @router.get("/{program_id}/enrolments")
 def list_enrolments(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return list_enrolments_service(db, program_id)
+@router.post("/{program_id}/waitlist", status_code=201, summary="Join waitlist when capacity reached")
+def join_waitlist(program_id: UUID, payload: EnrolmentCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.models.program_model import ProgramEnrolment
+    from app.repository.program_repo import get_program_by_id
+    from fastapi import HTTPException
+    prog=get_program_by_id(db, program_id)
+    if not prog: raise HTTPException(404, "Program not found")
+    exists=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.participant_email==payload.participant_email).first()
+    if exists: raise HTTPException(400, "Already enrolled/waitlisted")
+    e=ProgramEnrolment(program_id=program_id, participant_name=payload.participant_name, participant_email=payload.participant_email, status="waitlisted")
+    db.add(e); db.commit(); db.refresh(e)
+    return {"id": str(e.id), "program_id": str(e.program_id), "status": e.status, "available_seats": 0}
+@router.get("/{program_id}/waitlist", summary="List waitlist")
+def list_waitlist(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.models.program_model import ProgramEnrolment
+    rows=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.status=="waitlisted").all()
+    return [{"id": str(r.id), "participant_name": r.participant_name, "participant_email": r.participant_email, "created_at": r.created_at.isoformat()} for r in rows]
+@router.get("/{program_id}/availability", summary="Available seats & waitlist")
+def availability(program_id: UUID, db: Session=Depends(get_db)):
+    from app.models.program_model import ProgramEnrolment
+    from app.repository.program_repo import get_program_by_id
+    from fastapi import HTTPException
+    prog=get_program_by_id(db, program_id)
+    if not prog: raise HTTPException(404, "Program not found")
+    total=int(prog.capacity) if prog.capacity and str(prog.capacity).isdigit() else None
+    enrolled=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.status.in_(["enrolled","active","completed"])).count()
+    waitlisted=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.status=="waitlisted").count()
+    available=(total - enrolled) if total is not None else None
+    return {"program_id": str(program_id), "capacity": total, "enrolled": enrolled, "available_seats": available, "is_full": (available==0 if available is not None else False), "waitlist_count": waitlisted, "enrol_type": prog.enrol_type, "delivery_mode": prog.delivery_mode, "is_free": not prog.price or prog.price=="0"}
 
 @router.get("/{program_id}/content", summary="Secure enrolled content — phases/files gated")
 def secure_content(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):

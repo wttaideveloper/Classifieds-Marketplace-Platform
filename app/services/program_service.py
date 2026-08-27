@@ -63,23 +63,34 @@ def _get_program_or_404(db, pid):
 
 def enrol_program_service(db, pid, data):
     from app.models.program_model import ProgramEnrolment
+    from datetime import datetime
     prog=_get_program_or_404(db, pid)
+    # enrol window: fixed-date vs enrol_anytime
+    now=datetime.utcnow()
+    if prog.enrol_type != "enrol_anytime":
+        if prog.enrolment_start and now < prog.enrolment_start:
+            raise HTTPException(400, f"Enrolment not yet open (opens {prog.enrolment_start})")
+        if prog.enrolment_end and now > prog.enrolment_end:
+            raise HTTPException(400, f"Enrolment closed (closed {prog.enrolment_end})")
     # duplicate check
     exists=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid, ProgramEnrolment.participant_email==data.participant_email).first()
     if exists:
         raise HTTPException(status_code=400, detail="Already enrolled")
-    # capacity check
+    # capacity / available_seats / waitlist
     if prog.capacity:
         try:
             cap=int(prog.capacity)
-            cnt=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).count()
-            if cnt >= cap:
-                raise HTTPException(status_code=400, detail=f"Program at capacity ({cap})")
+            cnt=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid, ProgramEnrolment.status.in_(["enrolled","active","completed"])).count()
+            available=cap - cnt
+            if available <= 0:
+                # auto waitlist when capacity reached
+                raise HTTPException(status_code=400, detail=f"Program at capacity ({cap}). Only {available} seats left. Please join waitlist via POST /{{id}}/waitlist")
         except ValueError:
             pass
-    e=ProgramEnrolment(program_id=pid, participant_name=data.participant_name, participant_email=data.participant_email)
+    # free vs paid — price empty = free instant enrol
+    e=ProgramEnrolment(program_id=pid, participant_name=data.participant_name, participant_email=data.participant_email, status="enrolled")
     db.add(e); db.commit(); db.refresh(e)
-    return {"id": str(e.id), "program_id": str(e.program_id), "participant_name": e.participant_name, "participant_email": e.participant_email, "status": e.status, "created_at": e.created_at.isoformat()}
+    return {"id": str(e.id), "program_id": str(e.program_id), "participant_name": e.participant_name, "participant_email": e.participant_email, "status": e.status, "enrol_type": prog.enrol_type, "delivery_mode": prog.delivery_mode, "available_seats": (int(prog.capacity)-db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).count() if prog.capacity else None), "created_at": e.created_at.isoformat()}
 
 def list_enrolments_service(db, pid):
     from app.models.program_model import ProgramEnrolment
