@@ -52,6 +52,17 @@ def duplicate_training_service(db: Session, tid: UUID):
 def update_training_status_service(db: Session, tid: UUID, st: str):
     obj = get_training_by_id(db, tid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(status_code=404, detail="Training not found")
+    VALID = {
+        "draft": ["pending_approval", "cancelled"],
+        "pending_approval": ["approved", "cancelled"],
+        "approved": ["published", "cancelled"],
+        "published": ["cancelled", "completed", "suspended", "archived"],
+        "suspended": ["published", "cancelled"],
+        "completed": [], "cancelled": ["draft"], "archived": ["draft"],
+    }
+    allowed = VALID.get(obj.status, [])
+    if allowed and st not in allowed:
+        raise HTTPException(status_code=400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
     obj.status=st; db.commit(); db.refresh(obj); return TrainingResponse.model_validate(map_training_write(obj))
 
 # ---- Assessment / Assignment / Progress / LiveSession services (real implementations) ----

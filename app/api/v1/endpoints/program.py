@@ -21,7 +21,10 @@ def delete_program(program_id: UUID=Path(...), db: Session=Depends(get_db), curr
 @router.post("/{program_id}/duplicate", response_model=ProgramResponse, status_code=201)
 def duplicate(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return duplicate_program_service(db, program_id)
 @router.patch("/{program_id}/status", response_model=ProgramResponse)
-def update_status(program_id: UUID, payload: ProgramStatusUpdate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return update_program_status_service(db, program_id, payload.status)
+def update_status(program_id: UUID, payload: ProgramStatusUpdate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    if payload.status in ["approved", "published", "completed", "archived", "suspended"] and current_user.get("role") != "admin":
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Only admin can set status to approved/published/completed/archived/suspended")
+    return update_program_status_service(db, program_id, payload.status)
 # Phases / Activities (P6)
 @router.get("/{program_id}/phases")
 def list_phases(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):

@@ -41,6 +41,17 @@ def duplicate_program_service(db, pid):
 def update_program_status_service(db, pid, st):
     obj=get_program_by_id(db, pid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(404, "Program not found")
+    VALID = {
+        "draft": ["pending_approval", "cancelled"],
+        "pending_approval": ["approved", "cancelled"],
+        "approved": ["published", "cancelled"],
+        "published": ["cancelled", "completed", "suspended", "archived"],
+        "suspended": ["published", "cancelled"],
+        "completed": [], "cancelled": ["draft"], "archived": ["draft"],
+    }
+    allowed = VALID.get(obj.status, [])
+    if allowed and st not in allowed:
+        raise HTTPException(400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
     obj.status=st; db.commit(); db.refresh(obj); return ProgramResponse.model_validate(map_program_write(obj))
 
 def _get_program_or_404(db, pid):
