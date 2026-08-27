@@ -100,6 +100,7 @@ _safe_include(
 _safe_include("app.api.v1.endpoints.presence", prefix="/presence", tags=["Presence"])
 _safe_include("app.api.v1.endpoints.socket_io", prefix="/socket-io", tags=["Socket.IO"])
 _safe_include("app.api.v1.endpoints.chat_admin", prefix="/admin/chat", tags=["Chat Administration"])
+_safe_include("app.api.v1.endpoints.admin", prefix="/admin", tags=["Admin — Approvals"])
 
 # Cart + Orders (full cart: add multiple → view → checkout together)
 _safe_include("app.api.v1.endpoints.cart", prefix="/cart", tags=["Cart"])

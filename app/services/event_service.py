@@ -168,9 +168,16 @@ def update_event_status_service(db: Session, event_id: UUID, status: str):
             detail=f"Cannot transition from '{current_status}' to '{status}'. Allowed: {allowed_next}"
         )
 
+    previous = event.status
     event.status = status
     db.commit()
     db.refresh(event)
+    if status == "cancelled":
+        try:
+            from app.services.notification_triggers import notify_event_cancelled
+            notify_event_cancelled(db, event, previous)
+        except Exception:
+            pass
     return EventResponse.model_validate(map_event_write(event))
 
 
@@ -218,6 +225,12 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     db.add(reg)
     db.commit()
     db.refresh(reg)
+    # best-effort confirmation notification (in_app, sync, no celery)
+    try:
+        from app.services.notification_triggers import notify_registration_confirmation
+        notify_registration_confirmation(db, event, reg)
+    except Exception:
+        pass
     return reg
 
 

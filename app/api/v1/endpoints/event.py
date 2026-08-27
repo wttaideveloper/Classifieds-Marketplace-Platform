@@ -112,6 +112,10 @@ def duplicate_event(event_id: UUID = Path(..., description="Event ID"), db: Sess
 
 @router.patch("/{event_id}/status", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event Status")
 def update_status(event_id: UUID, payload: EventStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    # Harden: only admin can approve/publish/complete/suspend
+    if payload.status in ["approved", "published", "completed", "suspended"] and current_user.get("role") != "admin":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Only admin can set status to approved/published/completed/suspended. Use pending_approval to submit for review.")
     return update_event_status_service(db, event_id, payload.status)
 
 
@@ -122,6 +126,9 @@ def unpublish_event(event_id: UUID, db: Session = Depends(get_db), current_user:
 
 @router.post("/{event_id}/archive", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Archive Event")
 def archive_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    if current_user.get("role") != "admin":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Only admin can archive/complete events")
     return update_event_status_service(db, event_id, "completed")
 
 
@@ -148,6 +155,14 @@ def cancel_registration(event_id: UUID, reg_id: UUID, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="Registration not found")
     reg.status = "cancelled"
     db.commit()
+    try:
+        from app.models.event_model import Event
+        from app.services.notification_triggers import notify_single_cancellation
+        ev = db.query(Event).filter(Event.id == event_id).first()
+        if ev:
+            notify_single_cancellation(db, ev, reg)
+    except Exception:
+        pass
     return {"message": "Registration cancelled"}
 
 
