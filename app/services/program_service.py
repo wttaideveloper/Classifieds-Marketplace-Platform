@@ -44,10 +44,10 @@ def update_program_status_service(db, pid, st):
     obj=get_program_by_id(db, pid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(404, "Program not found")
     VALID = {
-        "draft": ["pending_approval", "cancelled", "archived"],
         "pending_approval": ["approved", "cancelled"],
-        "approved": ["published", "cancelled", "archived"],
-        "published": ["cancelled", "completed", "suspended"],
+        "approved": ["draft", "cancelled", "archived"],
+        "draft": ["published", "pending_approval", "cancelled", "archived"],
+        "published": ["completed", "cancelled", "suspended", "approved"],
         "suspended": ["published", "cancelled", "archived"],
         "completed": ["archived"], "cancelled": ["draft", "archived"], "archived": [],
     }

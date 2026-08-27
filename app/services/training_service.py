@@ -55,10 +55,10 @@ def update_training_status_service(db: Session, tid: UUID, st: str):
     obj = get_training_by_id(db, tid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(status_code=404, detail="Training not found")
     VALID = {
-        "draft": ["pending_approval", "cancelled", "archived"],
         "pending_approval": ["approved", "cancelled"],
-        "approved": ["published", "cancelled", "archived"],
-        "published": ["cancelled", "completed", "suspended"],
+        "approved": ["draft", "cancelled", "archived"],
+        "draft": ["published", "pending_approval", "cancelled", "archived"],
+        "published": ["completed", "cancelled", "suspended", "approved"],
         "suspended": ["published", "cancelled", "archived"],
         "completed": ["archived"], "cancelled": ["draft", "archived"], "archived": [],
     }
