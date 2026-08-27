@@ -39,9 +39,9 @@ def duplicate(training_id: UUID = Path(...), db: Session = Depends(get_db), curr
 
 @router.patch("/{training_id}/status", response_model=TrainingResponse)
 def update_status(training_id: UUID, payload: TrainingStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    if payload.status in ["approved", "published", "completed", "archived", "suspended"] and current_user.get("role") != "admin":
+    if payload.status == "approved" and current_user.get("role") != "admin":
         from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Only admin can set status to approved/published/completed/archived/suspended")
+        raise HTTPException(status_code=403, detail="Only admin can approve")
     return update_training_status_service(db, training_id, payload.status)
 
 
@@ -52,9 +52,6 @@ def unpublish_training(training_id: UUID, db: Session = Depends(get_db), current
 
 @router.post("/{training_id}/archive", response_model=TrainingResponse, status_code=200)
 def archive_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    if current_user.get("role") != "admin":
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Only admin can archive")
     return update_training_status_service(db, training_id, "archived")
 
 # Builder - sections / lessons (T7) - stored as JSONB on training
