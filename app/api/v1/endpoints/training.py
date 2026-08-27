@@ -80,8 +80,18 @@ def update_section(training_id: UUID, section_id: str, payload: SectionCreate, d
             s.update(payload.model_dump(exclude_unset=True)); db.commit(); return s
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
-@router.post("/{training_id}/sections/reorder")
+@router.post("/{training_id}/sections/reorder", summary="Reorder sections/modules")
 def reorder_sections(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.training_repo import get_training_by_id
+    obj = get_training_by_id(db, training_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
+    order = payload.get("ordered_ids", [])
+    mapping = {s["id"]: s for s in (obj.sections or [])}
+    obj.sections = [mapping[i] for i in order if i in mapping]
+    db.commit(); return obj.sections
+
+@router.post("/{training_id}/modules/reorder", summary="Reorder modules (alias)")
+def reorder_modules(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")

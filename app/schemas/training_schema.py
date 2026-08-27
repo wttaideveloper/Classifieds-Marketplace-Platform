@@ -151,23 +151,25 @@ class TrainingStatusUpdate(BaseModel):
 
 class SectionCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
-    title: str
+    title: str = Field(..., description="Section/Module title")
+    type: str = Field("section", description="section|module")
     order: int | None = 0
     instructor_id: UUID | None = Field(None, description="Section instructor allocation")
     schedule: dict | None = Field(None, description="Schedule/agenda for section")
 
 class LessonCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
-    type: str = Field("text", description="text|video|audio|webpage|pdf|live")
+    type: str = Field("text", description="text|video|audio|webpage|pdf|live|presentation|worksheet|document")
     title: str
     content_url: str | None = None
+    topics: list | None = Field(None, description="Topics within lesson: [{title, content_url}]")
     duration: int | None = None
-    is_preview: bool | None = False
-    is_draft: bool | None = False
+    is_preview: bool | None = Field(False, description="Preview allowed without enrolment")
+    is_draft: bool | None = Field(False, description="Draft mode — hidden until published")
     is_mandatory: bool | None = Field(False, description="Mandatory lesson")
     completion_rule: str | None = Field(None, description="Completion rule, e.g. mandatory")
-    prerequisites: list | None = None
-    release_rule: dict | None = None
+    prerequisites: list | None = Field(None, description="Lesson IDs that must be completed first — sequential learning")
+    release_rule: dict | None = Field(None, description="Release: {mode: 'date'|'enrolment_day'|'previous_lesson', date: '2026-01-01', days: 2, lesson_id: '...'}")
     instructor_id: UUID | None = Field(None, description="Lesson instructor allocation")
 
 
