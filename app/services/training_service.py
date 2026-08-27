@@ -55,12 +55,12 @@ def update_training_status_service(db: Session, tid: UUID, st: str):
     obj = get_training_by_id(db, tid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(status_code=404, detail="Training not found")
     VALID = {
+        "draft": ["pending_approval", "cancelled"],
         "pending_approval": ["approved", "cancelled"],
-        "approved": ["draft", "cancelled", "archived"],
-        "draft": ["published", "pending_approval", "cancelled", "archived"],
-        "published": ["completed", "cancelled", "suspended", "approved"],
-        "suspended": ["published", "cancelled", "archived"],
-        "completed": ["archived"], "cancelled": ["draft", "archived"], "archived": [],
+        "approved": ["published", "cancelled"],
+        "published": ["cancelled", "completed", "suspended", "archived"],
+        "suspended": ["published", "cancelled"],
+        "completed": [], "cancelled": ["draft"], "archived": ["draft"],
     }
     allowed = VALID.get(obj.status, [])
     if allowed and st not in allowed:
@@ -94,8 +94,6 @@ def add_assessment_question_service(db: Session, tid: UUID, aid: str, data):
 def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, participant_email: str = "user@example.com"):
     import uuid as _uuid
     from app.models.training_model import TrainingAssessmentSubmission
-    if _check_access_expiry(db, tid, participant_email):
-        raise HTTPException(status_code=403, detail="Access expired")
     t = _get_training_or_404(db, tid)
     assessments = t.assessments or []
     target = next((a for a in assessments if str(a.get("id")) == str(aid)), None)
@@ -137,8 +135,6 @@ def create_assignment_service(db: Session, tid: UUID, data):
 def submit_assignment_service(db: Session, tid: UUID, aid: str, payload, participant_email: str = "user@example.com"):
     import uuid as _uuid
     from app.models.training_model import TrainingAssignmentSubmission
-    if _check_access_expiry(db, tid, participant_email):
-        raise HTTPException(status_code=403, detail="Access expired")
     t = _get_training_or_404(db, tid)
     assignments = t.assignments or []
     target = next((a for a in assignments if str(a.get("id")) == str(aid)), None)
@@ -150,22 +146,12 @@ def submit_assignment_service(db: Session, tid: UUID, aid: str, payload, partici
     db.add(sub); db.commit(); db.refresh(sub)
     return {"id": str(sub.id), "submitted_at": sub.submitted_at.isoformat(), "grade": None, "feedback": None, "assignment_id": str(aid)}
 
-def _check_access_expiry(db: Session, tid: UUID, participant_email: str | None):
-    if not participant_email:
-        return None
-    from app.models.training_model import TrainingEnrolment
-    enrol = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==tid, TrainingEnrolment.participant_email==participant_email).first()
-    if enrol and getattr(enrol, "access_expires_at", None):
-        from datetime import datetime
-        if datetime.utcnow() > enrol.access_expires_at:
-            return enrol.access_expires_at
-    return None
-
 def get_training_progress_service(db: Session, tid: UUID, participant_email: str | None = None):
     t = _get_training_or_404(db, tid)
     sections = t.sections or []
     total_sections = len(sections)
     total_lessons = sum(len(s.get("lessons", [])) for s in sections)
+    # try to load progress row
     completed_sections = []
     completed_lessons = []
     certificate_url = None
@@ -176,18 +162,17 @@ def get_training_progress_service(db: Session, tid: UUID, participant_email: str
             completed_sections = prog.sections_completed or []
             completed_lessons = prog.lessons_completed or []
             certificate_url = prog.certificate_url
+    # if no progress row, estimate 0
     sections_done = len(completed_sections)
     lessons_done = len(completed_lessons)
     overall = round((lessons_done / total_lessons * 100) if total_lessons else (sections_done / total_sections * 100 if total_sections else 0), 2)
+    # Build detail
     sections_detail = [{"section_id": s.get("id"), "section_title": s.get("title"), "lessons_done": sum(1 for l in s.get("lessons", []) if l.get("id") in completed_lessons), "total_lessons": len(s.get("lessons", []))} for s in sections]
     lessons_detail = []
     for s in sections:
         for l in s.get("lessons", []):
             lessons_detail.append({"lesson_id": l.get("id"), "lesson_title": l.get("title"), "is_completed": l.get("id") in completed_lessons})
-    # access expiry enforcement
-    expires_at = _check_access_expiry(db, tid, participant_email)
-    expired = expires_at is not None
-    return {"overall_percent": overall, "sections_done": sections_done, "total_sections": total_sections, "lessons_done": lessons_done, "total_lessons": total_lessons, "certificate_url": certificate_url, "sections_detail": sections_detail, "lessons_detail": lessons_detail, "expired": expired, "status": "expired" if expired else "active", "access_expires_at": expires_at.isoformat() if expires_at else None}
+    return {"overall_percent": overall, "sections_done": sections_done, "total_sections": total_sections, "lessons_done": lessons_done, "total_lessons": total_lessons, "certificate_url": certificate_url, "sections_detail": sections_detail, "lessons_detail": lessons_detail}
 
 def create_live_session_service(db: Session, tid: UUID, data):
     from app.models.training_model import TrainingLiveSession
@@ -204,86 +189,6 @@ def get_live_sessions_service(db: Session, tid: UUID):
 
 def create_training_announcement_service(db: Session, tid: UUID, data, current_user: dict | None = None):
     _get_training_or_404(db, tid)
+    # For now persist as simple dict return; could add table later
     import uuid as _uuid, datetime
     return {"id": str(_uuid.uuid4()), "training_id": str(tid), "title": data.title, "message": data.message, "sent_at": datetime.datetime.utcnow().isoformat(), "channel": data.channel}
-
-def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_code: str | None = None):
-    from app.models.training_model import TrainingEnrolment
-    from datetime import datetime, timedelta
-    t = _get_training_or_404(db, tid)
-    # coupon validation
-    if coupon_code and t.coupon_code and coupon_code != t.coupon_code:
-        raise HTTPException(status_code=400, detail="Invalid coupon code")
-    # if promo price exists and coupon not needed, keep
-    # capacity
-    if t.capacity:
-        try:
-            cap = int(t.capacity)
-            cnt = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==tid, TrainingEnrolment.status.in_(["enrolled","pending_approval"])).count()
-            if cnt >= cap:
-                raise HTTPException(status_code=400, detail=f"Training at capacity ({cap})")
-        except ValueError:
-            pass
-    # determine status
-    status = "pending_approval" if getattr(t, "requires_approval", False) else "enrolled"
-    # access expiry
-    expires = None
-    if getattr(t, "access_duration_days", None):
-        try:
-            days = int(t.access_duration_days)
-            expires = datetime.utcnow() + timedelta(days=days)
-        except Exception:
-            pass
-    e = TrainingEnrolment(training_id=tid, participant_name=payload.get("participant_name","User"), participant_email=payload.get("participant_email","user@example.com"), group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires)
-    db.add(e); db.commit(); db.refresh(e)
-    return e
-
-def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, action: str):
-    from app.models.training_model import TrainingEnrolment
-    e = db.query(TrainingEnrolment).filter(TrainingEnrolment.id==enrol_id, TrainingEnrolment.training_id==tid).first()
-    if not e:
-        raise HTTPException(status_code=404, detail="Enrolment not found")
-    if action == "approve":
-        e.status = "enrolled"
-    elif action == "reject":
-        e.status = "cancelled"
-    else:
-        raise HTTPException(status_code=400, detail="action must be approve|reject")
-    db.commit(); db.refresh(e)
-    return e
-
-def create_training_checkout_service(db: Session, tid: UUID, payload):
-    from app.models.training_model import TrainingOrder, TrainingEnrolment
-    t = _get_training_or_404(db, tid)
-    # coupon check
-    coupon = getattr(payload, "coupon_code", None) or payload.get("coupon_code") if isinstance(payload, dict) else None
-    if coupon and t.coupon_code and coupon != t.coupon_code:
-        raise HTTPException(status_code=400, detail="Invalid coupon code")
-    # price - use promo_price if coupon valid
-    price = t.promo_price if (coupon and t.promo_price) else t.price or "0"
-    try:
-        total = float(price or "0") * int(getattr(payload, "quantity", 1) or 1)
-        amount = str(total)
-    except Exception:
-        amount = str(price)
-    currency = t.currency or "INR"
-    order = TrainingOrder(training_id=tid, participant_name=payload.participant_name if hasattr(payload, "participant_name") else payload.get("participant_name"), participant_email=payload.participant_email if hasattr(payload, "participant_email") else payload.get("participant_email"), quantity=str(getattr(payload, "quantity", 1)), amount=amount, currency=currency, payment_status="confirmed", status="confirmed", coupon_code=coupon)
-    db.add(order); db.commit(); db.refresh(order)
-    # also create enrolment if not exists
-    try:
-        enrol = TrainingEnrolment(training_id=tid, participant_name=order.participant_name, participant_email=order.participant_email, status="pending_approval" if getattr(t, "requires_approval", False) else "enrolled", coupon_code=coupon)
-        # access expiry
-        if getattr(t, "access_duration_days", None):
-            from datetime import datetime, timedelta
-            try:
-                enrol.access_expires_at = datetime.utcnow() + timedelta(days=int(t.access_duration_days))
-            except: pass
-        db.add(enrol); db.commit()
-    except Exception:
-        pass
-    return order
-
-def get_training_orders_service(db: Session, tid: UUID):
-    from app.models.training_model import TrainingOrder
-    _get_training_or_404(db, tid)
-    return db.query(TrainingOrder).filter(TrainingOrder.training_id==tid).order_by(TrainingOrder.created_at.desc()).all()

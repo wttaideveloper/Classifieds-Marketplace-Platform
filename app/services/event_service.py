@@ -242,16 +242,15 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str):
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
-    # Lifecycle as per spec: pending_approval -> approved -> draft -> published -> completed -> archived
+    # State machine: define valid transitions (unpublish = published/approved -> draft)
     VALID_TRANSITIONS = {
+        "draft": ["pending_approval", "cancelled"],
         "pending_approval": ["approved", "cancelled"],
-        "approved": ["draft", "cancelled", "archived"],
-        "draft": ["published", "pending_approval", "cancelled", "archived"],
-        "published": ["completed", "cancelled", "suspended", "approved"],
-        "completed": ["archived"],
-        "suspended": ["published", "cancelled", "archived"],
-        "cancelled": ["draft", "archived"],
-        "archived": [],
+        "approved": ["published", "cancelled", "draft"],
+        "published": ["cancelled", "completed", "suspended", "draft"],
+        "suspended": ["published", "cancelled", "draft"],
+        "completed": [],
+        "cancelled": ["draft"],
         "active": ["cancelled", "completed", "inactive"],
         "inactive": ["active", "cancelled"],
     }
