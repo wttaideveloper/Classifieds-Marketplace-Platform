@@ -7,6 +7,7 @@ from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_
 from app.services.event_service import get_events_service, update_event_status_service
 from app.services.training_service import get_trainings_service, update_training_status_service
 from app.services.program_service import get_programs_service, update_program_status_service
+from app.models.event_aux_models import EventCategory
 
 router = APIRouter(tags=["Admin — Approvals"])
 
@@ -66,3 +67,36 @@ def reject_program(program_id: UUID, payload: dict | None = None, db: Session = 
 @router.post("/programs/{program_id}/publish", summary="Admin — Publish Approved Program")
 def publish_program(program_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_admin)):
     return update_program_status_service(db, program_id, "published")
+
+# Event Categories — Admin-managed
+@router.get("/event-categories", summary="Admin — List Event Categories")
+def list_categories(db: Session = Depends(get_db), _admin: dict = Depends(get_current_admin)):
+    return db.query(EventCategory).order_by(EventCategory.name).all()
+
+@router.post("/event-categories", status_code=201, summary="Admin — Create Event Category")
+def create_category(payload: dict, db: Session = Depends(get_db), _admin: dict = Depends(get_current_admin)):
+    from fastapi import HTTPException
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    exists = db.query(EventCategory).filter(EventCategory.name == name).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="Category already exists")
+    parent_id = payload.get("parent_id")
+    cat = EventCategory(name=name, parent_id=parent_id, description=payload.get("description"))
+    db.add(cat); db.commit(); db.refresh(cat)
+    return cat
+
+@router.delete("/event-categories/{category_id}", summary="Admin — Delete Event Category")
+def delete_category(category_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_admin)):
+    from fastapi import HTTPException
+    cat = db.query(EventCategory).filter(EventCategory.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    db.delete(cat); db.commit()
+    return {"message": "Category deleted"}
+
+@router.get("/event-audits/{event_id}", summary="Admin — Event Audit History")
+def event_audits(event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_admin)):
+    from app.models.event_aux_models import EventAudit
+    return db.query(EventAudit).filter(EventAudit.event_id == event_id).order_by(EventAudit.created_at.desc()).all()

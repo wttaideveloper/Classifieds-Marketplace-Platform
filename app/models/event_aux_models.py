@@ -87,3 +87,27 @@ class EventOrder(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     event = relationship("Event", backref="orders")
+
+
+class EventCategory(Base):
+    __tablename__ = "event_categories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), nullable=False, unique=True, index=True)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("event_categories.id"), nullable=True, index=True)
+    description = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class EventAudit(Base):
+    __tablename__ = "event_audits"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False, index=True)
+    changed_by = Column(String(255))
+    action = Column(String(50), nullable=False)  # create|update|status_change|delete
+    before = Column(JSONB)
+    after = Column(JSONB)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    event = relationship("Event", backref="audit_logs")

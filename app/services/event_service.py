@@ -70,12 +70,43 @@ def _auto_meeting_link(delivery_mode: str | None, provider: str | None, existing
         return f"https://meet.example.com/{_u.uuid4()}"
     return existing
 
+def _check_category(db: Session, category: str | None, subcategory: str | None):
+    if not category and not subcategory:
+        return
+    from app.models.event_aux_models import EventCategory
+    # If any categories exist, enforce that provided category must match an existing one
+    count = db.query(EventCategory).count()
+    if count == 0:
+        return  # no admin categories yet, allow free-text
+    if category:
+        cat = db.query(EventCategory).filter(EventCategory.name == category).first()
+        if not cat:
+            raise HTTPException(status_code=400, detail=f"Category '{category}' not found in admin-managed categories")
+    if subcategory and category:
+        parent = db.query(EventCategory).filter(EventCategory.name == category).first()
+        if parent:
+            sub = db.query(EventCategory).filter(EventCategory.name == subcategory, EventCategory.parent_id == parent.id).first()
+            if not sub:
+                raise HTTPException(status_code=400, detail=f"Subcategory '{subcategory}' not found under '{category}'")
+
+def _log_audit(db: Session, event_id: UUID, action: str, before: dict | None, after: dict | None, changed_by: str | None = None):
+    try:
+        from app.models.event_aux_models import EventAudit
+        audit = EventAudit(event_id=event_id, action=action, before=before, after=after, changed_by=changed_by)
+        db.add(audit); db.commit()
+    except Exception:
+        try: db.rollback()
+        except: pass
+
 def create_event_service(db: Session, event_data):
     _validate_references(db, event_data.enterprise_id, event_data.location_id)
+    _check_category(db, getattr(event_data, "category", None), getattr(event_data, "subcategory", None))
     # auto-create meeting link if needed
     if not event_data.meeting_link:
         event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
-    return EventResponse.model_validate(map_event_write(create_event(db, event_data)))
+    created = create_event(db, event_data)
+    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status})
+    return EventResponse.model_validate(map_event_write(created))
 
 
 def get_events_service(
@@ -131,6 +162,9 @@ def update_event_service(db: Session, event_id: UUID, update_data):
 
     location_id = update_data.location_id if update_data.location_id is not None else event.location_id
     _validate_references(db, event.enterprise_id, location_id)
+    # category validation if provided
+    if getattr(update_data, "category", None) is not None or getattr(update_data, "subcategory", None) is not None:
+        _check_category(db, getattr(update_data, "category", None) or event.category, getattr(update_data, "subcategory", None))
 
     # auto-create meeting link on update if delivery_mode/provider changed and link missing
     cur_mode = update_data.delivery_mode if getattr(update_data, "delivery_mode", None) is not None else event.delivery_mode
@@ -144,9 +178,10 @@ def update_event_service(db: Session, event_id: UUID, update_data):
             except Exception:
                 pass
 
-    # capture old values for schedule change detection
-    old_vals = {k: getattr(event, k) for k in ["start_date","end_date","venue","meeting_link","time_zone","duration_type"] if hasattr(event, k)}
+    # capture old values for schedule change detection and audit
+    old_vals = {k: getattr(event, k) for k in ["start_date","end_date","venue","meeting_link","time_zone","duration_type","category","subcategory","title","status"] if hasattr(event, k)}
     updated = update_event(db, event, update_data)
+    _log_audit(db, event.id, "update", old_vals, {k: getattr(updated, k) for k in old_vals.keys()})
     # detect changes
     changes = {}
     for k, old in old_vals.items():
@@ -166,6 +201,7 @@ def delete_event_service(db: Session, event_id: UUID):
     event = get_event_by_id(db, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    _log_audit(db, event.id, "delete", {"status": event.status}, {"is_deleted": True})
     return delete_event(db, event)
 
 
@@ -232,6 +268,7 @@ def update_event_status_service(db: Session, event_id: UUID, status: str):
     event.status = status
     db.commit()
     db.refresh(event)
+    _log_audit(db, event.id, "status_change", {"status": previous}, {"status": status})
     if status == "cancelled":
         try:
             from app.services.notification_triggers import notify_event_cancelled
