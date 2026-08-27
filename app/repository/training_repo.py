@@ -13,7 +13,7 @@ def create_training(db: Session, data):
     return obj
 
 
-def get_trainings(db: Session, *, search=None, category=None, tenant_id=None, enterprise_id=None, location_id=None, status=None, delivery_mode=None, page=1, page_size=20, include_deleted=False):
+def get_trainings(db: Session, *, search=None, category=None, tenant_id=None, enterprise_id=None, location_id=None, status=None, delivery_mode=None, provider_id=None, min_price=None, max_price=None, duration=None, date_from=None, date_to=None, page=1, page_size=20, include_deleted=False):
     q = db.query(Training).options(joinedload(Training.enterprise))
     q = apply_soft_delete_filter(q, Training, include_deleted)
     if tenant_id: q = q.filter(Training.tenant_id == tenant_id)
@@ -22,6 +22,30 @@ def get_trainings(db: Session, *, search=None, category=None, tenant_id=None, en
     if category: q = q.filter(Training.category == category)
     if status: q = q.filter(Training.status == status)
     if delivery_mode: q = q.filter(Training.delivery_mode == delivery_mode)
+    if provider_id: q = q.filter(Training.instructor_id == provider_id)
+    if min_price is not None:
+        try:
+            from sqlalchemy import cast, Float
+            q = q.filter(cast(Training.price, Float) >= float(min_price))
+        except: pass
+    if max_price is not None:
+        try:
+            from sqlalchemy import cast, Float
+            q = q.filter(cast(Training.price, Float) <= float(max_price))
+        except: pass
+    if duration: q = q.filter(Training.course_type == str(duration))
+    if date_from:
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(str(date_from).replace('Z',''))
+            q = q.filter(Training.start_date >= dt)
+        except: pass
+    if date_to:
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(str(date_to).replace('Z',''))
+            q = q.filter(Training.end_date <= dt)
+        except: pass
     if search: q = apply_ilike_search(q, [Training.title, Training.description, Training.category], search)
     q = q.order_by(Training.created_at.desc())
     return paginate_query(q, page, page_size)

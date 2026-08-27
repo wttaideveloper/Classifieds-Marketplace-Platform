@@ -14,8 +14,12 @@ def create_training(data: TrainingCreate, db: Session = Depends(get_db), current
     return create_training_service(db, data)
 
 @router.get("/", response_model=TrainingPaginatedResponse)
-def list_trainings(search: str | None = Query(None), category: str | None = Query(None), tenant_id: UUID | None = Query(None), enterprise_id: UUID | None = Query(None), location_id: UUID | None = Query(None), status_filter: str | None = Query(None, alias="status"), page: int = Query(DEFAULT_PAGE, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE), db: Session = Depends(get_db)):
-    return get_trainings_service(db, search=search, category=category, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, page=page, page_size=page_size)
+def list_trainings(search: str | None = Query(None), category: str | None = Query(None), provider: str | None = Query(None, description="provider/instructor_id"), tenant_id: UUID | None = Query(None), enterprise_id: UUID | None = Query(None), location_id: UUID | None = Query(None), status_filter: str | None = Query(None, alias="status"), delivery_mode: str | None = Query(None), min_price: str | None = Query(None), max_price: str | None = Query(None), duration: str | None = Query(None, description="course_type"), date_from: str | None = Query(None), date_to: str | None = Query(None), page: int = Query(DEFAULT_PAGE, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE), db: Session = Depends(get_db)):
+    from uuid import UUID as _UUID
+    prov = None
+    try: prov = _UUID(provider) if provider else None
+    except: prov = None
+    return get_trainings_service(db, search=search, category=category, provider_id=prov, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, delivery_mode=delivery_mode, min_price=min_price, max_price=max_price, duration=duration, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
 
 @router.get("/{training_id}", response_model=TrainingDetailResponse)
 def get_training(training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -142,6 +146,17 @@ def delete_lesson(training_id: UUID, section_id: str, lesson_id: str, db: Sessio
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
 # Enrol, waitlist, assessments, assignments, progress, live-sessions, announcements
+@router.get("/my/enrolments", summary="Participant dashboard — enrolled/active/completed/cancelled")
+def my_enrolments(status: str | None = Query(None, description="enrolled|pending_approval|cancelled|waitlisted"), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.models.training_model import TrainingEnrolment
+    email = current_user.get("email")
+    if not email:
+        from fastapi import HTTPException; raise HTTPException(400, "Email not found in token")
+    q = db.query(TrainingEnrolment).filter(TrainingEnrolment.participant_email==email)
+    if status: q = q.filter(TrainingEnrolment.status==status)
+    rows = q.order_by(TrainingEnrolment.created_at.desc()).all()
+    return [{"training_id": str(r.training_id), "status": r.status, "enrolment_id": str(r.id), "created_at": r.created_at.isoformat()} for r in rows]
+
 @router.post("/{training_id}/enrol", status_code=201)
 def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import create_training_enrol_service
@@ -149,9 +164,22 @@ def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), curre
     return create_training_enrol_service(db, training_id, payload, coupon_code=coupon)
 
 @router.get("/{training_id}/enrolments")
-def list_enrolments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def list_enrolments(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.models.training_model import TrainingEnrolment
     return db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==training_id).all()
+
+@router.get("/{training_id}/content", summary="Secure enrolled content — gated")
+def secure_content(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.models.training_model import TrainingEnrolment
+    from app.repository.training_repo import get_training_by_id
+    from fastapi import HTTPException
+    email = current_user.get("email")
+    enrol = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==training_id, TrainingEnrolment.participant_email==email).first() if email else None
+    if not enrol and current_user.get("role") not in ["admin","provider"]:
+        raise HTTPException(403, "Enrolled participants only")
+    obj = get_training_by_id(db, training_id)
+    if not obj: raise HTTPException(404, "Training not found")
+    return {"training_id": str(training_id), "sections": obj.sections or [], "assessments": obj.assessments or []}
 
 @router.post("/{training_id}/enrolments/{enrol_id}/approve", summary="Approve/Reject Enrolment")
 def approve_enrol(training_id: UUID, enrol_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):

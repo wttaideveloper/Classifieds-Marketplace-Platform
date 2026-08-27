@@ -7,7 +7,7 @@ def create_program(db: Session, data):
     payload = data.to_model_data() if hasattr(data, "to_model_data") else data.model_dump()
     obj = Program(**payload); db.add(obj); db.commit(); db.refresh(obj); return obj
 
-def get_programs(db: Session, *, search=None, category=None, tenant_id=None, enterprise_id=None, location_id=None, status=None, delivery_mode=None, page=1, page_size=20, include_deleted=False):
+def get_programs(db: Session, *, search=None, category=None, tenant_id=None, enterprise_id=None, location_id=None, status=None, delivery_mode=None, provider_id=None, min_price=None, max_price=None, duration_weeks=None, date_from=None, date_to=None, page=1, page_size=20, include_deleted=False):
     q = db.query(Program).options(joinedload(Program.enterprise))
     q = apply_soft_delete_filter(q, Program, include_deleted)
     if tenant_id: q = q.filter(Program.tenant_id == tenant_id)
@@ -16,6 +16,30 @@ def get_programs(db: Session, *, search=None, category=None, tenant_id=None, ent
     if category: q = q.filter(Program.category == category)
     if status: q = q.filter(Program.status == status)
     if delivery_mode: q = q.filter(Program.delivery_mode == delivery_mode)
+    if provider_id: q = q.filter(Program.provider_id == provider_id)
+    if min_price is not None:
+        try:
+            from sqlalchemy import cast, Float
+            q = q.filter(cast(Program.price, Float) >= float(min_price))
+        except: pass
+    if max_price is not None:
+        try:
+            from sqlalchemy import cast, Float
+            q = q.filter(cast(Program.price, Float) <= float(max_price))
+        except: pass
+    if duration_weeks: q = q.filter(Program.duration_weeks == str(duration_weeks))
+    if date_from:
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(str(date_from).replace('Z',''))
+            q = q.filter(Program.start_date >= dt)
+        except: pass
+    if date_to:
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(str(date_to).replace('Z',''))
+            q = q.filter(Program.end_date <= dt)
+        except: pass
     if search: q = apply_ilike_search(q, [Program.title, Program.description, Program.category], search)
     q = q.order_by(Program.created_at.desc())
     return paginate_query(q, page, page_size)

@@ -158,27 +158,50 @@ def create_survey_service(db, pid, data):
     return {"id": str(s.id), "program_id": str(s.program_id), "title": s.title, "description": s.description, "answers": None, "created_at": s.created_at.isoformat()}
 
 def create_review_service(db, pid, data):
-    from app.models.program_model import ProgramReview
+    from app.models.program_model import ProgramReview, ProgramEnrolment
     _get_program_or_404(db, pid)
+    # Verified reviews: must be enrolled
+    enrolled = db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid, ProgramEnrolment.participant_email==data.participant_email).first()
+    if not enrolled:
+        raise HTTPException(status_code=400, detail="Verified reviews only — must be enrolled to review")
     r=ProgramReview(program_id=pid, participant_email=data.participant_email, rating=str(data.rating), comment=data.comment)
     db.add(r); db.commit(); db.refresh(r)
-    return {"id": str(r.id), "program_id": str(r.program_id), "rating": int(r.rating), "comment": r.comment, "participant_email": r.participant_email, "created_at": r.created_at.isoformat()}
+    return {"id": str(r.id), "program_id": str(r.program_id), "rating": int(r.rating), "comment": r.comment, "participant_email": r.participant_email, "verified": True, "created_at": r.created_at.isoformat()}
 
 def get_program_reports_service(db, pid, report_type: str = "enrolment"):
-    from app.models.program_model import ProgramEnrolment, ProgramCheckin, ProgramReview
+    from app.models.program_model import ProgramEnrolment, ProgramCheckin, ProgramReview, ProgramSurvey
+    from app.models.training_model import TrainingAssessmentSubmission
     _get_program_or_404(db, pid)
     if report_type=="enrolment":
         rows=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).all()
         by_status={}
         for r in rows: by_status[r.status]=by_status.get(r.status,0)+1
         data={"total": len(rows), "by_status": by_status}
-    elif report_type=="checkin":
+    elif report_type in ["attendance","checkin"]:
         rows=db.query(ProgramCheckin).filter(ProgramCheckin.program_id==pid).all()
         by_phase={}
         for r in rows: by_phase[r.phase_id or "unknown"]=by_phase.get(r.phase_id or "unknown",0)+1
-        data={"total": len(rows), "by_phase": by_phase}
+        data={"total": len(rows), "by_phase": by_phase, "attendance_rate": round(len(rows)/max(1, db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).count())*100,2)}
     elif report_type=="progress":
         data=get_program_progress_service(db, pid)
+    elif report_type=="engagement":
+        enrol_cnt=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).count()
+        check_cnt=db.query(ProgramCheckin).filter(ProgramCheckin.program_id==pid).count()
+        data={"enrolments": enrol_cnt, "checkins": check_cnt, "engagement_rate": round(check_cnt/max(1,enrol_cnt)*100,2)}
+    elif report_type=="assessment":
+        prog=_get_program_or_404(db, pid)
+        survey_cnt=db.query(ProgramSurvey).filter(ProgramSurvey.program_id==pid).count()
+        review_cnt=db.query(ProgramReview).filter(ProgramReview.program_id==pid).count()
+        data={"surveys": survey_cnt, "reviews": review_cnt, "avg_rating": round(sum(int(r.rating) for r in db.query(ProgramReview).filter(ProgramReview.program_id==pid).all())/max(1,review_cnt),2) if review_cnt else 0}
+    elif report_type=="completion":
+        data=get_program_progress_service(db, pid)
+        data["completion_rate"]=data.get("overall",0)
+    elif report_type=="revenue":
+        prog=_get_program_or_404(db, pid)
+        enrol_cnt=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).count()
+        try: price=float(prog.price or 0)
+        except: price=0
+        data={"total_revenue": str(price*enrol_cnt), "currency": prog.currency or "INR", "enrolments": enrol_cnt, "unit_price": str(prog.price or "0")}
     else:
         data={}
     return {"program_id": str(pid), "type": report_type, "data": data}
