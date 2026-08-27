@@ -67,15 +67,20 @@ class ProgramPaginatedResponse(PaginatedResponse[ProgramListItemResponse]): pass
 class ProgramStatusUpdate(BaseModel):
     status: str; reason: str | None = None
 class PhaseCreate(BaseModel):
-    title: str; type: str = "phase"; order: int | None = 0; prerequisites: list | None = None; completion_rule: str | None = None
+    model_config = ConfigDict(extra="allow")
+    title: str; type: str = "phase"; phase_type: str | None = Field(None, description="phase|stage|week|day|milestone"); order: int | None = 0; prerequisites: list | None = None; completion_rule: str | None = None; release_schedule: dict | None = Field(None, description="daily|weekly|milestone release: {mode:'daily', day:1}"); goals: dict | None = None; baseline: dict | None = None; expected_outcomes: dict | None = None; instructors: list | None = None
 class ActivityCreate(BaseModel):
-    type: str; title: str; content_url: str | None = None; release: dict | None = None
+    model_config = ConfigDict(extra="allow")
+    type: str = Field(..., description="lesson|appointment|task|assessment|live_session|document|video|webpage"); title: str; content_url: str | None = None; release: dict | None = None; session_type: str | None = Field(None, description="individual|group"); resource_url: str | None = None; document_url: str | None = None; video_url: str | None = None; webpage_url: str | None = None; prerequisites: list | None = None
 
 
 class EnrolmentCreate(BaseModel):
     participant_name: str = Field(..., description="Participant name")
     participant_email: str = Field(..., description="Participant email")
     group_enrol: bool = Field(False, description="Whether this is a group enrolment")
+    goals: dict | None = Field(None, description="Participant goals")
+    baseline: dict | None = Field(None, description="Baseline information")
+    expected_outcomes: dict | None = Field(None, description="Expected outcomes")
 
 
 class EnrolmentResponse(BaseModel):

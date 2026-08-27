@@ -91,6 +91,32 @@ def delete_activity(program_id: UUID, phase_id: str, activity_id: str, db: Sessi
             ph["activities"]=acts; obj.phases=list(obj.phases); flag_modified(obj,"phases"); db.commit(); return {"message":"Activity deleted"}
     from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
 
+@router.put("/{program_id}/phases/{phase_id}/instructors", summary="Assign instructors/coaches/mentors/service providers")
+def assign_instructors(program_id: UUID, phase_id: str, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    for ph in obj.phases or []:
+        if ph.get("id")==phase_id:
+            ph["instructors"]=payload.get("instructors") or payload.get("instructor_ids") or []
+            ph["coaches"]=payload.get("coaches") or []
+            ph["mentors"]=payload.get("mentors") or []
+            ph["service_providers"]=payload.get("service_providers") or []
+            flag_modified(obj,"phases"); db.commit(); return ph
+    from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
+
+@router.post("/{program_id}/check-ins/{checkin_id}/feedback", summary="Provider feedback & progress notes")
+def provider_feedback(program_id: UUID, checkin_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.models.program_model import ProgramCheckin
+    row=db.query(ProgramCheckin).filter(ProgramCheckin.id==checkin_id, ProgramCheckin.program_id==program_id).first()
+    if not row: from fastapi import HTTPException; raise HTTPException(404,"Check-in not found")
+    # store provider feedback in notes append
+    feedback=payload.get("feedback") or payload.get("notes") or ""
+    row.notes=(row.notes or "") + f"\n[Provider:{current_user.get('email','')}] {feedback}"
+    db.commit(); db.refresh(row)
+    return {"id": str(row.id), "feedback": feedback, "notes": row.notes}
+
 @router.post("/{program_id}/phases/reorder")
 def reorder_phases(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.program_repo import get_program_by_id
