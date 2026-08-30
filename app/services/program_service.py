@@ -8,17 +8,21 @@ from app.repository.query_utils import build_pagination_meta
 from app.schemas.program_schema import ProgramDetailResponse, ProgramListItemResponse, ProgramPaginatedResponse, ProgramResponse
 from app.services.response_mappers import map_program_detail, map_program_list_item, map_program_write
 
-def _validate(db, eid, lid):
+def _validate(db, eid, lid, current_user: dict | None = None):
     ent=db.query(Enterprise).filter(Enterprise.id==eid, Enterprise.is_deleted.is_(False)).first()
     if not ent: raise HTTPException(404, "Enterprise not found")
+    if current_user and current_user.get("role") != "admin":
+        user_tid = current_user.get("tenant_id")
+        if user_tid and str(ent.tenant_id) != str(user_tid):
+            raise HTTPException(403, "Not authorized for this enterprise/tenant")
     if ent.status in ("draft", "pending", "inactive"):
         raise HTTPException(400, f"Enterprise not approved (status={ent.status}). Programs can only be created under an approved business/profile.")
     if lid:
         loc=db.query(EnterpriseLocation).filter(EnterpriseLocation.id==lid, EnterpriseLocation.enterprise_id==eid, EnterpriseLocation.is_deleted.is_(False)).first()
         if not loc: raise HTTPException(404, "Location not found")
 
-def create_program_service(db, data):
-    _validate(db, data.enterprise_id, data.location_id); return ProgramResponse.model_validate(map_program_write(create_program(db, data)))
+def create_program_service(db, data, current_user: dict | None = None):
+    _validate(db, data.enterprise_id, data.location_id, current_user); return ProgramResponse.model_validate(map_program_write(create_program(db, data)))
 def get_programs_service(db, **kw):
     items,total=get_programs(db, **kw); return ProgramPaginatedResponse(items=[ProgramListItemResponse.model_validate(map_program_list_item(i)) for i in items], pagination=build_pagination_meta(total, kw.get("page",1), kw.get("page_size",20)))
 def get_program_service(db, pid):

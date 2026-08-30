@@ -8,17 +8,21 @@ from app.repository.query_utils import build_pagination_meta
 from app.schemas.training_schema import TrainingDetailResponse, TrainingListItemResponse, TrainingPaginatedResponse, TrainingResponse
 from app.services.response_mappers import map_training_detail, map_training_list_item, map_training_write
 
-def _validate(db: Session, eid: UUID, lid: UUID | None):
+def _validate(db: Session, eid: UUID, lid: UUID | None, current_user: dict | None = None):
     ent = db.query(Enterprise).filter(Enterprise.id==eid, Enterprise.is_deleted.is_(False)).first()
     if not ent: raise HTTPException(status_code=404, detail="Enterprise not found")
+    if current_user and current_user.get("role") != "admin":
+        user_tid = current_user.get("tenant_id")
+        if user_tid and str(ent.tenant_id) != str(user_tid):
+            raise HTTPException(status_code=403, detail="Not authorized for this enterprise/tenant")
     if ent.status in ("draft", "pending", "inactive"):
         raise HTTPException(status_code=400, detail=f"Enterprise not approved (status={ent.status}). Trainings can only be created under an approved business/profile.")
     if lid:
         loc = db.query(EnterpriseLocation).filter(EnterpriseLocation.id==lid, EnterpriseLocation.enterprise_id==eid, EnterpriseLocation.is_deleted.is_(False)).first()
         if not loc: raise HTTPException(status_code=404, detail="Location not found for this enterprise")
 
-def create_training_service(db: Session, data):
-    _validate(db, data.enterprise_id, data.location_id)
+def create_training_service(db: Session, data, current_user: dict | None = None):
+    _validate(db, data.enterprise_id, data.location_id, current_user)
     return TrainingResponse.model_validate(map_training_write(create_training(db, data)))
 
 def get_trainings_service(db: Session, **kw):

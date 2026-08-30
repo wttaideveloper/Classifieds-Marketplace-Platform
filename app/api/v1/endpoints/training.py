@@ -11,7 +11,7 @@ router = APIRouter(tags=["Trainings"])
 
 @router.post("/", response_model=TrainingResponse, status_code=201)
 def create_training(data: TrainingCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return create_training_service(db, data)
+    return create_training_service(db, data, current_user)
 
 @router.get("/", response_model=TrainingPaginatedResponse)
 def list_trainings(search: str | None = Query(None), category: str | None = Query(None), provider: str | None = Query(None, description="provider/instructor_id"), tenant_id: UUID | None = Query(None), enterprise_id: UUID | None = Query(None), location_id: UUID | None = Query(None), status_filter: str | None = Query(None, alias="status"), delivery_mode: str | None = Query(None), min_price: str | None = Query(None), max_price: str | None = Query(None), duration: str | None = Query(None, description="course_type"), date_from: str | None = Query(None), date_to: str | None = Query(None), page: int = Query(DEFAULT_PAGE, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE), db: Session = Depends(get_db)):
