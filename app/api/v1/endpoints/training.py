@@ -84,8 +84,11 @@ def reorder_sections(training_id: UUID, payload: dict, db: Session = Depends(get
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
     order = payload.get("ordered_ids", [])
-    mapping = {s["id"]: s for s in (obj.sections or [])}
-    obj.sections = [mapping[i] for i in order if i in mapping]
+    mapping = {s["id"]: s for s in (obj.sections or []) if s.get("id")}
+    ordered = [mapping[i] for i in order if i in mapping]
+    # Preserve sections not in ordered_ids (avoid data loss)
+    remaining = [s for s in (obj.sections or []) if s.get("id") not in order]
+    obj.sections = ordered + remaining
     db.commit(); return obj.sections
 
 @router.post("/{training_id}/modules/reorder", summary="Reorder modules (alias)")
@@ -94,8 +97,10 @@ def reorder_modules(training_id: UUID, payload: dict, db: Session = Depends(get_
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
     order = payload.get("ordered_ids", [])
-    mapping = {s["id"]: s for s in (obj.sections or [])}
-    obj.sections = [mapping[i] for i in order if i in mapping]
+    mapping = {s["id"]: s for s in (obj.sections or []) if s.get("id")}
+    ordered = [mapping[i] for i in order if i in mapping]
+    remaining = [s for s in (obj.sections or []) if s.get("id") not in order]
+    obj.sections = ordered + remaining
     db.commit(); return obj.sections
 
 @router.post("/{training_id}/sections/{section_id}/lessons/reorder")
@@ -106,8 +111,10 @@ def reorder_lessons(training_id: UUID, section_id: str, payload: dict, db: Sessi
     for s in obj.sections or []:
         if s.get("id")==section_id:
             order = payload.get("ordered_ids", [])
-            mapping = {l["id"]: l for l in s.get("lessons", [])}
-            s["lessons"] = [mapping[i] for i in order if i in mapping]
+            mapping = {l["id"]: l for l in s.get("lessons", []) if l.get("id")}
+            ordered = [mapping[i] for i in order if i in mapping]
+            remaining = [l for l in s.get("lessons", []) if l.get("id") not in order]
+            s["lessons"] = ordered + remaining
             from sqlalchemy.orm.attributes import flag_modified
             flag_modified(obj, "sections")
             db.commit(); return s["lessons"]
@@ -124,8 +131,7 @@ def add_lesson(training_id: UUID, section_id: str, payload: LessonCreate, db: Se
         all_ids = {l.get("id") for s in (obj.sections or []) for l in s.get("lessons", [])}
         for pid in payload.prerequisites:
             if pid not in all_ids and pid != section_id:
-                # allow cross-section prerequisites, but warn if not found
-                pass
+                from fastapi import HTTPException; raise HTTPException(status_code=400, detail=f"Prerequisite lesson {pid} not found")
     for s in obj.sections or []:
         if s.get("id")==section_id:
             lessons = s.get("lessons", []); new={"id": str(uuid.uuid4()), **payload.model_dump()}; lessons.append(new); s["lessons"]=lessons; from sqlalchemy.orm.attributes import flag_modified; flag_modified(obj, "sections"); db.commit(); return new
@@ -134,23 +140,25 @@ def add_lesson(training_id: UUID, section_id: str, payload: LessonCreate, db: Se
 @router.put("/{training_id}/sections/{section_id}/lessons/{lesson_id}")
 def update_lesson(training_id: UUID, section_id: str, lesson_id: str, payload: LessonCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
+    from sqlalchemy.orm.attributes import flag_modified
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
     for s in obj.sections or []:
         if s.get("id")==section_id:
             for ls in s.get("lessons", []):
                 if ls.get("id")==lesson_id:
-                    ls.update(payload.model_dump(exclude_unset=True)); db.commit(); return ls
+                    ls.update(payload.model_dump(exclude_unset=True)); flag_modified(obj, "sections"); db.commit(); return ls
     from fastapi import HTTPException; raise HTTPException(404, "Lesson not found")
 
 @router.delete("/{training_id}/sections/{section_id}/lessons/{lesson_id}")
 def delete_lesson(training_id: UUID, section_id: str, lesson_id: str, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
+    from sqlalchemy.orm.attributes import flag_modified
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
     for s in obj.sections or []:
         if s.get("id")==section_id:
-            s["lessons"]=[l for l in s.get("lessons",[]) if l.get("id")!=lesson_id]; db.commit(); return {"message":"Deleted"}
+            s["lessons"]=[l for l in s.get("lessons",[]) if l.get("id")!=lesson_id]; flag_modified(obj, "sections"); db.commit(); return {"message":"Deleted"}
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
 # Enrol, waitlist, assessments, assignments, progress, live-sessions, announcements

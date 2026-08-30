@@ -349,11 +349,15 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     if group_size < 1:
         group_size = 1
 
-    # Capacity enforcement (including group_size and per-ticket capacity) — with FOR UPDATE to prevent race
+    # Capacity enforcement — lock Event row first to prevent race (READ COMMITTED)
     need = group_size
+    try:
+        db.query(Event).filter(Event.id == event_id).with_for_update().first()
+    except Exception:
+        pass
     if event.capacity:
         try:
-            max_capacity = int(event.capacity)
+            max_capacity = int(float(str(event.capacity).strip()))
             current_count = db.query(EventRegistration).filter(
                 EventRegistration.event_id == event_id,
                 EventRegistration.status.in_(["confirmed", "attended"])
@@ -895,12 +899,16 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
     ticket = _resolve_ticket(event, payload.ticket_type_id)
     if payload.ticket_type_id and not ticket:
         raise HTTPException(status_code=404, detail="Ticket type not found")
-    # capacity per ticket type
+    # capacity per ticket type — lock Event row to prevent race
+    try:
+        db.query(Event).filter(Event.id == event_id).with_for_update().first()
+    except Exception:
+        pass
     if ticket and ticket.get("capacity"):
         try:
-            cap = int(ticket["capacity"])
-            cnt = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.ticket_type_id==payload.ticket_type_id, EventOrder.status.in_(["confirmed"])).count()
-            cnt += db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).count()
+            cap = int(float(str(ticket["capacity"]).strip()))
+            cnt = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.ticket_type_id==payload.ticket_type_id, EventOrder.status.in_(["confirmed"])).with_for_update().count()
+            cnt += db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).with_for_update().count()
             if cnt + payload.quantity > cap:
                 raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
         except ValueError:
@@ -912,9 +920,12 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
     except Exception:
         amount = str(price)
     currency = ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
-    # Free check
-    is_free = (price == "0" or price == "0.0" or not price)
-    payment_status = "confirmed" if is_free or price == "0" else "confirmed"  # stub: payment always confirmed (marketplace/merchant)
+    # Free check — handle 0, 0.0, 0.00, 00, empty
+    try:
+        is_free = not price or float(str(price).strip()) == 0
+    except Exception:
+        is_free = not price
+    payment_status = "confirmed"  # stub: payment always confirmed (marketplace/merchant)
     order = EventOrder(
         event_id=event_id,
         participant_name=payload.participant_name,

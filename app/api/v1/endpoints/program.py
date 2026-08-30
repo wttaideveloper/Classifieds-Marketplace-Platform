@@ -42,10 +42,11 @@ def add_phase(program_id: UUID, payload: PhaseCreate, db: Session=Depends(get_db
 @router.put("/{program_id}/phases/{phase_id}")
 def update_phase(program_id: UUID, phase_id: str, payload: PhaseCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
     obj=get_program_by_id(db, program_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
     for ph in obj.phases or []:
-        if ph.get("id")==phase_id: ph.update(payload.model_dump(exclude_unset=True)); db.commit(); return ph
+        if ph.get("id")==phase_id: ph.update({k:v for k,v in payload.model_dump(exclude_unset=True).items() if k!="id"}); flag_modified(obj, "phases"); db.commit(); return ph
     from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
 @router.post("/{program_id}/phases/{phase_id}/activities", status_code=201)
 def add_activity(program_id: UUID, phase_id: str, payload: ActivityCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
@@ -59,12 +60,13 @@ def add_activity(program_id: UUID, phase_id: str, payload: ActivityCreate, db: S
 @router.put("/{program_id}/phases/{phase_id}/activities/{activity_id}")
 def update_activity(program_id: UUID, phase_id: str, activity_id: str, payload: ActivityCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
     obj=get_program_by_id(db, program_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
     for ph in obj.phases or []:
         if ph.get("id")==phase_id:
             for ac in ph.get("activities",[]):
-                if ac.get("id")==activity_id: ac.update(payload.model_dump(exclude_unset=True)); db.commit(); return ac
+                if ac.get("id")==activity_id: ac.update({k:v for k,v in payload.model_dump(exclude_unset=True).items() if k!="id"}); flag_modified(obj, "phases"); db.commit(); return ac
     from fastapi import HTTPException; raise HTTPException(404,"Activity not found")
 # Phases - missing delete/reorder
 @router.delete("/{program_id}/phases/{phase_id}")
@@ -125,7 +127,9 @@ def reorder_phases(program_id: UUID, payload: dict, db: Session=Depends(get_db),
     if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
     order=payload.get("ordered_ids",[])
     mapping={p["id"]: p for p in (obj.phases or []) if p.get("id")}
-    obj.phases=[mapping[i] for i in order if i in mapping]
+    ordered=[mapping[i] for i in order if i in mapping]
+    remaining=[p for p in (obj.phases or []) if p.get("id") not in order]
+    obj.phases=ordered+remaining
     flag_modified(obj,"phases"); db.commit(); return obj.phases
 
 # Enrol, check-ins, progress, dashboards, surveys, reports

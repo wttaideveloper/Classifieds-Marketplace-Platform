@@ -3,15 +3,16 @@ from uuid import UUID
 import hashlib
 
 def _fmt(dt: datetime) -> str:
-    # ICS UTC format YYYYMMDDTHHMMSSZ
+    from datetime import timezone
+    # ICS UTC format YYYYMMDDTHHMMSSZ — must be UTC
     if dt.tzinfo is not None:
-        dt = dt.astimezone(tz=None).replace(tzinfo=None)
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt.strftime("%Y%m%dT%H%M%SZ")
 
 def _escape(text: str | None) -> str:
     if not text: return ""
-    # RFC5545: escape \ ; , \n and \r, and fold lines at 75 octets (handled by join)
-    return text.replace("\\", "\\\\").replace("\r", "").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+    # RFC5545: escape \ ; , \n and fold lines at 75 octets (handled by join)
+    return text.replace("\\", "\\\\").replace("\r\n", "\\n").replace("\r", "\\n").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
 
 def event_to_ics(event, sessions: list | None = None) -> str:
     uid_base = str(event.id)
@@ -33,7 +34,7 @@ def event_to_ics(event, sessions: list | None = None) -> str:
         location = _escape(event.venue.get("address") or event.venue.get("city") or "")
     elif event.venue and isinstance(event.venue, str):
         location = _escape(event.venue)
-    url = _escape(event.meeting_link or "")
+    url = _escape(event.meeting_link or "") if getattr(event, "status", "published") == "published" else ""
     lines += [
         "BEGIN:VEVENT",
         f"UID:{uid_base}@marketplace",

@@ -189,7 +189,8 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         if self.CORS_ORIGINS.strip() == "*":
-            return ["*"]
+            # With allow_credentials=True, browsers reject "*". Return empty and rely on explicit origins.
+            return []
 
         origins: set[str] = set()
         for origin in self.CORS_ORIGINS.split(","):
@@ -201,7 +202,7 @@ class Settings(BaseSettings):
         if frontend_url:
             origins.add(frontend_url)
 
-        if self.CORS_ALLOW_LOCALHOST:
+        if self.CORS_ALLOW_LOCALHOST and not self.is_production:
             origins.update(
                 {
                     "http://localhost:3000",
