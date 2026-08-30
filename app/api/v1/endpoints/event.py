@@ -125,6 +125,53 @@ def my_registrations(status: str | None = Query(None, description="Filter by reg
     return out
 
 
+@router.post("/templates", status_code=status.HTTP_201_CREATED, summary="Create Template")
+def create_template(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_template_service(db, payload)
+
+
+@router.get("/templates", summary="List Templates")
+def list_templates(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.models.event_aux_models import EventTemplate
+
+    return db.query(EventTemplate).all()
+
+
+@router.post("/templates/{template_id}/apply", status_code=status.HTTP_201_CREATED, summary="Apply Template")
+def apply_template(template_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.models.event_aux_models import EventTemplate
+    from fastapi import HTTPException
+    from app.models.event_model import Event
+
+    tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    data = dict(tmpl.template_data)
+    enterprise_id = payload.get("enterprise_id") or data.get("enterprise_id")
+    if not enterprise_id:
+        raise HTTPException(status_code=400, detail="enterprise_id is required")
+    data["enterprise_id"] = enterprise_id
+    data["status"] = "draft"
+    # Regenerate session ids for cloned template so they are addressable via PUT/DELETE
+    if data.get("sessions"):
+        import copy
+        import uuid
+
+        cloned_sessions = copy.deepcopy(data["sessions"])
+        for s in cloned_sessions:
+            if isinstance(s, dict):
+                s["id"] = str(uuid.uuid4())
+                sd = s.get("session_date")
+                if hasattr(sd, "isoformat"):
+                    s["session_date"] = sd.isoformat()
+        data["sessions"] = cloned_sessions
+    event = Event(**{k: v for k, v in data.items() if k in [c.key for c in Event.__table__.columns]})
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
 @router.get("/{event_id}", response_model=EventDetailResponse, status_code=status.HTTP_200_OK, summary="Get Event by ID")
 def get_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db)):
     return get_event_service(db, event_id)
@@ -627,45 +674,4 @@ def reports_summary(enterprise_id: UUID | None = None, db: Session = Depends(get
     return get_event_summary_service(db, enterprise_id)
 
 
-@router.post("/templates", status_code=status.HTTP_201_CREATED, summary="Create Template")
-def create_template(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return create_template_service(db, payload)
 
-
-@router.get("/templates", summary="List Templates")
-def list_templates(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.event_aux_models import EventTemplate
-
-    return db.query(EventTemplate).all()
-
-
-@router.post("/templates/{template_id}/apply", status_code=status.HTTP_201_CREATED, summary="Apply Template")
-def apply_template(template_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.event_aux_models import EventTemplate
-    from fastapi import HTTPException
-    from app.models.event_model import Event
-
-    tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
-    if not tmpl:
-        raise HTTPException(status_code=404, detail="Template not found")
-    data = dict(tmpl.template_data)
-    data["enterprise_id"] = payload.get("enterprise_id") or data.get("enterprise_id")
-    data["status"] = "draft"
-    # Regenerate session ids for cloned template so they are addressable via PUT/DELETE
-    if data.get("sessions"):
-        import copy
-        import uuid
-
-        cloned_sessions = copy.deepcopy(data["sessions"])
-        for s in cloned_sessions:
-            if isinstance(s, dict):
-                s["id"] = str(uuid.uuid4())
-                sd = s.get("session_date")
-                if hasattr(sd, "isoformat"):
-                    s["session_date"] = sd.isoformat()
-        data["sessions"] = cloned_sessions
-    event = Event(**{k: v for k, v in data.items() if k in [c.key for c in Event.__table__.columns]})
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-    return event
