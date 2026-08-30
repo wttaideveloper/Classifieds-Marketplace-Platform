@@ -316,7 +316,7 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     if group_size < 1:
         group_size = 1
 
-    # Capacity enforcement (including group_size and per-ticket capacity)
+    # Capacity enforcement (including group_size and per-ticket capacity) — with FOR UPDATE to prevent race
     need = group_size
     if event.capacity:
         try:
@@ -324,33 +324,28 @@ def create_registration_service(db: Session, event_id: UUID, payload):
             current_count = db.query(EventRegistration).filter(
                 EventRegistration.event_id == event_id,
                 EventRegistration.status.in_(["confirmed", "attended"])
-            ).count()
-            # For group, count includes group members already stored as separate rows? We count seats as rows + group_size from custom_fields?
-            # Simplified: current_count + need > max_capacity => full
+            ).with_for_update().count()
             if current_count + need > max_capacity:
-                # auto-suggest waitlist
                 raise HTTPException(
                     status_code=400,
                     detail=f"Event is at full capacity ({max_capacity} participants). Only {max_capacity - current_count} seats left. Please join waitlist."
                 )
         except ValueError:
             pass
-    # Per-ticket capacity already handled in checkout, but also check here for ticket_type_id
     if getattr(payload, "ticket_type_id", None) and event.ticket_types:
         for t in event.ticket_types or []:
             if isinstance(t, dict) and str(t.get("id")) == str(payload.ticket_type_id) and t.get("capacity"):
                 try:
                     cap = int(t["capacity"])
-                    cnt = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).count()
+                    cnt = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).with_for_update().count()
                     if cnt + need > cap:
                         raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
                 except ValueError:
                     pass
-    # Max participants check (alias of capacity)
     if event.max_participants:
         try:
             max_p = int(event.max_participants)
-            current = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.status.in_(["confirmed","attended"])).count()
+            current = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.status.in_(["confirmed","attended"])).with_for_update().count()
             if current + need > max_p:
                 raise HTTPException(status_code=400, detail=f"Maximum participants reached ({max_p})")
         except ValueError:
@@ -370,18 +365,21 @@ def create_registration_service(db: Session, event_id: UUID, payload):
         custom_fields=cf,
         ticket_type_id=payload.ticket_type_id,
         status="confirmed",
-        qr_code=str(uuid.uuid4())[:8].upper(),
+        qr_code=str(uuid.uuid4())[:12].upper(),
     )
     db.add(reg)
-    db.commit()
-    db.refresh(reg)
-    # Group members: create additional registrations for each member
+    db.flush()
+    # Group members: create additional registrations atomically in same transaction
     if getattr(payload, "group_members", None):
         for m in payload.group_members or []:
             try:
                 name = m.get("name") or m.get("participant_name") or payload.participant_name
                 email = m.get("email") or m.get("participant_email")
                 if not email or email == payload.participant_email:
+                    continue
+                # prevent duplicate email per event
+                exists = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==email).first()
+                if exists:
                     continue
                 extra = EventRegistration(
                     event_id=event_id,
@@ -390,15 +388,13 @@ def create_registration_service(db: Session, event_id: UUID, payload):
                     custom_fields={"group_leader": payload.participant_email},
                     ticket_type_id=payload.ticket_type_id,
                     status="confirmed",
-                    qr_code=str(uuid.uuid4())[:8].upper(),
+                    qr_code=str(uuid.uuid4())[:12].upper(),
                 )
                 db.add(extra)
             except Exception:
                 pass
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
+    db.commit()
+    db.refresh(reg)
     # best-effort confirmation notification (in_app, sync, no celery)
     try:
         from app.services.notification_triggers import notify_registration_confirmation
@@ -851,6 +847,15 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
         raise HTTPException(status_code=400, detail=f"Checkout closed — event is {event.status}")
     if event.status not in ["published"]:
         raise HTTPException(status_code=400, detail=f"Event not open for checkout (status: {event.status})")
+    # Registration window enforcement (same as free registration)
+    from datetime import datetime
+    now = datetime.utcnow()
+    if event.registration_open_at and now < event.registration_open_at:
+        raise HTTPException(status_code=400, detail=f"Registration not yet open (opens {event.registration_open_at})")
+    if event.registration_close_at and now > event.registration_close_at:
+        raise HTTPException(status_code=400, detail=f"Registration closed (closed {event.registration_close_at})")
+    if event.registration_cutoff and now > event.registration_cutoff:
+        raise HTTPException(status_code=400, detail=f"Registration cutoff passed ({event.registration_cutoff})")
     ticket = _resolve_ticket(event, payload.ticket_type_id)
     if payload.ticket_type_id and not ticket:
         raise HTTPException(status_code=404, detail="Ticket type not found")

@@ -241,10 +241,17 @@ def create_assessment(training_id: UUID, payload: dict, db: Session = Depends(ge
 @router.get("/{training_id}/assessments")
 def list_assessments(training_id: UUID, randomize: bool = Query(False, description="Randomise questions/answers"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.repository.training_repo import get_training_by_id
-    import random as _rnd
+    import random as _rnd, copy
     t = get_training_by_id(db, training_id)
     if not t: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
-    out = t.assessments or []
+    out = copy.deepcopy(t.assessments or [])
+    role = current_user.get("role") if current_user else None
+    # Hide correct_answer/explanation for non-provider/admin before submission (prevent answer leak)
+    if role not in ["admin", "provider"]:
+        for a in out:
+            for q in a.get("questions",[]):
+                q.pop("correct_answer", None)
+                q.pop("explanation", None)
     if randomize:
         for a in out:
             qs=a.get("questions",[])

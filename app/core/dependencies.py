@@ -42,7 +42,7 @@ def get_current_user(
         token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
 
     if not token:
-        if settings.is_production:
+        if settings.is_production or not settings.ENABLE_DEV_TOKEN:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated",
@@ -50,7 +50,7 @@ def get_current_user(
         return get_dev_user()
 
     if is_chat_scoped_token(token):
-        if not request.url.path.startswith(_CHAT_PATH_PREFIXES):
+        if not any(request.url.path == p or request.url.path.startswith(p + "/") for p in _CHAT_PATH_PREFIXES):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Chat-scoped token cannot access this endpoint",

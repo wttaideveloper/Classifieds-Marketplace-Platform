@@ -65,6 +65,8 @@ def enrol_program_service(db, pid, data):
     from app.models.program_model import ProgramEnrolment
     from datetime import datetime
     prog=_get_program_or_404(db, pid)
+    if prog.status not in ["published"]:
+        raise HTTPException(400, f"Program not open for enrolment (status: {prog.status})")
     # enrol window: fixed-date vs enrol_anytime
     now=datetime.utcnow()
     if prog.enrol_type != "enrol_anytime":
@@ -237,8 +239,10 @@ def update_enrolment_status_service(db, pid, enrol_id, new_status: str):
     return {"id": str(row.id), "program_id": str(row.program_id), "status": row.status, "participant_email": row.participant_email}
 
 def update_program_goals_service(db, pid, goals: dict):
+    from sqlalchemy.orm.attributes import flag_modified
     prog=_get_program_or_404(db, pid)
     prog.goals = goals or {}
+    flag_modified(prog, "goals")
     db.commit(); db.refresh(prog)
     return {"program_id": str(pid), "goals": prog.goals}
 

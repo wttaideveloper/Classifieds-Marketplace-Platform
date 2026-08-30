@@ -183,10 +183,13 @@ def secure_content(program_id: UUID, db: Session=Depends(get_db), current_user: 
     from fastapi import HTTPException
     email = current_user.get("email")
     enrol = db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.participant_email==email).first()
-    if not enrol and current_user.get("role") not in ["admin","provider"]:
-        raise HTTPException(403, "Enrolled participants only")
+    if (not enrol or enrol.status not in ["enrolled","active","completed"]) and current_user.get("role") not in ["admin","provider"]:
+        raise HTTPException(403, "Enrolled participants only (waitlisted/cancelled not allowed)")
+    # block content for draft/pending_approval/cancelled programs
     prog = get_program_by_id(db, program_id)
     if not prog: raise HTTPException(404, "Program not found")
+    if prog.status in ["draft","pending_approval","cancelled","archived"]:
+        raise HTTPException(403, f"Content not available — program is {prog.status}")
     return {"program_id": str(program_id), "phases": prog.phases or [], "goals": prog.goals}
 
 @router.get("/{program_id}/meeting-link", summary="Secure meeting link — enrolled only")
@@ -196,8 +199,8 @@ def meeting_link(program_id: UUID, db: Session=Depends(get_db), current_user: di
     from fastapi import HTTPException
     email = current_user.get("email")
     enrol = db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.participant_email==email).first()
-    if not enrol and current_user.get("role") not in ["admin","provider"]:
-        raise HTTPException(403, "Enrolled participants only")
+    if (not enrol or enrol.status not in ["enrolled","active","completed"]) and current_user.get("role") not in ["admin","provider"]:
+        raise HTTPException(403, "Enrolled participants only (waitlisted/cancelled not allowed)")
     prog = get_program_by_id(db, program_id)
     if not prog: raise HTTPException(404, "Program not found")
     # aggregate meeting links from phases activities if present

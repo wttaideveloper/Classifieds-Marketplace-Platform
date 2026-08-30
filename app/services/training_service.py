@@ -336,7 +336,7 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
     from datetime import datetime, timedelta
     t = _get_training_or_404(db, tid)
     # coupon validation
-    if coupon_code and t.coupon_code and coupon_code != t.coupon_code:
+    if t.coupon_code and coupon_code != t.coupon_code:
         raise HTTPException(status_code=400, detail="Invalid coupon code")
     # if promo price exists and coupon not needed, keep
     # capacity
@@ -412,7 +412,7 @@ def create_training_checkout_service(db: Session, tid: UUID, payload):
     t = _get_training_or_404(db, tid)
     # coupon check
     coupon = getattr(payload, "coupon_code", None) or payload.get("coupon_code") if isinstance(payload, dict) else None
-    if coupon and t.coupon_code and coupon != t.coupon_code:
+    if t.coupon_code and coupon != t.coupon_code:
         raise HTTPException(status_code=400, detail="Invalid coupon code")
     # price - use promo_price if coupon valid
     price = t.promo_price if (coupon and t.promo_price) else t.price or "0"

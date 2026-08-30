@@ -175,14 +175,18 @@ def decode_access_token(token: str) -> dict:
     header = jwt.get_unverified_header(token)
     algorithm = header.get("alg", settings.ALGORITHM)
 
+    # When Keycloak is configured, only RS256 is allowed (prevent alg confusion)
+    if settings.keycloak_configured:
+        if algorithm != "RS256":
+            raise JWTError(f"Invalid algorithm '{algorithm}' — expected RS256 when Keycloak is configured")
+        return _decode_keycloak_token(token)
+
     if algorithm == "HS256":
         return _decode_local_token(token)
 
     if algorithm == "RS256":
         return _decode_keycloak_token(token)
 
-    if settings.keycloak_configured:
-        return _decode_keycloak_token(token)
     return _decode_local_token(token)
 
 

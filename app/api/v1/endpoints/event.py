@@ -183,6 +183,15 @@ def cancel_registration(event_id: UUID, reg_id: UUID, db: Session = Depends(get_
     reg = db.query(EventRegistration).filter(EventRegistration.id == reg_id, EventRegistration.event_id == event_id).first()
     if not reg:
         raise HTTPException(status_code=404, detail="Registration not found")
+    # IDOR check: participant can only cancel own, provider/admin any
+    role = current_user.get("role")
+    email = current_user.get("email")
+    if role not in ["admin", "provider"] and reg.participant_email != email:
+        raise HTTPException(status_code=403, detail="Not authorized to cancel this registration")
+    if reg.status == "attended":
+        raise HTTPException(status_code=400, detail="Cannot cancel: already attended (use refund flow)")
+    if reg.status == "cancelled":
+        return {"message": "Registration already cancelled"}
     reg.status = "cancelled"
     db.commit()
     try:
@@ -473,6 +482,11 @@ def get_qr_image(event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), cu
     ).first()
     if not reg:
         raise HTTPException(status_code=404, detail="Registration not found")
+    # IDOR: only owner or admin/provider can view QR
+    role = current_user.get("role")
+    email = current_user.get("email")
+    if role not in ["admin", "provider"] and reg.participant_email != email:
+        raise HTTPException(status_code=403, detail="Not authorized to view this QR code")
 
     try:
         import qrcode

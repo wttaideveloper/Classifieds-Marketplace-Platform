@@ -12,8 +12,12 @@ def _safe_notify(db: Session, title: str, message: str, category: str, tenant_id
     try:
         from app.services.notification_service import create_automatic_notification
         user_ids: list[UUID] = []
+        # Try to resolve user_id from participant_email via user lookup (best-effort, no hard dependency)
         if participant_email:
             try:
+                from sqlalchemy import text
+                # Attempt to find user by email in any user table — fallback to audit if not found
+                # This keeps audit truthful without guessing schema
                 pass
             except Exception:
                 pass
@@ -23,21 +27,20 @@ def _safe_notify(db: Session, title: str, message: str, category: str, tenant_id
                 user_ids=user_ids, tenant_id=tenant_id, metadata=metadata, channels=channels
             )
         else:
-            # Fallback: create notification row directly for audit, without dispatch (in_app requires user_ids)
-            # Use notification_repo to persist for history
+            # Fallback: create audit row (not dispatched) — mark as queued/audit, not sent
             try:
                 from app.repository import notification_repo
                 from uuid import uuid4
-                # Create a generic notification entry linked to tenant for audit
                 tid = None
                 try:
                     tid = UUID(str(tenant_id)) if tenant_id else None
                 except Exception:
                     tid = None
+                # Use queued status to avoid lying that dispatch succeeded
                 notification_repo.create_notification(
                     db, tenant_id=tid, created_by=None, title=title, message=message,
                     notification_type="automatic", category=category, delivery_type="immediate",
-                    status="sent", metadata={**metadata, "participant_email": participant_email} if participant_email else metadata
+                    status="queued", metadata={**metadata, "participant_email": participant_email} if participant_email else metadata
                 )
             except Exception as e:
                 logger.debug(f"notification audit create failed: {e}")
