@@ -115,9 +115,12 @@ def my_registrations(status: str | None = Query(None, description="Filter by reg
         q = q.filter(EventRegistration.status==status)
     regs = q.order_by(EventRegistration.created_at.desc()).all()
     from app.models.event_model import Event
+    # Bulk fetch events to avoid N+1
+    event_ids = [r.event_id for r in regs]
+    ev_map = {e.id: e for e in db.query(Event).filter(Event.id.in_(event_ids)).all()} if event_ids else {}
     out = []
     for r in regs:
-        ev = db.query(Event).filter(Event.id==r.event_id).first()
+        ev = ev_map.get(r.event_id)
         out.append({"registration_id": str(r.id), "event_id": str(r.event_id), "event_title": ev.title if ev else None, "event_status": ev.status if ev else None, "event_start": ev.start_date.isoformat() if ev and ev.start_date else None, "registration_status": r.status, "qr_code": r.qr_code, "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None})
     return out
 
