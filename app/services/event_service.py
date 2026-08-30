@@ -361,7 +361,7 @@ def create_registration_service(db: Session, event_id: UUID, payload):
             current_count = db.query(EventRegistration).filter(
                 EventRegistration.event_id == event_id,
                 EventRegistration.status.in_(["confirmed", "attended"])
-            ).with_for_update().count()
+            ).count()
             if current_count + need > max_capacity:
                 raise HTTPException(
                     status_code=400,
@@ -373,16 +373,16 @@ def create_registration_service(db: Session, event_id: UUID, payload):
         for t in event.ticket_types or []:
             if isinstance(t, dict) and str(t.get("id")) == str(payload.ticket_type_id) and t.get("capacity"):
                 try:
-                    cap = int(t["capacity"])
-                    cnt = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).with_for_update().count()
+                    cap = int(float(str(t["capacity"]).strip()))
+                    cnt = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).count()
                     if cnt + need > cap:
                         raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
                 except ValueError:
                     pass
     if event.max_participants:
         try:
-            max_p = int(event.max_participants)
-            current = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.status.in_(["confirmed","attended"])).with_for_update().count()
+            max_p = int(float(str(event.max_participants).strip()))
+            current = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.status.in_(["confirmed","attended"])).count()
             if current + need > max_p:
                 raise HTTPException(status_code=400, detail=f"Maximum participants reached ({max_p})")
         except ValueError:
@@ -907,8 +907,8 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
     if ticket and ticket.get("capacity"):
         try:
             cap = int(float(str(ticket["capacity"]).strip()))
-            cnt = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.ticket_type_id==payload.ticket_type_id, EventOrder.status.in_(["confirmed"])).with_for_update().count()
-            cnt += db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).with_for_update().count()
+            cnt = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.ticket_type_id==payload.ticket_type_id, EventOrder.status.in_(["confirmed"])).count()
+            cnt += db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).count()
             if cnt + payload.quantity > cap:
                 raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
         except ValueError:
