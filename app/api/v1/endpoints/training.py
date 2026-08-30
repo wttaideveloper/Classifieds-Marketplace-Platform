@@ -189,13 +189,20 @@ def secure_content(training_id: UUID, db: Session=Depends(get_db), current_user:
     from app.models.training_model import TrainingEnrolment
     from app.repository.training_repo import get_training_by_id
     from fastapi import HTTPException
+    import copy
     email = current_user.get("email")
-    enrol = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==training_id, TrainingEnrolment.participant_email==email).first() if email else None
+    enrol = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==training_id, TrainingEnrolment.participant_email==email, TrainingEnrolment.status.in_(["enrolled","active","completed"])).first() if email else None
     if not enrol and current_user.get("role") not in ["admin","provider"]:
         raise HTTPException(403, "Enrolled participants only")
     obj = get_training_by_id(db, training_id)
     if not obj: raise HTTPException(404, "Training not found")
-    return {"training_id": str(training_id), "sections": obj.sections or [], "assessments": obj.assessments or []}
+    # Hide correct_answer/explanation for non-privileged users
+    assessments = copy.deepcopy(obj.assessments or [])
+    if current_user.get("role") not in ["admin","provider"]:
+        for a in assessments:
+            for q in a.get("questions", []):
+                q.pop("correct_answer", None); q.pop("explanation", None)
+    return {"training_id": str(training_id), "sections": obj.sections or [], "assessments": assessments}
 
 @router.delete("/{training_id}/enrolments/{enrol_id}", summary="Cancel enrolment — access-expiry & waitlist")
 def cancel_enrol(training_id: UUID, enrol_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

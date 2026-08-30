@@ -124,14 +124,15 @@ def get_program_progress_service(db, pid, participant_email: str | None = None):
     prog=_get_program_or_404(db, pid)
     phases=prog.phases or []
     total=len(phases)
-    # checkins per phase
+    valid_ids={p.get("id") for p in phases if p.get("id")}
+    # checkins per phase — only count valid phase_ids to prevent inflation via fake ids
     from app.models.program_model import ProgramCheckin, ProgramEnrolment, ProgramSurvey
     q=db.query(ProgramCheckin).filter(ProgramCheckin.program_id==pid)
     if participant_email: q=q.filter(ProgramCheckin.participant_email==participant_email)
     checkins=q.all()
-    checkin_phases=set(c.phase_id for c in checkins if c.phase_id)
+    checkin_phases=set(c.phase_id for c in checkins if c.phase_id in valid_ids)
     done=len(checkin_phases)
-    overall=round(done/total*100 if total else 0,2)
+    overall=min(100, round(done/total*100 if total else 0,2))
     stage=[{"stage_number": i+1, "stage_name": p.get("title", f"Stage {i+1}"), "completion_percent": 100 if p.get("id") in checkin_phases else 0, "milestones_achieved": [p.get("id")] if p.get("id") in checkin_phases else []} for i,p in enumerate(phases)]
     milestone=[{"milestone_id": p.get("id"), "milestone_name": p.get("title"), "achieved": p.get("id") in checkin_phases, "achieved_at": next((c.created_at.isoformat() for c in checkins if c.phase_id==p.get("id")), None)} for p in phases]
     # attendance / activities / assessments / missed
