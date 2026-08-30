@@ -202,11 +202,15 @@ class Settings(BaseSettings):
         if frontend_url:
             origins.add(frontend_url)
 
-        if self.CORS_ALLOW_LOCALHOST and not self.is_production:
+        if self.CORS_ALLOW_LOCALHOST:
             origins.update(
                 {
                     "http://localhost:3000",
                     "http://127.0.0.1:3000",
+                    "http://localhost:3001",
+                    "http://127.0.0.1:3001",
+                    "http://localhost:3002",
+                    "http://127.0.0.1:3002",
                 }
             )
 
@@ -214,7 +218,7 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_regex(self) -> str | None:
-        if self.is_production or not self.CORS_ALLOW_LOCALHOST:
+        if not self.CORS_ALLOW_LOCALHOST:
             return None
         return r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
