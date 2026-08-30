@@ -189,7 +189,7 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         if self.CORS_ORIGINS.strip() == "*":
-            # With allow_credentials=True, browsers reject "*". Return empty and rely on explicit origins.
+            # Allow all — with credentials we rely on regex to echo origin (browsers reject "*" + credentials)
             return []
 
         origins: set[str] = set()
@@ -218,6 +218,8 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_regex(self) -> str | None:
+        if self.CORS_ORIGINS.strip() == "*":
+            return ".*"
         if not self.CORS_ALLOW_LOCALHOST:
             return None
         return r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
