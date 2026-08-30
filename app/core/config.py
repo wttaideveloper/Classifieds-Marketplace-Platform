@@ -213,7 +213,7 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_regex(self) -> str | None:
-        if not self.CORS_ALLOW_LOCALHOST:
+        if self.is_production or not self.CORS_ALLOW_LOCALHOST:
             return None
         return r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 

@@ -18,7 +18,7 @@ class EventRegistration(Base):
     custom_fields = Column(JSONB, default=dict)
     ticket_type_id = Column(String(100))
     status = Column(String(20), default="confirmed", index=True)  # confirmed|cancelled|attended|no_show
-    qr_code = Column(String(255))
+    qr_code = Column(String(255), unique=True, index=True)
     checked_in_at = Column(DateTime, nullable=True)
     checked_in_by = Column(UUID(as_uuid=True), nullable=True)
     checked_out_at = Column(DateTime, nullable=True)

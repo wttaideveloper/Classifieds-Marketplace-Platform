@@ -65,7 +65,7 @@ router = APIRouter(tags=["Events"])
 
 @router.post("/", response_model=EventResponse, status_code=status.HTTP_201_CREATED, summary="Create Event")
 def create_event(event: EventCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return create_event_service(db, event)
+    return create_event_service(db, event, current_user)
 
 
 @router.get("/", response_model=EventPaginatedResponse, status_code=status.HTTP_200_OK, summary="List Events")

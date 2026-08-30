@@ -55,4 +55,4 @@ def update_program(db: Session, obj, data):
     db.commit(); db.refresh(obj); return obj
 
 def delete_program(db: Session, obj):
-    obj.is_deleted = True; obj.status = "inactive"; db.commit(); db.refresh(obj); return obj
+    obj.is_deleted = True; obj.status = "archived"; db.commit(); db.refresh(obj); return obj

@@ -64,4 +64,4 @@ def update_training(db: Session, obj, data):
 
 
 def delete_training(db: Session, obj):
-    obj.is_deleted = True; obj.status = "inactive"; db.commit(); db.refresh(obj); return obj
+    obj.is_deleted = True; obj.status = "archived"; db.commit(); db.refresh(obj); return obj

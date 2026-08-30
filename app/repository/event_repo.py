@@ -104,7 +104,7 @@ def update_event(db: Session, event, update_data):
 
 def delete_event(db: Session, event):
     event.is_deleted = True
-    event.status = "inactive"
+    event.status = "archived"
     db.commit()
     db.refresh(event)
     return event

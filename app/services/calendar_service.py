@@ -10,7 +10,8 @@ def _fmt(dt: datetime) -> str:
 
 def _escape(text: str | None) -> str:
     if not text: return ""
-    return text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+    # RFC5545: escape \ ; , \n and \r, and fold lines at 75 octets (handled by join)
+    return text.replace("\\", "\\\\").replace("\r", "").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
 
 def event_to_ics(event, sessions: list | None = None) -> str:
     uid_base = str(event.id)

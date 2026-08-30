@@ -23,7 +23,7 @@ from app.schemas.event_schema import (
 from app.services.response_mappers import map_event_detail, map_event_list_item, map_event_write
 
 
-def _validate_references(db: Session, enterprise_id: UUID, location_id: UUID | None):
+def _validate_references(db: Session, enterprise_id: UUID, location_id: UUID | None, current_user: dict | None = None):
     enterprise = (
         db.query(Enterprise)
         .filter(Enterprise.id == enterprise_id, Enterprise.is_deleted.is_(False))
@@ -31,6 +31,11 @@ def _validate_references(db: Session, enterprise_id: UUID, location_id: UUID | N
     )
     if not enterprise:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enterprise not found")
+    # Tenant ownership: non-admin must own enterprise tenant
+    if current_user and current_user.get("role") != "admin":
+        user_tid = current_user.get("tenant_id")
+        if user_tid and str(enterprise.tenant_id) != str(user_tid):
+            raise HTTPException(status_code=403, detail="Not authorized for this enterprise/tenant")
     # Must be under approved business/profile
     if enterprise.status in ("draft", "pending", "inactive"):
         raise HTTPException(
@@ -98,8 +103,8 @@ def _log_audit(db: Session, event_id: UUID, action: str, before: dict | None, af
         try: db.rollback()
         except: pass
 
-def create_event_service(db: Session, event_data):
-    _validate_references(db, event_data.enterprise_id, event_data.location_id)
+def create_event_service(db: Session, event_data, current_user: dict | None = None):
+    _validate_references(db, event_data.enterprise_id, event_data.location_id, current_user)
     _check_category(db, getattr(event_data, "category", None), getattr(event_data, "subcategory", None))
     # auto-create meeting link if needed
     if not event_data.meeting_link:
