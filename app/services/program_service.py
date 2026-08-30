@@ -49,14 +49,14 @@ def update_program_status_service(db, pid, st):
     if not obj or obj.is_deleted: raise HTTPException(404, "Program not found")
     VALID = {
         "pending_approval": ["approved", "cancelled"],
-        "approved": ["draft", "cancelled", "archived"],
+        "approved": ["draft", "published", "cancelled", "archived"],
         "draft": ["published", "pending_approval", "cancelled", "archived"],
-        "published": ["completed", "cancelled", "suspended", "approved"],
+        "published": ["completed", "cancelled", "suspended", "approved", "archived"],
         "suspended": ["published", "cancelled", "archived"],
         "completed": ["archived"], "cancelled": ["draft", "archived"], "archived": [],
     }
     allowed = VALID.get(obj.status, [])
-    if allowed and st not in allowed:
+    if st not in allowed:
         raise HTTPException(400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
     obj.status=st; db.commit(); db.refresh(obj); return ProgramResponse.model_validate(map_program_write(obj))
 

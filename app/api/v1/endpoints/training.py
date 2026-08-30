@@ -70,11 +70,12 @@ def add_section(training_id: UUID, payload: SectionCreate, db: Session = Depends
 @router.put("/{training_id}/sections/{section_id}")
 def update_section(training_id: UUID, section_id: str, payload: SectionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
+    from sqlalchemy.orm.attributes import flag_modified
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
     for s in obj.sections or []:
         if s.get("id")==section_id:
-            s.update(payload.model_dump(exclude_unset=True)); db.commit(); return s
+            s.update(payload.model_dump(exclude_unset=True)); flag_modified(obj, "sections"); db.commit(); return s
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
 @router.post("/{training_id}/sections/reorder", summary="Reorder sections/modules")

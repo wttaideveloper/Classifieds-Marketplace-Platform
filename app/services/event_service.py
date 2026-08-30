@@ -250,9 +250,9 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str):
     # Lifecycle as per spec: pending_approval -> approved -> draft -> published -> completed -> archived
     VALID_TRANSITIONS = {
         "pending_approval": ["approved", "cancelled"],
-        "approved": ["draft", "cancelled", "archived"],
+        "approved": ["draft", "published", "cancelled", "archived"],
         "draft": ["published", "pending_approval", "cancelled", "archived"],
-        "published": ["completed", "cancelled", "suspended", "approved"],
+        "published": ["completed", "cancelled", "suspended", "approved", "archived"],
         "completed": ["archived"],
         "suspended": ["published", "cancelled", "archived"],
         "cancelled": ["draft", "archived"],
@@ -917,7 +917,7 @@ def get_event_orders_service(db: Session, event_id: UUID):
 
 def create_event_refund_service(db: Session, event_id: UUID, reg_id: UUID, payload):
     from app.models.event_aux_models import EventOrder, EventRegistration
-    _get_event_or_404(db, event_id)
+    event = _get_event_or_404(db, event_id)
     # Try order first, then registration
     order = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.id==reg_id).first()
     if order:

@@ -60,14 +60,14 @@ def update_training_status_service(db: Session, tid: UUID, st: str):
     if not obj or obj.is_deleted: raise HTTPException(status_code=404, detail="Training not found")
     VALID = {
         "pending_approval": ["approved", "cancelled"],
-        "approved": ["draft", "cancelled", "archived"],
+        "approved": ["draft", "published", "cancelled", "archived"],
         "draft": ["published", "pending_approval", "cancelled", "archived"],
-        "published": ["completed", "cancelled", "suspended", "approved"],
+        "published": ["completed", "cancelled", "suspended", "approved", "archived"],
         "suspended": ["published", "cancelled", "archived"],
         "completed": ["archived"], "cancelled": ["draft", "archived"], "archived": [],
     }
     allowed = VALID.get(obj.status, [])
-    if allowed and st not in allowed:
+    if st not in allowed:
         raise HTTPException(status_code=400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
     obj.status=st; db.commit(); db.refresh(obj); return TrainingResponse.model_validate(map_training_write(obj))
 
