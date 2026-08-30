@@ -49,6 +49,7 @@ class Training(Base):
     sections = Column(JSONB, default=list)  # [{id, title, order, lessons:[]}]
     assessments = Column(JSONB, default=list)
     assignments = Column(JSONB, default=list)
+    discussions = Column(JSONB, default=list)
 
     status = Column(String(20), default="draft", nullable=False, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False)

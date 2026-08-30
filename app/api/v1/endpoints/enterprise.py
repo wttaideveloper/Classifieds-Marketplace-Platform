@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
+from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.enterprise_schema import (
@@ -32,6 +33,7 @@ router = APIRouter(tags=["Enterprise"])
 def create_enterprise(
     enterprise: EnterpriseCreate = Body(...),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
 ):
     return create_enterprise_service(db, enterprise)
 
@@ -54,6 +56,7 @@ def get_enterprises(
         description="Items per page.",
     ),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     return get_all_enterprises_service(
         db,
@@ -74,6 +77,7 @@ def get_enterprises(
 def get_enterprise(
     enterprise_id: UUID = Path(..., description="Unique identifier of the enterprise"),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     return get_enterprise_service(db, enterprise_id)
 
@@ -88,6 +92,7 @@ def update_enterprise(
     enterprise: EnterpriseUpdate,
     enterprise_id: UUID = Path(..., description="Unique identifier of the enterprise"),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
 ):
     return update_enterprise_service(db, enterprise_id, enterprise)
 
@@ -100,6 +105,7 @@ def update_enterprise(
 def delete_enterprise(
     enterprise_id: UUID = Path(..., description="Unique identifier of the enterprise"),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
 ):
     delete_enterprise_service(db, enterprise_id)
     return {"message": "Enterprise marked inactive successfully"}

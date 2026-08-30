@@ -398,18 +398,12 @@ def post_discussion(training_id: UUID, payload: dict, db: Session=Depends(get_db
     if not obj: from fastapi import HTTPException; raise HTTPException(404,"Training not found")
     disc=list(getattr(obj, "discussions", []) or [])
     entry={"id": str(_uuid.uuid4()), "author": current_user.get("email","anonymous"), "question": payload.get("question") or payload.get("text") or "", "answer": None, "created_at": __import__("datetime").datetime.utcnow().isoformat()}
+    if not entry["question"].strip():
+        from fastapi import HTTPException; raise HTTPException(400, "Question is required")
     disc.append(entry)
-    # store in custom JSONB via sections extra field discussions
-    if not hasattr(obj, "discussions"):
-        # fallback store in assessments JSONB workaround
-        pass
-    try:
-        obj.discussions=disc
-    except:
-        # store in sections[0] discussions if column missing — use in-memory
-        obj.__dict__["discussions"]=disc
-        flag_modified(obj, "sections")
-    flag_modified(obj, "sections")
+    obj.discussions=disc
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(obj, "discussions")
     db.commit()
     return entry
 
