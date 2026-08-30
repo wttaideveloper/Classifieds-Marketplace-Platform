@@ -290,7 +290,7 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
     if event.status == "cancelled" and new_status == "draft":
         event.requires_reapproval = True
 
-    # Clear requires_reapproval when Super Admin approves (pending_approval → approved)
+    # Clear requires_reapproval when Enterprise Admin approves (pending_approval → approved) — admin == Enterprise Admin (no Super Admin)
     if event.requires_reapproval and current_status == "pending_approval" and new_status == "approved":
         event.requires_reapproval = False
 

@@ -148,10 +148,10 @@ def duplicate_event(event_id: UUID = Path(..., description="Event ID"), db: Sess
 
 @router.patch("/{event_id}/status", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event Status")
 def update_status(event_id: UUID, payload: EventStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    # Only first approval needs admin; republishing/draft/archived/completed/suspended after approved don't need second approval
+    # Only Enterprise Admin (admin role) can approve; provider cannot approve — admin == Enterprise Admin (no Super Admin)
     if payload.status == "approved" and current_user.get("role") != "admin":
         from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Only admin can approve (pending_approval -> approved). Publish/draft/archived/completed/suspended can be done by provider after first approval.")
+        raise HTTPException(status_code=403, detail="Only Enterprise Admin can approve (pending_approval -> approved).")
     return update_event_status_service(db, event_id, payload.status, current_user)
 
 
