@@ -93,6 +93,8 @@ class Event(Base):
 
     status = Column(String(20), default="draft", nullable=False, index=True)
 
+    requires_reapproval = Column(Boolean, default=False, nullable=False)
+
     is_deleted = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

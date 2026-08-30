@@ -242,16 +242,23 @@ def duplicate_event_service(db: Session, event_id: UUID):
     return EventResponse.model_validate(map_event_write(clone))
 
 
-def update_event_status_service(db: Session, event_id: UUID, new_status: str):
+def update_event_status_service(db: Session, event_id: UUID, new_status: str, current_user: dict = None):
     event = get_event_by_id(db, event_id, include_deleted=True)
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    # Issue 1: Provider cannot cancel an Event — only Enterprise Admin can
+    if new_status == "cancelled" and current_user and current_user.get("role") == "provider":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Enterprise Admin or event owner can cancel this event",
+        )
 
     # Lifecycle as per spec: pending_approval -> approved -> draft -> published -> completed -> archived
     VALID_TRANSITIONS = {
         "pending_approval": ["approved", "cancelled"],
         "approved": ["draft", "published", "cancelled", "archived"],
-        "draft": ["published", "pending_approval", "cancelled", "archived"],
+        "draft": ["pending_approval", "cancelled", "archived"],  # draft→published now requires pending_approval if requires_reapproval
         "published": ["completed", "cancelled", "suspended", "approved", "archived"],
         "completed": ["archived"],
         "suspended": ["published", "cancelled", "archived"],
@@ -269,6 +276,28 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot transition from '{current_status}' to '{new_status}'. Allowed: {allowed_next}"
         )
+
+    # Issue 2: Restoring a cancelled Event requires approval again
+    if event.requires_reapproval and new_status == "published":
+        if current_status == "draft":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Event was previously cancelled. Must go through pending_approval → approved before publishing. Submit for approval first.",
+            )
+
+    # Set requires_reapproval flag when transitioning cancelled → draft
+    if event.status == "cancelled" and new_status == "draft":
+        event.requires_reapproval = True
+
+    # Clear requires_reapproval flag when status transitions from pending_approval to approved
+    # (this handles both admin and provider-initiated approvals after the first review)
+    if event.status == "draft" and new_status == "pending_approval" and event.requires_reapproval:
+        # Flag will be cleared after admin approves; we track it here
+        pass
+
+    # Clear requires_reapproval flag when approved by admin (pending_approval → approved)
+    if event.requires_reapproval and current_status == "pending_approval" and new_status == "approved":
+        event.requires_reapproval = False
 
     previous = event.status
     event.status = new_status

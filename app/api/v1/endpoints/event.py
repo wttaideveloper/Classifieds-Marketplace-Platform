@@ -152,7 +152,7 @@ def update_status(event_id: UUID, payload: EventStatusUpdate, db: Session = Depe
     if payload.status == "approved" and current_user.get("role") != "admin":
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Only admin can approve (pending_approval -> approved). Publish/draft/archived/completed/suspended can be done by provider after first approval.")
-    return update_event_status_service(db, event_id, payload.status)
+    return update_event_status_service(db, event_id, payload.status, current_user)
 
 
 @router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Unpublish Event")
