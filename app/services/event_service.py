@@ -247,18 +247,19 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
-    # Issue 1: Provider cannot cancel an Event — only Enterprise Admin can
+    # 1) Provider cannot cancel — only Enterprise Admin may cancel
     if new_status == "cancelled" and current_user and current_user.get("role") == "provider":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Enterprise Admin or event owner can cancel this event",
+            detail="Only Enterprise Admin can cancel events. Provider is assigned host only.",
         )
 
     # Lifecycle as per spec: pending_approval -> approved -> draft -> published -> completed -> archived
+    # draft normally allows published, but restored drafts (requires_reapproval) must go via pending_approval
     VALID_TRANSITIONS = {
         "pending_approval": ["approved", "cancelled"],
         "approved": ["draft", "published", "cancelled", "archived"],
-        "draft": ["pending_approval", "cancelled", "archived"],  # draft→published now requires pending_approval if requires_reapproval
+        "draft": ["published", "pending_approval", "cancelled", "archived"],
         "published": ["completed", "cancelled", "suspended", "approved", "archived"],
         "completed": ["archived"],
         "suspended": ["published", "cancelled", "archived"],
@@ -277,25 +278,19 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
             detail=f"Cannot transition from '{current_status}' to '{new_status}'. Allowed: {allowed_next}"
         )
 
-    # Issue 2: Restoring a cancelled Event requires approval again
-    if event.requires_reapproval and new_status == "published":
-        if current_status == "draft":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Event was previously cancelled. Must go through pending_approval → approved before publishing. Submit for approval first.",
-            )
+    # 2) Restored cancelled Event must be re-approved: cancelled→draft sets requires_reapproval,
+    # then draft→published is blocked until pending_approval→approved clears it
+    if event.requires_reapproval and current_status == "draft" and new_status == "published":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Event was previously cancelled and restored. Must go through draft → pending_approval → approved before publishing. Submit for approval first.",
+        )
 
-    # Set requires_reapproval flag when transitioning cancelled → draft
+    # Set requires_reapproval when restoring cancelled → draft
     if event.status == "cancelled" and new_status == "draft":
         event.requires_reapproval = True
 
-    # Clear requires_reapproval flag when status transitions from pending_approval to approved
-    # (this handles both admin and provider-initiated approvals after the first review)
-    if event.status == "draft" and new_status == "pending_approval" and event.requires_reapproval:
-        # Flag will be cleared after admin approves; we track it here
-        pass
-
-    # Clear requires_reapproval flag when approved by admin (pending_approval → approved)
+    # Clear requires_reapproval when Super Admin approves (pending_approval → approved)
     if event.requires_reapproval and current_status == "pending_approval" and new_status == "approved":
         event.requires_reapproval = False
 
