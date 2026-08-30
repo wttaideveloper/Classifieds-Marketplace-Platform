@@ -132,18 +132,18 @@ def get_event(event_id: UUID = Path(..., description="Event ID"), db: Session = 
 
 @router.put("/{event_id}", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event")
 def update_event(event: EventUpdate, event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return update_event_service(db, event_id, event)
+    return update_event_service(db, event_id, event, current_user)
 
 
 @router.delete("/{event_id}", status_code=status.HTTP_200_OK, summary="Delete Event")
 def delete_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    delete_event_service(db, event_id)
+    delete_event_service(db, event_id, current_user)
     return {"message": "Event deleted successfully"}
 
 
 @router.post("/{event_id}/duplicate", response_model=EventResponse, status_code=status.HTTP_201_CREATED, summary="Duplicate Event")
 def duplicate_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return duplicate_event_service(db, event_id)
+    return duplicate_event_service(db, event_id, current_user)
 
 
 @router.patch("/{event_id}/status", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event Status")
@@ -157,12 +157,12 @@ def update_status(event_id: UUID, payload: EventStatusUpdate, db: Session = Depe
 
 @router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Unpublish Event")
 def unpublish_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return update_event_status_service(db, event_id, "approved")
+    return update_event_status_service(db, event_id, "approved", current_user)
 
 
 @router.post("/{event_id}/archive", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Archive Event")
 def archive_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return update_event_status_service(db, event_id, "archived")
+    return update_event_status_service(db, event_id, "archived", current_user)
 
 
 # ---- Registrations & Waitlist (E7-E10) ----

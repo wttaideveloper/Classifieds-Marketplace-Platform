@@ -160,13 +160,17 @@ def get_event_service(db: Session, event_id: UUID) -> EventDetailResponse:
     return EventDetailResponse.model_validate(map_event_detail(event))
 
 
-def update_event_service(db: Session, event_id: UUID, update_data):
+def update_event_service(db: Session, event_id: UUID, update_data, current_user: dict = None):
     event = get_event_by_id(db, event_id, include_deleted=True)
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
+    # Block status change via PUT — must use PATCH /status with proper guards
+    if getattr(update_data, "status", None) is not None:
+        raise HTTPException(status_code=400, detail="Status cannot be changed via PUT. Use PATCH /{event_id}/status.")
+
     location_id = update_data.location_id if update_data.location_id is not None else event.location_id
-    _validate_references(db, event.enterprise_id, location_id)
+    _validate_references(db, event.enterprise_id, location_id, current_user)
     # category validation if provided
     if getattr(update_data, "category", None) is not None or getattr(update_data, "subcategory", None) is not None:
         _check_category(db, getattr(update_data, "category", None) or event.category, getattr(update_data, "subcategory", None))
@@ -202,7 +206,7 @@ def update_event_service(db: Session, event_id: UUID, update_data):
     return EventResponse.model_validate(map_event_write(updated))
 
 
-def delete_event_service(db: Session, event_id: UUID):
+def delete_event_service(db: Session, event_id: UUID, current_user: dict = None):
     event = get_event_by_id(db, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -210,7 +214,7 @@ def delete_event_service(db: Session, event_id: UUID):
     return delete_event(db, event)
 
 
-def duplicate_event_service(db: Session, event_id: UUID):
+def duplicate_event_service(db: Session, event_id: UUID, current_user: dict = None):
     import copy
     import uuid
 
