@@ -674,13 +674,14 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
 def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_review: bool = False):
     _get_event_or_404(db, event_id)
     from app.models.event_aux_models import EventFeedback, EventRegistration
-    # Verified review: only registered participants (confirmed/attended) can submit ratings/reviews
+    # Verified review: only registered participants (confirmed/attended) can submit ratings/reviews — email required
     if is_review:
         email = payload.get("participant_email")
-        if email:
-            reg = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==email, EventRegistration.status.in_(["confirmed","attended"])).first()
-            if not reg:
-                raise HTTPException(status_code=403, detail="Only registered participants can submit verified reviews")
+        if not email:
+            raise HTTPException(status_code=400, detail="participant_email is required for verified reviews")
+        reg = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==email, EventRegistration.status.in_(["confirmed","attended"])).first()
+        if not reg:
+            raise HTTPException(status_code=403, detail="Only registered participants can submit verified reviews")
     fb = EventFeedback(
         event_id=event_id,
         participant_email=payload.get("participant_email"),
@@ -705,7 +706,9 @@ def get_event_feedbacks_service(db: Session, event_id: UUID, is_review: bool = F
 
 def moderate_review_service(db: Session, review_id: UUID, action: str):
     from app.models.event_aux_models import EventFeedback
-
+    allowed = {"approved", "rejected", "pending"}
+    if action not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid moderation action. Allowed: {sorted(allowed)}")
     fb = db.query(EventFeedback).filter(EventFeedback.id == review_id).first()
     if not fb:
         raise HTTPException(status_code=404, detail="Review not found")

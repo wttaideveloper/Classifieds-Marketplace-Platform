@@ -24,15 +24,15 @@ def admin_pending_events(
 
 @router.post("/events/{event_id}/approve", summary="Admin — Approve Event")
 def approve_event(event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_admin)):
-    return update_event_status_service(db, event_id, "approved")
+    return update_event_status_service(db, event_id, "approved", _admin)
 
 @router.post("/events/{event_id}/reject", summary="Admin — Reject Event")
 def reject_event(event_id: UUID, payload: dict | None = None, db: Session = Depends(get_db), _admin: dict = Depends(get_current_admin)):
-    return update_event_status_service(db, event_id, "cancelled")
+    return update_event_status_service(db, event_id, "cancelled", _admin)
 
 @router.post("/events/{event_id}/publish", summary="Admin — Publish Approved Event")
 def publish_event(event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_admin)):
-    return update_event_status_service(db, event_id, "published")
+    return update_event_status_service(db, event_id, "published", _admin)
 
 # Trainings admin queue (same flow: draft -> pending_approval -> approved -> published)
 @router.get("/trainings/pending", summary="Admin — Pending Trainings Queue")

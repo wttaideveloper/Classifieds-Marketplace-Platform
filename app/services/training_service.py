@@ -169,11 +169,13 @@ def grade_assessment_manual_service(db: Session, tid: UUID, aid: str, submission
     sub.score=str(grade); sub.passed=grade>=passing; db.commit(); db.refresh(sub)
     return {"submission_id": str(sub.id), "score": grade, "passed": sub.passed, "total_points": total, "feedback": feedback, "explanation": "Manual evaluation completed"}
 
-def get_assessment_result_service(db: Session, tid: UUID, aid: str, submission_id: str):
+def get_assessment_result_service(db: Session, tid: UUID, aid: str, submission_id: str, current_user: dict = None):
     from app.models.training_model import TrainingAssessmentSubmission
     t=_get_training_or_404(db, tid)
     sub=db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.id==submission_id).first()
     if not sub: raise HTTPException(404, "Submission not found")
+    if current_user and current_user.get("role") not in ("admin","provider") and sub.participant_email != current_user.get("email"):
+        raise HTTPException(403, "Not authorized to view this submission")
     assessments=t.assessments or []
     target=next((a for a in assessments if str(a.get("id"))==str(aid)), None)
     questions=target.get("questions",[]) if target else []

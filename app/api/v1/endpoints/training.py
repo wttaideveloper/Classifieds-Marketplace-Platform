@@ -284,7 +284,7 @@ def grade_assessment(training_id: UUID, aid: str, sid: UUID, payload: dict, db: 
 @router.get("/{training_id}/assessments/{aid}/submissions/{sid}/review", summary="Answer explanations & result review")
 def review_assessment(training_id: UUID, aid: str, sid: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import get_assessment_result_service
-    return get_assessment_result_service(db, training_id, aid, str(sid))
+    return get_assessment_result_service(db, training_id, aid, str(sid), current_user)
 
 @router.post("/{training_id}/assignments", status_code=201)
 def create_assignment(training_id: UUID, payload: AssignmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
@@ -315,7 +315,10 @@ def live_attendance(training_id: UUID, session_id: str, payload: dict, db: Sessi
     return record_live_attendance_service(db, training_id, session_id, email)
 
 @router.get("/{training_id}/certificate", summary="Digital completion certificate")
-def get_certificate(training_id: UUID, participant_email: str = Query(...), db: Session=Depends(get_db)):
+def get_certificate(training_id: UUID, participant_email: str = Query(...), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Only owner or admin/provider can fetch certificate
+    if current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Not authorized to view this certificate")
     from app.services.training_service import get_certificate_service
     return get_certificate_service(db, training_id, participant_email)
 
