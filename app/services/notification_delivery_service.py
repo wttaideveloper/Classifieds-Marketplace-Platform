@@ -1,10 +1,13 @@
 import asyncio
 import logging
+import smtplib
 from datetime import datetime
 from uuid import UUID
+from email.message import EmailMessage
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.repository import chat_repo
 from app.repository import notification_repo
 from app.services.firebase_push_service import send_push_to_tokens
@@ -102,14 +105,35 @@ def deliver_notification_to_users(
                 )
 
         if "email" in channels:
-            notification_repo.create_notification_log(
-                db,
-                notification_id=notification_id,
-                recipient_id=user_id,
-                channel="email",
-                status="queued",
-                error_message="Email channel queued for future worker integration.",
-            )
+            try:
+                sent = _send_email_notification(user_id, title, body)
+                if sent:
+                    notification_repo.create_notification_log(
+                        db,
+                        notification_id=notification_id,
+                        recipient_id=user_id,
+                        channel="email",
+                        status="sent",
+                    )
+                else:
+                    notification_repo.create_notification_log(
+                        db,
+                        notification_id=notification_id,
+                        recipient_id=user_id,
+                        channel="email",
+                        status="failed",
+                        error_message="Failed to send email via SMTP.",
+                    )
+            except Exception as e:
+                logger.warning(f"Email send failed for user_id={user_id}: {e}")
+                notification_repo.create_notification_log(
+                    db,
+                    notification_id=notification_id,
+                    recipient_id=user_id,
+                    channel="email",
+                    status="failed",
+                    error_message=str(e),
+                )
 
         if "sms" in channels:
             notification_repo.create_notification_log(
@@ -125,3 +149,25 @@ def deliver_notification_to_users(
             delivered += 1
 
     return delivered
+
+
+def _send_email_notification(recipient_email: str, title: str, body: str) -> bool:
+    """Send a plain‑text email using the configured SMTP settings.
+
+    Returns True if the message was accepted by the SMTP server, False otherwise.
+    """
+    try:
+        msg = EmailMessage()
+        msg["From"] = settings.email_user
+        msg["To"] = recipient_email
+        msg["Subject"] = title
+        msg.set_content(body)
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.starttls()
+            smtp.login(settings.email_user, settings.email_pass)
+            smtp.send_message(msg)
+        return True
+    except Exception as e:
+        logger.exception(f"SMTP email send failed to {recipient_email}")
+        return False

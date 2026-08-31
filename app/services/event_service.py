@@ -665,6 +665,7 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
                 db, current_user, title=title, message=message,
                 notification_type="event_announcement", category="event",
                 user_ids=user_ids, tenant_id=str(event.tenant_id) if event.tenant_id else None,
+                channels=["in_app", "email"],
                 metadata={"event_id": str(event_id)}
             )
     except Exception:
