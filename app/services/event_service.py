@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -671,6 +672,7 @@ def get_event_attendance_service(db: Session, event_id: UUID):
 
 
 def send_announcement_service(db: Session, event_id: UUID, payload, current_user: dict | None = None):
+    from datetime import datetime
     from app.models.event_aux_models import EventRegistration
 
     event = _get_event_or_404(db, event_id)
@@ -707,7 +709,7 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
             logger.warning("Announcement dispatch failed for %s: %s", reg.participant_email, e)
 
     return {"id": str(event_id), "event_id": str(event_id), "sent_by": current_user.get("id") if current_user else None,
-            "recipient_count": recipient_count, "sent_count": sent_count, "created_at": __import__("datetime").datetime.utcnow().isoformat(), "title": title, "message": message}
+            "recipient_count": recipient_count, "sent_count": sent_count, "created_at": datetime.utcnow().isoformat(), "title": title, "message": message}
 
 def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_review: bool = False):
     _get_event_or_404(db, event_id)
@@ -968,6 +970,7 @@ def _ticket_effective_price(ticket: dict, event) -> str:
     return str(ticket.get("price", event.price or "0"))
 
 def create_event_checkout_service(db: Session, event_id: UUID, payload):
+    import uuid
     from app.models.event_aux_models import EventOrder, EventRegistration
     event = _get_event_or_404(db, event_id)
     if event.status in ["cancelled", "completed", "archived", "suspended"]:
@@ -1033,7 +1036,7 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
         pass
     # also create registration for attendance tracking
     try:
-        reg = EventRegistration(event_id=event_id, participant_name=payload.participant_name, participant_email=payload.participant_email, ticket_type_id=payload.ticket_type_id, status="confirmed", qr_code=str(__import__("uuid").uuid4())[:8].upper())
+        reg = EventRegistration(event_id=event_id, participant_name=payload.participant_name, participant_email=payload.participant_email, ticket_type_id=payload.ticket_type_id, status="confirmed", qr_code=str(uuid.uuid4())[:8].upper())
         db.add(reg); db.commit()
     except Exception:
         pass
@@ -1199,6 +1202,7 @@ def delete_template_service(db: Session, template_id: UUID, current_user: dict |
 
 
 def batch_checkin_service(db: Session, event_id: UUID, participants: list):
+    from datetime import datetime
     from app.models.event_aux_models import EventRegistration
     from app.models.event_model import Event as Ev
 
@@ -1274,6 +1278,7 @@ def batch_checkin_service(db: Session, event_id: UUID, participants: list):
 
 def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
     """If capacity has opened up, promote the oldest waitlisted person."""
+    import uuid
     from app.models.event_aux_models import EventRegistration, EventWaitlist
 
     if not event.capacity:
@@ -1303,7 +1308,7 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
         participant_name=next_in_line.participant_name,
         participant_email=next_in_line.participant_email,
         status="confirmed",
-        qr_code=str(__import__("uuid").uuid4())[:12].upper(),
+        qr_code=str(uuid.uuid4())[:12].upper(),
     )
     db.add(reg)
     db.delete(next_in_line)

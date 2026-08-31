@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_current_user, require_roles
@@ -28,6 +28,7 @@ from app.schemas.event_schema import (
     EventUncheckInRequest,
 )
 from app.services.event_service import (
+    get_template_service,
     add_session_service,
     apply_template_service,
     check_in_service,
@@ -125,6 +126,11 @@ def create_template(payload: dict, db: Session = Depends(get_db), current_user: 
 @router.get("/templates", summary="List Templates")
 def list_templates(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return list_templates_service(db, current_user)
+
+
+@router.get("/templates/{template_id}", summary="Get Template by ID")
+def get_template(template_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return get_template_service(db, template_id, current_user)
 
 
 @router.post("/templates/{template_id}/apply", status_code=status.HTTP_201_CREATED, summary="Apply Template")
