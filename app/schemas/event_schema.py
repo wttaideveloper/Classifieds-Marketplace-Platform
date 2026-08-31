@@ -229,6 +229,20 @@ class EventUpdate(BaseModel):
 
     def to_model_data(self) -> dict:
         data = self.model_dump(exclude_unset=True)
+        if "ticket_types" in data and data["ticket_types"] is not None:
+            normalized_tt: list[dict] = []
+            for raw in data["ticket_types"] or []:
+                if isinstance(raw, dict):
+                    d = dict(raw)
+                else:
+                    try:
+                        d = raw.model_dump() if hasattr(raw, "model_dump") else dict(raw)
+                    except Exception:
+                        continue
+                if not d.get("id"):
+                    d["id"] = str(uuid.uuid4())
+                normalized_tt.append(d)
+            data["ticket_types"] = normalized_tt
         if "sessions" in data and data["sessions"] is not None:
             normalized: list[dict] = []
             for raw in data["sessions"] or []:

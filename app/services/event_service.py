@@ -1,8 +1,11 @@
+import logging
 from uuid import UUID
 
 import sqlalchemy as sa
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.models.enterprise_model import Enterprise
 from app.models.location_model import EnterpriseLocation
@@ -25,22 +28,18 @@ from app.services.response_mappers import map_event_detail, map_event_list_item,
 
 def _validate_references(db: Session, enterprise_id: UUID | None, location_id: UUID | None, current_user: dict | None = None):
     if not enterprise_id:
-        # No enterprise_id provided — event will be owned by authenticated tenant
-        # Still validate location_id if enterprise_id is set (for backward compatibility)
-        if enterprise_id and location_id:
+        # Tenant-owned event — validate location_id independently if supplied (non-breaking, previously skipped)
+        if location_id:
             location = (
                 db.query(EnterpriseLocation)
                 .filter(
                     EnterpriseLocation.id == location_id,
-                    EnterpriseLocation.enterprise_id == enterprise_id,
                     EnterpriseLocation.is_deleted.is_(False),
                 )
                 .first()
             )
             if not location:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="Location not found for this enterprise"
-                )
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
         return
     enterprise = (
         db.query(Enterprise)
@@ -634,7 +633,7 @@ def get_event_attendance_service(db: Session, event_id: UUID):
 
     regs = db.query(EventRegistration).filter(EventRegistration.event_id == event_id).all()
     attended = [r for r in regs if r.status == "attended"]
-    no_show = [r for r in regs if r.status == "confirmed"]
+    no_show = [r for r in regs if r.status == "no_show"]
 
     # Build per-session attendance breakdown
     by_session: dict[str, dict] = {}
@@ -684,8 +683,16 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
     ).all()
     recipient_count = len(regs)
 
-    # Dispatch email + in-app notification to each registered participant
+    # Dispatch notification to each registered participant — honor payload.channels if supplied (non-breaking fallback)
     from app.services.notification_triggers import _safe_notify
+    # payload may be dict or Pydantic; respect requested channels, default to in_app+email for backward compat
+    try:
+        req_channels = payload.channels if hasattr(payload, "channels") and payload.channels else None
+        if not req_channels and isinstance(payload, dict):
+            req_channels = payload.get("channels")
+    except Exception:
+        req_channels = None
+    effective_channels = req_channels if req_channels else ["in_app", "email"]
     sent_count = 0
     for reg in regs:
         try:
@@ -693,7 +700,7 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
                 db, title, message, "event_announcement", event.tenant_id,
                 {"event_id": str(event_id), "registration_id": str(reg.id)},
                 participant_email=reg.participant_email,
-                channels=["in_app", "email"],
+                channels=effective_channels,
             )
             sent_count += 1
         except Exception as e:
@@ -764,7 +771,7 @@ def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
         data = {"total_registrations": len(regs), "by_status": by_status, "by_ticket_type": by_ticket}
     elif report_type == "attendance":
         attended = sum(1 for r in regs if r.status == "attended")
-        no_show = sum(1 for r in regs if r.status == "confirmed")
+        no_show = sum(1 for r in regs if r.status == "no_show")
         cancelled = sum(1 for r in regs if r.status == "cancelled")
         by_session: dict = {}
         for r in regs:
