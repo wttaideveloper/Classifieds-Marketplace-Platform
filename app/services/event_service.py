@@ -1596,6 +1596,16 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
             except Exception:
                 pass
 
+    # If tenant still null but enterprise supplied, derive tenant from Enterprise.tenant_id; keep null if not found
+    if not effective_tenant_id and enterprise_id:
+        try:
+            from app.models.enterprise_model import Enterprise as _EntForTenant
+            _ent = db.query(_EntForTenant).filter(_EntForTenant.id == enterprise_id).first()
+            if _ent and getattr(_ent, "tenant_id", None):
+                effective_tenant_id = str(_ent.tenant_id)
+        except Exception:
+            pass  # keep null
+
     # enterprise_id is OPTIONAL — tenant ownership is the boundary
     data["enterprise_id"] = enterprise_id if enterprise_id else None
 
