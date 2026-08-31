@@ -23,7 +23,25 @@ from app.schemas.event_schema import (
 from app.services.response_mappers import map_event_detail, map_event_list_item, map_event_write
 
 
-def _validate_references(db: Session, enterprise_id: UUID, location_id: UUID | None, current_user: dict | None = None):
+def _validate_references(db: Session, enterprise_id: UUID | None, location_id: UUID | None, current_user: dict | None = None):
+    if not enterprise_id:
+        # No enterprise_id provided — event will be owned by authenticated tenant
+        # Still validate location_id if enterprise_id is set (for backward compatibility)
+        if enterprise_id and location_id:
+            location = (
+                db.query(EnterpriseLocation)
+                .filter(
+                    EnterpriseLocation.id == location_id,
+                    EnterpriseLocation.enterprise_id == enterprise_id,
+                    EnterpriseLocation.is_deleted.is_(False),
+                )
+                .first()
+            )
+            if not location:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Location not found for this enterprise"
+                )
+        return
     enterprise = (
         db.query(Enterprise)
         .filter(Enterprise.id == enterprise_id, Enterprise.is_deleted.is_(False))
@@ -104,6 +122,17 @@ def _log_audit(db: Session, event_id: UUID, action: str, before: dict | None, af
         except: pass
 
 def create_event_service(db: Session, event_data, current_user: dict | None = None):
+    # Resolve enterprise_id from authenticated tenant if not provided
+    if not event_data.enterprise_id and current_user:
+        tenant_id = current_user.get("tenant_id") or current_user.get("tenant_id_claim")
+        if tenant_id:
+            try:
+                from app.models.enterprise_model import Enterprise
+                ent = db.query(Enterprise).filter(Enterprise.tenant_id == tenant_id).first()
+                if ent:
+                    event_data.enterprise_id = ent.id
+            except Exception:
+                pass
     _validate_references(db, event_data.enterprise_id, event_data.location_id, current_user)
     _check_category(db, getattr(event_data, "category", None), getattr(event_data, "subcategory", None))
     # auto-create meeting link if needed
@@ -655,26 +684,23 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
     ).all()
     recipient_count = len(regs)
 
-    # Try to dispatch via notification service if available, otherwise just count
-    try:
-        from app.services.notification_service import _dispatch_notification
-        # best-effort dispatch
-        user_ids = [r.participant_email for r in regs]
-        if user_ids and current_user:
-            _dispatch_notification(
-                db, current_user, title=title, message=message,
-                notification_type="event_announcement", category="event",
-                user_ids=user_ids, tenant_id=str(event.tenant_id) if event.tenant_id else None,
+    # Dispatch email + in-app notification to each registered participant
+    from app.services.notification_triggers import _safe_notify
+    sent_count = 0
+    for reg in regs:
+        try:
+            _safe_notify(
+                db, title, message, "event_announcement", event.tenant_id,
+                {"event_id": str(event_id), "registration_id": str(reg.id)},
+                participant_email=reg.participant_email,
                 channels=["in_app", "email"],
-                metadata={"event_id": str(event_id)}
             )
-    except Exception:
-        pass
+            sent_count += 1
+        except Exception as e:
+            logger.warning("Announcement dispatch failed for %s: %s", reg.participant_email, e)
 
     return {"id": str(event_id), "event_id": str(event_id), "sent_by": current_user.get("id") if current_user else None,
-            "recipient_count": recipient_count, "created_at": __import__("datetime").datetime.utcnow().isoformat(),
-            "title": title, "message": message}
-
+            "recipient_count": recipient_count, "sent_count": sent_count, "created_at": __import__("datetime").datetime.utcnow().isoformat(), "title": title, "message": message}
 
 def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_review: bool = False):
     _get_event_or_404(db, event_id)

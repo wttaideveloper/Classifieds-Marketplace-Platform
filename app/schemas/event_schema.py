@@ -79,7 +79,7 @@ class EventCreate(BaseModel):
     )
 
     tenant_id: UUID | None = Field(None, description="Tenant identifier.")
-    enterprise_id: UUID = Field(..., description="Enterprise ID")
+    enterprise_id: UUID | None = Field(None, description="Enterprise ID. If omitted, event is owned by the authenticated tenant.")
     location_id: UUID | None = Field(None, description="Enterprise location ID")
     title: str = Field(..., description="Event title")
     description: str | None = Field(None, description="Event description")

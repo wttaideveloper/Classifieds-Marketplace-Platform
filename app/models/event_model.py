@@ -24,7 +24,7 @@ class Event(Base):
     enterprise_id = Column(
         UUID(as_uuid=True),
         ForeignKey("enterprises.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
 
