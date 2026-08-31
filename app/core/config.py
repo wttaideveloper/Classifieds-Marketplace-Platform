@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # send email
     email_user: str
     email_pass: str
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
     # Chat file uploads — relative paths resolve under the project root (e.g. /app/uploads in Docker).
     # Override with an absolute path when mounting a host volume (e.g. UPLOAD_DIR=/app/uploads).
     UPLOAD_DIR: str = "uploads"

@@ -106,7 +106,22 @@ def deliver_notification_to_users(
 
         if "email" in channels:
             try:
-                sent = _send_email_notification(user_id, title, body)
+                # Extract email from metadata (participant_email stored by notification_triggers)
+                recipient_email = (metadata or {}).get("participant_email", "")
+                if not recipient_email:
+                    # Try to look up email from chat_users table
+                    try:
+                        from sqlalchemy import text
+                        row = db.execute(text("SELECT email FROM chat_users WHERE id = :uid LIMIT 1"), {"uid": str(user_id)}).fetchone()
+                        if row:
+                            recipient_email = row[0]
+                    except Exception:
+                        pass
+                if recipient_email:
+                    sent = _send_email_notification(recipient_email, title, body)
+                else:
+                    logger.debug("No email address for user_id=%s, skipping email channel", user_id)
+                    sent = False
                 if sent:
                     notification_repo.create_notification_log(
                         db,
@@ -163,7 +178,7 @@ def _send_email_notification(recipient_email: str, title: str, body: str) -> boo
         msg["Subject"] = title
         msg.set_content(body)
 
-        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as smtp:
             smtp.starttls()
             smtp.login(settings.email_user, settings.email_pass)
             smtp.send_message(msg)

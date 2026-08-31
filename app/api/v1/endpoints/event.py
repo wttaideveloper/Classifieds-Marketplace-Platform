@@ -124,7 +124,7 @@ def create_template(payload: dict, db: Session = Depends(get_db), current_user: 
 
 @router.get("/templates", summary="List Templates")
 def list_templates(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return list_templates_service(db)
+    return list_templates_service(db, current_user)
 
 
 @router.post("/templates/{template_id}/apply", status_code=status.HTTP_201_CREATED, summary="Apply Template")
@@ -445,13 +445,13 @@ def reports_summary(enterprise_id: UUID | None = None, db: Session = Depends(get
 @router.put("/templates/{template_id}", status_code=status.HTTP_200_OK, summary="Update Template")
 def update_template(template_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.event_service import update_template_service
-    return update_template_service(db, template_id, payload)
+    return update_template_service(db, template_id, payload, current_user)
 
 
 @router.delete("/templates/{template_id}", status_code=status.HTTP_200_OK, summary="Delete Template")
 def delete_template(template_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.event_service import delete_template_service
-    return delete_template_service(db, template_id)
+    return delete_template_service(db, template_id, current_user)
 
 
 @router.get("/{event_id}/batch-check-in", summary="Batch Check-in — List registrations for scanning")

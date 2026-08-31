@@ -177,3 +177,22 @@ def send_to_groups(
     current_user=Depends(get_current_user),
 ):
     return send_to_groups_service(db, current_user, payload)
+
+
+@router.get(
+    "/email-delivery-logs",
+    summary="Email Delivery Audit Log",
+)
+def list_email_delivery_logs(
+    tenant_id: UUID | None = Query(None, description="Filter by tenant ID"),
+    status: str | None = Query(None, description="Filter by delivery status: sent|failed|skipped"),
+    category: str | None = Query(None, description="Filter by notification category"),
+    page: int = Query(DEFAULT_PAGE, ge=1),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return list_email_delivery_logs_service(
+        db, current_user, tenant_id=tenant_id, status=status,
+        category=category, page=page, page_size=page_size,
+    )

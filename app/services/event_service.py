@@ -1112,19 +1112,29 @@ def delete_event_category_service(db: Session, category_id: UUID):
 # ---- Template CRUD (add update/delete) ----
 
 
-def get_template_service(db: Session, template_id: UUID):
+def get_template_service(db: Session, template_id: UUID, current_user: dict | None = None):
     from app.models.event_aux_models import EventTemplate
     tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found")
+    # Tenant isolation
+    if current_user:
+        user_tid = current_user.get("tenant_id")
+        if user_tid and tmpl.tenant_id and str(tmpl.tenant_id) != str(user_tid):
+            raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
     return tmpl
 
 
-def update_template_service(db: Session, template_id: UUID, payload: dict):
+def update_template_service(db: Session, template_id: UUID, payload: dict, current_user: dict | None = None):
     from app.models.event_aux_models import EventTemplate
     tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found")
+    # Tenant isolation
+    if current_user:
+        user_tid = current_user.get("tenant_id")
+        if user_tid and tmpl.tenant_id and str(tmpl.tenant_id) != str(user_tid):
+            raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
     if "name" in payload:
         tmpl.name = payload["name"]
     if "template_data" in payload:
@@ -1134,11 +1144,16 @@ def update_template_service(db: Session, template_id: UUID, payload: dict):
     return tmpl
 
 
-def delete_template_service(db: Session, template_id: UUID):
+def delete_template_service(db: Session, template_id: UUID, current_user: dict | None = None):
     from app.models.event_aux_models import EventTemplate
     tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found")
+    # Tenant isolation
+    if current_user:
+        user_tid = current_user.get("tenant_id")
+        if user_tid and tmpl.tenant_id and str(tmpl.tenant_id) != str(user_tid):
+            raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
     db.delete(tmpl)
     db.commit()
     return {"message": "Template deleted"}
@@ -1498,9 +1513,15 @@ def my_registrations_service(db: Session, email: str, status_filter: str | None 
 # ---- Template CRUD ----
 
 
-def list_templates_service(db: Session):
+def list_templates_service(db: Session, current_user: dict | None = None):
     from app.models.event_aux_models import EventTemplate
-    return db.query(EventTemplate).all()
+    q = db.query(EventTemplate)
+    # Tenant isolation: filter by authenticated tenant
+    if current_user:
+        user_tid = current_user.get("tenant_id")
+        if user_tid:
+            q = q.filter(EventTemplate.tenant_id == user_tid)
+    return q.all()
 
 
 def apply_template_service(db: Session, template_id: UUID, payload: dict, current_user: dict | None = None):
@@ -1512,9 +1533,17 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
     tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found")
+
+    # Tenant isolation: verify template belongs to authenticated tenant
+    if current_user:
+        user_tid = current_user.get("tenant_id")
+        if user_tid and tmpl.tenant_id and str(tmpl.tenant_id) != str(user_tid):
+            raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
+
     data = dict(tmpl.template_data)
+
+    # Resolve enterprise_id: payload > template > auth context
     enterprise_id = payload.get("enterprise_id") or data.get("enterprise_id") or tmpl.enterprise_id
-    # Auto-assign from auth context if still missing
     if not enterprise_id and current_user:
         enterprise_id = current_user.get("enterprise_id") or current_user.get("enterpriseId")
         if not enterprise_id and current_user.get("tenant_slug"):
@@ -1525,15 +1554,18 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
                     enterprise_id = str(ent.id)
             except Exception:
                 pass
-    if not enterprise_id:
-        raise HTTPException(status_code=400, detail="enterprise_id is required (provide in payload or create template with enterprise_id)")
+
+    # enterprise_id is OPTIONAL — tenant ownership is the boundary
     data["enterprise_id"] = enterprise_id
-    # Also propagate tenant_id if template has it and event data missing it
+
+    # Propagate tenant_id from template or auth context
     if not data.get("tenant_id") and tmpl.tenant_id:
         data["tenant_id"] = str(tmpl.tenant_id)
     if not data.get("tenant_id") and current_user and current_user.get("tenant_id"):
         data["tenant_id"] = current_user.get("tenant_id")
+
     data["status"] = "draft"
+
     # Regenerate session ids
     if data.get("sessions"):
         cloned_sessions = copy.deepcopy(data["sessions"])
@@ -1544,15 +1576,12 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
                 if hasattr(sd, "isoformat"):
                     s["session_date"] = sd.isoformat()
         data["sessions"] = cloned_sessions
+
     event = Ev(**{k: v for k, v in data.items() if k in [c.key for c in Ev.__table__.columns]})
     db.add(event)
     db.commit()
     db.refresh(event)
     return event
-
-
-# ---- Meeting Link ----
-
 
 def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict):
     """Get meeting link — admin/provider or registered participant only."""

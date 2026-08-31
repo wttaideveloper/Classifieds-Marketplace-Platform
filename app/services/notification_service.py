@@ -1,3 +1,58 @@
+
+
+
+def list_email_delivery_logs_service(
+    db: Session,
+    current_user: dict,
+    *,
+    tenant_id: UUID | None,
+    status: str | None,
+    category: str | None,
+    page: int,
+    page_size: int,
+):
+    """List email delivery logs from notification_logs filtered by channel=email."""
+    _require_tenant_admin(current_user)
+    scoped_tenant = tenant_id
+    if current_user.get("role") == "provider":
+        scoped_tenant = _parse_tenant_id(current_user)
+
+    from app.models.notification_model import NotificationLog, Notification
+    from sqlalchemy import and_
+
+    query = (
+        db.query(NotificationLog, Notification)
+        .join(Notification, Notification.id == NotificationLog.notification_id)
+        .filter(NotificationLog.channel == "email")
+    )
+    if scoped_tenant is not None:
+        query = query.filter(Notification.tenant_id == scoped_tenant)
+    if status:
+        query = query.filter(NotificationLog.status == status)
+    if category:
+        query = query.filter(Notification.category == category)
+    query = query.order_by(NotificationLog.created_at.desc())
+    total = query.count()
+    rows = apply_pagination(query, page, page_size).all()
+
+    items = []
+    for log_row, notif_row in rows:
+        items.append({
+            "id": log_row.id,
+            "notification_id": log_row.notification_id,
+            "recipient_id": log_row.recipient_id,
+            "channel": log_row.channel,
+            "status": log_row.status,
+            "error_message": log_row.error_message,
+            "created_at": log_row.created_at,
+            "notification_title": notif_row.title,
+            "notification_category": notif_row.category,
+            "notification_tenant_id": notif_row.tenant_id,
+        })
+    return {
+        "items": items,
+        "pagination": build_pagination_meta(total, page, page_size),
+    }
 import logging
 from datetime import datetime
 from uuid import UUID

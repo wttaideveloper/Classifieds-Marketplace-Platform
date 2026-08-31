@@ -252,7 +252,7 @@ class EventResponse(BaseModel):
 
     id: UUID
     tenant_id: UUID | None = None
-    enterprise_id: UUID
+    enterprise_id: UUID | None = None
     location_id: UUID | None = None
     title: str
     description: str | None = None
