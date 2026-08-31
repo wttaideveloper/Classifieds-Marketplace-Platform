@@ -840,10 +840,34 @@ def get_event_summary_service(db: Session, enterprise_id: UUID | None = None):
             "upcoming_events": upcoming, "past_events": past, "total_registrations": reg_count, "total_attended": attended_count, "average_rating": avg_rating}
 
 
-def create_template_service(db: Session, payload: dict):
+def create_template_service(db: Session, payload: dict, current_user: dict | None = None):
     from app.models.event_aux_models import EventTemplate
 
-    tmpl = EventTemplate(name=payload.get("name", "Template"), template_data=payload.get("template_data", payload))
+    # Auto-assign tenant/enterprise from auth context if not provided
+    tenant_id = payload.get("tenant_id")
+    enterprise_id = payload.get("enterprise_id")
+    if current_user:
+        if not tenant_id:
+            tenant_id = current_user.get("tenant_id") or current_user.get("tenantId") or current_user.get("tenant_id_claim")
+        if not enterprise_id:
+            enterprise_id = current_user.get("enterprise_id") or current_user.get("enterpriseId")
+            # Fallback: try to resolve enterprise_id from tenant if token only has tenant_slug
+            if not enterprise_id and current_user.get("tenant_slug"):
+                try:
+                    from app.models.enterprise_model import Enterprise
+                    ent = db.query(Enterprise).filter(Enterprise.slug == current_user.get("tenant_slug")).first()
+                    if ent:
+                        enterprise_id = str(ent.id)
+                        if not tenant_id and ent.tenant_id:
+                            tenant_id = str(ent.tenant_id)
+                except Exception:
+                    pass
+    tmpl = EventTemplate(
+        name=payload.get("name", "Template"),
+        template_data=payload.get("template_data", payload),
+        tenant_id=tenant_id,
+        enterprise_id=enterprise_id,
+    )
     db.add(tmpl)
     db.commit()
     db.refresh(tmpl)
@@ -996,3 +1020,555 @@ def create_event_refund_service(db: Session, event_id: UUID, reg_id: UUID, paylo
     except Exception:
         pass
     return {"message": "Refund requested", "registration_id": str(reg.id), "status": reg.status}
+
+
+# ---- EventCategory CRUD ----
+
+
+def create_event_category_service(db: Session, payload):
+    from app.models.event_aux_models import EventCategory
+
+    name = payload.name.strip()
+    existing = db.query(EventCategory).filter(EventCategory.name == name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Category '{name}' already exists")
+    if payload.parent_id:
+        parent = db.query(EventCategory).filter(EventCategory.id == payload.parent_id).first()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent category not found")
+    cat = EventCategory(name=name, parent_id=payload.parent_id, description=payload.description)
+    db.add(cat)
+    db.commit()
+    db.refresh(cat)
+    return cat
+
+
+def list_event_categories_service(db: Session):
+    from app.models.event_aux_models import EventCategory
+    return db.query(EventCategory).order_by(EventCategory.name).all()
+
+
+def update_event_category_service(db: Session, category_id: UUID, payload):
+    from app.models.event_aux_models import EventCategory
+
+    cat = db.query(EventCategory).filter(EventCategory.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    if payload.name is not None:
+        new_name = payload.name.strip()
+        dup = db.query(EventCategory).filter(EventCategory.name == new_name, EventCategory.id != category_id).first()
+        if dup:
+            raise HTTPException(status_code=400, detail=f"Category '{new_name}' already exists")
+        cat.name = new_name
+    if payload.description is not None:
+        cat.description = payload.description
+    db.commit()
+    db.refresh(cat)
+    return cat
+
+
+def delete_event_category_service(db: Session, category_id: UUID):
+    from app.models.event_aux_models import EventCategory
+
+    cat = db.query(EventCategory).filter(EventCategory.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    # Check if any subcategories exist
+    child_count = db.query(EventCategory).filter(EventCategory.parent_id == category_id).count()
+    if child_count > 0:
+        raise HTTPException(status_code=400, detail=f"Cannot delete: category has {child_count} subcategories. Delete subcategories first.")
+    db.delete(cat)
+    db.commit()
+    return {"message": "Category deleted"}
+
+
+# ---- Template CRUD (add update/delete) ----
+
+
+def get_template_service(db: Session, template_id: UUID):
+    from app.models.event_aux_models import EventTemplate
+    tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return tmpl
+
+
+def update_template_service(db: Session, template_id: UUID, payload: dict):
+    from app.models.event_aux_models import EventTemplate
+    tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if "name" in payload:
+        tmpl.name = payload["name"]
+    if "template_data" in payload:
+        tmpl.template_data = payload["template_data"]
+    db.commit()
+    db.refresh(tmpl)
+    return tmpl
+
+
+def delete_template_service(db: Session, template_id: UUID):
+    from app.models.event_aux_models import EventTemplate
+    tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    db.delete(tmpl)
+    db.commit()
+    return {"message": "Template deleted"}
+
+
+# ---- Batch Check-in ----
+
+
+def batch_checkin_service(db: Session, event_id: UUID, participants: list):
+    from app.models.event_aux_models import EventRegistration
+    from app.models.event_model import Event as Ev
+
+    _get_event_or_404(db, event_id)
+    ev_chk = db.query(Ev).filter(Ev.id == event_id).first()
+    if ev_chk and ev_chk.status in ["cancelled", "completed", "archived", "suspended"]:
+        raise HTTPException(status_code=400, detail=f"Cannot check-in: event is {ev_chk.status}")
+
+    results = []
+    succeeded = 0
+    failed = 0
+    for item in participants:
+        reg = None
+        if item.registration_id:
+            reg = db.query(EventRegistration).filter(
+                EventRegistration.id == item.registration_id,
+                EventRegistration.event_id == event_id
+            ).first()
+        elif item.qr_code:
+            reg = db.query(EventRegistration).filter(
+                EventRegistration.qr_code == item.qr_code,
+                EventRegistration.event_id == event_id
+            ).first()
+        if not reg:
+            results.append({
+                "registration_id": item.registration_id or item.qr_code,
+                "status": "failed",
+                "message": "Registration not found"
+            })
+            failed += 1
+            continue
+        if reg.status == "cancelled":
+            results.append({
+                "registration_id": reg.id,
+                "participant_name": reg.participant_name,
+                "participant_email": reg.participant_email,
+                "status": "failed",
+                "message": "Registration is cancelled"
+            })
+            failed += 1
+            continue
+        if reg.status == "attended":
+            results.append({
+                "registration_id": reg.id,
+                "participant_name": reg.participant_name,
+                "participant_email": reg.participant_email,
+                "status": "already_checked_in",
+                "checked_in_at": reg.checked_in_at.isoformat() if reg.checked_in_at else None,
+                "message": "Already checked in"
+            })
+            succeeded += 1
+            continue
+        reg.status = "attended"
+        reg.checked_in_at = datetime.utcnow()
+        reg.checked_in_by = None  # batch — no single user context
+        if item.session_id:
+            reg.session_id = item.session_id
+        results.append({
+            "registration_id": reg.id,
+            "participant_name": reg.participant_name,
+            "participant_email": reg.participant_email,
+            "status": "attended",
+            "checked_in_at": reg.checked_in_at.isoformat(),
+            "message": "Checked in"
+        })
+        succeeded += 1
+    db.commit()
+    return {"total": len(participants), "succeeded": succeeded, "failed": failed, "results": results}
+
+
+# ---- Waitlist Auto-Promote ----
+
+
+def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
+    """If capacity has opened up, promote the oldest waitlisted person."""
+    from app.models.event_aux_models import EventRegistration, EventWaitlist
+
+    if not event.capacity:
+        return
+    try:
+        max_capacity = int(float(str(event.capacity).strip()))
+    except ValueError:
+        return
+    current_count = db.query(EventRegistration).filter(
+        EventRegistration.event_id == event_id,
+        EventRegistration.status.in_(["confirmed", "attended"])
+    ).count()
+    if current_count >= max_capacity:
+        return
+    # Get oldest waitlist entry
+    next_in_line = (
+        db.query(EventWaitlist)
+        .filter(EventWaitlist.event_id == event_id)
+        .order_by(EventWaitlist.created_at.asc())
+        .first()
+    )
+    if not next_in_line:
+        return
+    # Auto-promote
+    reg = EventRegistration(
+        event_id=event_id,
+        participant_name=next_in_line.participant_name,
+        participant_email=next_in_line.participant_email,
+        status="confirmed",
+        qr_code=str(__import__("uuid").uuid4())[:12].upper(),
+    )
+    db.add(reg)
+    db.delete(next_in_line)
+    db.flush()
+    # Notify
+    try:
+        from app.services.notification_triggers import notify_registration_confirmation
+        notify_registration_confirmation(db, event, reg)
+    except Exception:
+        pass
+
+
+# ---- Event Auto-Complete ----
+
+
+def auto_complete_past_events_service(db: Session, enterprise_id: UUID | None = None):
+    """Transition published events past their end_date to completed."""
+    from app.models.event_model import Event as Ev
+    from datetime import datetime
+    now = datetime.utcnow()
+    q = db.query(Ev).filter(
+        Ev.status == "published",
+        Ev.end_date < now,
+        Ev.is_deleted.is_(False)
+    )
+    if enterprise_id:
+        q = q.filter(Ev.enterprise_id == enterprise_id)
+    events = q.all()
+    updated = 0
+    for ev in events:
+        previous = ev.status
+        ev.status = "completed"
+        _log_audit(db, ev.id, "auto_complete", {"status": previous}, {"status": "completed"})
+        updated += 1
+    if updated:
+        db.commit()
+    return {"auto_completed": updated}
+
+
+# ---- Check-in / Uncheck-in / Check-out / QR Validation ----
+
+
+def _find_registration(db: Session, event_id: UUID, registration_id: UUID | None, qr_code: str | None):
+    """Find a registration by ID or QR code within an event."""
+    from app.models.event_aux_models import EventRegistration
+
+    if registration_id:
+        reg = db.query(EventRegistration).filter(
+            EventRegistration.id == registration_id,
+            EventRegistration.event_id == event_id,
+        ).first()
+    elif qr_code:
+        reg = db.query(EventRegistration).filter(
+            EventRegistration.qr_code == qr_code,
+            EventRegistration.event_id == event_id,
+        ).first()
+    else:
+        raise HTTPException(status_code=400, detail="registration_id or qr_code is required")
+    return reg
+
+
+def check_in_service(db: Session, event_id: UUID, payload, current_user: dict | None = None):
+    """Check-in a participant by registration_id or qr_code."""
+    from app.models.event_aux_models import EventRegistration
+    from app.models.event_model import Event as Ev
+    from app.schemas.event_schema import EventCheckInResponse
+
+    reg = _find_registration(db, event_id, payload.registration_id, payload.qr_code)
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+
+    ev_chk = db.query(Ev).filter(Ev.id == event_id).first()
+    if ev_chk and ev_chk.status in ["cancelled", "completed", "archived", "suspended"]:
+        raise HTTPException(status_code=400, detail=f"Cannot check-in: event is {ev_chk.status}")
+    if reg.status == "cancelled":
+        raise HTTPException(status_code=400, detail="Cannot check-in: registration is cancelled")
+    if reg.status == "attended":
+        return EventCheckInResponse(
+            message="Already checked in",
+            registration_id=reg.id,
+            participant_name=reg.participant_name,
+            participant_email=reg.participant_email,
+            status=reg.status,
+            checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
+            session_id=payload.session_id,
+        )
+
+    reg.status = "attended"
+    reg.checked_in_at = datetime.utcnow()
+    reg.checked_in_by = current_user.get("id") if current_user else None
+    if payload.session_id:
+        reg.session_id = payload.session_id
+    db.commit()
+    db.refresh(reg)
+
+    return EventCheckInResponse(
+        message="Checked in successfully",
+        registration_id=reg.id,
+        participant_name=reg.participant_name,
+        participant_email=reg.participant_email,
+        status=reg.status,
+        checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
+        session_id=reg.session_id,
+    )
+
+
+def uncheck_in_service(db: Session, event_id: UUID, payload):
+    """Undo a check-in, restoring registration to 'confirmed'."""
+    from app.schemas.event_schema import EventUncheckInResponse
+
+    reg = _find_registration(db, event_id, payload.registration_id, payload.qr_code)
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if reg.status != "attended":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot undo: registration status is '{reg.status}', not 'attended'",
+        )
+
+    reg.status = "confirmed"
+    reg.checked_in_at = None
+    reg.checked_in_by = None
+    reg.session_id = None
+    db.commit()
+    db.refresh(reg)
+
+    return EventUncheckInResponse(
+        message="Check-in undone",
+        registration_id=reg.id,
+        participant_name=reg.participant_name,
+        participant_email=reg.participant_email,
+        status=reg.status,
+        restored_to="confirmed",
+    )
+
+
+def check_out_service(db: Session, event_id: UUID, payload):
+    """Check-out a participant by registration_id or qr_code."""
+    from app.schemas.event_schema import EventCheckOutResponse
+
+    reg = _find_registration(db, event_id, payload.registration_id, payload.qr_code)
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if reg.status == "cancelled":
+        raise HTTPException(status_code=400, detail="Cannot check-out: registration is cancelled")
+    if reg.status == "no_show":
+        raise HTTPException(status_code=400, detail="Cannot check-out: registration is marked as no_show")
+    if reg.checked_out_at:
+        return EventCheckOutResponse(
+            message="Already checked out",
+            registration_id=reg.id,
+            participant_name=reg.participant_name,
+            participant_email=reg.participant_email,
+            status=reg.status,
+            checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
+            checked_out_at=reg.checked_out_at.isoformat() if reg.checked_out_at else None,
+            session_id=reg.session_id,
+        )
+
+    reg.checked_out_at = datetime.utcnow()
+    db.commit()
+    db.refresh(reg)
+
+    return EventCheckOutResponse(
+        message="Checked out successfully",
+        registration_id=reg.id,
+        participant_name=reg.participant_name,
+        participant_email=reg.participant_email,
+        status=reg.status,
+        checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
+        checked_out_at=reg.checked_out_at.isoformat() if reg.checked_out_at else None,
+        session_id=reg.session_id,
+    )
+
+
+def validate_qr_service(db: Session, event_id: UUID, qr_code: str | None):
+    """Validate a QR code against event registrations."""
+    from app.models.event_aux_models import EventRegistration
+    from app.schemas.event_schema import EventQRValidateResponse
+
+    if not qr_code:
+        raise HTTPException(status_code=400, detail="qr_code is required")
+
+    reg = db.query(EventRegistration).filter(
+        EventRegistration.qr_code == qr_code,
+        EventRegistration.event_id == event_id,
+    ).first()
+
+    if not reg:
+        return EventQRValidateResponse(valid=False, message="QR code not found for this event")
+
+    from app.models.event_model import Event
+    event = db.query(Event).filter(Event.id == event_id).first()
+
+    return EventQRValidateResponse(
+        valid=True,
+        registration_id=reg.id,
+        participant_name=reg.participant_name,
+        participant_email=reg.participant_email,
+        status=reg.status,
+        event_id=event_id,
+        event_title=event.title if event else None,
+        ticket_type_id=reg.ticket_type_id,
+        message=f"Valid ticket: {reg.participant_name} ({reg.status})",
+    )
+
+
+# ---- My Registrations ----
+
+
+def my_registrations_service(db: Session, email: str, status_filter: str | None = None):
+    """List registrations for a user by email, with bulk event lookup."""
+    from app.models.event_aux_models import EventRegistration
+    from app.models.event_model import Event
+
+    q = db.query(EventRegistration).filter(EventRegistration.participant_email == email)
+    if status_filter:
+        q = q.filter(EventRegistration.status == status_filter)
+    regs = q.order_by(EventRegistration.created_at.desc()).all()
+
+    event_ids = [r.event_id for r in regs]
+    ev_map = (
+        {e.id: e for e in db.query(Event).filter(Event.id.in_(event_ids)).all()}
+        if event_ids
+        else {}
+    )
+    out = []
+    for r in regs:
+        ev = ev_map.get(r.event_id)
+        out.append({
+            "registration_id": str(r.id),
+            "event_id": str(r.event_id),
+            "event_title": ev.title if ev else None,
+            "event_status": ev.status if ev else None,
+            "event_start": ev.start_date.isoformat() if ev and ev.start_date else None,
+            "registration_status": r.status,
+            "qr_code": r.qr_code,
+            "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None,
+        })
+    return out
+
+
+# ---- Template CRUD ----
+
+
+def list_templates_service(db: Session):
+    from app.models.event_aux_models import EventTemplate
+    return db.query(EventTemplate).all()
+
+
+def apply_template_service(db: Session, template_id: UUID, payload: dict, current_user: dict | None = None):
+    from app.models.event_aux_models import EventTemplate
+    from app.models.event_model import Event as Ev
+    import copy
+    import uuid
+
+    tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    data = dict(tmpl.template_data)
+    enterprise_id = payload.get("enterprise_id") or data.get("enterprise_id") or tmpl.enterprise_id
+    # Auto-assign from auth context if still missing
+    if not enterprise_id and current_user:
+        enterprise_id = current_user.get("enterprise_id") or current_user.get("enterpriseId")
+        if not enterprise_id and current_user.get("tenant_slug"):
+            try:
+                from app.models.enterprise_model import Enterprise
+                ent = db.query(Enterprise).filter(Enterprise.slug == current_user.get("tenant_slug")).first()
+                if ent:
+                    enterprise_id = str(ent.id)
+            except Exception:
+                pass
+    if not enterprise_id:
+        raise HTTPException(status_code=400, detail="enterprise_id is required (provide in payload or create template with enterprise_id)")
+    data["enterprise_id"] = enterprise_id
+    # Also propagate tenant_id if template has it and event data missing it
+    if not data.get("tenant_id") and tmpl.tenant_id:
+        data["tenant_id"] = str(tmpl.tenant_id)
+    if not data.get("tenant_id") and current_user and current_user.get("tenant_id"):
+        data["tenant_id"] = current_user.get("tenant_id")
+    data["status"] = "draft"
+    # Regenerate session ids
+    if data.get("sessions"):
+        cloned_sessions = copy.deepcopy(data["sessions"])
+        for s in cloned_sessions:
+            if isinstance(s, dict):
+                s["id"] = str(uuid.uuid4())
+                sd = s.get("session_date")
+                if hasattr(sd, "isoformat"):
+                    s["session_date"] = sd.isoformat()
+        data["sessions"] = cloned_sessions
+    event = Ev(**{k: v for k, v in data.items() if k in [c.key for c in Ev.__table__.columns]})
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+# ---- Meeting Link ----
+
+
+def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict):
+    """Get meeting link — admin/provider or registered participant only."""
+    from app.models.event_aux_models import EventRegistration
+
+    ev = get_event_by_id(db, event_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    role = current_user.get("role")
+    email = current_user.get("email")
+    if role not in ("admin", "provider"):
+        reg = db.query(EventRegistration).filter(
+            EventRegistration.event_id == event_id,
+            EventRegistration.participant_email == email,
+            EventRegistration.status.in_(["confirmed", "attended"]),
+        ).first()
+        if not reg:
+            raise HTTPException(status_code=403, detail="Only registered participants can access meeting link")
+    return {
+        "event_id": str(event_id),
+        "meeting_link": ev.meeting_link,
+        "meeting_provider": ev.meeting_provider,
+        "delivery_mode": ev.delivery_mode,
+    }
+
+
+# ---- Contact Organiser ----
+
+
+def contact_organiser_service(db: Session, event_id: UUID, payload: dict, current_user: dict):
+    ev = get_event_by_id(db, event_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    msg = payload.get("message") or payload.get("text") or ""
+    if not msg:
+        raise HTTPException(status_code=400, detail="message is required")
+    try:
+        from app.services.notification_triggers import _safe_notify
+        _safe_notify(
+            db, f"Message for {ev.title}", msg, "event_contact", ev.tenant_id,
+            {"event_id": str(event_id), "from_email": current_user.get("email"), "from_name": current_user.get("name")},
+            participant_email=ev.organiser_contact,
+        )
+    except Exception:
+        pass
+    return {"message": "Message sent to organiser", "event_id": str(event_id), "organiser": ev.organiser_contact}

@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, require_roles
+from app.core.dependencies import get_current_admin, get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.event_schema import (
@@ -16,22 +16,23 @@ from app.schemas.event_schema import (
 )
 from app.schemas.event_schema import (
     EventAnnouncementCreate,
+    EventBatchCheckInRequest,
     EventCheckInRequest,
-    EventCheckInResponse,
     EventCheckOutRequest,
-    EventCheckOutResponse,
     EventCheckoutRequest,
     EventOrderResponse,
-    EventQRValidateResponse,
     EventRefundRequest,
     EventRegistrationCreate,
     EventSessionCreate,
     EventSessionUpdate,
     EventUncheckInRequest,
-    EventUncheckInResponse,
 )
 from app.services.event_service import (
     add_session_service,
+    apply_template_service,
+    check_in_service,
+    check_out_service,
+    contact_organiser_service,
     create_event_checkout_service,
     create_event_refund_service,
     create_event_service,
@@ -52,12 +53,17 @@ from app.services.event_service import (
     get_event_summary_service,
     get_event_waitlist_service,
     get_events_service,
+    get_meeting_link_service,
     get_sessions_service,
+    list_templates_service,
     moderate_review_service,
+    my_registrations_service,
     send_announcement_service,
+    uncheck_in_service,
     update_event_service,
     update_event_status_service,
     update_session_service,
+    validate_qr_service,
 )
 
 router = APIRouter(tags=["Events"])
@@ -105,71 +111,25 @@ def list_events(
 
 @router.get("/my/registrations", summary="My registrations — upcoming/completed/cancelled")
 def my_registrations(status: str | None = Query(None, description="Filter by registration status: confirmed|attended|cancelled"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.event_aux_models import EventRegistration
     email = current_user.get("email")
     if not email:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Email not found in token")
-    q = db.query(EventRegistration).filter(EventRegistration.participant_email==email)
-    if status:
-        q = q.filter(EventRegistration.status==status)
-    regs = q.order_by(EventRegistration.created_at.desc()).all()
-    from app.models.event_model import Event
-    # Bulk fetch events to avoid N+1
-    event_ids = [r.event_id for r in regs]
-    ev_map = {e.id: e for e in db.query(Event).filter(Event.id.in_(event_ids)).all()} if event_ids else {}
-    out = []
-    for r in regs:
-        ev = ev_map.get(r.event_id)
-        out.append({"registration_id": str(r.id), "event_id": str(r.event_id), "event_title": ev.title if ev else None, "event_status": ev.status if ev else None, "event_start": ev.start_date.isoformat() if ev and ev.start_date else None, "registration_status": r.status, "qr_code": r.qr_code, "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None})
-    return out
+    return my_registrations_service(db, email, status)
 
 
 @router.post("/templates", status_code=status.HTTP_201_CREATED, summary="Create Template")
 def create_template(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return create_template_service(db, payload)
+    return create_template_service(db, payload, current_user)
 
 
 @router.get("/templates", summary="List Templates")
 def list_templates(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.event_aux_models import EventTemplate
-
-    return db.query(EventTemplate).all()
+    return list_templates_service(db)
 
 
 @router.post("/templates/{template_id}/apply", status_code=status.HTTP_201_CREATED, summary="Apply Template")
 def apply_template(template_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.event_aux_models import EventTemplate
-    from fastapi import HTTPException
-    from app.models.event_model import Event
-
-    tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
-    if not tmpl:
-        raise HTTPException(status_code=404, detail="Template not found")
-    data = dict(tmpl.template_data)
-    enterprise_id = payload.get("enterprise_id") or data.get("enterprise_id")
-    if not enterprise_id:
-        raise HTTPException(status_code=400, detail="enterprise_id is required")
-    data["enterprise_id"] = enterprise_id
-    data["status"] = "draft"
-    # Regenerate session ids for cloned template so they are addressable via PUT/DELETE
-    if data.get("sessions"):
-        import copy
-        import uuid
-
-        cloned_sessions = copy.deepcopy(data["sessions"])
-        for s in cloned_sessions:
-            if isinstance(s, dict):
-                s["id"] = str(uuid.uuid4())
-                sd = s.get("session_date")
-                if hasattr(sd, "isoformat"):
-                    s["session_date"] = sd.isoformat()
-        data["sessions"] = cloned_sessions
-    event = Event(**{k: v for k, v in data.items() if k in [c.key for c in Event.__table__.columns]})
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-    return event
+    return apply_template_service(db, template_id, payload, current_user)
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse, status_code=status.HTTP_200_OK, summary="Get Event by ID")
@@ -246,10 +206,16 @@ def cancel_registration(event_id: UUID, reg_id: UUID, db: Session = Depends(get_
     db.commit()
     try:
         from app.models.event_model import Event
-        from app.services.notification_triggers import notify_single_cancellation
         ev = db.query(Event).filter(Event.id == event_id).first()
         if ev:
+            from app.services.notification_triggers import notify_single_cancellation
             notify_single_cancellation(db, ev, reg)
+            # Auto-promote from waitlist if capacity has opened
+            from app.services.event_service import _try_promote_from_waitlist
+            try:
+                _try_promote_from_waitlist(db, event_id, ev)
+            except Exception:
+                pass
     except Exception:
         pass
     return {"message": "Registration cancelled"}
@@ -330,193 +296,22 @@ def delete_session(event_id: UUID, session_id: str, db: Session = Depends(get_db
 
 @router.post("/{event_id}/check-in", summary="Check-in Participant")
 def check_in(event_id: UUID, payload: EventCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.event_aux_models import EventRegistration
-    from fastapi import HTTPException
-    from datetime import datetime
-
-    # Find registration by ID or QR code
-    reg = None
-    if payload.registration_id:
-        reg = db.query(EventRegistration).filter(
-            EventRegistration.id == payload.registration_id,
-            EventRegistration.event_id == event_id
-        ).first()
-    elif payload.qr_code:
-        reg = db.query(EventRegistration).filter(
-            EventRegistration.qr_code == payload.qr_code,
-            EventRegistration.event_id == event_id
-        ).first()
-    else:
-        raise HTTPException(status_code=400, detail="registration_id or qr_code is required")
-
-    if not reg:
-        raise HTTPException(status_code=404, detail="Registration not found")
-    # Block check-in if event itself is cancelled/completed/archived/suspended
-    from app.models.event_model import Event as Ev
-    ev_chk = db.query(Ev).filter(Ev.id == event_id).first()
-    if ev_chk and ev_chk.status in ["cancelled", "completed", "archived", "suspended"]:
-        raise HTTPException(status_code=400, detail=f"Cannot check-in: event is {ev_chk.status}")
-    if reg.status == "cancelled":
-        raise HTTPException(status_code=400, detail="Cannot check-in: registration is cancelled")
-    if reg.status == "attended":
-        return EventCheckInResponse(
-            message="Already checked in",
-            registration_id=reg.id,
-            participant_name=reg.participant_name,
-            participant_email=reg.participant_email,
-            status=reg.status,
-            checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
-            session_id=payload.session_id
-        )
-
-    reg.status = "attended"
-    reg.checked_in_at = datetime.utcnow()
-    reg.checked_in_by = current_user.get("id")
-    if payload.session_id:
-        reg.session_id = payload.session_id
-    db.commit()
-    db.refresh(reg)
-
-    return EventCheckInResponse(
-        message="Checked in successfully",
-        registration_id=reg.id,
-        participant_name=reg.participant_name,
-        participant_email=reg.participant_email,
-        status=reg.status,
-        checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
-        session_id=reg.session_id
-    )
+    return check_in_service(db, event_id, payload, current_user)
 
 
 @router.post("/{event_id}/uncheck-in", summary="Undo Check-in")
 def uncheck_in(event_id: UUID, payload: EventUncheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.event_aux_models import EventRegistration
-    from fastapi import HTTPException
-
-    reg = None
-    if payload.registration_id:
-        reg = db.query(EventRegistration).filter(
-            EventRegistration.id == payload.registration_id,
-            EventRegistration.event_id == event_id
-        ).first()
-    elif payload.qr_code:
-        reg = db.query(EventRegistration).filter(
-            EventRegistration.qr_code == payload.qr_code,
-            EventRegistration.event_id == event_id
-        ).first()
-    else:
-        raise HTTPException(status_code=400, detail="registration_id or qr_code is required")
-
-    if not reg:
-        raise HTTPException(status_code=404, detail="Registration not found")
-    if reg.status != "attended":
-        raise HTTPException(status_code=400, detail=f"Cannot undo: registration status is '{reg.status}', not 'attended'")
-
-    reg.status = "confirmed"
-    reg.checked_in_at = None
-    reg.checked_in_by = None
-    reg.session_id = None
-    db.commit()
-    db.refresh(reg)
-
-    return EventUncheckInResponse(
-        message="Check-in undone",
-        registration_id=reg.id,
-        participant_name=reg.participant_name,
-        participant_email=reg.participant_email,
-        status=reg.status,
-        restored_to="confirmed"
-    )
+    return uncheck_in_service(db, event_id, payload)
 
 
 @router.post("/{event_id}/check-out", summary="Check-out Participant")
 def check_out(event_id: UUID, payload: EventCheckOutRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.event_aux_models import EventRegistration
-    from fastapi import HTTPException
-    from datetime import datetime
-
-    reg = None
-    if payload.registration_id:
-        reg = db.query(EventRegistration).filter(
-            EventRegistration.id == payload.registration_id,
-            EventRegistration.event_id == event_id
-        ).first()
-    elif payload.qr_code:
-        reg = db.query(EventRegistration).filter(
-            EventRegistration.qr_code == payload.qr_code,
-            EventRegistration.event_id == event_id
-        ).first()
-    else:
-        raise HTTPException(status_code=400, detail="registration_id or qr_code is required")
-
-    if not reg:
-        raise HTTPException(status_code=404, detail="Registration not found")
-    if reg.status == "cancelled":
-        raise HTTPException(status_code=400, detail="Cannot check-out: registration is cancelled")
-    if reg.status == "no_show":
-        raise HTTPException(status_code=400, detail="Cannot check-out: registration is marked as no_show")
-    if reg.checked_out_at:
-        return EventCheckOutResponse(
-            message="Already checked out",
-            registration_id=reg.id,
-            participant_name=reg.participant_name,
-            participant_email=reg.participant_email,
-            status=reg.status,
-            checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
-            checked_out_at=reg.checked_out_at.isoformat() if reg.checked_out_at else None,
-            session_id=reg.session_id
-        )
-
-    reg.checked_out_at = datetime.utcnow()
-    db.commit()
-    db.refresh(reg)
-
-    return EventCheckOutResponse(
-        message="Checked out successfully",
-        registration_id=reg.id,
-        participant_name=reg.participant_name,
-        participant_email=reg.participant_email,
-        status=reg.status,
-        checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
-        checked_out_at=reg.checked_out_at.isoformat() if reg.checked_out_at else None,
-        session_id=reg.session_id
-    )
+    return check_out_service(db, event_id, payload)
 
 
 @router.post("/{event_id}/validate-qr", summary="Validate QR Code")
 def validate_qr(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    from app.models.event_aux_models import EventRegistration
-    from fastapi import HTTPException
-
-    qr_code = payload.get("qr_code")
-    if not qr_code:
-        raise HTTPException(status_code=400, detail="qr_code is required")
-
-    reg = db.query(EventRegistration).filter(
-        EventRegistration.qr_code == qr_code,
-        EventRegistration.event_id == event_id
-    ).first()
-
-    if not reg:
-        return EventQRValidateResponse(
-            valid=False,
-            message="QR code not found for this event"
-        )
-
-    from app.models.event_model import Event
-    event = db.query(Event).filter(Event.id == event_id).first()
-
-    return EventQRValidateResponse(
-        valid=True,
-        registration_id=reg.id,
-        participant_name=reg.participant_name,
-        participant_email=reg.participant_email,
-        status=reg.status,
-        event_id=event_id,
-        event_title=event.title if event else None,
-        ticket_type_id=reg.ticket_type_id,
-        message=f"Valid ticket: {reg.participant_name} ({reg.status})"
-    )
+    return validate_qr_service(db, event_id, payload.get("qr_code"))
 
 
 @router.get("/{event_id}/registrations/{reg_id}/qr", summary="Get QR Code Image")
@@ -584,39 +379,12 @@ def session_calendar(event_id: UUID, session_id: str, db: Session = Depends(get_
 
 @router.get("/{event_id}/meeting-link", summary="Get Meeting Link (registered only)")
 def get_meeting_link(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.event_aux_models import EventRegistration
-    from app.repository.event_repo import get_event_by_id
-    from fastapi import HTTPException
-    ev = get_event_by_id(db, event_id)
-    if not ev:
-        raise HTTPException(status_code=404, detail="Event not found")
-    # allow if admin/provider or registered participant
-    role = current_user.get("role")
-    email = current_user.get("email")
-    if role not in ("admin", "provider"):
-        reg = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==email, EventRegistration.status.in_(["confirmed","attended"])).first()
-        if not reg:
-            raise HTTPException(status_code=403, detail="Only registered participants can access meeting link")
-    return {"event_id": str(event_id), "meeting_link": ev.meeting_link, "meeting_provider": ev.meeting_provider, "delivery_mode": ev.delivery_mode}
+    return get_meeting_link_service(db, event_id, current_user)
 
 
 @router.post("/{event_id}/contact", summary="Contact Organiser")
 def contact_organiser(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.repository.event_repo import get_event_by_id
-    from fastapi import HTTPException
-    ev = get_event_by_id(db, event_id)
-    if not ev:
-        raise HTTPException(status_code=404, detail="Event not found")
-    msg = payload.get("message") or payload.get("text") or ""
-    if not msg:
-        raise HTTPException(status_code=400, detail="message is required")
-    # create notification to organiser (best-effort via notification_triggers audit)
-    try:
-        from app.services.notification_triggers import _safe_notify
-        _safe_notify(db, f"Message for {ev.title}", msg, "event_contact", ev.tenant_id, {"event_id": str(event_id), "from_email": current_user.get("email"), "from_name": current_user.get("name")}, participant_email=ev.organiser_contact)
-    except Exception:
-        pass
-    return {"message": "Message sent to organiser", "event_id": str(event_id), "organiser": ev.organiser_contact}
+    return contact_organiser_service(db, event_id, payload, current_user)
 
 
 @router.get("/{event_id}/attendance", summary="Attendance Report")
@@ -672,6 +440,42 @@ def reports(event_id: UUID, type: str = Query("registration"), format: str = Que
 @router.get("/reports/summary", summary="Performance Dashboard")
 def reports_summary(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return get_event_summary_service(db, enterprise_id)
+
+
+@router.put("/templates/{template_id}", status_code=status.HTTP_200_OK, summary="Update Template")
+def update_template(template_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.event_service import update_template_service
+    return update_template_service(db, template_id, payload)
+
+
+@router.delete("/templates/{template_id}", status_code=status.HTTP_200_OK, summary="Delete Template")
+def delete_template(template_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.event_service import delete_template_service
+    return delete_template_service(db, template_id)
+
+
+@router.get("/{event_id}/batch-check-in", summary="Batch Check-in — List registrations for scanning")
+def batch_check_in_preview(event_id: UUID, status_filter: str | None = Query(None, alias="status", description="Filter: confirmed|attended|cancelled"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.models.event_aux_models import EventRegistration
+    from app.services.event_service import _get_event_or_404
+    _get_event_or_404(db, event_id)
+    q = db.query(EventRegistration).filter(EventRegistration.event_id == event_id)
+    if status_filter:
+        q = q.filter(EventRegistration.status == status_filter)
+    regs = q.order_by(EventRegistration.participant_name).all()
+    return [{"registration_id": r.id, "participant_name": r.participant_name, "participant_email": r.participant_email, "status": r.status, "qr_code": r.qr_code, "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None} for r in regs]
+
+
+@router.post("/{event_id}/batch-check-in", status_code=status.HTTP_200_OK, summary="Batch Check-in — Check in multiple participants")
+def batch_check_in(event_id: UUID, payload: EventBatchCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.event_service import batch_checkin_service
+    return batch_checkin_service(db, event_id, payload.participants)
+
+
+@router.post("/auto-complete", summary="Auto-complete past published events", status_code=status.HTTP_200_OK)
+def auto_complete_events(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin)):
+    from app.services.event_service import auto_complete_past_events_service
+    return auto_complete_past_events_service(db, enterprise_id)
 
 
 

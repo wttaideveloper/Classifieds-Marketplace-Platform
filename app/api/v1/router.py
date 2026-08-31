@@ -43,6 +43,7 @@ _safe_include(
 
 # Events
 _safe_include("app.api.v1.endpoints.event", prefix="/events", tags=["Events"])
+_safe_include("app.api.v1.endpoints.event_category", prefix="/event-categories", tags=["Event Categories"])
 _safe_include("app.api.v1.endpoints.training", prefix="/trainings", tags=["Trainings"])
 _safe_include("app.api.v1.endpoints.program", prefix="/programs", tags=["Programs"])
 

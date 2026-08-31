@@ -487,3 +487,81 @@ class EventSummaryResponse(BaseModel):
     total_registrations: int
     total_attended: int
     average_rating: float | None = None
+
+
+# --- EventCategory CRUD schemas ---
+
+class EventCategoryCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, description="Category name")
+    parent_id: UUID | None = Field(None, description="Parent category ID (for subcategories)")
+    description: str | None = Field(None, description="Category description")
+
+
+class EventCategoryUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100, description="Category name")
+    description: str | None = Field(None, description="Category description")
+
+
+class EventCategoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    parent_id: UUID | None = None
+    description: str | None = None
+    created_at: datetime | None = None
+
+
+# --- Waitlist / Feedback / Announcement standardised schemas ---
+
+class EventWaitlistResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    event_id: UUID
+    participant_name: str
+    participant_email: str
+    created_at: datetime | None = None
+
+
+class EventFeedbackResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    event_id: UUID
+    participant_email: str | None = None
+    form_id: str | None = None
+    answers: dict | None = None
+    rating: str | None = None
+    comment: str | None = None
+    is_review: bool = False
+    moderation_status: str = "pending"
+    created_at: datetime | None = None
+
+
+# --- Batch Check-in ---
+
+class EventBatchCheckInItem(BaseModel):
+    registration_id: UUID | None = Field(None, description="Registration ID")
+    qr_code: str | None = Field(None, description="QR code")
+    session_id: str | None = Field(None, description="Optional session ID")
+
+
+class EventBatchCheckInRequest(BaseModel):
+    participants: list[EventBatchCheckInItem] = Field(..., min_length=1, description="List of participants to check in")
+
+
+class EventBatchCheckInResultItem(BaseModel):
+    registration_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    checked_in_at: str | None = None
+    message: str
+
+
+class EventBatchCheckInResponse(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    results: list[EventBatchCheckInResultItem]
