@@ -579,3 +579,50 @@ class EventBatchCheckInResponse(BaseModel):
     succeeded: int
     failed: int
     results: list[EventBatchCheckInResultItem]
+
+
+# --- Event Templates (explicit schemas for OpenAPI) ---
+class EventTemplateUpdateRequest(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=255, description="New template name")
+    template_data: dict | None = Field(None, description="New template_data (Event draft JSON). enterprise_id is ignored on update.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"name": "New Name", "template_data": {"title": "Updated Event", "category": "Fitness & Wellness"}}
+        }
+    )
+
+
+class EventTemplateCreateRequest(BaseModel):
+    tenant_id: UUID | None = Field(None, description="Tenant ID (from /tenant/me). Required when auth token lacks tenant claim; validated against auth user if both present.")
+    enterprise_id: UUID | None = Field(None, description="Optional Enterprise ID. If supplied, tenant_id is derived as Enterprise.tenant_id if tenant_id absent.")
+    name: str = Field(..., min_length=1, max_length=255, description="Template name")
+    template_data: dict = Field(..., description="Event draft JSON to store as template (title, category, sessions, ticket_types, etc.). location_id/ticket_type IDs are preserved as reusable config.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"tenant_id": "550e8400-e29b-41d4-a716-446655440000", "name": "Wellness Template", "template_data": {"title": "Wellness Summit 2026", "category": "Fitness & Wellness"}}
+        }
+    )
+
+
+class EventTemplateResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID | None = None
+    enterprise_id: UUID | None = None
+    name: str
+    template_data: dict
+    created_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EventTemplateApplyRequest(BaseModel):
+    tenant_id: UUID | None = Field(None, description="Tenant ID (from /tenant/me). If supplied, must belong to authenticated user; else derived from template or auth.")
+    enterprise_id: UUID | None = Field(None, description="Optional Enterprise ID to attach to new Event. If omitted, new Event keeps tenant ownership with enterprise_id=null.")
+
+    model_config = ConfigDict(json_schema_extra={"example": {}})
+
+
+class EventTemplateDeleteResponse(BaseModel):
+    message: str = Field(..., examples=["Template deleted"])

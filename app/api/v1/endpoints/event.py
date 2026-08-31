@@ -25,6 +25,11 @@ from app.schemas.event_schema import (
     EventRegistrationCreate,
     EventSessionCreate,
     EventSessionUpdate,
+    EventTemplateApplyRequest,
+    EventTemplateCreateRequest,
+    EventTemplateDeleteResponse,
+    EventTemplateResponse,
+    EventTemplateUpdateRequest,
     EventUncheckInRequest,
 )
 from app.services.event_service import (
@@ -118,24 +123,52 @@ def my_registrations(status: str | None = Query(None, description="Filter by reg
     return my_registrations_service(db, email, status)
 
 
-@router.post("/templates", status_code=status.HTTP_201_CREATED, summary="Create Template")
-def create_template(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return create_template_service(db, payload, current_user)
+@router.post(
+    "/templates",
+    response_model=EventTemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Template",
+    description="Create a template under tenant ownership. Frontend may send tenant_id from /tenant/me when auth token lacks tenant claim. enterprise_id optional.",
+    responses={
+        403: {"description": "Supplied tenant_id does not belong to authenticated user", "content": {"application/json": {"example": {"detail": "Supplied tenant_id does not belong to authenticated user"}}}},
+    },
+)
+def create_template(payload: EventTemplateCreateRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_template_service(db, payload.model_dump(exclude_unset=True), current_user)
 
 
-@router.get("/templates", summary="List Templates")
+@router.get("/templates", response_model=list[EventTemplateResponse], summary="List Templates", description="List templates owned by authenticated tenant (tenant isolation).")
 def list_templates(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return list_templates_service(db, current_user)
 
 
-@router.get("/templates/{template_id}", summary="Get Template by ID")
+@router.get(
+    "/templates/{template_id}",
+    response_model=EventTemplateResponse,
+    summary="Get Template by ID",
+    responses={
+        404: {"description": "Template not found", "content": {"application/json": {"example": {"detail": "Template not found"}}}},
+        403: {"description": "Tenant mismatch", "content": {"application/json": {"example": {"detail": "Template does not belong to your tenant"}}}},
+    },
+)
 def get_template(template_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return get_template_service(db, template_id, current_user)
 
 
-@router.post("/templates/{template_id}/apply", status_code=status.HTTP_201_CREATED, summary="Apply Template")
-def apply_template(template_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return apply_template_service(db, template_id, payload, current_user)
+@router.post(
+    "/templates/{template_id}/apply",
+    response_model=EventResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Apply Template",
+    description="Apply template to create a new Event (status=draft). Accepts optional tenant_id/enterprise_id; if only enterprise_id sent, tenant_id is derived as Enterprise.tenant_id. enterprise_id may stay null.",
+    responses={
+        404: {"description": "Template not found", "content": {"application/json": {"example": {"detail": "Template not found"}}}},
+        403: {"description": "Tenant mismatch", "content": {"application/json": {"example": {"detail": "Template does not belong to your tenant"}}}},
+        400: {"description": "Invalid template data", "content": {"application/json": {"example": {"detail": "Failed to create Event from template: ..."}}}},
+    },
+)
+def apply_template(template_id: UUID, payload: EventTemplateApplyRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return apply_template_service(db, template_id, payload.model_dump(exclude_unset=True), current_user)
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse, status_code=status.HTTP_200_OK, summary="Get Event by ID")
@@ -448,13 +481,33 @@ def reports_summary(enterprise_id: UUID | None = None, db: Session = Depends(get
     return get_event_summary_service(db, enterprise_id)
 
 
-@router.put("/templates/{template_id}", status_code=status.HTTP_200_OK, summary="Update Template")
-def update_template(template_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+@router.put(
+    "/templates/{template_id}",
+    response_model=EventTemplateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update Template",
+    description="Partial update — send only `name` and/or `template_data`. `enterprise_id` cannot be changed after creation. Returns full EventTemplate.",
+    responses={
+        404: {"description": "Template not found", "content": {"application/json": {"example": {"detail": "Template not found"}}}},
+        403: {"description": "Tenant mismatch", "content": {"application/json": {"example": {"detail": "Template does not belong to your tenant"}}}},
+    },
+)
+def update_template(template_id: UUID, payload: EventTemplateUpdateRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.event_service import update_template_service
-    return update_template_service(db, template_id, payload, current_user)
+    return update_template_service(db, template_id, payload.model_dump(exclude_unset=True), current_user)
 
 
-@router.delete("/templates/{template_id}", status_code=status.HTTP_200_OK, summary="Delete Template")
+@router.delete(
+    "/templates/{template_id}",
+    response_model=EventTemplateDeleteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Delete Template",
+    description="Delete a template. Empty body. Always succeeds if template exists and belongs to tenant; no 409 conflict (no usage check).",
+    responses={
+        404: {"description": "Template not found", "content": {"application/json": {"example": {"detail": "Template not found"}}}},
+        403: {"description": "Tenant mismatch", "content": {"application/json": {"example": {"detail": "Template does not belong to your tenant"}}}},
+    },
+)
 def delete_template(template_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.event_service import delete_template_service
     return delete_template_service(db, template_id, current_user)
