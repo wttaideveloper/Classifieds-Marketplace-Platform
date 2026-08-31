@@ -867,18 +867,37 @@ def get_event_summary_service(db: Session, enterprise_id: UUID | None = None):
             "upcoming_events": upcoming, "past_events": past, "total_registrations": reg_count, "total_attended": attended_count, "average_rating": avg_rating}
 
 
+def _resolve_auth_tenant_id(current_user: dict | None) -> str | None:
+    if not current_user:
+        return None
+    return (
+        current_user.get("tenant_id")
+        or current_user.get("tenantId")
+        or current_user.get("tenant_id_claim")
+        or current_user.get("org_id")
+        or current_user.get("organization_id")
+    )
+
+
+def _validate_payload_tenant_id(payload_tenant_id, auth_tenant_id):
+    """Validate supplied tenant_id belongs to authenticated user. Raise 403 if mismatch."""
+    if payload_tenant_id and auth_tenant_id and str(payload_tenant_id) != str(auth_tenant_id):
+        raise HTTPException(status_code=403, detail="Supplied tenant_id does not belong to authenticated user")
+
+
 def create_template_service(db: Session, payload: dict, current_user: dict | None = None):
     from app.models.event_aux_models import EventTemplate
 
-    # Auto-assign tenant/enterprise from auth context if not provided
-    tenant_id = payload.get("tenant_id")
+    supplied_tenant_id = payload.get("tenant_id")
+    auth_tenant_id = _resolve_auth_tenant_id(current_user)
+    _validate_payload_tenant_id(supplied_tenant_id, auth_tenant_id)
+
+    # Effective tenant_id: payload explicit > auth context > enterprise lookup
+    tenant_id = supplied_tenant_id or auth_tenant_id
     enterprise_id = payload.get("enterprise_id")
     if current_user:
-        if not tenant_id:
-            tenant_id = current_user.get("tenant_id") or current_user.get("tenantId") or current_user.get("tenant_id_claim")
         if not enterprise_id:
             enterprise_id = current_user.get("enterprise_id") or current_user.get("enterpriseId")
-            # Fallback: try to resolve enterprise_id from tenant if token only has tenant_slug
             if not enterprise_id and current_user.get("tenant_slug"):
                 try:
                     from app.models.enterprise_model import Enterprise
@@ -889,6 +908,16 @@ def create_template_service(db: Session, payload: dict, current_user: dict | Non
                             tenant_id = str(ent.tenant_id)
                 except Exception:
                     pass
+        # fallback: resolve tenant_id from enterprise if still missing
+        if not tenant_id and enterprise_id:
+            try:
+                from app.models.enterprise_model import Enterprise
+                ent = db.query(Enterprise).filter(Enterprise.id == enterprise_id).first()
+                if ent and ent.tenant_id:
+                    tenant_id = str(ent.tenant_id)
+            except Exception:
+                pass
+
     tmpl = EventTemplate(
         name=payload.get("name", "Template"),
         template_data=payload.get("template_data", payload),
@@ -1516,11 +1545,10 @@ def my_registrations_service(db: Session, email: str, status_filter: str | None 
 def list_templates_service(db: Session, current_user: dict | None = None):
     from app.models.event_aux_models import EventTemplate
     q = db.query(EventTemplate)
-    # Tenant isolation: filter by authenticated tenant
-    if current_user:
-        user_tid = current_user.get("tenant_id")
-        if user_tid:
-            q = q.filter(EventTemplate.tenant_id == user_tid)
+    # Tenant isolation: filter by authenticated tenant (ownership boundary)
+    auth_tid = _resolve_auth_tenant_id(current_user)
+    if auth_tid:
+        q = q.filter(EventTemplate.tenant_id == auth_tid)
     return q.all()
 
 
@@ -1535,14 +1563,27 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
         raise HTTPException(status_code=404, detail="Template not found")
 
     # Tenant isolation: verify template belongs to authenticated tenant
-    if current_user:
-        user_tid = current_user.get("tenant_id")
-        if user_tid and tmpl.tenant_id and str(tmpl.tenant_id) != str(user_tid):
-            raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
+    auth_tenant_id = _resolve_auth_tenant_id(current_user)
+    supplied_tenant_id = payload.get("tenant_id")
+    _validate_payload_tenant_id(supplied_tenant_id, auth_tenant_id)
+    if current_user and auth_tenant_id and tmpl.tenant_id and str(tmpl.tenant_id) != str(auth_tenant_id):
+        raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
 
     data = dict(tmpl.template_data)
 
-    # Resolve enterprise_id: payload > template > auth context
+    # Resolve tenant_id: payload explicit > template > auth context (ownership boundary)
+    effective_tenant_id = supplied_tenant_id or tmpl.tenant_id or auth_tenant_id
+    # If no tenant_id yet, try enterprise lookup fallback (rare)
+    if not effective_tenant_id and current_user and current_user.get("tenant_slug"):
+        try:
+            from app.models.enterprise_model import Enterprise
+            ent = db.query(Enterprise).filter(Enterprise.slug == current_user.get("tenant_slug")).first()
+            if ent and ent.tenant_id:
+                effective_tenant_id = str(ent.tenant_id)
+        except Exception:
+            pass
+
+    # Resolve enterprise_id: payload > template > auth context — OPTIONAL
     enterprise_id = payload.get("enterprise_id") or data.get("enterprise_id") or tmpl.enterprise_id
     if not enterprise_id and current_user:
         enterprise_id = current_user.get("enterprise_id") or current_user.get("enterpriseId")
@@ -1556,13 +1597,10 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
                 pass
 
     # enterprise_id is OPTIONAL — tenant ownership is the boundary
-    data["enterprise_id"] = enterprise_id
+    data["enterprise_id"] = enterprise_id if enterprise_id else None
 
-    # Propagate tenant_id from template or auth context
-    if not data.get("tenant_id") and tmpl.tenant_id:
-        data["tenant_id"] = str(tmpl.tenant_id)
-    if not data.get("tenant_id") and current_user and current_user.get("tenant_id"):
-        data["tenant_id"] = current_user.get("tenant_id")
+    # Propagate tenant_id for new Event
+    data["tenant_id"] = effective_tenant_id
 
     data["status"] = "draft"
 
@@ -1577,10 +1615,27 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
                     s["session_date"] = sd.isoformat()
         data["sessions"] = cloned_sessions
 
-    event = Ev(**{k: v for k, v in data.items() if k in [c.key for c in Ev.__table__.columns]})
-    db.add(event)
-    db.commit()
-    db.refresh(event)
+    # Filter data to only valid Event columns, coerce UUID fields
+    try:
+        valid_keys = {c.key for c in Ev.__table__.columns}
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        # Ensure UUID fields are None or valid UUID string
+        for uuid_field in ("tenant_id", "enterprise_id", "location_id"):
+            if uuid_field in filtered and filtered[uuid_field] in ("", "null"):
+                filtered[uuid_field] = None
+        event = Ev(**filtered)
+        db.add(event)
+        db.commit()
+        db.refresh(event)
+    except Exception as e:
+        db.rollback()
+        # Convert DB constraint errors to 400 instead of 500
+        msg = str(e)
+        if "null value" in msg.lower() or "not-null" in msg.lower():
+            raise HTTPException(status_code=400, detail=f"Missing required field for Event creation from template: {msg}")
+        if "violates foreign key" in msg.lower():
+            raise HTTPException(status_code=400, detail=f"Invalid reference in template data: {msg}")
+        raise HTTPException(status_code=400, detail=f"Failed to create Event from template: {msg}")
     return event
 
 def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict):
