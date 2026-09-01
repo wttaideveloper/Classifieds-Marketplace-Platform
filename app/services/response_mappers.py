@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from sqlalchemy.orm import Session
 
 from app.models.enterprise_model import Enterprise
 from app.models.location_model import EnterpriseLocation
