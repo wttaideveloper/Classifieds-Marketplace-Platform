@@ -84,7 +84,10 @@ def create_event(event: EventCreate, db: Session = Depends(get_db), current_user
 def list_events(
     search: str | None = Query(None, description="Search across title/description/category."),
     category: str | None = Query(None, description="Filter by category."),
-    tenant_id: UUID | None = Query(None, description="Filter by tenant ID."),
+    tenant_id: UUID | None = Query(
+        None,
+        description="Filter events by tenant ID. Omit for global list (all tenants).",
+    ),
     enterprise_id: UUID | None = Query(None, description="Filter by enterprise ID."),
     location_id: UUID | None = Query(None, description="Filter by location ID."),
     status_filter: str | None = Query(None, alias="status", description="Filter by status."),

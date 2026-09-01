@@ -307,8 +307,25 @@ def map_service_write(service: Service) -> dict:
     return _service_base_fields(service)
 
 
-def map_event_list_item(event) -> dict:
-    return _event_base_fields(event)
+def map_event_list_item(event, db: Session | None = None) -> dict:
+    base = _event_base_fields(event)
+    # Soft fallback: compute available_seats / is_full if a DB session is supplied
+    if db is not None:
+        try:
+            from sqlalchemy import func
+            from app.models.event_aux_models import EventRegistration
+            cnt = db.scalar(
+                select(func.count(EventRegistration.id))
+                .join(EventRegistration.event)
+                .filter(EventRegistration.status.in_(("confirmed", "attended")))
+                .filter(EventRegistration.event_id == event.id)
+            )
+            available = (event.capacity or 0) - (cnt or 0)
+            base["available_seats"] = max(available, 0)
+            base["is_full"] = available <= 0
+        except Exception:
+            pass
+    return base
 
 
 def map_event_detail(event) -> dict:

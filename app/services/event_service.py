@@ -133,6 +133,10 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
                     event_data.enterprise_id = ent.id
             except Exception:
                 pass
+    # Soft fallback: coerce status to draft if not allowed on create
+    allowed_create_status = ("draft", "pending_approval")
+    if event_data.status not in allowed_create_status:
+        event_data.status = "draft"
     _validate_references(db, event_data.enterprise_id, event_data.location_id, current_user)
     _check_category(db, getattr(event_data, "category", None), getattr(event_data, "subcategory", None))
     # auto-create meeting link if needed
@@ -177,7 +181,7 @@ def get_events_service(
         page_size=page_size,
     )
     return EventPaginatedResponse(
-        items=[EventListItemResponse.model_validate(map_event_list_item(e)) for e in items],
+        items=[EventListItemResponse.model_validate(map_event_list_item(e, db)) for e in items],
         pagination=build_pagination_meta(total, page, page_size),
     )
 
