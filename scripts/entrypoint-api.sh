@@ -3,7 +3,7 @@
 set -e
 
 echo "Running database migrations..."
-alembic upgrade head
+alembic upgrade heads || alembic upgrade head
 
 WORKERS="${WEB_CONCURRENCY:-4}"
 echo "Starting REST API with ${WORKERS} worker(s) on port ${API_PORT:-8000}..."
