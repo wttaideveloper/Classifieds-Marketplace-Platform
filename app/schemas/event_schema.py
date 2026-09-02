@@ -565,6 +565,38 @@ class EventBatchCheckInRequest(BaseModel):
     participants: list[EventBatchCheckInItem] = Field(..., min_length=1, description="List of participants to check in")
 
 
+class EventBatchCheckInPreviewItem(BaseModel):
+    registration_id: UUID = Field(..., description="Registration ID")
+    participant_name: str = Field(..., description="Participant full name")
+    participant_email: str = Field(..., description="Participant email")
+    status: str = Field(..., description="Current registration status: confirmed|attended|cancelled|no_show")
+    qr_code: str | None = Field(None, description="QR code for scanning")
+    session_id: str | None = Field(None, description="Session ID if attendance is per-session")
+    ticket_type_id: str | None = Field(None, description="Ticket type ID")
+    checked_in_at: str | None = Field(None, description="ISO datetime when checked in, null if not yet")
+    checked_out_at: str | None = Field(None, description="ISO datetime when checked out, if any")
+    can_check_in: bool = Field(..., description="Eligibility: true if status==confirmed and not yet attended/cancelled")
+    eligibility_reason: str = Field(..., description="Human-readable reason for eligibility, e.g. 'Ready to check in' or 'Already attended'")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "registration_id": "668fc81f-1f86-4f7e-bfb7-179082b88e3a",
+                "participant_name": "Attendance Test Participant",
+                "participant_email": "attendance-test-participant@example.com",
+                "status": "confirmed",
+                "qr_code": "5B652615",
+                "session_id": None,
+                "ticket_type_id": "asdsda",
+                "checked_in_at": None,
+                "checked_out_at": None,
+                "can_check_in": True,
+                "eligibility_reason": "Ready to check in",
+            }
+        }
+    )
+
+
 class EventBatchCheckInResultItem(BaseModel):
     registration_id: UUID
     participant_name: str | None = None
@@ -626,3 +658,14 @@ class EventTemplateApplyRequest(BaseModel):
 
 class EventTemplateDeleteResponse(BaseModel):
     message: str = Field(..., examples=["Template deleted"])
+
+
+# ---- Event Order Status & Refund Approval ----
+
+class EventOrderStatusUpdate(BaseModel):
+    status: str = Field(..., description="New status: confirmed|cancelled|completed")
+    reason: str | None = Field(None, description="Reason for status change")
+
+class EventRefundApproveRequest(BaseModel):
+    action: str = Field(..., description="approve|reject")
+    reason: str | None = Field(None, description="Reason for approval/rejection")

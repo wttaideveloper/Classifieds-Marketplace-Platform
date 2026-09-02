@@ -27,6 +27,8 @@ from app.schemas.event_schema import (
     EventSessionUpdate,
     EventTemplateApplyRequest,
     EventTemplateCreateRequest,
+    EventBatchCheckInPreviewItem,
+    EventBatchCheckInResponse,
     EventTemplateDeleteResponse,
     EventTemplateResponse,
     EventTemplateUpdateRequest,
@@ -516,7 +518,12 @@ def delete_template(template_id: UUID, db: Session = Depends(get_db), current_us
     return delete_template_service(db, template_id, current_user)
 
 
-@router.get("/{event_id}/batch-check-in", summary="Batch Check-in — List registrations for scanning")
+@router.get(
+    "/{event_id}/batch-check-in",
+    response_model=list[EventBatchCheckInPreviewItem],
+    summary="Batch Check-in — List registrations for scanning",
+    description="Returns registrations for the event with eligibility computed server-side. Frontend renders table: pick multi + POST /batch-check-in + refresh attendance.",
+)
 def batch_check_in_preview(event_id: UUID, status_filter: str | None = Query(None, alias="status", description="Filter: confirmed|attended|cancelled"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.models.event_aux_models import EventRegistration
     from app.services.event_service import _get_event_or_404
@@ -525,10 +532,44 @@ def batch_check_in_preview(event_id: UUID, status_filter: str | None = Query(Non
     if status_filter:
         q = q.filter(EventRegistration.status == status_filter)
     regs = q.order_by(EventRegistration.participant_name).all()
-    return [{"registration_id": r.id, "participant_name": r.participant_name, "participant_email": r.participant_email, "status": r.status, "qr_code": r.qr_code, "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None} for r in regs]
+    out: list[dict] = []
+    for r in regs:
+        can = r.status == "confirmed"
+        if r.status == "attended":
+            reason = "Already checked in"
+        elif r.status == "cancelled":
+            reason = "Cancelled — cannot check in"
+        elif r.status == "no_show":
+            reason = "Marked no-show"
+        elif can:
+            reason = "Ready to check in"
+        else:
+            reason = f"Status {r.status}"
+        out.append(
+            {
+                "registration_id": r.id,
+                "participant_name": r.participant_name,
+                "participant_email": r.participant_email,
+                "status": r.status,
+                "qr_code": r.qr_code,
+                "session_id": r.session_id,
+                "ticket_type_id": r.ticket_type_id,
+                "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None,
+                "checked_out_at": r.checked_out_at.isoformat() if r.checked_out_at else None,
+                "can_check_in": can,
+                "eligibility_reason": reason,
+            }
+        )
+    return out
 
 
-@router.post("/{event_id}/batch-check-in", status_code=status.HTTP_200_OK, summary="Batch Check-in — Check in multiple participants")
+@router.post(
+    "/{event_id}/batch-check-in",
+    response_model=EventBatchCheckInResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Batch Check-in — Check in multiple participants",
+    description="Batch check-in: body { participants: [{registration_id|qr_code, session_id?}] }. Returns {total, succeeded, failed, results:[{registration_id, participant_name, status, checked_in_at, message}]} — refresh GET /batch-check-in or GET /{id}/attendance after.",
+)
 def batch_check_in(event_id: UUID, payload: EventBatchCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.event_service import batch_checkin_service
     return batch_checkin_service(db, event_id, payload.participants)
@@ -541,3 +582,37 @@ def auto_complete_events(enterprise_id: UUID | None = None, db: Session = Depend
 
 
 
+
+
+# ---- Event Order Status & Refund Approval ----
+
+from app.schemas.event_schema import EventOrderStatusUpdate, EventRefundApproveRequest
+from app.services.event_service import update_event_order_status_service, approve_event_refund_service
+
+
+@router.patch(
+    "/{event_id}/orders/{order_id}/status",
+    summary="Update Event Order Status (Admin/Provider)",
+)
+def update_event_order_status(
+    event_id: UUID,
+    order_id: UUID,
+    payload: EventOrderStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    return update_event_order_status_service(db, event_id, order_id, payload)
+
+
+@router.post(
+    "/{event_id}/orders/{order_id}/refund/approve",
+    summary="Approve or Reject Event Refund (Admin/Provider)",
+)
+def approve_event_refund(
+    event_id: UUID,
+    order_id: UUID,
+    payload: EventRefundApproveRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    return approve_event_refund_service(db, event_id, order_id, payload)
