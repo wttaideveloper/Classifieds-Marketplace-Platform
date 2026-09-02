@@ -11,7 +11,7 @@ from app.services.response_mappers import map_training_detail, map_training_list
 def _validate(db: Session, eid: UUID, lid: UUID | None, current_user: dict | None = None):
     ent = db.query(Enterprise).filter(Enterprise.id==eid, Enterprise.is_deleted.is_(False)).first()
     if not ent: raise HTTPException(status_code=404, detail="Enterprise not found")
-    if current_user and current_user.get("role") != "admin":
+    if current_user and current_user.get("role") not in ("admin", "super_admin"):
         user_tid = current_user.get("tenant_id")
         if user_tid and str(ent.tenant_id) != str(user_tid):
             raise HTTPException(status_code=403, detail="Not authorized for this enterprise/tenant")
@@ -448,3 +448,63 @@ def get_training_orders_service(db: Session, tid: UUID):
     from app.models.training_model import TrainingOrder
     _get_training_or_404(db, tid)
     return db.query(TrainingOrder).filter(TrainingOrder.training_id==tid).order_by(TrainingOrder.created_at.desc()).all()
+
+
+# ---- Training Order Status & Refund ----
+
+def update_training_order_status_service(db: Session, tid: UUID, order_id: UUID, payload):
+    from app.models.training_model import TrainingOrder
+    VALID_TRANSITIONS = {
+        "confirmed": ["cancelled", "completed"],
+        "refund_requested": ["refunded", "cancelled"],
+        "cancelled": [],
+        "refunded": [],
+        "completed": [],
+    }
+    order = db.query(TrainingOrder).filter(TrainingOrder.id == order_id, TrainingOrder.training_id == tid).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    new_status = payload.status
+    allowed = VALID_TRANSITIONS.get(order.status, [])
+    if new_status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Cannot transition from '{order.status}' to '{new_status}'. Allowed: {allowed}")
+    order.status = new_status
+    db.commit()
+    db.refresh(order)
+    return {"id": str(order.id), "status": order.status, "message": f"Order status updated to '{new_status}'"}
+
+
+def request_training_refund_service(db: Session, tid: UUID, order_id: UUID, payload):
+    from app.models.training_model import TrainingOrder
+    order = db.query(TrainingOrder).filter(TrainingOrder.id == order_id, TrainingOrder.training_id == tid).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status in ("cancelled", "refunded"):
+        raise HTTPException(status_code=400, detail=f"Order already {order.status}")
+    order.status = "refund_requested"
+    db.commit()
+    db.refresh(order)
+    return {"id": str(order.id), "status": order.status, "message": "Refund requested"}
+
+
+def approve_training_refund_service(db: Session, tid: UUID, order_id: UUID, payload):
+    from app.models.training_model import TrainingOrder
+    order = db.query(TrainingOrder).filter(TrainingOrder.id == order_id, TrainingOrder.training_id == tid).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status != "refund_requested":
+        raise HTTPException(status_code=400, detail=f"Order is not in refund_requested state (current: {order.status})")
+    action = payload.action
+    if action == "approve":
+        order.status = "refunded"
+        order.payment_status = "refunded"
+        message = "Refund approved"
+    elif action == "reject":
+        order.status = "confirmed"
+        order.payment_status = "confirmed"
+        message = "Refund rejected — order restored to confirmed"
+    else:
+        raise HTTPException(status_code=400, detail="action must be approve|reject")
+    db.commit()
+    db.refresh(order)
+    return {"id": str(order.id), "status": order.status, "payment_status": order.payment_status, "message": message}

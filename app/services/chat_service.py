@@ -555,7 +555,7 @@ def delete_message_service(db: Session, current_user: dict, message_id: UUID):
     message = chat_repo.get_message_by_id(db, message_id)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
-    if message.sender_id != user_id and current_user.get("role") != "admin":
+    if message.sender_id != user_id and current_user.get("role") not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Not authorized to delete this message")
 
     message = chat_repo.soft_delete_message(db, message)
@@ -572,7 +572,7 @@ def edit_message_service(db: Session, current_user: dict, message_id: UUID, cont
     message = chat_repo.get_message_by_id(db, message_id)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
-    if message.sender_id != user_id and current_user.get("role") != "admin":
+    if message.sender_id != user_id and current_user.get("role") not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Not authorized to edit this message")
     if message.is_deleted:
         raise HTTPException(status_code=400, detail="Deleted messages cannot be edited")

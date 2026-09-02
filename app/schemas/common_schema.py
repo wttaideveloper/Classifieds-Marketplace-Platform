@@ -15,6 +15,8 @@ EventStatus = Literal[
     "archived",
     "active",
     "inactive",
+    "needs_revision",
+    "rejected",
 ]
 LocationStatus = Literal["draft", "active", "inactive"]
 AttributeType = Literal["text", "number", "date", "boolean", "email", "phone", "dropdown"]

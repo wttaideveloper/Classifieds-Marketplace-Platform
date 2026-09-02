@@ -208,7 +208,7 @@ def delete_attachment_service(db: Session, current_user: dict, attachment_id: UU
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    if attachment.uploaded_by != user_id and current_user.get("role") != "admin":
+    if attachment.uploaded_by != user_id and current_user.get("role") not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Not authorized to delete this attachment")
 
     chat_repo.soft_delete_attachment(db, attachment)

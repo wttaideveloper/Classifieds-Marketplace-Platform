@@ -95,6 +95,8 @@ class Event(Base):
 
     requires_reapproval = Column(Boolean, default=False, nullable=False)
 
+    last_admin_notes = Column(Text)  # Super Admin's latest reject/request_changes message
+
     is_deleted = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

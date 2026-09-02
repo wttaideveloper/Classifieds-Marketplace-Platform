@@ -11,7 +11,7 @@ from app.services.response_mappers import map_program_detail, map_program_list_i
 def _validate(db, eid, lid, current_user: dict | None = None):
     ent=db.query(Enterprise).filter(Enterprise.id==eid, Enterprise.is_deleted.is_(False)).first()
     if not ent: raise HTTPException(404, "Enterprise not found")
-    if current_user and current_user.get("role") != "admin":
+    if current_user and current_user.get("role") not in ("admin", "super_admin"):
         user_tid = current_user.get("tenant_id")
         if user_tid and str(ent.tenant_id) != str(user_tid):
             raise HTTPException(403, "Not authorized for this enterprise/tenant")

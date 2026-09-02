@@ -311,3 +311,18 @@ class TrainingOrderResponse(BaseModel):
 class EnrolApprovalRequest(BaseModel):
     action: str = Field(..., description="approve|reject")
     reason: str | None = None
+
+
+# ---- Training Order Status & Refund ----
+
+class TrainingOrderStatusUpdate(BaseModel):
+    status: str = Field(..., description="New status: confirmed|cancelled|completed")
+    reason: str | None = Field(None, description="Reason for status change")
+
+class TrainingRefundRequest(BaseModel):
+    reason: str | None = Field(None, description="Reason for refund")
+    amount: str | None = Field(None, description="Partial amount if partial refund")
+
+class TrainingRefundApproveRequest(BaseModel):
+    action: str = Field(..., description="approve|reject")
+    reason: str | None = Field(None, description="Reason for approval/rejection")

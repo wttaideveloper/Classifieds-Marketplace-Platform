@@ -105,9 +105,10 @@ class EventAudit(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False, index=True)
     changed_by = Column(String(255))
-    action = Column(String(50), nullable=False)  # create|update|status_change|delete
+    action = Column(String(50), nullable=False)  # create|update|status_change|delete|reject|request_changes
     before = Column(JSONB)
     after = Column(JSONB)
+    notes = Column(Text)  # admin reason/message for reject/request_changes
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     event = relationship("Event", backref="audit_logs")

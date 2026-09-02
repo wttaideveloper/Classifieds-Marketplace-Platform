@@ -81,8 +81,19 @@ def require_roles(allowed_roles: list):
 
 
 def get_current_admin(current_user=Depends(get_current_user)):
-    if current_user.get("role") != "admin":
+    """Requires admin OR super_admin role. Used for enterprise-level admin operations."""
+    if current_user.get("role") not in ("admin", "super_admin"):
         if not settings.is_production and current_user.get("id") == settings.DEV_DEFAULT_USER_ID:
             return {**current_user, "role": "admin"}
         raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
+def get_current_super_admin(current_user=Depends(get_current_user)):
+    """Requires super_admin role only. Used for platform-wide admin operations
+    (approve/reject events, manage all tenants, audit logs)."""
+    if current_user.get("role") != "super_admin":
+        if not settings.is_production and current_user.get("id") == settings.DEV_DEFAULT_USER_ID:
+            return {**current_user, "role": "super_admin"}
+        raise HTTPException(status_code=403, detail="Super Admin access required")
     return current_user

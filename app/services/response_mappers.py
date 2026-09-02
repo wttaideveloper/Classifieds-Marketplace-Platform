@@ -456,6 +456,7 @@ def _event_base_fields(event) -> dict:
         "created_at": event.created_at,
         "updated_at": event.updated_at,
         "requires_reapproval": event.requires_reapproval,
+        "last_admin_notes": getattr(event, "last_admin_notes", None),
         "available_seats": _event_available_seats(event),
         "is_full": _event_is_full(event),
         "registration_open": _event_registration_open(event),

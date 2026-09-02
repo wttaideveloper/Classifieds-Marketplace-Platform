@@ -96,3 +96,22 @@ class OrderListItemResponse(BaseModel):
     currency: str | None = "USD"
     item_count: int = 0
     created_at: datetime | None = None
+
+
+# ---- Order Status & Refund Schemas ----
+
+class OrderStatusUpdate(BaseModel):
+    status: str = Field(..., description="New status: confirmed|shipped|delivered|cancelled|completed")
+    reason: str | None = Field(None, description="Reason for status change")
+
+class OrderRefundRequest(BaseModel):
+    reason: str | None = Field(None, description="Reason for refund")
+    amount: str | None = Field(None, description="Partial amount if partial refund")
+
+class OrderRefundResponse(BaseModel):
+    id: UUID
+    order_id: UUID
+    status: str
+    payment_status: str | None = None
+    refund_reason: str | None = None
+    message: str

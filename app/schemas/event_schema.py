@@ -303,6 +303,8 @@ class EventResponse(BaseModel):
     is_deleted: bool | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    requires_reapproval: bool | None = Field(None, description="Whether event needs re-approval after restoration")
+    last_admin_notes: str | None = Field(None, description="Super Admin's latest reject/request-changes message")
     available_seats: int | None = Field(None, description="Available seats (capacity - confirmed)")
     is_full: bool | None = Field(None, description="Whether event is at capacity")
     registration_open: bool | None = Field(None, description="Whether registration window is open")
@@ -669,3 +671,35 @@ class EventOrderStatusUpdate(BaseModel):
 class EventRefundApproveRequest(BaseModel):
     action: str = Field(..., description="approve|reject")
     reason: str | None = Field(None, description="Reason for approval/rejection")
+
+
+# ---- Super Admin Approval Actions ----
+
+class EventAdminActionRequest(BaseModel):
+    """Request body for Super Admin reject / request-changes actions."""
+    reason: str = Field(..., min_length=1, max_length=2000, description="Reason or message from Super Admin (required)")
+    notes: str | None = Field(None, description="Internal notes (not shown to enterprise)")
+
+    model_config = ConfigDict(json_schema_extra={"example": {"reason": "Please add venue details and seating capacity"}})
+
+
+class EventAdminActionResponse(BaseModel):
+    """Response after Super Admin reject / request-changes."""
+    event_id: UUID
+    previous_status: str
+    new_status: str
+    reason: str | None = None
+    message: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EventAdminNotesResponse(BaseModel):
+    """Enterprise-facing response showing Super Admin notes on an event."""
+    event_id: UUID
+    title: str
+    status: str
+    last_admin_notes: str | None = None
+    admin_notes_updated_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)

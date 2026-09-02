@@ -95,7 +95,7 @@ def _normalize_slug(value: str | None) -> str | None:
 
 def _map_keycloak_role(payload: dict) -> str | None:
     explicit_role = _normalize_slug(payload.get("role"))
-    if explicit_role in {"admin", "provider", "customer"}:
+    if explicit_role in {"admin", "super_admin", "provider", "customer"}:
         return explicit_role
 
     tenant_role = _normalize_slug(payload.get("tenant_role"))
@@ -113,11 +113,13 @@ def _map_keycloak_role(payload: dict) -> str | None:
     if tenant_role in {"tenant_admin", "internal_user"}:
         return "provider"
 
-    if user_role in {"admin", "provider", "customer", "patient", "external_user"}:
+    if user_role in {"admin", "super_admin", "provider", "customer", "patient", "external_user"}:
         if user_role in {"patient", "external_user"}:
             return "customer"
         if user_role == "admin":
             return "admin"
+        if user_role == "super_admin":
+            return "super_admin"
         return user_role
 
     if rbac_roles & {"tenant_owner"}:
@@ -132,7 +134,9 @@ def _map_keycloak_role(payload: dict) -> str | None:
         roles.extend(client_roles.get("roles") or [])
 
     normalized = {_normalize_slug(role) for role in roles if _normalize_slug(role)}
-    if normalized & {"admin", "super_admin", "tenant_owner"}:
+    if "super_admin" in normalized:
+        return "super_admin"
+    if normalized & {"admin", "tenant_owner"}:
         return "admin"
     if normalized & {"provider", "tenant_admin", "internal_user", "staff"}:
         return "provider"

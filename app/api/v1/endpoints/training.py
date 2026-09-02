@@ -39,7 +39,7 @@ def duplicate(training_id: UUID = Path(...), db: Session = Depends(get_db), curr
 
 @router.patch("/{training_id}/status", response_model=TrainingResponse)
 def update_status(training_id: UUID, payload: TrainingStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    if payload.status == "approved" and current_user.get("role") != "admin":
+    if payload.status == "approved" and current_user.get("role") not in ("admin", "super_admin"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Only admin can approve")
     return update_training_status_service(db, training_id, payload.status)
@@ -410,3 +410,51 @@ def post_discussion(training_id: UUID, payload: dict, db: Session=Depends(get_db
 @router.post("/{training_id}/announcements")
 def announce(training_id: UUID, payload: AnnouncementCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_training_announcement_service(db, training_id, payload, current_user)
+
+
+# ---- Training Order Status & Refund ----
+
+from app.schemas.training_schema import TrainingOrderStatusUpdate, TrainingRefundRequest, TrainingRefundApproveRequest
+from app.services.training_service import update_training_order_status_service, request_training_refund_service, approve_training_refund_service
+
+
+@router.patch(
+    "/{training_id}/orders/{order_id}/status",
+    summary="Update Training Order Status (Admin/Provider)",
+)
+def update_training_order_status(
+    training_id: UUID,
+    order_id: UUID,
+    payload: TrainingOrderStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    return update_training_order_status_service(db, training_id, order_id, payload)
+
+
+@router.post(
+    "/{training_id}/orders/{order_id}/refund",
+    summary="Request Training Refund",
+)
+def request_training_refund(
+    training_id: UUID,
+    order_id: UUID,
+    payload: TrainingRefundRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return request_training_refund_service(db, training_id, order_id, payload)
+
+
+@router.post(
+    "/{training_id}/orders/{order_id}/refund/approve",
+    summary="Approve or Reject Training Refund (Admin/Provider)",
+)
+def approve_training_refund(
+    training_id: UUID,
+    order_id: UUID,
+    payload: TrainingRefundApproveRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    return approve_training_refund_service(db, training_id, order_id, payload)

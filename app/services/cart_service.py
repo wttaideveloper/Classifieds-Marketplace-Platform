@@ -350,3 +350,71 @@ def get_order_service(db: Session, user_id: UUID, order_id: UUID) -> OrderRespon
         created_at=order.created_at,
         updated_at=order.updated_at,
     )
+
+
+# ---- Order Status & Refund Services ----
+
+def update_order_status_service(db: Session, user_id: UUID, order_id: UUID, payload):
+    from app.models.cart_model import Order
+    VALID_TRANSITIONS = {
+        "pending": ["confirmed", "cancelled"],
+        "confirmed": ["shipped", "cancelled"],
+        "shipped": ["delivered", "cancelled"],
+        "delivered": ["completed"],
+        "completed": [],
+        "cancelled": [],
+    }
+    order = db.query(Order).filter(Order.id == order_id, Order.user_id == user_id, Order.is_deleted.is_(False)).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    new_status = payload.status
+    allowed = VALID_TRANSITIONS.get(order.status, [])
+    if new_status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Cannot transition from '{order.status}' to '{new_status}'. Allowed: {allowed}")
+    order.status = new_status
+    db.commit()
+    db.refresh(order)
+    return {"id": str(order.id), "status": order.status, "message": f"Order status updated to '{new_status}'"}
+
+
+def request_order_refund_service(db: Session, user_id: UUID, order_id: UUID, payload):
+    from app.models.cart_model import Order
+    VALID_TRANSITIONS = {
+        "pending": ["confirmed", "cancelled"],
+        "confirmed": ["shipped", "cancelled"],
+        "shipped": ["delivered", "cancelled"],
+        "delivered": ["completed"],
+        "completed": [],
+        "cancelled": [],
+    }
+    order = db.query(Order).filter(Order.id == order_id, Order.user_id == user_id, Order.is_deleted.is_(False)).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status in ("cancelled",):
+        raise HTTPException(status_code=400, detail="Order already cancelled")
+    order.status = "refund_requested"
+    order.refund_reason = payload.reason if payload and hasattr(payload, 'reason') else None
+    db.commit()
+    db.refresh(order)
+    return {"id": str(order.id), "status": order.status, "message": "Refund requested", "refund_reason": order.refund_reason}
+
+
+def approve_order_refund_service(db: Session, user_id: UUID, order_id: UUID, payload):
+    from app.models.cart_model import Order
+    order = db.query(Order).filter(Order.id == order_id, Order.user_id == user_id, Order.is_deleted.is_(False)).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status != "refund_requested":
+        raise HTTPException(status_code=400, detail=f"Order is not in refund_requested state (current: {order.status})")
+    action = payload.action
+    if action == "approve":
+        order.status = "refunded"
+        message = "Refund approved"
+    elif action == "reject":
+        order.status = "confirmed"
+        message = "Refund rejected — order restored to confirmed"
+    else:
+        raise HTTPException(status_code=400, detail="action must be approve|reject")
+    db.commit()
+    db.refresh(order)
+    return {"id": str(order.id), "status": order.status, "message": message}

@@ -131,3 +131,51 @@ def get_order(
 ):
     user_id = UUID(str(current_user["id"]))
     return get_order_service(db, user_id, order_id)
+
+
+# ---- Order Status & Refund Endpoints ----
+
+from app.schemas.cart_schema import OrderRefundRequest, OrderStatusUpdate
+from app.services.cart_service import update_order_status_service, request_order_refund_service, approve_order_refund_service
+
+
+@router.patch(
+    "/orders/{order_id}/status",
+    summary="Update Order Status",
+)
+def update_order_status(
+    order_id: UUID,
+    payload: OrderStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = UUID(str(current_user["id"]))
+    return update_order_status_service(db, user_id, order_id, payload)
+
+
+@router.post(
+    "/orders/{order_id}/refund",
+    summary="Request Order Refund",
+)
+def request_refund(
+    order_id: UUID,
+    payload: OrderRefundRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = UUID(str(current_user["id"]))
+    return request_order_refund_service(db, user_id, order_id, payload)
+
+
+@router.post(
+    "/orders/{order_id}/refund/approve",
+    summary="Approve or Reject Refund (Admin/Provider)",
+)
+def approve_refund(
+    order_id: UUID,
+    payload: OrderRefundRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = UUID(str(current_user["id"]))
+    return approve_order_refund_service(db, user_id, order_id, payload)

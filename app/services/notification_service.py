@@ -40,7 +40,7 @@ def _parse_tenant_id(current_user: dict) -> UUID | None:
 
 
 def _require_super_admin(current_user: dict) -> None:
-    if current_user.get("role") != "admin":
+    if current_user.get("role") not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Super admin access required.")
 
 

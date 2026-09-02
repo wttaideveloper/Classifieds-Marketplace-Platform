@@ -26,7 +26,7 @@ def delete_program(program_id: UUID=Path(...), db: Session=Depends(get_db), curr
 def duplicate(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return duplicate_program_service(db, program_id)
 @router.patch("/{program_id}/status", response_model=ProgramResponse)
 def update_status(program_id: UUID, payload: ProgramStatusUpdate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    if payload.status == "approved" and current_user.get("role") != "admin":
+    if payload.status == "approved" and current_user.get("role") not in ("admin", "super_admin"):
         from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Only admin can approve")
     return update_program_status_service(db, program_id, payload.status)
 # Phases / Activities (P6)

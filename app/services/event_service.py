@@ -50,7 +50,7 @@ def _validate_references(db: Session, enterprise_id: UUID | None, location_id: U
     if not enterprise:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enterprise not found")
     # Tenant ownership: non-admin must own enterprise tenant
-    if current_user and current_user.get("role") != "admin":
+    if current_user and current_user.get("role") not in ("admin", "super_admin"):
         user_tid = current_user.get("tenant_id")
         if user_tid and str(enterprise.tenant_id) != str(user_tid):
             raise HTTPException(status_code=403, detail="Not authorized for this enterprise/tenant")
@@ -112,10 +112,10 @@ def _check_category(db: Session, category: str | None, subcategory: str | None):
             if not sub:
                 raise HTTPException(status_code=400, detail=f"Subcategory '{subcategory}' not found under '{category}'")
 
-def _log_audit(db: Session, event_id: UUID, action: str, before: dict | None, after: dict | None, changed_by: str | None = None):
+def _log_audit(db: Session, event_id: UUID, action: str, before: dict | None, after: dict | None, changed_by: str | None = None, notes: str | None = None):
     try:
         from app.models.event_aux_models import EventAudit
-        audit = EventAudit(event_id=event_id, action=action, before=before, after=after, changed_by=changed_by)
+        audit = EventAudit(event_id=event_id, action=action, before=before, after=after, changed_by=changed_by, notes=notes)
         db.add(audit); db.commit()
     except Exception:
         try: db.rollback()
@@ -279,7 +279,7 @@ def duplicate_event_service(db: Session, event_id: UUID, current_user: dict = No
     return EventResponse.model_validate(map_event_write(clone))
 
 
-def update_event_status_service(db: Session, event_id: UUID, new_status: str, current_user: dict = None):
+def update_event_status_service(db: Session, event_id: UUID, new_status: str, current_user: dict = None, notes: str | None = None):
     event = get_event_by_id(db, event_id, include_deleted=True)
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -292,9 +292,9 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
         )
 
     # Lifecycle as per spec: pending_approval -> approved -> draft -> published -> completed -> archived
-    # draft normally allows published, but restored drafts (requires_reapproval) must go via pending_approval
+    # Added: needs_revision (super admin asks for changes), rejected (super admin rejects)
     VALID_TRANSITIONS = {
-        "pending_approval": ["approved", "cancelled"],
+        "pending_approval": ["approved", "rejected", "needs_revision", "cancelled"],
         "approved": ["draft", "published", "cancelled", "archived"],
         "draft": ["published", "pending_approval", "cancelled", "archived"],
         "published": ["completed", "cancelled", "suspended", "approved", "archived"],
@@ -304,6 +304,8 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
         "archived": [],
         "active": ["cancelled", "completed", "inactive"],
         "inactive": ["active", "cancelled"],
+        "needs_revision": ["pending_approval", "cancelled"],  # enterprise edits and resubmits
+        "rejected": ["draft", "cancelled"],  # enterprise can revise and resubmit via draft -> pending_approval
     }
 
     current_status = event.status
@@ -331,11 +333,15 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
     if event.requires_reapproval and current_status == "pending_approval" and new_status == "approved":
         event.requires_reapproval = False
 
+    # Store admin notes on event when rejecting or requesting changes
+    if new_status in ("rejected", "needs_revision") and notes:
+        event.last_admin_notes = notes
+
     previous = event.status
     event.status = new_status
     db.commit()
     db.refresh(event)
-    _log_audit(db, event.id, "status_change", {"status": previous}, {"status": new_status})
+    _log_audit(db, event.id, "status_change", {"status": previous}, {"status": new_status}, notes=notes)
     if new_status == "cancelled":
         try:
             from app.services.notification_triggers import notify_event_cancelled

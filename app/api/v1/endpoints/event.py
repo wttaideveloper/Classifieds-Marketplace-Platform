@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_current_user, require_roles
+from app.core.dependencies import get_current_admin, get_current_super_admin, get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.event_schema import (
@@ -199,21 +199,55 @@ def duplicate_event(event_id: UUID = Path(..., description="Event ID"), db: Sess
 
 @router.patch("/{event_id}/status", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event Status")
 def update_status(event_id: UUID, payload: EventStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    # Only Enterprise Admin (admin role) can approve; provider cannot approve — admin == Enterprise Admin (no Super Admin)
-    if payload.status == "approved" and current_user.get("role") != "admin":
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Only Enterprise Admin can approve (pending_approval -> approved).")
+    from fastapi import HTTPException
+    role = current_user.get("role")
+    # Super Admin platform-wide operations: approve / reject / request_changes
+    _super_admin_only = {"approved", "rejected", "needs_revision"}
+    if payload.status in _super_admin_only and role != "super_admin":
+        raise HTTPException(status_code=403, detail=f"Only Super Admin can set status to '{payload.status}'. Use /admin/events/{{id}}/reject or /admin/events/{{id}}/request-changes instead.")
     return update_event_status_service(db, event_id, payload.status, current_user)
 
 
 @router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Unpublish Event")
 def unpublish_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    if current_user.get("role") != "super_admin":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Only Super Admin can unpublish events.")
     return update_event_status_service(db, event_id, "approved", current_user)
 
 
 @router.post("/{event_id}/archive", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Archive Event")
 def archive_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return update_event_status_service(db, event_id, "archived", current_user)
+
+
+@router.get("/{event_id}/admin-notes", summary="View Super Admin Notes on Event")
+def get_admin_notes(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    """Enterprise Admin / Provider can see the Super Admin's latest reject/request-changes message."""
+    from app.repository.event_repo import get_event_by_id
+    from fastapi import HTTPException
+    event = get_event_by_id(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return {
+        "event_id": str(event.id),
+        "title": event.title,
+        "status": event.status,
+        "last_admin_notes": event.last_admin_notes,
+    }
+
+
+@router.post("/{event_id}/resubmit", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Resubmit Event After Revision")
+def resubmit_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    """Resubmit event for approval after Super Admin requested changes (needs_revision -> pending_approval)."""
+    from app.repository.event_repo import get_event_by_id
+    from fastapi import HTTPException
+    event = get_event_by_id(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if event.status not in ("needs_revision", "draft"):
+        raise HTTPException(status_code=400, detail=f"Cannot resubmit event in '{event.status}' status. Must be needs_revision or draft.")
+    return update_event_status_service(db, event_id, "pending_approval", current_user)
 
 
 # ---- Registrations & Waitlist (E7-E10) ----
@@ -576,7 +610,7 @@ def batch_check_in(event_id: UUID, payload: EventBatchCheckInRequest, db: Sessio
 
 
 @router.post("/auto-complete", summary="Auto-complete past published events", status_code=status.HTTP_200_OK)
-def auto_complete_events(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin)):
+def auto_complete_events(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_super_admin)):
     from app.services.event_service import auto_complete_past_events_service
     return auto_complete_past_events_service(db, enterprise_id)
 
