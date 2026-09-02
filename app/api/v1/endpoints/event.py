@@ -201,18 +201,18 @@ def duplicate_event(event_id: UUID = Path(..., description="Event ID"), db: Sess
 def update_status(event_id: UUID, payload: EventStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from fastapi import HTTPException
     role = current_user.get("role")
-    # Super Admin platform-wide operations: approve / reject / request_changes
+    # TESTING: Enterprise Admin acts as Super Admin — approve / reject / request_changes
     _super_admin_only = {"approved", "rejected", "needs_revision"}
-    if payload.status in _super_admin_only and role != "super_admin":
-        raise HTTPException(status_code=403, detail=f"Only Super Admin can set status to '{payload.status}'. Use /admin/events/{{id}}/reject or /admin/events/{{id}}/request-changes instead.")
+    if payload.status in _super_admin_only and role not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail=f"Only Enterprise Admin can set status to '{payload.status}'.")
     return update_event_status_service(db, event_id, payload.status, current_user)
 
 
 @router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Unpublish Event")
 def unpublish_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    if current_user.get("role") != "super_admin":
+    if current_user.get("role") not in ("admin", "super_admin"):
         from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Only Super Admin can unpublish events.")
+        raise HTTPException(status_code=403, detail="Only Enterprise Admin can unpublish events (acting as Super Admin for testing).")
     return update_event_status_service(db, event_id, "approved", current_user)
 
 
@@ -221,9 +221,9 @@ def archive_event(event_id: UUID, db: Session = Depends(get_db), current_user: d
     return update_event_status_service(db, event_id, "archived", current_user)
 
 
-@router.get("/{event_id}/admin-notes", summary="View Super Admin Notes on Event")
+@router.get("/{event_id}/admin-notes", summary="View Enterprise Admin Notes on Event")
 def get_admin_notes(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    """Enterprise Admin / Provider can see the Super Admin's latest reject/request-changes message."""
+    """Enterprise Admin / Provider can see the Enterprise Admin's latest reject/request-changes message (testing as Super Admin)."""
     from app.repository.event_repo import get_event_by_id
     from fastapi import HTTPException
     event = get_event_by_id(db, event_id)
@@ -239,7 +239,7 @@ def get_admin_notes(event_id: UUID, db: Session = Depends(get_db), current_user:
 
 @router.post("/{event_id}/resubmit", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Resubmit Event After Revision")
 def resubmit_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    """Resubmit event for approval after Super Admin requested changes (needs_revision -> pending_approval)."""
+    """Resubmit event for approval after Enterprise Admin requested changes (needs_revision -> pending_approval) — testing as Super Admin."""
     from app.repository.event_repo import get_event_by_id
     from fastapi import HTTPException
     event = get_event_by_id(db, event_id)
@@ -610,7 +610,7 @@ def batch_check_in(event_id: UUID, payload: EventBatchCheckInRequest, db: Sessio
 
 
 @router.post("/auto-complete", summary="Auto-complete past published events", status_code=status.HTTP_200_OK)
-def auto_complete_events(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_super_admin)):
+def auto_complete_events(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin)):
     from app.services.event_service import auto_complete_past_events_service
     return auto_complete_past_events_service(db, enterprise_id)
 
