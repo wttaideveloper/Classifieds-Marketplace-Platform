@@ -1709,3 +1709,51 @@ def contact_organiser_service(db: Session, event_id: UUID, payload: dict, curren
     except Exception:
         pass
     return {"message": "Message sent to organiser", "event_id": str(event_id), "organiser": ev.organiser_contact}
+
+
+# ---- Event Order Status & Refund Approval ----
+
+def update_event_order_status_service(db: Session, event_id: UUID, order_id: UUID, payload):
+    from app.models.event_aux_models import EventOrder
+    VALID_TRANSITIONS = {
+        "confirmed": ["cancelled", "completed"],
+        "refund_requested": ["refunded", "cancelled"],
+        "cancelled": [],
+        "refunded": [],
+        "completed": [],
+    }
+    order = db.query(EventOrder).filter(EventOrder.id == order_id, EventOrder.event_id == event_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    new_status = payload.status
+    allowed = VALID_TRANSITIONS.get(order.status, [])
+    if new_status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Cannot transition from '{order.status}' to '{new_status}'. Allowed: {allowed}")
+    order.status = new_status
+    db.commit()
+    db.refresh(order)
+    return {"id": str(order.id), "status": order.status, "message": f"Order status updated to '{new_status}'"}
+
+
+def approve_event_refund_service(db: Session, event_id: UUID, order_id: UUID, payload):
+    from app.models.event_aux_models import EventOrder
+    order = db.query(EventOrder).filter(EventOrder.id == order_id, EventOrder.event_id == event_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status != "refund_requested":
+        raise HTTPException(status_code=400, detail=f"Order is not in refund_requested state (current: {order.status})")
+    action = payload.action
+    if action == "approve":
+        order.status = "refunded"
+        order.payment_status = "refunded"
+        message = "Refund approved"
+    elif action == "reject":
+        order.status = "confirmed"
+        order.payment_status = "confirmed"
+        order.refund_reason = None
+        message = "Refund rejected — order restored to confirmed"
+    else:
+        raise HTTPException(status_code=400, detail="action must be approve|reject")
+    db.commit()
+    db.refresh(order)
+    return {"id": str(order.id), "status": order.status, "payment_status": order.payment_status, "message": message}
