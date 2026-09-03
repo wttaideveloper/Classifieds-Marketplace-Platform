@@ -87,6 +87,10 @@ class Event(Base):
     registration_open_at = Column(DateTime)
     registration_close_at = Column(DateTime)
     custom_fields = Column(JSONB, default=list)
+    custom_values = Column(JSONB, default=list)
+
+    form_configuration_id = Column(UUID(as_uuid=True), ForeignKey("event_form_configurations.id"), nullable=True, index=True)
+    form_configuration_version_id = Column(UUID(as_uuid=True), ForeignKey("event_form_configuration_versions.id"), nullable=True, index=True)
 
     # Schedule
     sessions = Column(MutableList.as_mutable(JSONB), default=list)

@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common_schema import EventStatus, PaginatedResponse
+from app.schemas.event_form_config_schema import EventCustomValueInput
 
 DeliveryMode = str  # in_person|online|hybrid
 MeetingProvider = str  # zoom|google_meet|teams|other
@@ -110,6 +111,14 @@ class EventCreate(BaseModel):
     registration_open_at: datetime | None = None
     registration_close_at: datetime | None = None
     custom_fields: list | None = None
+    form_configuration_version_id: UUID | None = Field(
+        None,
+        description="Published form configuration version ID. If omitted, server resolves active form for tenant.",
+    )
+    custom_values: list[EventCustomValueInput] | list | None = Field(
+        None,
+        description="Super Admin custom Event field values (separate from registration custom_fields)",
+    )
     sessions: list | None = Field(None, description="Agenda sessions")
     status: EventStatus = Field("draft", description="Event status.")
 
@@ -190,6 +199,7 @@ class EventCreate(BaseModel):
             "sessions": self._normalize_sessions(),
             "status": self.status,
         }
+        # form_configuration_* and custom_values applied by service layer after validation
 
 
 class EventUpdate(BaseModel):
@@ -224,11 +234,16 @@ class EventUpdate(BaseModel):
     registration_open_at: datetime | None = None
     registration_close_at: datetime | None = None
     custom_fields: list | None = None
+    custom_values: list[EventCustomValueInput] | list | None = Field(
+        None,
+        description="Update Super Admin custom Event field values",
+    )
     sessions: list | None = None
     status: EventStatus | None = None
 
     def to_model_data(self) -> dict:
         data = self.model_dump(exclude_unset=True)
+        data.pop("custom_values", None)  # handled by form configuration service
         if "ticket_types" in data and data["ticket_types"] is not None:
             normalized_tt: list[dict] = []
             for raw in data["ticket_types"] or []:
@@ -298,6 +313,9 @@ class EventResponse(BaseModel):
     registration_open_at: datetime | None = None
     registration_close_at: datetime | None = None
     custom_fields: list | None = None
+    custom_values: list | None = None
+    form_configuration_id: UUID | None = None
+    form_configuration_version_id: UUID | None = None
     sessions: list | None = None
     status: str
     is_deleted: bool | None = None

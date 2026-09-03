@@ -176,6 +176,38 @@ def apply_template(template_id: UUID, payload: EventTemplateApplyRequest, db: Se
     return apply_template_service(db, template_id, payload.model_dump(exclude_unset=True), current_user)
 
 
+@router.get(
+    "/form-configuration/active",
+    summary="Resolved active Event form for authenticated Enterprise Admin",
+    description=(
+        "Server-side resolution: authenticate → Enterprise → tenant_id → active selective config "
+        "→ else active global → else legacy default. Returns full sections/fields for dynamic rendering."
+    ),
+)
+def get_active_event_form_configuration(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    from app.schemas.event_form_config_schema import ActiveFormConfigurationResponse
+    from app.services.event_form_config_service import get_active_form_configuration_service
+    return ActiveFormConfigurationResponse.model_validate(get_active_form_configuration_service(db, current_user))
+
+
+@router.get(
+    "/{event_id}/form-configuration",
+    summary="Historical Event form version used by this Event",
+    description="Loads the exact published configuration version stored on the Event at creation time.",
+)
+def get_event_form_configuration(
+    event_id: UUID = Path(..., description="Event ID"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    from app.schemas.event_form_config_schema import ActiveFormConfigurationResponse
+    from app.services.event_form_config_service import get_event_form_configuration_service
+    return ActiveFormConfigurationResponse.model_validate(get_event_form_configuration_service(db, event_id, current_user))
+
+
 @router.get("/{event_id}", response_model=EventDetailResponse, status_code=status.HTTP_200_OK, summary="Get Event by ID")
 def get_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db)):
     return get_event_service(db, event_id)

@@ -7,7 +7,7 @@ def create_program(db: Session, data):
     payload = data.to_model_data() if hasattr(data, "to_model_data") else data.model_dump()
     obj = Program(**payload); db.add(obj); db.commit(); db.refresh(obj); return obj
 
-def get_programs(db: Session, *, search=None, category=None, tenant_id=None, enterprise_id=None, location_id=None, status=None, delivery_mode=None, provider_id=None, min_price=None, max_price=None, duration_weeks=None, date_from=None, date_to=None, page=1, page_size=20, include_deleted=False):
+def get_programs(db: Session, *, search=None, category=None, tenant_id=None, enterprise_id=None, location_id=None, status=None, delivery_mode=None, provider_id=None, instructor_id=None, min_price=None, max_price=None, duration_weeks=None, date_from=None, date_to=None, eligibility=None, sort_by=None, sort_order=None, page=1, page_size=20, include_deleted=False):
     q = db.query(Program).options(joinedload(Program.enterprise))
     q = apply_soft_delete_filter(q, Program, include_deleted)
     if tenant_id: q = q.filter(Program.tenant_id == tenant_id)
@@ -17,6 +17,9 @@ def get_programs(db: Session, *, search=None, category=None, tenant_id=None, ent
     if status: q = q.filter(Program.status == status)
     if delivery_mode: q = q.filter(Program.delivery_mode == delivery_mode)
     if provider_id: q = q.filter(Program.provider_id == provider_id)
+    if instructor_id: q = q.filter(Program.provider_id == instructor_id)
+    if eligibility:
+        q = q.filter(Program.eligibility.contains(eligibility) if isinstance(eligibility, dict) else Program.eligibility.astext.ilike(f"%{eligibility}%"))
     if min_price is not None:
         try:
             from sqlalchemy import cast, Float
@@ -41,7 +44,12 @@ def get_programs(db: Session, *, search=None, category=None, tenant_id=None, ent
             q = q.filter(Program.end_date <= dt)
         except: pass
     if search: q = apply_ilike_search(q, [Program.title, Program.description, Program.category], search)
-    q = q.order_by(Program.created_at.desc())
+    sort_map = {"title": Program.title, "start_date": Program.start_date, "price": Program.price, "created_at": Program.created_at}
+    sort_col = sort_map.get(sort_by or "created_at", Program.created_at)
+    if (sort_order or "desc").lower() == "asc":
+        q = q.order_by(sort_col.asc())
+    else:
+        q = q.order_by(sort_col.desc())
     return paginate_query(q, page, page_size)
 
 def get_program_by_id(db: Session, pid: UUID, include_deleted=False):

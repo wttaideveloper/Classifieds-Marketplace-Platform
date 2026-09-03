@@ -50,6 +50,8 @@ class Training(Base):
     assessments = Column(JSONB, default=list)
     assignments = Column(JSONB, default=list)
     discussions = Column(JSONB, default=list)
+    announcements = Column(JSONB, default=list)
+    moderation_history = Column(JSONB, default=list)
 
     status = Column(String(20), default="draft", nullable=False, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False)
@@ -161,4 +163,5 @@ class TrainingLiveSession(Base):
     meeting_provider = Column(String(50), default="zoom")
     status = Column(String(20), default="scheduled")
     recording_url = Column(Text)
+    attendance = Column(JSONB, default=list)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

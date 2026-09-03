@@ -58,6 +58,8 @@ KEYCLOAK_AUDIENCE=invigorate-api
 | Badge count | `GET /api/v1/notifications/unread-count` |
 | Mark read | `PATCH /api/v1/conversations/{id}/read` |
 | Real-time chat | Socket.IO — see **Socket.IO** tag |
+| Trainings | `GET/POST /api/v1/trainings` — see **Trainings** tag |
+| Programs | `GET/POST /api/v1/programs` — see **Programs** tag |
 
 ## Notification channels
 

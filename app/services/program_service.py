@@ -29,31 +29,51 @@ def get_program_service(db, pid):
     obj=get_program_by_id(db, pid)
     if not obj: raise HTTPException(404, "Program not found")
     return ProgramDetailResponse.model_validate(map_program_detail(obj))
-def update_program_service(db, pid, data):
+def update_program_service(db, pid, data, current_user: dict | None = None):
     obj=get_program_by_id(db, pid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(404, "Program not found")
+    if current_user and current_user.get("role") not in ("admin", "super_admin"):
+        user_tid = current_user.get("tenant_id")
+        if user_tid and obj.tenant_id and str(obj.tenant_id) != str(user_tid):
+            raise HTTPException(403, "Not authorized for this tenant")
     return ProgramResponse.model_validate(map_program_write(update_program(db, obj, data)))
-def delete_program_service(db, pid):
+def delete_program_service(db, pid, current_user: dict | None = None):
     obj=get_program_by_id(db, pid)
     if not obj: raise HTTPException(404, "Program not found")
+    if current_user and current_user.get("role") not in ("admin", "super_admin"):
+        user_tid = current_user.get("tenant_id")
+        if user_tid and obj.tenant_id and str(obj.tenant_id) != str(user_tid):
+            raise HTTPException(403, "Not authorized for this tenant")
     return delete_program(db, obj)
-def duplicate_program_service(db, pid):
+def duplicate_program_service(db, pid, current_user: dict | None = None):
     obj=get_program_by_id(db, pid)
     if not obj: raise HTTPException(404, "Program not found")
+    if current_user and current_user.get("role") not in ("admin", "super_admin"):
+        user_tid = current_user.get("tenant_id")
+        if user_tid and obj.tenant_id and str(obj.tenant_id) != str(user_tid):
+            raise HTTPException(403, "Not authorized for this tenant")
     payload={c.key: getattr(obj,c.key) for c in obj.__table__.columns if c.key not in ("id","created_at","updated_at")}
     payload["status"]="draft"; payload["is_deleted"]=False
     from app.models.program_model import Program
     clone=Program(**payload); db.add(clone); db.commit(); db.refresh(clone); return ProgramResponse.model_validate(map_program_write(clone))
-def update_program_status_service(db, pid, st):
+def update_program_status_service(db, pid, st, current_user: dict | None = None):
     obj=get_program_by_id(db, pid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(404, "Program not found")
+    if current_user and current_user.get("role") not in ("admin", "super_admin"):
+        user_tid = current_user.get("tenant_id")
+        if user_tid and obj.tenant_id and str(obj.tenant_id) != str(user_tid):
+            raise HTTPException(403, "Not authorized for this tenant")
     VALID = {
-        "pending_approval": ["approved", "cancelled"],
-        "approved": ["draft", "published", "cancelled", "archived"],
+        "pending_approval": ["approved", "cancelled", "rejected"],
+        "approved": ["draft", "published", "unpublished", "cancelled", "archived"],
         "draft": ["published", "pending_approval", "cancelled", "archived"],
-        "published": ["completed", "cancelled", "suspended", "approved", "archived"],
-        "suspended": ["published", "cancelled", "archived"],
-        "completed": ["archived"], "cancelled": ["draft", "archived"], "archived": [],
+        "published": ["completed", "cancelled", "suspended", "unpublished", "archived"],
+        "unpublished": ["published", "draft", "cancelled", "archived"],
+        "suspended": ["published", "unpublished", "cancelled", "archived"],
+        "completed": ["archived"],
+        "cancelled": ["draft", "archived"],
+        "rejected": ["draft", "pending_approval", "archived"],
+        "archived": [],
     }
     allowed = VALID.get(obj.status, [])
     if st not in allowed:
@@ -94,7 +114,13 @@ def enrol_program_service(db, pid, data):
         except ValueError:
             pass
     # free vs paid — price empty = free instant enrol
-    e=ProgramEnrolment(program_id=pid, participant_name=data.participant_name, participant_email=data.participant_email, status="enrolled")
+    goals = data.goals or {}
+    participant_goals = dict(goals)
+    if data.baseline:
+        participant_goals["baseline"] = data.baseline
+    if data.expected_outcomes:
+        participant_goals["expected_outcomes"] = data.expected_outcomes
+    e=ProgramEnrolment(program_id=pid, participant_name=data.participant_name, participant_email=data.participant_email, status="enrolled", participant_goals=participant_goals)
     db.add(e); db.commit(); db.refresh(e)
     return {"id": str(e.id), "program_id": str(e.program_id), "participant_name": e.participant_name, "participant_email": e.participant_email, "status": e.status, "enrol_type": prog.enrol_type, "delivery_mode": prog.delivery_mode, "available_seats": (int(prog.capacity)-db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).count() if prog.capacity else None), "created_at": e.created_at.isoformat()}
 
@@ -194,17 +220,37 @@ def create_review_service(db, pid, data):
     db.add(r); db.commit(); db.refresh(r)
     return {"id": str(r.id), "program_id": str(r.program_id), "rating": int(r.rating), "comment": r.comment, "participant_email": r.participant_email, "verified": True, "created_at": r.created_at.isoformat()}
 
-def get_program_reports_service(db, pid, report_type: str = "enrolment"):
+def get_program_reports_service(db, pid, report_type: str = "enrolment", date_from=None, date_to=None):
     from app.models.program_model import ProgramEnrolment, ProgramCheckin, ProgramReview, ProgramSurvey
-    from app.models.training_model import TrainingAssessmentSubmission
+    from datetime import datetime
     _get_program_or_404(db, pid)
+
+    def _in_range(dt):
+        if not dt:
+            return True
+        if date_from:
+            try:
+                if dt < datetime.fromisoformat(str(date_from)):
+                    return False
+            except (TypeError, ValueError):
+                pass
+        if date_to:
+            try:
+                if dt > datetime.fromisoformat(str(date_to)):
+                    return False
+            except (TypeError, ValueError):
+                pass
+        return True
+
     if report_type=="enrolment":
         rows=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).all()
+        rows=[r for r in rows if _in_range(r.created_at)]
         by_status={}
         for r in rows: by_status[r.status]=by_status.get(r.status,0)+1
         data={"total": len(rows), "by_status": by_status}
     elif report_type in ["attendance","checkin"]:
         rows=db.query(ProgramCheckin).filter(ProgramCheckin.program_id==pid).all()
+        rows=[r for r in rows if _in_range(r.created_at)]
         by_phase={}
         for r in rows: by_phase[r.phase_id or "unknown"]=by_phase.get(r.phase_id or "unknown",0)+1
         data={"total": len(rows), "by_phase": by_phase, "attendance_rate": round(len(rows)/max(1, db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).count())*100,2)}
@@ -224,24 +270,37 @@ def get_program_reports_service(db, pid, report_type: str = "enrolment"):
         data["completion_rate"]=data.get("overall",0)
     elif report_type=="revenue":
         prog=_get_program_or_404(db, pid)
-        enrol_cnt=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).count()
+        rows=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==pid).all()
+        rows=[r for r in rows if _in_range(r.created_at)]
+        enrol_cnt=len(rows)
         try: price=float(prog.price or 0)
         except: price=0
-        data={"total_revenue": str(price*enrol_cnt), "currency": prog.currency or "INR", "enrolments": enrol_cnt, "unit_price": str(prog.price or "0")}
+        paid_enrolments = [r for r in rows if r.status in ("enrolled", "active", "completed")]
+        data={"total_revenue": str(price*len(paid_enrolments)), "currency": prog.currency or "INR", "enrolments": enrol_cnt, "paid_enrolments": len(paid_enrolments), "unit_price": str(prog.price or "0")}
     else:
         data={}
     return {"program_id": str(pid), "type": report_type, "data": data}
 
-def update_enrolment_status_service(db, pid, enrol_id, new_status: str):
+def update_enrolment_status_service(db, pid, enrol_id, payload: dict):
     from app.models.program_model import ProgramEnrolment
+    from datetime import datetime
     _get_program_or_404(db, pid)
     allowed = ["completed","withdrawn","cancelled","extended","enrolled","active"]
+    new_status = payload.get("status") or payload.get("new_status") or "completed"
     if new_status not in allowed:
         raise HTTPException(400, f"Invalid status. Allowed: {allowed}")
     row = db.query(ProgramEnrolment).filter(ProgramEnrolment.id==enrol_id, ProgramEnrolment.program_id==pid).first()
     if not row: raise HTTPException(404, "Enrolment not found")
-    row.status=new_status; db.commit(); db.refresh(row)
-    return {"id": str(row.id), "program_id": str(row.program_id), "status": row.status, "participant_email": row.participant_email}
+    row.status=new_status
+    if payload.get("new_end_date"):
+        try:
+            row.new_end_date = datetime.fromisoformat(str(payload.get("new_end_date")))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Invalid new_end_date")
+    if payload.get("withdrawal_reason"):
+        row.withdrawal_reason = payload.get("withdrawal_reason")
+    db.commit(); db.refresh(row)
+    return {"id": str(row.id), "program_id": str(row.program_id), "status": row.status, "participant_email": row.participant_email, "new_end_date": row.new_end_date.isoformat() if row.new_end_date else None, "withdrawal_reason": row.withdrawal_reason}
 
 def update_program_goals_service(db, pid, goals: dict):
     from sqlalchemy.orm.attributes import flag_modified
@@ -279,3 +338,60 @@ def get_program_summary_service(db, enterprise_id=None):
         total_enrol=db.query(func.count(ProgramEnrolment.id)).filter(ProgramEnrolment.program_id.in_(pids)).scalar() or 0
         total_check=db.query(func.count(ProgramCheckin.id)).filter(ProgramCheckin.program_id.in_(pids)).scalar() or 0
     return {"total_programs": total, "by_status": by_status, "by_category": by_category, "by_delivery_mode": by_delivery, "total_enrolments": total_enrol, "total_checkins": total_check}
+
+
+def create_participant_checkin_service(db, pid, data, current_user: dict):
+    from app.models.program_model import ProgramEnrolment, ProgramCheckin
+    email = current_user.get("email")
+    if not email:
+        raise HTTPException(400, "Email required in token for self check-in")
+    enrolled = db.query(ProgramEnrolment).filter(
+        ProgramEnrolment.program_id == pid,
+        ProgramEnrolment.participant_email == email,
+        ProgramEnrolment.status.in_(["enrolled", "active", "completed"]),
+    ).first()
+    if not enrolled:
+        raise HTTPException(403, "Only enrolled participants can self check-in")
+    _get_program_or_404(db, pid)
+    phase_id = data.phase_id if hasattr(data, "phase_id") else data.get("phase_id")
+    notes = data.notes if hasattr(data, "notes") else data.get("notes")
+    checkin = ProgramCheckin(program_id=pid, participant_email=email, phase_id=phase_id, notes=notes)
+    db.add(checkin)
+    db.commit()
+    db.refresh(checkin)
+    return {"id": str(checkin.id), "program_id": str(checkin.program_id), "participant_email": checkin.participant_email, "phase_id": checkin.phase_id, "notes": checkin.notes, "created_at": checkin.created_at.isoformat()}
+
+
+def submit_survey_response_service(db, pid, survey_id: UUID, payload: dict, current_user: dict):
+    from app.models.program_model import ProgramSurvey, ProgramEnrolment
+    from sqlalchemy.orm.attributes import flag_modified
+    from datetime import datetime
+    survey = db.query(ProgramSurvey).filter(ProgramSurvey.id == survey_id, ProgramSurvey.program_id == pid).first()
+    if not survey:
+        raise HTTPException(404, "Survey not found")
+    email = current_user.get("email") or payload.get("participant_email")
+    if not email:
+        raise HTTPException(400, "participant_email required")
+    enrolled = db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id == pid, ProgramEnrolment.participant_email == email).first()
+    if not enrolled:
+        raise HTTPException(403, "Must be enrolled to submit survey")
+    entry = {"participant_email": email, "answers": payload.get("answers") or payload.get("responses") or [], "submitted_at": datetime.utcnow().isoformat()}
+    questions = list(survey.questions or [])
+    stored = next((q for q in questions if isinstance(q, dict) and q.get("_meta") == "responses"), None)
+    if stored is None:
+        questions.append({"_meta": "responses", "items": [entry]})
+    else:
+        stored.setdefault("items", []).append(entry)
+    survey.questions = questions
+    flag_modified(survey, "questions")
+    db.commit()
+    return {"survey_id": str(survey.id), "participant_email": email, "submitted_at": entry["submitted_at"]}
+
+
+def list_program_reviews_service(db, pid):
+    from app.models.program_model import ProgramReview
+    _get_program_or_404(db, pid)
+    rows = db.query(ProgramReview).filter(ProgramReview.program_id == pid).order_by(ProgramReview.created_at.desc()).all()
+    reviews = [{"id": str(r.id), "rating": int(r.rating), "comment": r.comment, "participant_email": r.participant_email, "created_at": r.created_at.isoformat()} for r in rows]
+    avg = round(sum(item["rating"] for item in reviews) / len(reviews), 2) if reviews else 0
+    return {"reviews": reviews, "average_rating": avg, "count": len(reviews)}

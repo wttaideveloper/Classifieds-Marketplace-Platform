@@ -42,6 +42,9 @@ class ProgramEnrolment(Base):
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False, index=True)
     status = Column(String(20), default="enrolled")
+    new_end_date = Column(DateTime)
+    withdrawal_reason = Column(Text)
+    participant_goals = Column(JSONB, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 class ProgramCheckin(Base):

@@ -5,30 +5,49 @@ from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.program_schema import ActivityCreate, CheckinCreate, EnrolmentCreate, PhaseCreate, ProgramCreate, ProgramDetailResponse, ProgramPaginatedResponse, ProgramResponse, ProgramStatusUpdate, ProgramUpdate, ReviewCreate, SurveyCreate
-from app.services.program_service import create_program_checkin_service, create_program_service, create_review_service, create_survey_service, delete_program_service, duplicate_program_service, enrol_program_service, get_participant_dashboard_service, get_program_progress_service, get_program_reports_service, get_program_service, get_program_summary_service, get_provider_dashboard_service, get_programs_service, list_checkins_service, list_enrolments_service, update_program_service, update_program_status_service
+from app.services.program_service import create_program_checkin_service, create_program_service, create_review_service, create_survey_service, delete_program_service, duplicate_program_service, enrol_program_service, get_participant_dashboard_service, get_program_progress_service, get_program_reports_service, get_program_service, get_program_summary_service, get_provider_dashboard_service, get_programs_service, list_checkins_service, list_enrolments_service, update_program_service, update_program_status_service, create_participant_checkin_service, submit_survey_response_service, list_program_reviews_service
 router=APIRouter(tags=["Programs"])
 @router.post("/", response_model=ProgramResponse, status_code=201)
 def create_program(data: ProgramCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return create_program_service(db, data, current_user)
 @router.get("/", response_model=ProgramPaginatedResponse)
-def list_programs(search: str|None=Query(None), category: str|None=Query(None), provider: str|None=Query(None, description="provider_id"), tenant_id: UUID|None=Query(None), enterprise_id: UUID|None=Query(None), location_id: UUID|None=Query(None), status_filter: str|None=Query(None, alias="status"), delivery_mode: str|None=Query(None), min_price: str|None=Query(None), max_price: str|None=Query(None), duration: str|None=Query(None, description="duration_weeks"), date_from: str|None=Query(None), date_to: str|None=Query(None), page:int=Query(DEFAULT_PAGE,ge=1), page_size:int=Query(DEFAULT_PAGE_SIZE,ge=1,le=MAX_PAGE_SIZE), db:Session=Depends(get_db)):
+def list_programs(search: str|None=Query(None), category: str|None=Query(None), provider: str|None=Query(None, description="provider_id"), instructor: str|None=Query(None, description="instructor/provider_id alias"), tenant_id: UUID|None=Query(None), enterprise_id: UUID|None=Query(None), location_id: UUID|None=Query(None), status_filter: str|None=Query(None, alias="status"), delivery_mode: str|None=Query(None), min_price: str|None=Query(None), max_price: str|None=Query(None), duration: str|None=Query(None, description="duration_weeks"), eligibility: str|None=Query(None, description="Eligibility filter (text match)"), sort_by: str|None=Query(None, description="title|start_date|price|created_at"), sort_order: str|None=Query("desc", description="asc|desc"), date_from: str|None=Query(None), date_to: str|None=Query(None), page:int=Query(DEFAULT_PAGE,ge=1), page_size:int=Query(DEFAULT_PAGE_SIZE,ge=1,le=MAX_PAGE_SIZE), db:Session=Depends(get_db)):
     from uuid import UUID as _UUID
     prov_id = None
     try: prov_id = _UUID(provider) if provider else None
     except: prov_id = None
-    return get_programs_service(db, search=search, category=category, provider_id=prov_id, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, delivery_mode=delivery_mode, min_price=min_price, max_price=max_price, duration_weeks=duration, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
+    instr_id = None
+    try: instr_id = _UUID(instructor) if instructor else None
+    except: instr_id = None
+    return get_programs_service(db, search=search, category=category, provider_id=prov_id or instr_id, instructor_id=instr_id, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, delivery_mode=delivery_mode, min_price=min_price, max_price=max_price, duration_weeks=duration, eligibility=eligibility, sort_by=sort_by, sort_order=sort_order, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
 @router.get("/{program_id}", response_model=ProgramDetailResponse)
 def get_program(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)): return get_program_service(db, program_id)
 @router.put("/{program_id}", response_model=ProgramResponse)
-def update_program(data: ProgramUpdate, program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return update_program_service(db, program_id, data)
+def update_program(data: ProgramUpdate, program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return update_program_service(db, program_id, data, current_user)
 @router.delete("/{program_id}")
-def delete_program(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): delete_program_service(db, program_id); return {"message":"Program deleted"}
+def delete_program(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): delete_program_service(db, program_id, current_user); return {"message":"Program deleted"}
 @router.post("/{program_id}/duplicate", response_model=ProgramResponse, status_code=201)
-def duplicate(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return duplicate_program_service(db, program_id)
-@router.patch("/{program_id}/status", response_model=ProgramResponse)
+def duplicate(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return duplicate_program_service(db, program_id, current_user)
+@router.patch("/{program_id}/status", response_model=ProgramResponse, summary="Update program status (generic transition)")
 def update_status(program_id: UUID, payload: ProgramStatusUpdate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     if payload.status == "approved" and current_user.get("role") not in ("admin", "super_admin"):
         from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Only admin can approve")
-    return update_program_status_service(db, program_id, payload.status)
+    return update_program_status_service(db, program_id, payload.status, current_user)
+
+@router.post("/{program_id}/publish", response_model=ProgramResponse, summary="Publish program")
+def publish_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "published", current_user)
+
+@router.post("/{program_id}/unpublish", response_model=ProgramResponse, summary="Unpublish program")
+def unpublish_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "unpublished", current_user)
+
+@router.post("/{program_id}/suspend", response_model=ProgramResponse, summary="Suspend program")
+def suspend_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "suspended", current_user)
+
+@router.post("/{program_id}/cancel", response_model=ProgramResponse, summary="Cancel program")
+def cancel_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "cancelled", current_user)
 # Phases / Activities (P6)
 @router.get("/{program_id}/phases")
 def list_phases(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -213,7 +232,11 @@ def meeting_link(program_id: UUID, db: Session=Depends(get_db), current_user: di
         for ac in ph.get("activities",[]):
             if ac.get("meeting_link"): links.append(ac.get("meeting_link"))
     return {"program_id": str(program_id), "meeting_links": links}
-@router.post("/{program_id}/check-ins", status_code=201)
+@router.post("/{program_id}/check-ins/self", status_code=201, summary="Participant self check-in / activity update")
+def self_checkin(program_id: UUID, payload: CheckinCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_participant_checkin_service(db, program_id, payload, current_user)
+
+@router.post("/{program_id}/check-ins", status_code=201, summary="Admin/provider check-in")
 def checkin(program_id: UUID, payload: CheckinCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_program_checkin_service(db, program_id, payload)
 @router.get("/{program_id}/check-ins")
@@ -238,19 +261,27 @@ def update_goals(program_id: UUID, payload: dict, db: Session=Depends(get_db), c
 def get_certificate(program_id: UUID, participant_email: str = Query(...), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.program_service import get_program_certificate_service
     return get_program_certificate_service(db, program_id, participant_email)
-@router.patch("/{program_id}/enrolments/{enrol_id}/status", summary="Completion/withdrawal/cancellation/extension")
+@router.patch("/{program_id}/enrolments/{enrol_id}/status", summary="Completion/withdrawal/cancellation/extension with new_end_date & withdrawal_reason")
 def update_enrol_status(program_id: UUID, enrol_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.program_service import update_enrolment_status_service
-    return update_enrolment_status_service(db, program_id, enrol_id, payload.get("status") or payload.get("new_status") or "completed")
+    return update_enrolment_status_service(db, program_id, enrol_id, payload)
 @router.post("/{program_id}/surveys", status_code=201)
 def create_survey(program_id: UUID, payload: SurveyCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_survey_service(db, program_id, payload)
+@router.post("/{program_id}/surveys/{survey_id}/submit", status_code=201, summary="Submit survey response")
+def submit_survey(program_id: UUID, survey_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return submit_survey_response_service(db, program_id, survey_id, payload, current_user)
+
+@router.get("/{program_id}/reviews", summary="List reviews with average rating")
+def list_reviews(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return list_program_reviews_service(db, program_id)
+
 @router.post("/{program_id}/reviews", status_code=201)
 def create_review(program_id: UUID, payload: ReviewCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     return create_review_service(db, program_id, payload)
-@router.get("/{program_id}/reports")
-def reports(program_id: UUID, type: str=Query("enrolment", description="enrolment|attendance|engagement|assessment|progress|completion|revenue"), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return get_program_reports_service(db, program_id, type)
+@router.get("/{program_id}/reports", summary="Program reports with optional date range")
+def reports(program_id: UUID, type: str=Query("enrolment", description="enrolment|attendance|engagement|assessment|progress|completion|revenue"), date_from: str | None = Query(None), date_to: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_program_reports_service(db, program_id, type, date_from=date_from, date_to=date_to)
 
 @router.get("/{program_id}/enrolments/export", summary="Export participant & performance data CSV")
 def export_enrolments(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):

@@ -188,6 +188,7 @@ class AssessmentQuestionCreate(BaseModel):
 
 class AssessmentSubmitCreate(BaseModel):
     answers: list[dict] = Field(..., description="List of answer selections, each with question_id and answer")
+    started_at: str | None = Field(None, description="ISO timestamp when assessment was started — required when time_limit_minutes is set")
 
 
 class AssessmentSubmitResponse(BaseModel):

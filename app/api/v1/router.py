@@ -102,6 +102,11 @@ _safe_include("app.api.v1.endpoints.presence", prefix="/presence", tags=["Presen
 _safe_include("app.api.v1.endpoints.socket_io", prefix="/socket-io", tags=["Socket.IO"])
 _safe_include("app.api.v1.endpoints.chat_admin", prefix="/admin/chat", tags=["Chat Administration"])
 _safe_include("app.api.v1.endpoints.admin", prefix="/admin", tags=["Admin — Approvals"])
+_safe_include(
+    "app.api.v1.endpoints.event_form_config_admin",
+    prefix="/admin",
+    tags=["Event Form Configuration (Super Admin)"],
+)
 
 # Cart + Orders (full cart: add multiple → view → checkout together)
 _safe_include("app.api.v1.endpoints.cart", prefix="/cart", tags=["Cart"])

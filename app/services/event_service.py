@@ -122,6 +122,9 @@ def _log_audit(db: Session, event_id: UUID, action: str, before: dict | None, af
         except: pass
 
 def create_event_service(db: Session, event_data, current_user: dict | None = None):
+    from app.services.event_form_config_service import apply_form_configuration_to_event_data
+
+    form_meta = apply_form_configuration_to_event_data(db, event_data, current_user or {})
     # Resolve enterprise_id from authenticated tenant if not provided
     if not event_data.enterprise_id and current_user:
         tenant_id = current_user.get("tenant_id") or current_user.get("tenant_id_claim")
@@ -142,8 +145,14 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
     # auto-create meeting link if needed
     if not event_data.meeting_link:
         event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
-    created = create_event(db, event_data)
-    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status})
+    payload = event_data.to_model_data()
+    payload.update(form_meta)
+    from app.models.event_model import Event
+    created = Event(**payload)
+    db.add(created)
+    db.commit()
+    db.refresh(created)
+    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None})
     return EventResponse.model_validate(map_event_write(created))
 
 
@@ -222,7 +231,24 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
 
     # capture old values for schedule change detection and audit
     old_vals = {k: getattr(event, k) for k in ["start_date","end_date","venue","meeting_link","time_zone","duration_type","category","subcategory","title","status"] if hasattr(event, k)}
+    from app.services.event_form_config_service import apply_form_configuration_to_event_update, validate_form_required_core_fields
+    from app.models.event_form_config_model import EventFormConfigurationVersion
+    from app.services.event_form_config_service import normalize_sections
+
+    extra = apply_form_configuration_to_event_update(db, event, update_data, current_user or {})
+    if extra is None and any(getattr(update_data, f, None) is not None for f in ("title", "description", "category", "start_date", "end_date")):
+        version_id = event.form_configuration_version_id
+        if version_id:
+            version = db.query(EventFormConfigurationVersion).filter(EventFormConfigurationVersion.id == version_id).first()
+            if version:
+                validate_form_required_core_fields(update_data, normalize_sections(version.sections or [], assign_ids=False))
+
     updated = update_event(db, event, update_data)
+    if extra:
+        for key, val in extra.items():
+            setattr(updated, key, val)
+        db.commit()
+        db.refresh(updated)
     _log_audit(db, event.id, "update", old_vals, {k: getattr(updated, k) for k in old_vals.keys()})
     # detect changes
     changes = {}

@@ -148,6 +148,55 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "Onboarding Forms",
         "description": "Onboarding form templates — create, publish, duplicate.",
     },
+    {
+        "name": "Trainings",
+        "description": (
+            "Training/course lifecycle, builder (sections/lessons/topics), enrolment, assessments, "
+            "assignments, progress, live sessions, announcements, and discussions.\n\n"
+            "**Implemented:** CRUD, `POST /publish|/unpublish|/suspend|/cancel`, section delete, "
+            "lesson GET, topic CRUD, prerequisite & release-rule enforcement on complete/content, "
+            "enrolment window, waitlist auto-promotion on cancel, assessment PUT/DELETE, timed assessments "
+            "(`started_at`), assignment due-date/file-type validation, module/lesson assessment filters, "
+            "persisted announcements + list, live attendance GET/export, Q&A replies, moderation history.\n\n"
+            "**Partial:** Certificate returns URL placeholder (PDF generation not yet implemented). "
+            "Admin moderation queue UI is API-only via `/moderation-history`."
+        ),
+    },
+    {
+        "name": "Programs",
+        "description": (
+            "Structured programs — phases/activities, enrolment, check-ins, surveys, reviews, "
+            "dashboards, and reports.\n\n"
+            "**Implemented:** CRUD with tenant isolation on update/delete/duplicate/status, "
+            "`POST /publish|/unpublish|/suspend|/cancel`, participant self check-in, enrolment goals/baseline "
+            "on enrol, enrolment status with `new_end_date` & `withdrawal_reason`, survey submit, review listing "
+            "with average rating, reports with `date_from`/`date_to` and paid revenue calculation.\n\n"
+            "**Partial:** Weeks/days/milestones hierarchy uses phases JSONB (not separate tables). "
+            "Drip/release rules, category subcategory dynamic attributes, secure signed file download, "
+            "certificate PDF generation, and advanced search facets (instructor/curriculum/eligibility) "
+            "are planned — use list filters where available (`category`, `provider`, `delivery_mode`, `status`)."
+        ),
+    },
+    {
+        "name": "Events",
+        "description": (
+            "Event catalog, lifecycle, registrations, sessions, orders, and **dynamic form configuration**.\n\n"
+            "**Enterprise Admin runtime:** `GET /events/form-configuration/active` resolves selective → global → legacy form. "
+            "Create/update Events with `form_configuration_version_id` + `custom_values` (separate from registration `custom_fields`).\n\n"
+            "**Historical edit:** `GET /events/{id}/form-configuration` loads the exact version stored on the Event."
+        ),
+    },
+    {
+        "name": "Event Form Configuration (Super Admin)",
+        "description": (
+            "Super Admin Event form builder — configurations, versions, publish/activate, tenant assignments, "
+            "field registry, and audit. Independent of Workflow. Enterprise Admins consume resolved forms via Events APIs."
+        ),
+    },
+    {
+        "name": "Event Categories",
+        "description": "Event category taxonomy.",
+    },
 ]
 
 SWAGGER_UI_PARAMETERS: dict = {

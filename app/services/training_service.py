@@ -59,12 +59,16 @@ def update_training_status_service(db: Session, tid: UUID, st: str):
     obj = get_training_by_id(db, tid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(status_code=404, detail="Training not found")
     VALID = {
-        "pending_approval": ["approved", "cancelled"],
-        "approved": ["draft", "published", "cancelled", "archived"],
+        "pending_approval": ["approved", "cancelled", "rejected"],
+        "approved": ["draft", "published", "unpublished", "cancelled", "archived"],
         "draft": ["published", "pending_approval", "cancelled", "archived"],
-        "published": ["completed", "cancelled", "suspended", "approved", "archived"],
-        "suspended": ["published", "cancelled", "archived"],
-        "completed": ["archived"], "cancelled": ["draft", "archived"], "archived": [],
+        "published": ["completed", "cancelled", "suspended", "unpublished", "archived"],
+        "unpublished": ["published", "draft", "cancelled", "archived"],
+        "suspended": ["published", "unpublished", "cancelled", "archived"],
+        "completed": ["archived"],
+        "cancelled": ["draft", "archived"],
+        "rejected": ["draft", "pending_approval", "archived"],
+        "archived": [],
     }
     allowed = VALID.get(obj.status, [])
     if st not in allowed:
@@ -77,6 +81,125 @@ def _get_training_or_404(db: Session, tid: UUID):
     obj = get_training_by_id(db, tid)
     if not obj: raise HTTPException(status_code=404, detail="Training not found")
     return obj
+
+
+def _find_lesson(training, section_id: str, lesson_id: str):
+    for section in training.sections or []:
+        if section.get("id") == section_id:
+            for lesson in section.get("lessons", []):
+                if lesson.get("id") == lesson_id:
+                    return section, lesson
+    return None, None
+
+
+def _all_lesson_ids(training) -> set[str]:
+    return {
+        str(l.get("id"))
+        for s in training.sections or []
+        for l in s.get("lessons", [])
+        if l.get("id")
+    }
+
+
+def _enforce_enrolment_window(training) -> None:
+    from datetime import datetime
+    now = datetime.utcnow()
+    if training.enrolment_start and now < training.enrolment_start:
+        raise HTTPException(status_code=400, detail=f"Enrolment not yet open (opens {training.enrolment_start.isoformat()})")
+    if training.enrolment_end and now > training.enrolment_end:
+        raise HTTPException(status_code=400, detail=f"Enrolment closed (closed {training.enrolment_end.isoformat()})")
+
+
+def _get_enrolment(db: Session, tid: UUID, participant_email: str):
+    from app.models.training_model import TrainingEnrolment
+    return db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email == participant_email,
+    ).first()
+
+
+def _lesson_is_accessible(lesson: dict, completed_lessons: set[str], enrolment, training) -> tuple[bool, str | None]:
+    from datetime import datetime, timedelta
+    if lesson.get("is_draft"):
+        return False, "Lesson is in draft mode"
+    prereqs = lesson.get("prerequisites") or []
+    for pid in prereqs:
+        if str(pid) not in completed_lessons:
+            return False, f"Prerequisite lesson {pid} not completed"
+    rule = lesson.get("release_rule") or {}
+    mode = rule.get("mode")
+    if mode == "date":
+        try:
+            release_at = datetime.fromisoformat(str(rule.get("date")))
+            if datetime.utcnow() < release_at:
+                return False, f"Lesson releases on {release_at.isoformat()}"
+        except (TypeError, ValueError):
+            pass
+    elif mode == "enrolment_day" and enrolment:
+        try:
+            days = int(rule.get("days") or 0)
+            unlock_at = enrolment.created_at + timedelta(days=days)
+            if datetime.utcnow() < unlock_at:
+                return False, f"Lesson unlocks on day {days} after enrolment ({unlock_at.isoformat()})"
+        except (TypeError, ValueError):
+            pass
+    elif mode == "previous_lesson":
+        prev_id = rule.get("lesson_id")
+        if prev_id and str(prev_id) not in completed_lessons:
+            return False, f"Previous lesson {prev_id} must be completed first"
+    return True, None
+
+
+def _promote_waitlist(db: Session, tid: UUID) -> dict | None:
+    from app.models.training_model import TrainingEnrolment, TrainingWaitlist
+    training = _get_training_or_404(db, tid)
+    if not training.capacity:
+        return None
+    try:
+        cap = int(training.capacity)
+    except ValueError:
+        return None
+    enrolled = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.status.in_(["enrolled", "pending_approval", "active"]),
+    ).count()
+    if enrolled >= cap:
+        return None
+    next_wait = (
+        db.query(TrainingWaitlist)
+        .filter(TrainingWaitlist.training_id == tid)
+        .order_by(TrainingWaitlist.created_at.asc())
+        .first()
+    )
+    if not next_wait:
+        return None
+    status = "pending_approval" if getattr(training, "requires_approval", False) else "enrolled"
+    promoted = TrainingEnrolment(
+        training_id=tid,
+        participant_name=next_wait.participant_name,
+        participant_email=next_wait.participant_email,
+        status=status,
+    )
+    db.add(promoted)
+    db.delete(next_wait)
+    db.commit()
+    db.refresh(promoted)
+    return {"enrolment_id": str(promoted.id), "participant_email": promoted.participant_email, "status": promoted.status}
+
+
+def _append_moderation(db: Session, training, action: str, reason: str | None, actor: dict | None):
+    from datetime import datetime
+    from sqlalchemy.orm.attributes import flag_modified
+    history = list(getattr(training, "moderation_history", None) or [])
+    history.append({
+        "action": action,
+        "reason": reason,
+        "actor_email": (actor or {}).get("email"),
+        "actor_role": (actor or {}).get("role"),
+        "at": datetime.utcnow().isoformat(),
+    })
+    training.moderation_history = history
+    flag_modified(training, "moderation_history")
 
 def add_assessment_question_service(db: Session, tid: UUID, aid: str, data):
     import uuid as _uuid, copy
@@ -111,8 +234,24 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
     if cnt >= attempt_limit:
         raise HTTPException(400, f"Attempt limit reached ({attempt_limit})")
     if target.get("time_limit_minutes"):
-        # enforce via started_at if provided in payload else ignore
-        pass
+        started_at = None
+        if hasattr(payload, "started_at"):
+            started_at = payload.started_at
+        elif isinstance(payload, dict):
+            started_at = payload.get("started_at")
+        if started_at:
+            from datetime import datetime, timedelta
+            try:
+                start = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+                limit = int(target.get("time_limit_minutes"))
+                if datetime.utcnow() > start + timedelta(minutes=limit):
+                    raise HTTPException(status_code=400, detail=f"Time limit exceeded ({limit} minutes)")
+            except HTTPException:
+                raise
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Invalid started_at for timed assessment")
+        else:
+            raise HTTPException(status_code=400, detail="started_at required for timed assessments")
     # scheduled publication
     if target.get("publish_at"):
         from datetime import datetime
@@ -219,7 +358,26 @@ def submit_assignment_service(db: Session, tid: UUID, aid: str, payload, partici
     target = next((a for a in assignments if str(a.get("id")) == str(aid)), None)
     if not target:
         raise HTTPException(status_code=404, detail="Assignment not found")
+    from datetime import datetime
+    due_date = target.get("due_date")
+    allow_late = bool(target.get("allow_late_submissions"))
+    if due_date and not allow_late:
+        try:
+            due = datetime.fromisoformat(str(due_date).replace("Z", "+00:00"))
+            if datetime.utcnow() > due:
+                raise HTTPException(status_code=400, detail="Due date has passed — late submissions not allowed")
+        except HTTPException:
+            raise
+        except (TypeError, ValueError):
+            pass
+    accepted = target.get("accepted_file_types") or []
     file_url = payload.file_url if hasattr(payload, "file_url") else payload.get("file_url") if isinstance(payload, dict) else None
+    if accepted and file_url:
+        import os
+        ext = os.path.splitext(str(file_url))[-1].lower()
+        normalized = {str(t).lower() if str(t).startswith(".") else f".{str(t).lower()}" for t in accepted}
+        if ext and ext not in normalized:
+            raise HTTPException(status_code=400, detail=f"File type {ext} not allowed. Accepted: {sorted(normalized)}")
     text = payload.submission_text if hasattr(payload, "submission_text") else payload.get("submission_text") if isinstance(payload, dict) else None
     sub = TrainingAssignmentSubmission(training_id=tid, assignment_id=str(aid), participant_email=participant_email, file_url=file_url, submission_text=text)
     db.add(sub); db.commit(); db.refresh(sub)
@@ -288,14 +446,55 @@ def grade_assignment_service(db: Session, tid: UUID, aid: str, submission_id: st
 def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_email: str):
     from app.models.training_model import TrainingProgress
     from datetime import datetime
-    t=_get_training_or_404(db, tid)
-    prog=db.query(TrainingProgress).filter(TrainingProgress.training_id==tid, TrainingProgress.participant_email==participant_email).first()
+    t = _get_training_or_404(db, tid)
+    enrol = _get_enrolment(db, tid, participant_email)
+    if not enrol or enrol.status not in ("enrolled", "active", "completed"):
+        raise HTTPException(status_code=403, detail="Active enrolment required")
+    prog = db.query(TrainingProgress).filter(
+        TrainingProgress.training_id == tid,
+        TrainingProgress.participant_email == participant_email,
+    ).first()
     if not prog:
-        prog=TrainingProgress(training_id=tid, participant_email=participant_email, sections_completed=[], lessons_completed=[], overall_percent="0")
-        db.add(prog); db.commit(); db.refresh(prog)
-    lessons=set(prog.lessons_completed or [])
+        prog = TrainingProgress(
+            training_id=tid,
+            participant_email=participant_email,
+            sections_completed=[],
+            lessons_completed=[],
+            overall_percent="0",
+        )
+        db.add(prog)
+        db.commit()
+        db.refresh(prog)
+    lessons = set(prog.lessons_completed or [])
+    completed_sections = set(prog.sections_completed or [])
+    target_lesson = None
+    target_section_id = None
+    for section in t.sections or []:
+        for lesson in section.get("lessons", []):
+            if lesson.get("id") == lesson_id:
+                target_lesson = lesson
+                target_section_id = section.get("id")
+                break
+        if target_lesson:
+            break
+    if not target_lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    accessible, reason = _lesson_is_accessible(target_lesson, lessons, enrol, t)
+    if not accessible:
+        raise HTTPException(status_code=403, detail=reason or "Lesson not accessible")
     lessons.add(lesson_id)
-    prog.lessons_completed=list(lessons)
+    prog.lessons_completed = list(lessons)
+    if target_section_id:
+        section_lessons = [
+            l.get("id")
+            for s in t.sections or []
+            if s.get("id") == target_section_id
+            for l in s.get("lessons", [])
+            if l.get("id")
+        ]
+        if section_lessons and all(lid in lessons for lid in section_lessons):
+            completed_sections.add(target_section_id)
+            prog.sections_completed = list(completed_sections)
     # mandatory check — count mandatory lessons
     all_lessons=[]
     mandatory_ids=set()
@@ -320,10 +519,26 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
     return {"lesson_id": lesson_id, "overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url, "resume_lesson": lesson_id}
 
 def record_live_attendance_service(db: Session, tid: UUID, session_id: str, participant_email: str):
-    from app.models.training_model import TrainingProgress
+    from app.models.training_model import TrainingLiveSession
     from datetime import datetime
-    # reuse complete_lesson as attendance
-    return complete_lesson_service(db, tid, f"live:{session_id}", participant_email)
+    session = db.query(TrainingLiveSession).filter(
+        TrainingLiveSession.training_id == tid,
+        TrainingLiveSession.id == session_id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Live session not found")
+    attendance = list(session.attendance or [])
+    if not any(a.get("participant_email") == participant_email for a in attendance):
+        attendance.append({
+            "participant_email": participant_email,
+            "recorded_at": datetime.utcnow().isoformat(),
+        })
+        session.attendance = attendance
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(session, "attendance")
+        db.commit()
+    complete_lesson_service(db, tid, f"live:{session_id}", participant_email)
+    return {"session_id": session_id, "participant_email": participant_email, "recorded_at": attendance[-1]["recorded_at"]}
 
 def get_certificate_service(db: Session, tid: UUID, participant_email: str):
     from app.models.training_model import TrainingProgress
@@ -333,14 +548,67 @@ def get_certificate_service(db: Session, tid: UUID, participant_email: str):
     return {"training_id": str(tid), "participant_email": participant_email, "certificate_url": prog.certificate_url, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "overall_percent": prog.overall_percent}
 
 def create_training_announcement_service(db: Session, tid: UUID, data, current_user: dict | None = None):
-    _get_training_or_404(db, tid)
-    import uuid as _uuid, datetime
-    return {"id": str(_uuid.uuid4()), "training_id": str(tid), "title": data.title, "message": data.message, "sent_at": datetime.datetime.utcnow().isoformat(), "channel": data.channel}
+    import uuid as _uuid
+    from datetime import datetime
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    entry = {
+        "id": str(_uuid.uuid4()),
+        "training_id": str(tid),
+        "title": data.title,
+        "message": data.message,
+        "channel": data.channel,
+        "author": (current_user or {}).get("email"),
+        "sent_at": datetime.utcnow().isoformat(),
+    }
+    announcements = list(getattr(training, "announcements", None) or [])
+    announcements.append(entry)
+    training.announcements = announcements
+    flag_modified(training, "announcements")
+    db.commit()
+    return entry
+
+
+def list_training_announcements_service(db: Session, tid: UUID):
+    training = _get_training_or_404(db, tid)
+    return list(getattr(training, "announcements", None) or [])
+
+
+def get_live_attendance_service(db: Session, tid: UUID, session_id: str):
+    from app.models.training_model import TrainingLiveSession
+    session = db.query(TrainingLiveSession).filter(
+        TrainingLiveSession.training_id == tid,
+        TrainingLiveSession.id == session_id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Live session not found")
+    return {
+        "session_id": str(session.id),
+        "title": session.title,
+        "attendance": session.attendance or [],
+        "count": len(session.attendance or []),
+    }
+
+
+def export_live_attendance_service(db: Session, tid: UUID, session_id: str):
+    data = get_live_attendance_service(db, tid, session_id)
+    import csv
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["participant_email", "recorded_at"])
+    for row in data["attendance"]:
+        writer.writerow([row.get("participant_email"), row.get("recorded_at")])
+    output.seek(0)
+    return output.getvalue(), data["session_id"]
 
 def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_code: str | None = None):
     from app.models.training_model import TrainingEnrolment
     from datetime import datetime, timedelta
     t = _get_training_or_404(db, tid)
+    if t.status not in ("published", "approved"):
+        raise HTTPException(status_code=400, detail=f"Training not open for enrolment (status={t.status})")
+    _enforce_enrolment_window(t)
     # coupon validation
     if t.coupon_code and coupon_code != t.coupon_code:
         raise HTTPException(status_code=400, detail="Invalid coupon code")
@@ -392,26 +660,38 @@ def cancel_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, partic
     e=q.first()
     if not e: raise HTTPException(404, "Enrolment not found")
     if e.status=="cancelled": return e
-    e.status="cancelled"; db.commit(); db.refresh(e)
+    e.status = "cancelled"
+    db.commit()
+    db.refresh(e)
+    promoted = _promote_waitlist(db, tid)
     try:
         from app.services.notification_triggers import _safe_notify
         _safe_notify(db, f"training:{tid}", "training_enrolment_cancelled", {"training_id": str(tid)})
-    except: pass
-    return e
+    except Exception:
+        pass
+    result = {"id": str(e.id), "status": e.status}
+    if promoted:
+        result["waitlist_promoted"] = promoted
+    return result
 
-def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, action: str):
+def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, action: str, reason: str | None = None, current_user: dict | None = None):
     from app.models.training_model import TrainingEnrolment
-    e = db.query(TrainingEnrolment).filter(TrainingEnrolment.id==enrol_id, TrainingEnrolment.training_id==tid).first()
+    training = _get_training_or_404(db, tid)
+    e = db.query(TrainingEnrolment).filter(TrainingEnrolment.id == enrol_id, TrainingEnrolment.training_id == tid).first()
     if not e:
         raise HTTPException(status_code=404, detail="Enrolment not found")
     if action == "approve":
         e.status = "enrolled"
+        _append_moderation(db, training, "enrolment_approved", reason, current_user)
     elif action == "reject":
         e.status = "cancelled"
+        _append_moderation(db, training, "enrolment_rejected", reason, current_user)
     else:
         raise HTTPException(status_code=400, detail="action must be approve|reject")
-    db.commit(); db.refresh(e)
-    return e
+    db.commit()
+    db.refresh(e)
+    db.refresh(training)
+    return {"id": str(e.id), "status": e.status, "reason": reason}
 
 def create_training_checkout_service(db: Session, tid: UUID, payload):
     from app.models.training_model import TrainingOrder, TrainingEnrolment
@@ -508,3 +788,249 @@ def approve_training_refund_service(db: Session, tid: UUID, order_id: UUID, payl
     db.commit()
     db.refresh(order)
     return {"id": str(order.id), "status": order.status, "payment_status": order.payment_status, "message": message}
+
+
+def publish_training_service(db: Session, tid: UUID, current_user: dict | None = None):
+    return update_training_status_service(db, tid, "published")
+
+
+def unpublish_training_service(db: Session, tid: UUID, current_user: dict | None = None):
+    return update_training_status_service(db, tid, "unpublished")
+
+
+def suspend_training_service(db: Session, tid: UUID, reason: str | None = None, current_user: dict | None = None):
+    training = _get_training_or_404(db, tid)
+    result = update_training_status_service(db, tid, "suspended")
+    if reason:
+        _append_moderation(db, training, "suspended", reason, current_user)
+        db.commit()
+    return result
+
+
+def cancel_training_service(db: Session, tid: UUID, reason: str | None = None, current_user: dict | None = None):
+    training = _get_training_or_404(db, tid)
+    result = update_training_status_service(db, tid, "cancelled")
+    if reason:
+        _append_moderation(db, training, "cancelled", reason, current_user)
+        db.commit()
+    return result
+
+
+def delete_section_service(db: Session, tid: UUID, section_id: str):
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    original = len(training.sections or [])
+    training.sections = [s for s in (training.sections or []) if s.get("id") != section_id]
+    if len(training.sections) == original:
+        raise HTTPException(status_code=404, detail="Section not found")
+    flag_modified(training, "sections")
+    db.commit()
+    return {"message": "Section deleted"}
+
+
+def get_lesson_service(db: Session, tid: UUID, section_id: str, lesson_id: str, current_user: dict | None = None):
+    training = _get_training_or_404(db, tid)
+    section, lesson = _find_lesson(training, section_id, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    role = (current_user or {}).get("role")
+    if lesson.get("is_draft") and role not in ("admin", "provider") and not lesson.get("is_preview"):
+        raise HTTPException(status_code=403, detail="Draft lesson — not available to learners")
+    return {"section_id": section_id, "section_title": (section or {}).get("title"), **lesson}
+
+
+def list_lesson_topics_service(db: Session, tid: UUID, section_id: str, lesson_id: str):
+    training = _get_training_or_404(db, tid)
+    _, lesson = _find_lesson(training, section_id, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return lesson.get("topics") or []
+
+
+def add_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_id: str, payload: dict):
+    import uuid as _uuid
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    _, lesson = _find_lesson(training, section_id, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    topics = list(lesson.get("topics") or [])
+    new_topic = {"id": str(_uuid.uuid4()), **payload}
+    topics.append(new_topic)
+    lesson["topics"] = topics
+    flag_modified(training, "sections")
+    db.commit()
+    return new_topic
+
+
+def update_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_id: str, topic_id: str, payload: dict):
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    _, lesson = _find_lesson(training, section_id, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    for topic in lesson.get("topics") or []:
+        if topic.get("id") == topic_id:
+            topic.update({k: v for k, v in payload.items() if k != "id"})
+            flag_modified(training, "sections")
+            db.commit()
+            return topic
+    raise HTTPException(status_code=404, detail="Topic not found")
+
+
+def delete_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_id: str, topic_id: str):
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    _, lesson = _find_lesson(training, section_id, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    topics = [t for t in (lesson.get("topics") or []) if t.get("id") != topic_id]
+    if len(topics) == len(lesson.get("topics") or []):
+        raise HTTPException(status_code=404, detail="Topic not found")
+    lesson["topics"] = topics
+    flag_modified(training, "sections")
+    db.commit()
+    return {"message": "Topic deleted"}
+
+
+def update_assessment_service(db: Session, tid: UUID, aid: str, payload: dict):
+    import copy
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    assessments = copy.deepcopy(training.assessments or [])
+    for assessment in assessments:
+        if str(assessment.get("id")) == str(aid):
+            assessment.update({k: v for k, v in payload.items() if k not in ("id", "questions")})
+            training.assessments = assessments
+            flag_modified(training, "assessments")
+            db.commit()
+            return assessment
+    raise HTTPException(status_code=404, detail="Assessment not found")
+
+
+def delete_assessment_service(db: Session, tid: UUID, aid: str):
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    original = len(training.assessments or [])
+    training.assessments = [a for a in (training.assessments or []) if str(a.get("id")) != str(aid)]
+    if len(training.assessments) == original:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    flag_modified(training, "assessments")
+    db.commit()
+    return {"message": "Assessment deleted"}
+
+
+def delete_assessment_question_service(db: Session, tid: UUID, aid: str, qid: str):
+    import copy
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    assessments = copy.deepcopy(training.assessments or [])
+    for assessment in assessments:
+        if str(assessment.get("id")) != str(aid):
+            continue
+        questions = [q for q in assessment.get("questions", []) if str(q.get("id")) != str(qid)]
+        if len(questions) == len(assessment.get("questions", [])):
+            raise HTTPException(status_code=404, detail="Question not found")
+        assessment["questions"] = questions
+        training.assessments = assessments
+        flag_modified(training, "assessments")
+        db.commit()
+        return {"message": "Question deleted"}
+    raise HTTPException(status_code=404, detail="Assessment not found")
+
+
+def filter_assessments(assessments: list, module_id: str | None, lesson_id: str | None) -> list:
+    if not module_id and not lesson_id:
+        return assessments
+    filtered = []
+    for assessment in assessments:
+        if module_id:
+            assessment_module = str(assessment.get("module_id") or assessment.get("section_id") or "")
+            if assessment_module and assessment_module != str(module_id):
+                continue
+        if lesson_id:
+            assessment_lesson = str(assessment.get("lesson_id") or "")
+            if assessment_lesson and assessment_lesson != str(lesson_id):
+                continue
+        filtered.append(assessment)
+    return filtered
+
+
+def get_secure_training_content_service(db: Session, tid: UUID, current_user: dict):
+    from app.models.training_model import TrainingEnrolment
+    import copy
+    email = current_user.get("email")
+    enrol = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email == email,
+        TrainingEnrolment.status.in_(["enrolled", "active", "completed"]),
+    ).first() if email else None
+    if not enrol and current_user.get("role") not in ["admin", "provider"]:
+        raise HTTPException(status_code=403, detail="Enrolled participants only")
+    training = _get_training_or_404(db, tid)
+    if training.status in ("draft", "cancelled", "archived") and current_user.get("role") not in ["admin", "provider"]:
+        raise HTTPException(status_code=403, detail=f"Content not available — training is {training.status}")
+    sections = copy.deepcopy(training.sections or [])
+    assessments = copy.deepcopy(training.assessments or [])
+    role = current_user.get("role")
+    if role not in ["admin", "provider"]:
+        filtered_sections = []
+        completed = set()
+        if email:
+            from app.models.training_model import TrainingProgress
+            prog = db.query(TrainingProgress).filter(
+                TrainingProgress.training_id == tid,
+                TrainingProgress.participant_email == email,
+            ).first()
+            if prog:
+                completed = set(prog.lessons_completed or [])
+        for section in sections:
+            section_copy = {**section, "lessons": []}
+            for lesson in section.get("lessons", []):
+                if lesson.get("is_draft") and not lesson.get("is_preview"):
+                    continue
+                accessible, _ = _lesson_is_accessible(lesson, completed, enrol, training)
+                if accessible or lesson.get("is_preview"):
+                    section_copy["lessons"].append(lesson)
+            if section_copy["lessons"]:
+                filtered_sections.append(section_copy)
+        sections = filtered_sections
+        for assessment in assessments:
+            for question in assessment.get("questions", []):
+                question.pop("correct_answer", None)
+                question.pop("explanation", None)
+    return {"training_id": str(tid), "sections": sections, "assessments": assessments}
+
+
+def reply_discussion_service(db: Session, tid: UUID, discussion_id: str, payload: dict, current_user: dict):
+    from sqlalchemy.orm.attributes import flag_modified
+    from datetime import datetime
+    training = _get_training_or_404(db, tid)
+    discussions = list(getattr(training, "discussions", None) or [])
+    for entry in discussions:
+        if entry.get("id") != discussion_id:
+            continue
+        replies = list(entry.get("replies") or [])
+        reply = {
+            "id": str(__import__("uuid").uuid4()),
+            "author": current_user.get("email", "anonymous"),
+            "text": payload.get("text") or payload.get("answer") or "",
+            "created_at": datetime.utcnow().isoformat(),
+            "is_answer": bool(payload.get("is_answer")),
+        }
+        if reply["is_answer"] or current_user.get("role") in ("admin", "provider"):
+            entry["answer"] = reply["text"]
+            entry["answered_by"] = reply["author"]
+            entry["answered_at"] = reply["created_at"]
+        replies.append(reply)
+        entry["replies"] = replies
+        training.discussions = discussions
+        flag_modified(training, "discussions")
+        db.commit()
+        return entry
+    raise HTTPException(status_code=404, detail="Discussion not found")
+
+
+def get_moderation_history_service(db: Session, tid: UUID):
+    training = _get_training_or_404(db, tid)
+    return list(getattr(training, "moderation_history", None) or [])
