@@ -28,7 +28,9 @@ def get_programs_service(db, **kw):
 def get_program_service(db, pid):
     obj=get_program_by_id(db, pid)
     if not obj: raise HTTPException(404, "Program not found")
-    return ProgramDetailResponse.model_validate(map_program_detail(obj))
+    detail = map_program_detail(obj)
+    detail["phases"] = normalize_program_phases(obj.phases)
+    return ProgramDetailResponse.model_validate(detail)
 def update_program_service(db, pid, data, current_user: dict | None = None):
     obj=get_program_by_id(db, pid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(404, "Program not found")
@@ -56,7 +58,7 @@ def duplicate_program_service(db, pid, current_user: dict | None = None):
     payload["status"]="draft"; payload["is_deleted"]=False
     from app.models.program_model import Program
     clone=Program(**payload); db.add(clone); db.commit(); db.refresh(clone); return ProgramResponse.model_validate(map_program_write(clone))
-def update_program_status_service(db, pid, st, current_user: dict | None = None):
+def update_program_status_service(db, pid, st, current_user: dict | None = None, notes: str | None = None):
     obj=get_program_by_id(db, pid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(404, "Program not found")
     if current_user and current_user.get("role") not in ("admin", "super_admin"):
@@ -64,7 +66,7 @@ def update_program_status_service(db, pid, st, current_user: dict | None = None)
         if user_tid and obj.tenant_id and str(obj.tenant_id) != str(user_tid):
             raise HTTPException(403, "Not authorized for this tenant")
     VALID = {
-        "pending_approval": ["approved", "cancelled", "rejected"],
+        "pending_approval": ["approved", "cancelled", "rejected", "needs_revision"],
         "approved": ["draft", "published", "unpublished", "cancelled", "archived"],
         "draft": ["published", "pending_approval", "cancelled", "archived"],
         "published": ["completed", "cancelled", "suspended", "unpublished", "archived"],
@@ -73,17 +75,127 @@ def update_program_status_service(db, pid, st, current_user: dict | None = None)
         "completed": ["archived"],
         "cancelled": ["draft", "archived"],
         "rejected": ["draft", "pending_approval", "archived"],
+        "needs_revision": ["pending_approval", "draft", "cancelled"],
         "archived": [],
     }
     allowed = VALID.get(obj.status, [])
     if st not in allowed:
         raise HTTPException(400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
-    obj.status=st; db.commit(); db.refresh(obj); return ProgramResponse.model_validate(map_program_write(obj))
+    obj.status=st
+    if st in ("rejected", "needs_revision") and notes:
+        obj.last_admin_notes = notes
+    db.commit(); db.refresh(obj); return ProgramResponse.model_validate(map_program_write(obj))
 
 def _get_program_or_404(db, pid):
     obj=get_program_by_id(db, pid)
     if not obj: raise HTTPException(404, "Program not found")
     return obj
+
+
+def normalize_program_phases(phases: list | None) -> list[dict]:
+    """Ensure each phase includes nested activities/instructors arrays for list responses."""
+    normalized: list[dict] = []
+    for phase in phases or []:
+        if not isinstance(phase, dict):
+            continue
+        entry = dict(phase)
+        entry["activities"] = list(entry.get("activities") or [])
+        entry["instructors"] = list(entry.get("instructors") or [])
+        entry["coaches"] = list(entry.get("coaches") or [])
+        entry["mentors"] = list(entry.get("mentors") or [])
+        entry["service_providers"] = list(entry.get("service_providers") or [])
+        normalized.append(entry)
+    return normalized
+
+
+def _save_program_phases(db: Session, obj, phases: list) -> None:
+    from sqlalchemy.orm.attributes import flag_modified
+    obj.phases = phases
+    flag_modified(obj, "phases")
+    db.commit()
+    db.refresh(obj)
+
+
+def list_program_phases_service(db: Session, pid: UUID) -> list[dict]:
+    obj = _get_program_or_404(db, pid)
+    db.refresh(obj)
+    return normalize_program_phases(obj.phases)
+
+
+def get_program_availability_service(db: Session, pid: UUID) -> dict:
+    from app.models.program_model import ProgramEnrolment
+    prog = _get_program_or_404(db, pid)
+    total = int(prog.capacity) if prog.capacity and str(prog.capacity).isdigit() else None
+    enrolled = (
+        db.query(ProgramEnrolment)
+        .filter(
+            ProgramEnrolment.program_id == pid,
+            ProgramEnrolment.status.in_(["enrolled", "active", "completed"]),
+        )
+        .count()
+    )
+    waitlisted = (
+        db.query(ProgramEnrolment)
+        .filter(ProgramEnrolment.program_id == pid, ProgramEnrolment.status == "waitlisted")
+        .count()
+    )
+    available = (total - enrolled) if total is not None else None
+    return {
+        "program_id": str(pid),
+        "capacity": total,
+        "enrolled": enrolled,
+        "available_seats": available,
+        "is_full": (available == 0 if available is not None else False),
+        "waitlist_count": waitlisted,
+        "enrol_type": prog.enrol_type,
+        "delivery_mode": prog.delivery_mode,
+        "is_free": not prog.price or prog.price == "0",
+    }
+
+
+def get_program_goals_service(db: Session, pid: UUID) -> dict:
+    prog = _get_program_or_404(db, pid)
+    return {"program_id": str(pid), "goals": prog.goals or {}}
+
+
+def list_program_surveys_service(db: Session, pid: UUID) -> list[dict]:
+    from app.models.program_model import ProgramSurvey
+    _get_program_or_404(db, pid)
+    rows = (
+        db.query(ProgramSurvey)
+        .filter(ProgramSurvey.program_id == pid)
+        .order_by(ProgramSurvey.created_at.desc())
+        .all()
+    )
+    out: list[dict] = []
+    for survey in rows:
+        questions = [
+            q
+            for q in (survey.questions or [])
+            if not (isinstance(q, dict) and q.get("_meta") == "responses")
+        ]
+        out.append(
+            {
+                "id": str(survey.id),
+                "program_id": str(survey.program_id),
+                "title": survey.title,
+                "description": survey.description,
+                "questions": questions,
+                "is_active": survey.is_active,
+                "created_at": survey.created_at.isoformat(),
+            }
+        )
+    return out
+
+
+def get_program_admin_notes_service(db: Session, pid: UUID) -> dict:
+    prog = _get_program_or_404(db, pid)
+    return {
+        "program_id": str(pid),
+        "status": prog.status,
+        "last_admin_notes": getattr(prog, "last_admin_notes", None),
+        "updated_at": prog.updated_at.isoformat() if prog.updated_at else None,
+    }
 
 def enrol_program_service(db, pid, data):
     from app.models.program_model import ProgramEnrolment

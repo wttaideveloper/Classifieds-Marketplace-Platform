@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import relationship
 from app.db.database import Base
 
@@ -26,8 +27,9 @@ class Program(Base):
     price = Column(String(50))
     currency = Column(String(3), default="INR")
     capacity = Column(String(50))
-    phases = Column(JSONB, default=list)
+    phases = Column(MutableList.as_mutable(JSONB), default=list)
     goals = Column(JSONB, default=dict)
+    last_admin_notes = Column(Text)
     status = Column(String(20), default="draft", nullable=False, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

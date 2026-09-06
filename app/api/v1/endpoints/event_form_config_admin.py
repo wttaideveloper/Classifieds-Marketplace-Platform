@@ -214,7 +214,11 @@ def get_assignments(
     "/{config_id}/assignments",
     response_model=AssignmentResponse,
     summary="Replace tenant/enterprise assignments",
-    description="Canonical assignment key is tenant_id. enterprise_id is validated against Enterprise↔Tenant linkage.",
+    description=(
+        "Canonical assignment key is tenant_id. Accepts tenant_ids (UUID), tenant_slugs "
+        "(resolved server-side via Invigorate tenant catalog, e.g. tester-shop), "
+        "enterprise_ids, or explicit assignments[]. enterprise_id is validated against Enterprise↔Tenant linkage."
+    ),
 )
 def put_assignments(
     payload: AssignmentPutRequest,

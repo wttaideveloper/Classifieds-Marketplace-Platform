@@ -47,25 +47,74 @@ class ProgramUpdate(BaseModel):
 class ProgramResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
+    tenant_id: UUID | None = None
     enterprise_id: UUID
+    location_id: UUID | None = None
     title: str
     description: str | None = None
     category: str
+    provider_id: UUID | None = None
+    duration_weeks: str | None = None
+    eligibility: dict | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    enrolment_start: datetime | None = None
+    enrolment_end: datetime | None = None
+    enrol_type: str | None = None
     delivery_mode: str | None = None
     price: str | None = None
+    currency: str | None = None
+    capacity: str | None = None
     status: str
     is_deleted: bool | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     phases: list | None = None
+    goals: dict | None = None
+    last_admin_notes: str | None = None
 
 class ProgramListItemResponse(ProgramResponse): pass
 class ProgramDetailResponse(ProgramResponse):
     enterprise_name: str | None = None
     model_config = ConfigDict(from_attributes=True)
 class ProgramPaginatedResponse(PaginatedResponse[ProgramListItemResponse]): pass
+class ProgramAdminActionRequest(BaseModel):
+    reason: str = Field(..., min_length=1, description="Admin reason/message for reject or request-changes")
+
+
+class ProgramGoalsResponse(BaseModel):
+    program_id: str
+    goals: dict = Field(default_factory=dict)
+
+
+class ProgramAvailabilityResponse(BaseModel):
+    program_id: str
+    capacity: int | None = None
+    enrolled: int
+    available_seats: int | None = None
+    is_full: bool
+    waitlist_count: int
+    enrol_type: str | None = None
+    delivery_mode: str | None = None
+    is_free: bool
+
+
+class PhaseResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: str | None = None
+    title: str | None = None
+    activities: list[dict] = Field(default_factory=list)
+    instructors: list = Field(default_factory=list)
+    coaches: list = Field(default_factory=list)
+    mentors: list = Field(default_factory=list)
+    service_providers: list = Field(default_factory=list)
+
+
 class ProgramStatusUpdate(BaseModel):
-    status: str; reason: str | None = None
+    status: str
+    reason: str | None = None
+
+
 class PhaseCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
     title: str; type: str = "phase"; phase_type: str | None = Field(None, description="phase|stage|week|day|milestone"); order: int | None = 0; prerequisites: list | None = None; completion_rule: str | None = None; release_schedule: dict | None = Field(None, description="daily|weekly|milestone release: {mode:'daily', day:1}"); goals: dict | None = None; baseline: dict | None = None; expected_outcomes: dict | None = None; instructors: list | None = None
@@ -120,7 +169,9 @@ class SurveyResponse(BaseModel):
     program_id: str
     title: str
     description: str | None = None
+    questions: list[dict] = Field(default_factory=list)
     answers: dict | None = None
+    is_active: bool | None = True
     created_at: str
 
 

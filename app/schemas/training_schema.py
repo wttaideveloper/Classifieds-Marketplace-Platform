@@ -131,6 +131,23 @@ class TrainingResponse(BaseModel):
     updated_at: datetime | None = None
     sections: list | None = None
     assessments: list | None = None
+    assignments: list | None = None
+    requires_approval: bool | None = None
+    access_duration_days: str | None = None
+    promo_price: str | None = None
+    coupon_code: str | None = None
+    requirements: str | None = None
+    primary_image: str | None = None
+    gallery_images: list | None = None
+    promotional_video: str | None = None
+    documents: list | None = None
+    duration: str | None = None
+    time_zone: str | None = None
+    enrolment_start: datetime | None = None
+    enrolment_end: datetime | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    last_admin_notes: str | None = None
 
 
 class TrainingListItemResponse(TrainingResponse):
@@ -144,6 +161,10 @@ class TrainingDetailResponse(TrainingResponse):
 
 class TrainingPaginatedResponse(PaginatedResponse[TrainingListItemResponse]):
     pass
+
+
+class TrainingAdminActionRequest(BaseModel):
+    reason: str = Field(..., min_length=1, description="Admin reason/message for reject or request-changes")
 
 
 class TrainingStatusUpdate(BaseModel):

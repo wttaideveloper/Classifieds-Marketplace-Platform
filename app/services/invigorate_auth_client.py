@@ -27,6 +27,68 @@ def list_tenants() -> list[dict]:
     return items if isinstance(items, list) else []
 
 
+def _normalize_tenant_slug(value: str) -> str:
+    return str(value).strip().lower()
+
+
+def resolve_tenant_ids_from_slugs(slugs: list[str]) -> list[UUID]:
+    """Resolve tenant slugs to canonical tenant UUIDs using the Invigorate tenant catalog."""
+    from fastapi import HTTPException
+
+    if not slugs:
+        return []
+
+    if not settings.invigorate_internal_api_configured:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Tenant slug resolution requires INVIGORATE_AUTH_BASE_URL and "
+                "INVIGORATE_INTERNAL_API_KEY to be configured"
+            ),
+        )
+
+    tenants = list_tenants()
+    if not tenants:
+        raise HTTPException(
+            status_code=503,
+            detail="Tenant catalog is unavailable — cannot resolve tenant slugs",
+        )
+
+    by_slug: dict[str, UUID] = {}
+    for tenant in tenants:
+        if not isinstance(tenant, dict):
+            continue
+        slug = tenant.get("slug")
+        tenant_id = tenant.get("id")
+        if not slug or not tenant_id:
+            continue
+        try:
+            by_slug[_normalize_tenant_slug(slug)] = UUID(str(tenant_id))
+        except ValueError:
+            continue
+
+    resolved: list[UUID] = []
+    unknown: list[str] = []
+    for raw_slug in slugs:
+        key = _normalize_tenant_slug(raw_slug)
+        tenant_uuid = by_slug.get(key)
+        if tenant_uuid is None:
+            unknown.append(raw_slug)
+        else:
+            resolved.append(tenant_uuid)
+
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Unknown tenant slug(s)",
+                "unknown_slugs": unknown,
+            },
+        )
+
+    return resolved
+
+
 def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
     """Resolve tenant members via Invigorate internal API when configured."""
     if not settings.invigorate_internal_api_configured:

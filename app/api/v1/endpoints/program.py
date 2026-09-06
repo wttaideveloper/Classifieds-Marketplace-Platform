@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.program_schema import ActivityCreate, CheckinCreate, EnrolmentCreate, PhaseCreate, ProgramCreate, ProgramDetailResponse, ProgramPaginatedResponse, ProgramResponse, ProgramStatusUpdate, ProgramUpdate, ReviewCreate, SurveyCreate
-from app.services.program_service import create_program_checkin_service, create_program_service, create_review_service, create_survey_service, delete_program_service, duplicate_program_service, enrol_program_service, get_participant_dashboard_service, get_program_progress_service, get_program_reports_service, get_program_service, get_program_summary_service, get_provider_dashboard_service, get_programs_service, list_checkins_service, list_enrolments_service, update_program_service, update_program_status_service, create_participant_checkin_service, submit_survey_response_service, list_program_reviews_service
+from app.schemas.program_schema import ActivityCreate, CheckinCreate, EnrolmentCreate, PhaseCreate, PhaseResponse, ProgramAvailabilityResponse, ProgramCreate, ProgramDetailResponse, ProgramGoalsResponse, ProgramPaginatedResponse, ProgramResponse, ProgramStatusUpdate, ProgramUpdate, ReviewCreate, SurveyCreate, SurveyResponse
+from app.services.program_service import create_program_checkin_service, create_program_service, create_review_service, create_survey_service, delete_program_service, duplicate_program_service, enrol_program_service, get_participant_dashboard_service, get_program_admin_notes_service, get_program_availability_service, get_program_goals_service, get_program_progress_service, get_program_reports_service, get_program_service, get_program_summary_service, get_provider_dashboard_service, get_programs_service, list_checkins_service, list_enrolments_service, list_program_phases_service, list_program_surveys_service, normalize_program_phases, update_program_service, update_program_status_service, create_participant_checkin_service, submit_survey_response_service, list_program_reviews_service, _save_program_phases
 router=APIRouter(tags=["Programs"])
 @router.post("/", response_model=ProgramResponse, status_code=201)
 def create_program(data: ProgramCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return create_program_service(db, data, current_user)
@@ -19,8 +19,25 @@ def list_programs(search: str|None=Query(None), category: str|None=Query(None), 
     try: instr_id = _UUID(instructor) if instructor else None
     except: instr_id = None
     return get_programs_service(db, search=search, category=category, provider_id=prov_id or instr_id, instructor_id=instr_id, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, delivery_mode=delivery_mode, min_price=min_price, max_price=max_price, duration_weeks=duration, eligibility=eligibility, sort_by=sort_by, sort_order=sort_order, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
-@router.get("/{program_id}", response_model=ProgramDetailResponse)
-def get_program(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)): return get_program_service(db, program_id)
+
+@router.get("/reports/summary", summary="Program portfolio summary")
+def summary(enterprise_id: UUID|None=None, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_program_summary_service(db, enterprise_id)
+
+@router.get("/my/enrolments", summary="Participant dashboard — enrolled/active/completed/cancelled")
+def my_enrolments(status: str | None = Query(None, description="enrolled|completed|cancelled"), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.models.program_model import ProgramEnrolment
+    email = current_user.get("email")
+    if not email:
+        from fastapi import HTTPException; raise HTTPException(400, "Email not found in token")
+    q = db.query(ProgramEnrolment).filter(ProgramEnrolment.participant_email==email)
+    if status: q = q.filter(ProgramEnrolment.status==status)
+    rows = q.order_by(ProgramEnrolment.created_at.desc()).all()
+    return [{"program_id": str(r.program_id), "status": r.status, "enrolment_id": str(r.id), "created_at": r.created_at.isoformat()} for r in rows]
+
+@router.get("/{program_id}", response_model=ProgramDetailResponse, summary="Get program detail")
+def get_program(program_id: UUID=Path(...), db: Session=Depends(get_db)):
+    return get_program_service(db, program_id)
 @router.put("/{program_id}", response_model=ProgramResponse)
 def update_program(data: ProgramUpdate, program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return update_program_service(db, program_id, data, current_user)
 @router.delete("/{program_id}")
@@ -49,15 +66,15 @@ def suspend_program(program_id: UUID, db: Session=Depends(get_db), current_user:
 def cancel_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return update_program_status_service(db, program_id, "cancelled", current_user)
 # Phases / Activities (P6)
-@router.get("/{program_id}/phases")
+@router.get("/{program_id}/phases", response_model=list[PhaseResponse], summary="List phases with nested activities/instructors")
 def list_phases(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    p=get_program_service(db, program_id); return p.phases or []
+    return list_program_phases_service(db, program_id)
 @router.post("/{program_id}/phases", status_code=201)
 def add_phase(program_id: UUID, payload: PhaseCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.program_repo import get_program_by_id; import uuid
     obj=get_program_by_id(db, program_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
-    phases=list(obj.phases or []); new={"id":str(uuid.uuid4()), **payload.model_dump()}; phases.append(new); obj.phases=phases; db.commit(); return new
+    phases=list(obj.phases or []); new={"id":str(uuid.uuid4()), **payload.model_dump()}; new.setdefault("activities", []); new.setdefault("instructors", []); phases.append(new); _save_program_phases(db, obj, phases); return new
 @router.put("/{program_id}/phases/{phase_id}")
 def update_phase(program_id: UUID, phase_id: str, payload: PhaseCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.program_repo import get_program_by_id
@@ -65,7 +82,7 @@ def update_phase(program_id: UUID, phase_id: str, payload: PhaseCreate, db: Sess
     obj=get_program_by_id(db, program_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
     for ph in obj.phases or []:
-        if ph.get("id")==phase_id: ph.update({k:v for k,v in payload.model_dump(exclude_unset=True).items() if k!="id"}); flag_modified(obj, "phases"); db.commit(); return ph
+        if ph.get("id")==phase_id: ph.update({k:v for k,v in payload.model_dump(exclude_unset=True).items() if k!="id"}); _save_program_phases(db, obj, list(obj.phases or [])); return ph
     from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
 @router.post("/{program_id}/phases/{phase_id}/activities", status_code=201)
 def add_activity(program_id: UUID, phase_id: str, payload: ActivityCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
@@ -74,7 +91,8 @@ def add_activity(program_id: UUID, phase_id: str, payload: ActivityCreate, db: S
     if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
     for ph in obj.phases or []:
         if ph.get("id")==phase_id:
-            acts=ph.get("activities",[]); new={"id":str(uuid.uuid4()), **payload.model_dump()}; acts.append(new); ph["activities"]=acts; obj.phases=list(obj.phases); db.commit(); return new
+            acts=ph.get("activities",[]); new={"id":str(uuid.uuid4()), **payload.model_dump()}; acts.append(new); ph["activities"]=acts
+            _save_program_phases(db, obj, list(obj.phases or [])); return new
     from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
 @router.put("/{program_id}/phases/{phase_id}/activities/{activity_id}")
 def update_activity(program_id: UUID, phase_id: str, activity_id: str, payload: ActivityCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
@@ -85,7 +103,7 @@ def update_activity(program_id: UUID, phase_id: str, activity_id: str, payload: 
     for ph in obj.phases or []:
         if ph.get("id")==phase_id:
             for ac in ph.get("activities",[]):
-                if ac.get("id")==activity_id: ac.update({k:v for k,v in payload.model_dump(exclude_unset=True).items() if k!="id"}); flag_modified(obj, "phases"); db.commit(); return ac
+                if ac.get("id")==activity_id: ac.update({k:v for k,v in payload.model_dump(exclude_unset=True).items() if k!="id"}); _save_program_phases(db, obj, list(obj.phases or [])); return ac
     from fastapi import HTTPException; raise HTTPException(404,"Activity not found")
 # Phases - missing delete/reorder
 @router.delete("/{program_id}/phases/{phase_id}")
@@ -97,7 +115,7 @@ def delete_phase(program_id: UUID, phase_id: str, db: Session=Depends(get_db), c
     orig=len(obj.phases or [])
     new=[p for p in (obj.phases or []) if p.get("id")!=phase_id]
     if len(new)==orig: from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
-    obj.phases=new; flag_modified(obj,"phases"); db.commit(); return {"message":"Phase deleted"}
+    obj.phases=new; _save_program_phases(db, obj, new); return {"message":"Phase deleted"}
 
 @router.delete("/{program_id}/phases/{phase_id}/activities/{activity_id}")
 def delete_activity(program_id: UUID, phase_id: str, activity_id: str, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
@@ -109,7 +127,7 @@ def delete_activity(program_id: UUID, phase_id: str, activity_id: str, db: Sessi
         if ph.get("id")==phase_id:
             acts=[a for a in ph.get("activities",[]) if a.get("id")!=activity_id]
             if len(acts)==len(ph.get("activities",[])): from fastapi import HTTPException; raise HTTPException(404,"Activity not found")
-            ph["activities"]=acts; obj.phases=list(obj.phases); flag_modified(obj,"phases"); db.commit(); return {"message":"Activity deleted"}
+            ph["activities"]=acts; _save_program_phases(db, obj, list(obj.phases or [])); return {"message":"Activity deleted"}
     from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
 
 @router.put("/{program_id}/phases/{phase_id}/instructors", summary="Assign instructors/coaches/mentors/service providers")
@@ -124,7 +142,7 @@ def assign_instructors(program_id: UUID, phase_id: str, payload: dict, db: Sessi
             ph["coaches"]=payload.get("coaches") or []
             ph["mentors"]=payload.get("mentors") or []
             ph["service_providers"]=payload.get("service_providers") or []
-            flag_modified(obj,"phases"); db.commit(); return ph
+            _save_program_phases(db, obj, list(obj.phases or [])); return ph
     from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
 
 @router.post("/{program_id}/check-ins/{checkin_id}/feedback", summary="Provider feedback & progress notes")
@@ -149,20 +167,9 @@ def reorder_phases(program_id: UUID, payload: dict, db: Session=Depends(get_db),
     ordered=[mapping[i] for i in order if i in mapping]
     remaining=[p for p in (obj.phases or []) if p.get("id") not in order]
     obj.phases=ordered+remaining
-    flag_modified(obj,"phases"); db.commit(); return obj.phases
+    _save_program_phases(db, obj, obj.phases); return normalize_program_phases(obj.phases)
 
 # Enrol, check-ins, progress, dashboards, surveys, reports
-@router.get("/my/enrolments", summary="Participant dashboard — enrolled/active/completed/cancelled")
-def my_enrolments(status: str | None = Query(None, description="enrolled|completed|cancelled"), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.program_model import ProgramEnrolment
-    email = current_user.get("email")
-    if not email:
-        from fastapi import HTTPException; raise HTTPException(400, "Email not found in token")
-    q = db.query(ProgramEnrolment).filter(ProgramEnrolment.participant_email==email)
-    if status: q = q.filter(ProgramEnrolment.status==status)
-    rows = q.order_by(ProgramEnrolment.created_at.desc()).all()
-    return [{"program_id": str(r.program_id), "status": r.status, "enrolment_id": str(r.id), "created_at": r.created_at.isoformat()} for r in rows]
-
 @router.post("/{program_id}/enrol", status_code=201, summary="Enrol — fixed-date & enrol-anytime, free/paid, capacity/waitlist")
 def enrol(program_id: UUID, payload: EnrolmentCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     return enrol_program_service(db, program_id, payload)
@@ -186,18 +193,9 @@ def list_waitlist(program_id: UUID, db: Session=Depends(get_db), current_user: d
     from app.models.program_model import ProgramEnrolment
     rows=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.status=="waitlisted").all()
     return [{"id": str(r.id), "participant_name": r.participant_name, "participant_email": r.participant_email, "created_at": r.created_at.isoformat()} for r in rows]
-@router.get("/{program_id}/availability", summary="Available seats & waitlist")
-def availability(program_id: UUID, db: Session=Depends(get_db)):
-    from app.models.program_model import ProgramEnrolment
-    from app.repository.program_repo import get_program_by_id
-    from fastapi import HTTPException
-    prog=get_program_by_id(db, program_id)
-    if not prog: raise HTTPException(404, "Program not found")
-    total=int(prog.capacity) if prog.capacity and str(prog.capacity).isdigit() else None
-    enrolled=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.status.in_(["enrolled","active","completed"])).count()
-    waitlisted=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.status=="waitlisted").count()
-    available=(total - enrolled) if total is not None else None
-    return {"program_id": str(program_id), "capacity": total, "enrolled": enrolled, "available_seats": available, "is_full": (available==0 if available is not None else False), "waitlist_count": waitlisted, "enrol_type": prog.enrol_type, "delivery_mode": prog.delivery_mode, "is_free": not prog.price or prog.price=="0"}
+@router.get("/{program_id}/availability", response_model=ProgramAvailabilityResponse, summary="Available seats & waitlist")
+def availability(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"]))):
+    return get_program_availability_service(db, program_id)
 
 @router.get("/{program_id}/content", summary="Secure enrolled content — phases/files gated")
 def secure_content(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -253,6 +251,10 @@ def dash_participant(program_id: UUID, participant_email: str | None = Query(Non
 @router.get("/{program_id}/dashboards/provider")
 def dash_provider(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return get_provider_dashboard_service(db, program_id)
+@router.get("/{program_id}/goals", response_model=ProgramGoalsResponse, summary="Get program goals & outcomes")
+def get_goals(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_program_goals_service(db, program_id)
+
 @router.put("/{program_id}/goals", summary="Goal & outcome — configurable fields")
 def update_goals(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.program_service import update_program_goals_service
@@ -265,6 +267,10 @@ def get_certificate(program_id: UUID, participant_email: str = Query(...), db: S
 def update_enrol_status(program_id: UUID, enrol_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.program_service import update_enrolment_status_service
     return update_enrolment_status_service(db, program_id, enrol_id, payload)
+@router.get("/{program_id}/surveys", response_model=list[SurveyResponse], summary="List program surveys")
+def list_surveys(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return list_program_surveys_service(db, program_id)
+
 @router.post("/{program_id}/surveys", status_code=201)
 def create_survey(program_id: UUID, payload: SurveyCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_survey_service(db, program_id, payload)
@@ -295,6 +301,18 @@ def export_enrolments(program_id: UUID, db: Session=Depends(get_db), current_use
     output.seek(0)
     return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=program_{program_id}_enrolments.csv"})
 
-@router.get("/reports/summary")
-def summary(enterprise_id: UUID|None=None, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return get_program_summary_service(db, enterprise_id)
+@router.get("/{program_id}/admin-notes", summary="Latest super-admin reject/request-changes message")
+def get_program_admin_notes(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_program_admin_notes_service(db, program_id)
+
+@router.post("/{program_id}/resubmit", response_model=ProgramResponse, summary="Resubmit program after requested changes")
+def resubmit_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.program_repo import get_program_by_id
+    from fastapi import HTTPException
+    prog = get_program_by_id(db, program_id)
+    if not prog:
+        raise HTTPException(404, "Program not found")
+    if prog.status not in ("needs_revision", "draft", "rejected"):
+        raise HTTPException(400, detail=f"Cannot resubmit program in '{prog.status}' status")
+    return update_program_status_service(db, program_id, "pending_approval", current_user)
+

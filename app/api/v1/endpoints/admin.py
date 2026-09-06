@@ -5,8 +5,10 @@ from app.core.dependencies import get_current_super_admin
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.services.event_service import get_events_service, update_event_status_service
-from app.services.training_service import get_trainings_service, update_training_status_service
-from app.services.program_service import get_programs_service, update_program_status_service
+from app.services.training_service import get_trainings_service, get_training_service, update_training_status_service
+from app.schemas.training_schema import TrainingAdminActionRequest, TrainingDetailResponse
+from app.services.program_service import get_programs_service, get_program_service, update_program_status_service
+from app.schemas.program_schema import ProgramAdminActionRequest, ProgramDetailResponse
 from app.models.event_aux_models import EventCategory
 
 router = APIRouter(tags=["Admin — Approvals"])
@@ -72,34 +74,72 @@ def publish_event(event_id: UUID, db: Session = Depends(get_db), _admin: dict = 
 def admin_pending_trainings(page: int = Query(DEFAULT_PAGE, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE), enterprise_id: UUID | None = Query(None), category: str | None = Query(None), db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
     return get_trainings_service(db, status="pending_approval", enterprise_id=enterprise_id, category=category, page=page, page_size=page_size)
 
+@router.get("/trainings/{training_id}", response_model=TrainingDetailResponse, summary="Admin — Training detail for approval review")
+def admin_get_training(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return get_training_service(db, training_id)
+
 @router.post("/trainings/{training_id}/approve", summary="Admin — Approve Training")
 def approve_training(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_training_status_service(db, training_id, "approved")
+    return update_training_status_service(db, training_id, "approved", _admin)
 
 @router.post("/trainings/{training_id}/reject", summary="Admin — Reject Training")
-def reject_training(training_id: UUID, payload: dict | None = None, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_training_status_service(db, training_id, "cancelled")
+def reject_training(
+    training_id: UUID,
+    payload: TrainingAdminActionRequest | None = None,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(get_current_super_admin),
+):
+    reason = payload.reason if payload else None
+    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason)
+
+@router.post("/trainings/{training_id}/request-changes", summary="Admin — Request Changes on Training")
+def request_changes_training(
+    training_id: UUID,
+    payload: TrainingAdminActionRequest,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(get_current_super_admin),
+):
+    return update_training_status_service(db, training_id, "needs_revision", _admin, notes=payload.reason)
 
 @router.post("/trainings/{training_id}/publish", summary="Admin — Publish Approved Training")
 def publish_training(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_training_status_service(db, training_id, "published")
+    return update_training_status_service(db, training_id, "published", _admin)
 
 # Programs admin queue
 @router.get("/programs/pending", summary="Admin — Pending Programs Queue")
 def admin_pending_programs(page: int = Query(DEFAULT_PAGE, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE), enterprise_id: UUID | None = Query(None), category: str | None = Query(None), db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
     return get_programs_service(db, status="pending_approval", enterprise_id=enterprise_id, category=category, page=page, page_size=page_size)
 
+@router.get("/programs/{program_id}", response_model=ProgramDetailResponse, summary="Admin — Program detail for approval review")
+def admin_get_program(program_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return get_program_service(db, program_id)
+
 @router.post("/programs/{program_id}/approve", summary="Admin — Approve Program")
 def approve_program(program_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_program_status_service(db, program_id, "approved")
+    return update_program_status_service(db, program_id, "approved", _admin)
 
 @router.post("/programs/{program_id}/reject", summary="Admin — Reject Program")
-def reject_program(program_id: UUID, payload: dict | None = None, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_program_status_service(db, program_id, "cancelled")
+def reject_program(
+    program_id: UUID,
+    payload: ProgramAdminActionRequest | None = None,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(get_current_super_admin),
+):
+    reason = payload.reason if payload else None
+    return update_program_status_service(db, program_id, "rejected", _admin, notes=reason)
+
+@router.post("/programs/{program_id}/request-changes", summary="Admin — Request Changes on Program")
+def request_changes_program(
+    program_id: UUID,
+    payload: ProgramAdminActionRequest,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(get_current_super_admin),
+):
+    return update_program_status_service(db, program_id, "needs_revision", _admin, notes=payload.reason)
 
 @router.post("/programs/{program_id}/publish", summary="Admin — Publish Approved Program")
 def publish_program(program_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_program_status_service(db, program_id, "published")
+    return update_program_status_service(db, program_id, "published", _admin)
 
 # Event Categories — Admin-managed
 @router.get("/event-categories", summary="Admin — List Event Categories")

@@ -186,7 +186,11 @@ class AssignmentItem(BaseModel):
 
 
 class AssignmentPutRequest(BaseModel):
-    tenant_ids: list[UUID] | None = None
+    tenant_ids: list[UUID] | None = Field(None, description="Canonical tenant UUIDs")
+    tenant_slugs: list[str] | None = Field(
+        None,
+        description="Tenant slugs (e.g. tester-shop) — resolved server-side to tenant UUIDs",
+    )
     enterprise_ids: list[UUID] | None = None
     assignments: list[AssignmentItem] | None = None
 

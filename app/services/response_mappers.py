@@ -388,7 +388,34 @@ def map_program_detail(p) -> dict:
 def map_program_write(p) -> dict:
     return _program_base_fields(p)
 def _program_base_fields(p) -> dict:
-    return {"id":p.id,"tenant_id":p.tenant_id,"enterprise_id":p.enterprise_id,"location_id":p.location_id,"title":p.title,"description":p.description,"category":p.category,"provider_id":p.provider_id,"duration_weeks":p.duration_weeks,"eligibility":p.eligibility,"start_date":p.start_date,"end_date":p.end_date,"enrolment_start":p.enrolment_start,"enrolment_end":p.enrolment_end,"enrol_type":p.enrol_type,"delivery_mode":p.delivery_mode,"price":p.price,"currency":p.currency,"capacity":p.capacity,"status":p.status,"is_deleted":p.is_deleted,"created_at":p.created_at,"updated_at":p.updated_at,"phases":p.phases}
+    return {
+        "id": p.id,
+        "tenant_id": p.tenant_id,
+        "enterprise_id": p.enterprise_id,
+        "location_id": p.location_id,
+        "title": p.title,
+        "description": p.description,
+        "category": p.category,
+        "provider_id": p.provider_id,
+        "duration_weeks": p.duration_weeks,
+        "eligibility": p.eligibility,
+        "start_date": p.start_date,
+        "end_date": p.end_date,
+        "enrolment_start": p.enrolment_start,
+        "enrolment_end": p.enrolment_end,
+        "enrol_type": p.enrol_type,
+        "delivery_mode": p.delivery_mode,
+        "price": p.price,
+        "currency": p.currency,
+        "capacity": p.capacity,
+        "status": p.status,
+        "is_deleted": p.is_deleted,
+        "created_at": p.created_at,
+        "updated_at": p.updated_at,
+        "phases": p.phases,
+        "goals": getattr(p, "goals", None) or {},
+        "last_admin_notes": getattr(p, "last_admin_notes", None),
+    }
 def map_training_list_item(t) -> dict:
     return _training_base_fields(t)
 
@@ -412,6 +439,11 @@ def _training_base_fields(t) -> dict:
         "time_zone": t.time_zone, "capacity": t.capacity, "price": t.price, "currency": t.currency, "promo_price": t.promo_price,
         "status": t.status, "is_deleted": t.is_deleted, "created_at": t.created_at, "updated_at": t.updated_at,
         "sections": t.sections, "assessments": t.assessments, "assignments": t.assignments,
+        "requires_approval": getattr(t, "requires_approval", False),
+        "access_duration_days": getattr(t, "access_duration_days", None),
+        "promo_price": t.promo_price, "coupon_code": t.coupon_code,
+        "duration": getattr(t, "duration", None),
+        "last_admin_notes": getattr(t, "last_admin_notes", None),
     }
 
 def _event_base_fields(event) -> dict:

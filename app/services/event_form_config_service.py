@@ -32,6 +32,7 @@ from app.services.event_form_registry import (
     get_field_registry,
     normalize_composite_config,
 )
+from app.services.invigorate_auth_client import resolve_tenant_ids_from_slugs
 
 
 def _actor(current_user: dict | None) -> str | None:
@@ -533,6 +534,12 @@ def put_assignments_service(db: Session, config_id: UUID, payload, current_user:
             if not ent:
                 raise HTTPException(status_code=404, detail=f"No enterprise linked to tenant {tid}")
             targets.append((tid, ent.id))
+    elif payload.tenant_slugs:
+        for tid in resolve_tenant_ids_from_slugs(payload.tenant_slugs):
+            ent = _resolve_enterprise_for_tenant(db, tid)
+            if not ent:
+                raise HTTPException(status_code=404, detail=f"No enterprise linked to tenant {tid}")
+            targets.append((tid, ent.id))
     elif payload.enterprise_ids:
         for eid in payload.enterprise_ids:
             ent = db.query(Enterprise).filter(Enterprise.id == eid, Enterprise.is_deleted.is_(False)).first()
@@ -540,7 +547,7 @@ def put_assignments_service(db: Session, config_id: UUID, payload, current_user:
                 raise HTTPException(status_code=400, detail=f"Enterprise {eid} has no tenant_id")
             targets.append((ent.tenant_id, eid))
     else:
-        raise HTTPException(status_code=400, detail="Provide tenant_ids, enterprise_ids, or assignments")
+        raise HTTPException(status_code=400, detail="Provide tenant_ids, tenant_slugs, enterprise_ids, or assignments")
 
     # Remove assignments for this config not in new set
     new_tenant_ids = {t[0] for t in targets}

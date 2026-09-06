@@ -52,6 +52,7 @@ class Training(Base):
     discussions = Column(JSONB, default=list)
     announcements = Column(JSONB, default=list)
     moderation_history = Column(JSONB, default=list)
+    last_admin_notes = Column(Text)
 
     status = Column(String(20), default="draft", nullable=False, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False)

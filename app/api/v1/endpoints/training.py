@@ -5,7 +5,7 @@ from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingStatusUpdate, TrainingUpdate
-from app.services.training_service import add_assessment_question_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service
+from app.services.training_service import add_assessment_question_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 
 router = APIRouter(tags=["Trainings"])
 
@@ -21,8 +21,8 @@ def list_trainings(search: str | None = Query(None), category: str | None = Quer
     except: prov = None
     return get_trainings_service(db, search=search, category=category, provider_id=prov, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, delivery_mode=delivery_mode, min_price=min_price, max_price=max_price, duration=duration, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
 
-@router.get("/{training_id}", response_model=TrainingDetailResponse)
-def get_training(training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+@router.get("/{training_id}", response_model=TrainingDetailResponse, summary="Get training detail")
+def get_training(training_id: UUID = Path(...), db: Session = Depends(get_db)):
     return get_training_service(db, training_id)
 
 @router.put("/{training_id}", response_model=TrainingResponse)
@@ -342,9 +342,17 @@ def review_assessment(training_id: UUID, aid: str, sid: UUID, db: Session=Depend
     from app.services.training_service import get_assessment_result_service
     return get_assessment_result_service(db, training_id, aid, str(sid), current_user)
 
+@router.get("/{training_id}/assignments", summary="List training assignments")
+def list_assignments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return list_training_assignments_service(db, training_id)
+
 @router.post("/{training_id}/assignments", status_code=201)
 def create_assignment(training_id: UUID, payload: AssignmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_assignment_service(db, training_id, payload)
+
+@router.delete("/{training_id}/assignments/{aid}", summary="Delete training assignment")
+def delete_assignment(training_id: UUID, aid: str, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return delete_training_assignment_service(db, training_id, aid)
 
 @router.post("/{training_id}/assignments/{aid}/submit", status_code=201, summary="Submit text/links/images/videos/documents — resubmission allowed")
 def submit_assignment(training_id: UUID, aid: str, payload: AssignmentSubmitCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -375,9 +383,15 @@ def export_live_attendance(training_id: UUID, session_id: str, db: Session = Dep
 
 @router.post("/{training_id}/live-sessions/{session_id}/attendance", summary="Record live session attendance")
 def live_attendance(training_id: UUID, session_id: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.services.training_service import record_live_attendance_service
-    email = payload.get("participant_email") or (current_user.get("email") if current_user else None)
-    if not email: from fastapi import HTTPException; raise HTTPException(400, "participant_email required")
+    email = payload.get("participant_email")
+    if not email and current_user.get("role") in ("admin", "provider", "super_admin"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="participant_email required when marking attendance for a participant")
+    if not email:
+        email = current_user.get("email")
+    if not email:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="participant_email required")
     return record_live_attendance_service(db, training_id, session_id, email)
 
 @router.get("/{training_id}/certificate", summary="Digital completion certificate")
@@ -503,6 +517,22 @@ def request_training_refund(
     current_user: dict = Depends(get_current_user),
 ):
     return request_training_refund_service(db, training_id, order_id, payload)
+
+
+@router.get("/{training_id}/admin-notes", summary="Latest super-admin reject/request-changes message")
+def get_training_admin_notes(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_training_admin_notes_service(db, training_id)
+
+@router.post("/{training_id}/resubmit", response_model=TrainingResponse, summary="Resubmit training after requested changes")
+def resubmit_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.training_repo import get_training_by_id
+    from fastapi import HTTPException
+    training = get_training_by_id(db, training_id)
+    if not training:
+        raise HTTPException(status_code=404, detail="Training not found")
+    if training.status not in ("needs_revision", "draft", "rejected"):
+        raise HTTPException(status_code=400, detail=f"Cannot resubmit training in '{training.status}' status")
+    return update_training_status_service(db, training_id, "pending_approval", current_user)
 
 
 @router.post(

@@ -8,6 +8,12 @@ from app.repository.query_utils import build_pagination_meta
 from app.schemas.training_schema import TrainingDetailResponse, TrainingListItemResponse, TrainingPaginatedResponse, TrainingResponse
 from app.services.response_mappers import map_training_detail, map_training_list_item, map_training_write
 
+ACTIVE_ENROLMENT_STATUSES = frozenset({"enrolled", "active", "completed", "approved"})
+
+
+def _is_active_enrolment(enrolment) -> bool:
+    return bool(enrolment and enrolment.status in ACTIVE_ENROLMENT_STATUSES)
+
 def _validate(db: Session, eid: UUID, lid: UUID | None, current_user: dict | None = None):
     ent = db.query(Enterprise).filter(Enterprise.id==eid, Enterprise.is_deleted.is_(False)).first()
     if not ent: raise HTTPException(status_code=404, detail="Enterprise not found")
@@ -23,7 +29,24 @@ def _validate(db: Session, eid: UUID, lid: UUID | None, current_user: dict | Non
 
 def create_training_service(db: Session, data, current_user: dict | None = None):
     _validate(db, data.enterprise_id, data.location_id, current_user)
-    return TrainingResponse.model_validate(map_training_write(create_training(db, data)))
+    payload = data.to_model_data()
+    create_status = payload.get("status") or "draft"
+    if create_status not in ("draft", "pending_approval"):
+        create_status = "draft"
+    payload["status"] = create_status
+    if not payload.get("tenant_id"):
+        ent = db.query(Enterprise).filter(Enterprise.id == payload["enterprise_id"]).first()
+        if ent and ent.tenant_id:
+            payload["tenant_id"] = ent.tenant_id
+    for key in ("sections", "assessments", "assignments", "discussions", "announcements", "tags", "gallery_images", "documents", "moderation_history"):
+        if payload.get(key) is None:
+            payload[key] = []
+    from app.models.training_model import Training
+    obj = Training(**payload)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return TrainingResponse.model_validate(map_training_write(obj))
 
 def get_trainings_service(db: Session, **kw):
     items, total = get_trainings(db, **kw)
@@ -55,11 +78,15 @@ def duplicate_training_service(db: Session, tid: UUID):
     clone=Training(**payload); db.add(clone); db.commit(); db.refresh(clone)
     return TrainingResponse.model_validate(map_training_write(clone))
 
-def update_training_status_service(db: Session, tid: UUID, st: str):
+def update_training_status_service(db: Session, tid: UUID, st: str, current_user: dict | None = None, notes: str | None = None):
     obj = get_training_by_id(db, tid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(status_code=404, detail="Training not found")
+    if current_user and current_user.get("role") not in ("admin", "super_admin"):
+        user_tid = current_user.get("tenant_id")
+        if user_tid and obj.tenant_id and str(obj.tenant_id) != str(user_tid):
+            raise HTTPException(status_code=403, detail="Not authorized for this tenant")
     VALID = {
-        "pending_approval": ["approved", "cancelled", "rejected"],
+        "pending_approval": ["approved", "cancelled", "rejected", "needs_revision"],
         "approved": ["draft", "published", "unpublished", "cancelled", "archived"],
         "draft": ["published", "pending_approval", "cancelled", "archived"],
         "published": ["completed", "cancelled", "suspended", "unpublished", "archived"],
@@ -68,12 +95,16 @@ def update_training_status_service(db: Session, tid: UUID, st: str):
         "completed": ["archived"],
         "cancelled": ["draft", "archived"],
         "rejected": ["draft", "pending_approval", "archived"],
+        "needs_revision": ["pending_approval", "draft", "cancelled"],
         "archived": [],
     }
     allowed = VALID.get(obj.status, [])
     if st not in allowed:
         raise HTTPException(status_code=400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
-    obj.status=st; db.commit(); db.refresh(obj); return TrainingResponse.model_validate(map_training_write(obj))
+    obj.status = st
+    if st in ("rejected", "needs_revision") and notes:
+        obj.last_admin_notes = notes
+    db.commit(); db.refresh(obj); return TrainingResponse.model_validate(map_training_write(obj))
 
 # ---- Assessment / Assignment / Progress / LiveSession services (real implementations) ----
 
@@ -348,6 +379,35 @@ def create_assignment_service(db: Session, tid: UUID, data):
     db.commit(); db.refresh(t)
     return new
 
+
+def list_training_assignments_service(db: Session, tid: UUID) -> list[dict]:
+    t = _get_training_or_404(db, tid)
+    return list(t.assignments or [])
+
+
+def delete_training_assignment_service(db: Session, tid: UUID, aid: str) -> dict:
+    import copy
+    from sqlalchemy.orm.attributes import flag_modified
+    t = _get_training_or_404(db, tid)
+    original = list(t.assignments or [])
+    remaining = [a for a in original if str(a.get("id")) != str(aid)]
+    if len(remaining) == len(original):
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    t.assignments = remaining
+    flag_modified(t, "assignments")
+    db.commit()
+    return {"message": "Assignment deleted", "assignment_id": str(aid)}
+
+
+def get_training_admin_notes_service(db: Session, tid: UUID) -> dict:
+    t = _get_training_or_404(db, tid)
+    return {
+        "training_id": str(tid),
+        "status": t.status,
+        "last_admin_notes": getattr(t, "last_admin_notes", None),
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+    }
+
 def submit_assignment_service(db: Session, tid: UUID, aid: str, payload, participant_email: str = "user@example.com"):
     import uuid as _uuid
     from app.models.training_model import TrainingAssignmentSubmission
@@ -448,7 +508,7 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
     from datetime import datetime
     t = _get_training_or_404(db, tid)
     enrol = _get_enrolment(db, tid, participant_email)
-    if not enrol or enrol.status not in ("enrolled", "active", "completed"):
+    if not _is_active_enrolment(enrol):
         raise HTTPException(status_code=403, detail="Active enrolment required")
     prog = db.query(TrainingProgress).filter(
         TrainingProgress.training_id == tid,
@@ -519,26 +579,64 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
     return {"lesson_id": lesson_id, "overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url, "resume_lesson": lesson_id}
 
 def record_live_attendance_service(db: Session, tid: UUID, session_id: str, participant_email: str):
-    from app.models.training_model import TrainingLiveSession
+    from app.models.training_model import TrainingLiveSession, TrainingProgress
     from datetime import datetime
+    from uuid import UUID as PyUUID
+    from sqlalchemy.orm.attributes import flag_modified
+
+    try:
+        session_uuid = PyUUID(str(session_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id") from exc
+
     session = db.query(TrainingLiveSession).filter(
         TrainingLiveSession.training_id == tid,
-        TrainingLiveSession.id == session_id,
+        TrainingLiveSession.id == session_uuid,
     ).first()
     if not session:
         raise HTTPException(status_code=404, detail="Live session not found")
+
+    enrol = _get_enrolment(db, tid, participant_email)
+    if not _is_active_enrolment(enrol):
+        raise HTTPException(status_code=403, detail="Active enrolment required for attendance")
+
     attendance = list(session.attendance or [])
+    recorded_at = datetime.utcnow().isoformat()
     if not any(a.get("participant_email") == participant_email for a in attendance):
         attendance.append({
             "participant_email": participant_email,
-            "recorded_at": datetime.utcnow().isoformat(),
+            "recorded_at": recorded_at,
         })
         session.attendance = attendance
-        from sqlalchemy.orm.attributes import flag_modified
         flag_modified(session, "attendance")
         db.commit()
-    complete_lesson_service(db, tid, f"live:{session_id}", participant_email)
-    return {"session_id": session_id, "participant_email": participant_email, "recorded_at": attendance[-1]["recorded_at"]}
+
+    live_lesson_id = f"live:{session_id}"
+    prog = db.query(TrainingProgress).filter(
+        TrainingProgress.training_id == tid,
+        TrainingProgress.participant_email == participant_email,
+    ).first()
+    if not prog:
+        prog = TrainingProgress(
+            training_id=tid,
+            participant_email=participant_email,
+            sections_completed=[],
+            lessons_completed=[],
+            overall_percent="0",
+        )
+        db.add(prog)
+    lessons = set(prog.lessons_completed or [])
+    lessons.add(live_lesson_id)
+    prog.lessons_completed = list(lessons)
+    prog.last_accessed_at = datetime.utcnow()
+    db.commit()
+
+    return {
+        "session_id": str(session_id),
+        "participant_email": participant_email,
+        "recorded_at": recorded_at,
+        "progress_marked": True,
+    }
 
 def get_certificate_service(db: Session, tid: UUID, participant_email: str):
     from app.models.training_model import TrainingProgress
@@ -576,9 +674,14 @@ def list_training_announcements_service(db: Session, tid: UUID):
 
 def get_live_attendance_service(db: Session, tid: UUID, session_id: str):
     from app.models.training_model import TrainingLiveSession
+    from uuid import UUID as PyUUID
+    try:
+        session_uuid = PyUUID(str(session_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id") from exc
     session = db.query(TrainingLiveSession).filter(
         TrainingLiveSession.training_id == tid,
-        TrainingLiveSession.id == session_id,
+        TrainingLiveSession.id == session_uuid,
     ).first()
     if not session:
         raise HTTPException(status_code=404, detail="Live session not found")
@@ -791,11 +894,11 @@ def approve_training_refund_service(db: Session, tid: UUID, order_id: UUID, payl
 
 
 def publish_training_service(db: Session, tid: UUID, current_user: dict | None = None):
-    return update_training_status_service(db, tid, "published")
+    return update_training_status_service(db, tid, "published", current_user)
 
 
 def unpublish_training_service(db: Session, tid: UUID, current_user: dict | None = None):
-    return update_training_status_service(db, tid, "unpublished")
+    return update_training_status_service(db, tid, "unpublished", current_user)
 
 
 def suspend_training_service(db: Session, tid: UUID, reason: str | None = None, current_user: dict | None = None):
