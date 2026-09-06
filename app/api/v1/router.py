@@ -102,9 +102,15 @@ _safe_include("app.api.v1.endpoints.presence", prefix="/presence", tags=["Presen
 _safe_include("app.api.v1.endpoints.socket_io", prefix="/socket-io", tags=["Socket.IO"])
 _safe_include("app.api.v1.endpoints.chat_admin", prefix="/admin/chat", tags=["Chat Administration"])
 _safe_include("app.api.v1.endpoints.admin", prefix="/admin", tags=["Admin — Approvals"])
+# Event form builder — mounted twice for WebAuth/cookie compatibility with Events routes
 _safe_include(
     "app.api.v1.endpoints.event_form_config_admin",
-    prefix="/admin",
+    prefix="/events/form-configuration/admin",
+    tags=["Event Form Configuration (Super Admin)"],
+)
+_safe_include(
+    "app.api.v1.endpoints.event_form_config_admin",
+    prefix="/admin/event-form-configurations",
     tags=["Event Form Configuration (Super Admin)"],
 )
 

@@ -27,6 +27,8 @@ BEARER_AUTH_DESCRIPTION = """JWT **access token** for authenticated API requests
 
 See **Authentication** → `GET /api/v1/auth/integration` for full reference.
 
+**WebAuth session:** HttpOnly cookie `access_token` (name from `WEB_SESSION_COOKIE_NAME`) is accepted on **all** protected routes including form builder — same as `GET /api/v1/events/*`. Send `credentials: include` from the browser.
+
 ## Fallback — Local dev token (Testing only)
 
 `GET /api/v1/auth/dev-token` when `ENABLE_DEV_TOKEN=true` — local HS256 token, not Invigorate auth."""
@@ -189,8 +191,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Event Form Configuration (Super Admin)",
         "description": (
-            "Super Admin Event form builder — configurations, versions, publish/activate, tenant assignments, "
-            "field registry, and audit. Independent of Workflow. Enterprise Admins consume resolved forms via Events APIs."
+            "Event form builder for Super Admin / Enterprise Admin (`admin`, `super_admin`, `provider`). "
+            "**Auth:** identical to Events — `Authorization: Bearer` or WebAuth HttpOnly cookie (`access_token`). "
+            "Preferred path: `/events/form-configuration/admin/*` (same session as Events). "
+            "Legacy alias: `/admin/event-form-configurations/*`."
         ),
     },
     {

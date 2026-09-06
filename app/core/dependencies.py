@@ -97,3 +97,17 @@ def get_current_super_admin(current_user=Depends(get_current_user)):
             return {**current_user, "role": "admin"}
         raise HTTPException(status_code=403, detail="Enterprise Admin access required (acting as Super Admin for testing)")
     return current_user
+
+
+def require_event_form_builder_admin(current_user=Depends(get_current_user)):
+    """Event form builder — same auth as Events (Bearer OR WebAuth cookie via get_current_user).
+
+    Allows admin, super_admin, and provider (Invigorate tenant_admin/internal_user → provider).
+    Use this instead of get_current_super_admin until a dedicated super-admin role exists.
+    """
+    role = current_user.get("role")
+    if role in ("admin", "super_admin", "provider"):
+        return current_user
+    if not settings.is_production and current_user.get("id") == settings.DEV_DEFAULT_USER_ID:
+        return {**current_user, "role": "admin"}
+    raise HTTPException(status_code=403, detail="Event form builder access required (admin or provider)")
