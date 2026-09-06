@@ -13,18 +13,7 @@ class FieldConfigurableFlags(BaseModel):
     placeholder: bool = True
     help_text: bool = True
     validation: bool = True
-
-
-class FieldRegistryEntry(BaseModel):
-    key: str
-    display_name: str
-    value_type: str
-    allowed_renderers: list[str]
-    default_renderer: str
-    required_by_domain: bool
-    removable: bool
-    hideable: bool
-    configurable: FieldConfigurableFlags
+    composite_config: bool = True
 
 
 class FieldOption(BaseModel):
@@ -39,6 +28,34 @@ class FieldValidation(BaseModel):
     min: float | None = None
     max: float | None = None
     pattern: str | None = None
+
+
+class CompositeSubfieldDefinition(BaseModel):
+    key: str
+    label: str
+    required_by_default: bool = False
+
+
+class CompositeFieldConfig(BaseModel):
+    """Configure which sub-fields/features are available for composite Event core fields."""
+
+    enabled_fields: list[str] = Field(default_factory=list)
+    required_fields: list[str] = Field(default_factory=list)
+
+
+class FieldRegistryEntry(BaseModel):
+    key: str
+    display_name: str
+    value_type: str
+    allowed_renderers: list[str]
+    default_renderer: str
+    required_by_domain: bool
+    removable: bool
+    hideable: bool
+    configurable: FieldConfigurableFlags
+    supports_composite_config: bool = False
+    composite_subfields: list[CompositeSubfieldDefinition] = Field(default_factory=list)
+    default_composite_config: CompositeFieldConfig | None = None
 
 
 class FormFieldInput(BaseModel):
@@ -57,6 +74,10 @@ class FormFieldInput(BaseModel):
     help_text: str | None = None
     options: list[FieldOption | dict] = Field(default_factory=list)
     validation: FieldValidation | dict = Field(default_factory=dict)
+    composite_config: CompositeFieldConfig | dict | None = Field(
+        None,
+        description="Sub-field configuration for composite renderers (ticket_types, sessions, venue, etc.)",
+    )
 
 
 class FormSectionInput(BaseModel):
@@ -85,6 +106,7 @@ class FormFieldResponse(BaseModel):
     help_text: str | None = None
     options: list[dict] = Field(default_factory=list)
     validation: dict = Field(default_factory=dict)
+    composite_config: CompositeFieldConfig | None = None
 
 
 class FormSectionResponse(BaseModel):

@@ -180,7 +180,8 @@ def apply_template(template_id: UUID, payload: EventTemplateApplyRequest, db: Se
     "/form-configuration/active",
     summary="Resolved active Event form for authenticated Enterprise Admin",
     description=(
-        "Server-side resolution: authenticate → Enterprise → tenant_id → active selective config "
+        "Server-side resolution from authenticated session/JWT (query `tenant_id` is ignored): "
+        "authenticate → resolve tenant from token → active selective config "
         "→ else active global → else legacy default. Returns full sections/fields for dynamic rendering."
     ),
 )

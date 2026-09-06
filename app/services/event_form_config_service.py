@@ -11,6 +11,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.auth_context import resolve_auth_tenant_id_with_db
 from app.models.enterprise_model import Enterprise
 from app.models.event_form_config_model import (
     EventFormAssignment,
@@ -19,6 +20,7 @@ from app.models.event_form_config_model import (
     EventFormConfigurationVersion,
 )
 from app.services.event_form_registry import (
+    COMPOSITE_CORE_KEYS,
     CUSTOM_RENDERERS,
     DOMAIN_REQUIRED_CORE_KEYS,
     LEGACY_CONFIGURATION_ID,
@@ -26,7 +28,9 @@ from app.services.event_form_registry import (
     NON_REPEATABLE_CORE_KEYS,
     REGISTRY_BY_KEY,
     build_default_sections,
+    get_allowed_composite_subfields,
     get_field_registry,
+    normalize_composite_config,
 )
 
 
@@ -102,6 +106,8 @@ def normalize_sections(raw_sections: list, *, assign_ids: bool = True) -> list[d
                 "options": list(field.get("options") or []),
                 "validation": dict(field.get("validation") or {}),
             }
+            if source == "core" and core_key in COMPOSITE_CORE_KEYS:
+                entry["composite_config"] = normalize_composite_config(core_key, field.get("composite_config"))
             fields.append(entry)
         sec["fields"] = fields
         normalized.append(sec)
@@ -138,6 +144,24 @@ def validate_sections_for_publish(sections: list[dict], *, scope: str) -> None:
                         errors.append(f"Domain-required field '{core_key}' cannot be optional")
                 if reg["required_by_domain"] and not field.get("is_enabled", True):
                     errors.append(f"Domain-required field '{core_key}' cannot be disabled")
+                if core_key in COMPOSITE_CORE_KEYS:
+                    composite = field.get("composite_config") or normalize_composite_config(core_key, None)
+                    allowed = get_allowed_composite_subfields(core_key)
+                    enabled_sub = composite.get("enabled_fields") or []
+                    required_sub = composite.get("required_fields") or []
+                    if field.get("is_enabled", True) and not enabled_sub:
+                        errors.append(f"Composite field '{core_key}' must have at least one enabled sub-field")
+                    unknown_enabled = [f for f in enabled_sub if f not in allowed]
+                    if unknown_enabled:
+                        errors.append(f"Unknown sub-fields for '{core_key}': {', '.join(unknown_enabled)}")
+                    unknown_required = [f for f in required_sub if f not in allowed]
+                    if unknown_required:
+                        errors.append(f"Unknown required sub-fields for '{core_key}': {', '.join(unknown_required)}")
+                    not_enabled_required = [f for f in required_sub if f not in enabled_sub]
+                    if not_enabled_required:
+                        errors.append(
+                            f"Required sub-fields must be enabled for '{core_key}': {', '.join(not_enabled_required)}"
+                        )
             elif source == "custom":
                 renderer = field.get("renderer")
                 if renderer not in CUSTOM_RENDERERS:
@@ -572,12 +596,15 @@ def list_audit_service(db: Session, config_id: UUID) -> list[dict]:
 
 
 def resolve_enterprise_context(db: Session, current_user: dict) -> tuple[Enterprise, UUID]:
-    """Resolve Enterprise + tenant from authenticated user — do not trust client tenant_id."""
+    """Resolve Enterprise + tenant from authenticated user — do not trust client tenant_id query params."""
     if current_user.get("role") not in ("admin", "super_admin", "provider"):
         raise HTTPException(status_code=403, detail="Enterprise Admin access required")
-    tenant_id = current_user.get("tenant_id")
+    tenant_id = resolve_auth_tenant_id_with_db(db, current_user)
     if not tenant_id:
-        raise HTTPException(status_code=400, detail="Authenticated tenant_id is required")
+        raise HTTPException(
+            status_code=400,
+            detail="Authenticated tenant_id is required (derive from session/JWT — query param tenant_id is ignored)",
+        )
     tenant_uuid = UUID(str(tenant_id))
     enterprise = _resolve_enterprise_for_tenant(db, tenant_uuid)
     if not enterprise:
@@ -585,6 +612,33 @@ def resolve_enterprise_context(db: Session, current_user: dict) -> tuple[Enterpr
     if enterprise.status in ("draft", "pending", "inactive"):
         raise HTTPException(status_code=400, detail=f"Enterprise not approved (status={enterprise.status})")
     return enterprise, tenant_uuid
+
+
+def _resolve_active_form_configuration(
+    db: Session,
+    tenant_id: UUID | None,
+) -> tuple[EventFormConfiguration, EventFormConfigurationVersion]:
+    """selective tenant config → global config → legacy fallback."""
+    if tenant_id is not None:
+        resolved = _active_config_for_tenant(db, tenant_id)
+        if resolved:
+            return resolved
+    else:
+        global_config = (
+            db.query(EventFormConfiguration)
+            .filter(
+                EventFormConfiguration.scope == "global",
+                EventFormConfiguration.is_active.is_(True),
+                EventFormConfiguration.status == "published",
+            )
+            .order_by(EventFormConfiguration.published_at.desc().nullslast())
+            .first()
+        )
+        if global_config:
+            version = _get_published_version(db, global_config.id)
+            if version:
+                return global_config, version
+    return _legacy_config_version(db)
 
 
 def _active_config_for_tenant(db: Session, tenant_id: UUID) -> tuple[EventFormConfiguration, EventFormConfigurationVersion] | None:
@@ -640,11 +694,12 @@ def build_active_response(config: EventFormConfiguration, version: EventFormConf
 
 
 def get_active_form_configuration_service(db: Session, current_user: dict) -> dict:
-    _, tenant_id = resolve_enterprise_context(db, current_user)
-    resolved = _active_config_for_tenant(db, tenant_id)
-    if not resolved:
-        resolved = _legacy_config_version(db)
-    config, version = resolved
+    if current_user.get("role") not in ("admin", "super_admin", "provider"):
+        raise HTTPException(status_code=403, detail="Enterprise Admin access required")
+
+    tenant_raw = resolve_auth_tenant_id_with_db(db, current_user)
+    tenant_uuid = UUID(str(tenant_raw)) if tenant_raw else None
+    config, version = _resolve_active_form_configuration(db, tenant_uuid)
     return build_active_response(config, version)
 
 

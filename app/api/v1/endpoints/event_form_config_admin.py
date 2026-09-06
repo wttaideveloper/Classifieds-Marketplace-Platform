@@ -48,7 +48,9 @@ _BUILDER_AUTH = Depends(require_event_form_builder_admin)
     summary="Authoritative Event core field registry",
     description=(
         "Super Admin / Enterprise Admin form builder field registry. "
-        "Auth: same as Events — `Authorization: Bearer` **or** WebAuth HttpOnly session cookie (`access_token`)."
+        "Composite core fields expose `supports_composite_config`, `composite_subfields`, and "
+        "`default_composite_config` for configuring structured sub-fields via `composite_config` "
+        "on each form field. Auth: same as Events — `Authorization: Bearer` **or** WebAuth HttpOnly session cookie (`access_token`)."
     ),
 )
 def field_registry(_: dict = _BUILDER_AUTH):

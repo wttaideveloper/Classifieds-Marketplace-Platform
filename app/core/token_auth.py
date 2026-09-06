@@ -167,9 +167,26 @@ def payload_to_user(payload: dict) -> dict:
     if rbac_roles is not None:
         user["tenant_rbac_roles"] = rbac_roles
 
-    tenant_id = payload.get("tenant_id") or payload.get("org_id") or payload.get("organization_id")
+    tenant_id = (
+        payload.get("tenant_id")
+        or payload.get("tenantId")
+        or payload.get("org_id")
+        or payload.get("organization_id")
+    )
+    if not tenant_id:
+        membership = payload.get("membership")
+        if isinstance(membership, dict):
+            tenant_id = membership.get("tenant_id") or membership.get("tenantId") or membership.get("id")
     if tenant_id is not None:
         user["tenant_id"] = str(tenant_id)
+
+    enterprise_id = payload.get("enterprise_id") or payload.get("enterpriseId")
+    if enterprise_id is not None:
+        user["enterprise_id"] = str(enterprise_id)
+
+    for passthrough in ("membership", "tenants", "tenant_slug", "tenant_id_claim"):
+        if payload.get(passthrough) is not None:
+            user[passthrough] = payload[passthrough]
 
     return user
 
