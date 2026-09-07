@@ -23,11 +23,15 @@ BEARER_AUTH_DESCRIPTION = """JWT **access token** for authenticated API requests
 | User ID claim | `sub` (Keycloak user ID) |
 | App User UUID | `GET /api/v1/auth/me` on auth API (different from `sub`) |
 
-**Role claims:** `tenant_role`, `user_role`, `tenant_rbac_roles`, `tenant_permissions`
+**Role claims:** `isSuperAdmin` (Platform Super Admin login → `super_admin`), `tenant_role`, `user_role`, `tenant_rbac_roles`, `tenant_permissions`
 
 See **Authentication** → `GET /api/v1/auth/integration` for full reference.
 
-**WebAuth session:** HttpOnly cookie `access_token` (name from `WEB_SESSION_COOKIE_NAME`) is accepted on **all** protected routes including form builder — same as `GET /api/v1/events/*`. Send `credentials: include` from the browser.
+**Dual auth (same routes, no duplicate APIs):**
+- **Enterprise Admin portal** — HttpOnly cookie `access_token` (`credentials: include`)
+- **Platform Super Admin portal** — `Authorization: Bearer <access_token>` from dedicated Super Admin login
+
+Both use the same JWT validation path (`get_current_user`). Public catalog GETs (products, services) remain unauthenticated.
 
 ## Fallback — Local dev token (Testing only)
 

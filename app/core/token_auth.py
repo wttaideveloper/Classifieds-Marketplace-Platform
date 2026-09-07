@@ -93,7 +93,21 @@ def _normalize_slug(value: str | None) -> str | None:
     return str(value).strip().lower().replace("-", "_")
 
 
+def _is_super_admin_claim(payload: dict) -> bool:
+    """Dedicated Platform Super Admin login sets isSuperAdmin on the Keycloak access token."""
+    for key in ("isSuperAdmin", "is_super_admin"):
+        value = payload.get(key)
+        if value is True:
+            return True
+        if isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}:
+            return True
+    return False
+
+
 def _map_keycloak_role(payload: dict) -> str | None:
+    if _is_super_admin_claim(payload):
+        return "super_admin"
+
     explicit_role = _normalize_slug(payload.get("role"))
     if explicit_role in {"admin", "super_admin", "provider", "customer"}:
         return explicit_role
@@ -184,7 +198,7 @@ def payload_to_user(payload: dict) -> dict:
     if enterprise_id is not None:
         user["enterprise_id"] = str(enterprise_id)
 
-    for passthrough in ("membership", "tenants", "tenant_slug", "tenant_id_claim"):
+    for passthrough in ("membership", "tenants", "tenant_slug", "tenant_id_claim", "isSuperAdmin"):
         if payload.get(passthrough) is not None:
             user[passthrough] = payload[passthrough]
 

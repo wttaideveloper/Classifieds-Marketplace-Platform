@@ -43,6 +43,30 @@ def test_payload_to_user_uses_sub_for_keycloak():
     assert user["email"] == "user@example.com"
 
 
+def test_payload_to_user_maps_is_super_admin_claim():
+    user = payload_to_user(
+        {
+            "sub": "platform-super-admin-id",
+            "email": "superadmin@invigor8.app",
+            "isSuperAdmin": True,
+            "azp": "invigorate-api",
+        }
+    )
+    assert user["id"] == "platform-super-admin-id"
+    assert user["role"] == "super_admin"
+    assert user["isSuperAdmin"] is True
+
+
+def test_payload_to_user_maps_is_super_admin_string_claim():
+    user = payload_to_user(
+        {
+            "sub": "platform-super-admin-id",
+            "is_super_admin": "true",
+        }
+    )
+    assert user["role"] == "super_admin"
+
+
 def test_payload_to_user_maps_internal_user_to_provider():
     user = payload_to_user(
         {

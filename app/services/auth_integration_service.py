@@ -29,12 +29,14 @@ def get_auth_integration_info() -> AuthIntegrationResponse:
         user_id_claim="sub",
         application_user_uuid_endpoint="GET /api/v1/auth/me",
         role_claims=[
+            "isSuperAdmin",
             "tenant_role",
             "user_role",
             "tenant_rbac_roles",
             "tenant_permissions",
         ],
         role_mapping=[
+            AuthRoleMapping(tenant_role="isSuperAdmin=true", marketplace_role="super_admin"),
             AuthRoleMapping(tenant_role="external_user", marketplace_role="customer"),
             AuthRoleMapping(tenant_role="tenant_admin", marketplace_role="provider"),
             AuthRoleMapping(tenant_role="internal_user", marketplace_role="provider"),
