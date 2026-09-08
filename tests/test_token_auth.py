@@ -57,6 +57,21 @@ def test_payload_to_user_maps_is_super_admin_claim():
     assert user["isSuperAdmin"] is True
 
 
+def test_payload_to_user_is_super_admin_overrides_other_role_claims():
+    """Dedicated Super Admin JWT may still carry tenant/user role claims."""
+    user = payload_to_user(
+        {
+            "sub": "platform-super-admin-id",
+            "isSuperAdmin": True,
+            "role": "provider",
+            "tenant_role": "tenant_admin",
+            "user_role": "internal_user",
+            "tenant_rbac_roles": ["contributor"],
+        }
+    )
+    assert user["role"] == "super_admin"
+
+
 def test_payload_to_user_maps_is_super_admin_string_claim():
     user = payload_to_user(
         {

@@ -231,13 +231,21 @@ def duplicate_event(event_id: UUID = Path(..., description="Event ID"), db: Sess
 
 
 @router.patch("/{event_id}/status", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event Status")
-def update_status(event_id: UUID, payload: EventStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def update_status(
+    event_id: UUID,
+    payload: EventStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"])),
+):
     from fastapi import HTTPException
     role = current_user.get("role")
-    # TESTING: Enterprise Admin acts as Super Admin — approve / reject / request_changes
+    # Platform Super Admin (or Enterprise Admin during testing) — approve / reject / request_changes
     _super_admin_only = {"approved", "rejected", "needs_revision"}
     if payload.status in _super_admin_only and role not in ("admin", "super_admin"):
-        raise HTTPException(status_code=403, detail=f"Only Enterprise Admin can set status to '{payload.status}'.")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only Super Admin can set status to '{payload.status}'.",
+        )
     return update_event_status_service(db, event_id, payload.status, current_user)
 
 

@@ -164,7 +164,14 @@ def payload_to_user(payload: dict) -> dict:
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    role = payload.get("role") or _map_keycloak_role(payload)
+    # Dedicated Platform Super Admin tokens set isSuperAdmin=true and may also carry
+    # unrelated role/tenant_role claims — always prefer the Super Admin flag.
+    if _is_super_admin_claim(payload):
+        role = "super_admin"
+    else:
+        explicit = _normalize_slug(payload.get("role"))
+        role = explicit if explicit in {"admin", "super_admin", "provider", "customer"} else None
+        role = role or _map_keycloak_role(payload)
     user = {
         "id": str(user_id),
         "role": role,

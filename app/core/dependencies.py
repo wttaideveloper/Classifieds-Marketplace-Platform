@@ -90,12 +90,16 @@ def get_current_admin(current_user=Depends(get_current_user)):
 
 
 def get_current_super_admin(current_user=Depends(get_current_user)):
-    """TESTING: Enterprise Admin acts as Super Admin. Allows admin OR super_admin.
-    Used for platform-wide admin operations (approve/reject events, manage all tenants, audit logs)."""
+    """Platform Super Admin approval/admin operations.
+
+    Allows dedicated Super Admin (`super_admin` from isSuperAdmin JWT claim) and
+    Enterprise Admin (`admin`) for backwards-compatible testing.
+    Used for approve/reject/request-changes, audits, and platform-wide queues.
+    """
     if current_user.get("role") not in ("admin", "super_admin"):
         if not settings.is_production and current_user.get("id") == settings.DEV_DEFAULT_USER_ID:
             return {**current_user, "role": "admin"}
-        raise HTTPException(status_code=403, detail="Enterprise Admin access required (acting as Super Admin for testing)")
+        raise HTTPException(status_code=403, detail="Super Admin access required")
     return current_user
 
 

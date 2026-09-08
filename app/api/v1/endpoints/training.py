@@ -5,7 +5,7 @@ from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingStatusUpdate, TrainingUpdate
-from app.services.training_service import add_assessment_question_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
+from app.services.training_service import add_assessment_question_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 
 router = APIRouter(tags=["Trainings"])
 
@@ -38,10 +38,10 @@ def duplicate(training_id: UUID = Path(...), db: Session = Depends(get_db), curr
     return duplicate_training_service(db, training_id)
 
 @router.patch("/{training_id}/status", response_model=TrainingResponse, summary="Update training status (generic transition)")
-def update_status(training_id: UUID, payload: TrainingStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    if payload.status == "approved" and current_user.get("role") not in ("admin", "super_admin"):
+def update_status(training_id: UUID, payload: TrainingStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"]))):
+    if payload.status in ("approved", "rejected", "needs_revision") and current_user.get("role") not in ("admin", "super_admin"):
         from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Only admin can approve")
+        raise HTTPException(status_code=403, detail="Only Super Admin can approve/reject/request-changes")
     return update_training_status_service(db, training_id, payload.status)
 
 
@@ -69,8 +69,18 @@ def cancel_training(training_id: UUID, payload: TrainingStatusUpdate | None = No
 
 @router.post("/{training_id}/archive", response_model=TrainingResponse, status_code=200, summary="Archive training")
 def archive_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return update_training_status_service(db, training_id, "archived")
+    return update_training_status_service(db, training_id, "archived", current_user)
 
+
+@router.post(
+    "/{training_id}/restore",
+    response_model=TrainingResponse,
+    status_code=200,
+    summary="Restore archived training to draft",
+    description="Transitions archived → draft and clears is_deleted. Equivalent to PATCH status with {\"status\":\"draft\"}.",
+)
+def restore_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return restore_training_service(db, training_id, current_user)
 
 @router.get("/{training_id}/moderation-history", summary="Admin moderation / rejection history")
 def moderation_history(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):

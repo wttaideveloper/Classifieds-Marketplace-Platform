@@ -80,7 +80,11 @@ def duplicate_training_service(db: Session, tid: UUID):
 
 def update_training_status_service(db: Session, tid: UUID, st: str, current_user: dict | None = None, notes: str | None = None):
     obj = get_training_by_id(db, tid, include_deleted=True)
-    if not obj or obj.is_deleted: raise HTTPException(status_code=404, detail="Training not found")
+    if not obj:
+        raise HTTPException(status_code=404, detail="Training not found")
+    # Soft-deleted archived rows can still be restored to draft
+    if obj.is_deleted and not (obj.status == "archived" and st == "draft"):
+        raise HTTPException(status_code=404, detail="Training not found")
     if current_user and current_user.get("role") not in ("admin", "super_admin"):
         user_tid = current_user.get("tenant_id")
         if user_tid and obj.tenant_id and str(obj.tenant_id) != str(user_tid):
@@ -96,15 +100,22 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
         "cancelled": ["draft", "archived"],
         "rejected": ["draft", "pending_approval", "archived"],
         "needs_revision": ["pending_approval", "draft", "cancelled"],
-        "archived": [],
+        "archived": ["draft"],
     }
     allowed = VALID.get(obj.status, [])
     if st not in allowed:
         raise HTTPException(status_code=400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
     obj.status = st
+    if st == "draft":
+        obj.is_deleted = False
     if st in ("rejected", "needs_revision") and notes:
         obj.last_admin_notes = notes
     db.commit(); db.refresh(obj); return TrainingResponse.model_validate(map_training_write(obj))
+
+
+def restore_training_service(db: Session, tid: UUID, current_user: dict | None = None):
+    """Restore an archived training back to draft (clears is_deleted)."""
+    return update_training_status_service(db, tid, "draft", current_user)
 
 # ---- Assessment / Assignment / Progress / LiveSession services (real implementations) ----
 

@@ -60,7 +60,10 @@ def duplicate_program_service(db, pid, current_user: dict | None = None):
     clone=Program(**payload); db.add(clone); db.commit(); db.refresh(clone); return ProgramResponse.model_validate(map_program_write(clone))
 def update_program_status_service(db, pid, st, current_user: dict | None = None, notes: str | None = None):
     obj=get_program_by_id(db, pid, include_deleted=True)
-    if not obj or obj.is_deleted: raise HTTPException(404, "Program not found")
+    if not obj:
+        raise HTTPException(404, "Program not found")
+    if obj.is_deleted and not (obj.status == "archived" and st == "draft"):
+        raise HTTPException(404, "Program not found")
     if current_user and current_user.get("role") not in ("admin", "super_admin"):
         user_tid = current_user.get("tenant_id")
         if user_tid and obj.tenant_id and str(obj.tenant_id) != str(user_tid):
@@ -76,15 +79,22 @@ def update_program_status_service(db, pid, st, current_user: dict | None = None,
         "cancelled": ["draft", "archived"],
         "rejected": ["draft", "pending_approval", "archived"],
         "needs_revision": ["pending_approval", "draft", "cancelled"],
-        "archived": [],
+        "archived": ["draft"],
     }
     allowed = VALID.get(obj.status, [])
     if st not in allowed:
         raise HTTPException(400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
     obj.status=st
+    if st == "draft":
+        obj.is_deleted = False
     if st in ("rejected", "needs_revision") and notes:
         obj.last_admin_notes = notes
     db.commit(); db.refresh(obj); return ProgramResponse.model_validate(map_program_write(obj))
+
+
+def restore_program_service(db, pid, current_user: dict | None = None):
+    """Restore an archived program back to draft (clears is_deleted)."""
+    return update_program_status_service(db, pid, "draft", current_user)
 
 def _get_program_or_404(db, pid):
     obj=get_program_by_id(db, pid)

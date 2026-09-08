@@ -5,7 +5,7 @@ from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.program_schema import ActivityCreate, CheckinCreate, EnrolmentCreate, PhaseCreate, PhaseResponse, ProgramAvailabilityResponse, ProgramCreate, ProgramDetailResponse, ProgramGoalsResponse, ProgramPaginatedResponse, ProgramResponse, ProgramStatusUpdate, ProgramUpdate, ReviewCreate, SurveyCreate, SurveyResponse
-from app.services.program_service import create_program_checkin_service, create_program_service, create_review_service, create_survey_service, delete_program_service, duplicate_program_service, enrol_program_service, get_participant_dashboard_service, get_program_admin_notes_service, get_program_availability_service, get_program_goals_service, get_program_progress_service, get_program_reports_service, get_program_service, get_program_summary_service, get_provider_dashboard_service, get_programs_service, list_checkins_service, list_enrolments_service, list_program_phases_service, list_program_surveys_service, normalize_program_phases, update_program_service, update_program_status_service, create_participant_checkin_service, submit_survey_response_service, list_program_reviews_service, _save_program_phases
+from app.services.program_service import create_program_checkin_service, create_program_service, create_review_service, create_survey_service, delete_program_service, duplicate_program_service, enrol_program_service, get_participant_dashboard_service, get_program_admin_notes_service, get_program_availability_service, get_program_goals_service, get_program_progress_service, get_program_reports_service, get_program_service, get_program_summary_service, get_provider_dashboard_service, get_programs_service, list_checkins_service, list_enrolments_service, list_program_phases_service, list_program_surveys_service, normalize_program_phases, restore_program_service, update_program_service, update_program_status_service, create_participant_checkin_service, submit_survey_response_service, list_program_reviews_service, _save_program_phases
 router=APIRouter(tags=["Programs"])
 @router.post("/", response_model=ProgramResponse, status_code=201)
 def create_program(data: ProgramCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return create_program_service(db, data, current_user)
@@ -45,9 +45,9 @@ def delete_program(program_id: UUID=Path(...), db: Session=Depends(get_db), curr
 @router.post("/{program_id}/duplicate", response_model=ProgramResponse, status_code=201)
 def duplicate(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return duplicate_program_service(db, program_id, current_user)
 @router.patch("/{program_id}/status", response_model=ProgramResponse, summary="Update program status (generic transition)")
-def update_status(program_id: UUID, payload: ProgramStatusUpdate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    if payload.status == "approved" and current_user.get("role") not in ("admin", "super_admin"):
-        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Only admin can approve")
+def update_status(program_id: UUID, payload: ProgramStatusUpdate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"]))):
+    if payload.status in ("approved", "rejected", "needs_revision") and current_user.get("role") not in ("admin", "super_admin"):
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Only Super Admin can approve/reject/request-changes")
     return update_program_status_service(db, program_id, payload.status, current_user)
 
 @router.post("/{program_id}/publish", response_model=ProgramResponse, summary="Publish program")
@@ -65,6 +65,24 @@ def suspend_program(program_id: UUID, db: Session=Depends(get_db), current_user:
 @router.post("/{program_id}/cancel", response_model=ProgramResponse, summary="Cancel program")
 def cancel_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return update_program_status_service(db, program_id, "cancelled", current_user)
+
+@router.post(
+    "/{program_id}/archive",
+    response_model=ProgramResponse,
+    summary="Archive program",
+)
+def archive_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "archived", current_user)
+
+@router.post(
+    "/{program_id}/restore",
+    response_model=ProgramResponse,
+    summary="Restore archived program to draft",
+    description="Transitions archived → draft and clears is_deleted. Equivalent to PATCH status with {\"status\":\"draft\"}.",
+)
+def restore_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return restore_program_service(db, program_id, current_user)
+
 # Phases / Activities (P6)
 @router.get("/{program_id}/phases", response_model=list[PhaseResponse], summary="List phases with nested activities/instructors")
 def list_phases(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
