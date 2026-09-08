@@ -3,7 +3,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
-from app.schemas.common_schema import EntityStatus, EnterpriseStatusLabel, PaginatedResponse
+from app.schemas.common_schema import (
+    BusinessHoursEntry,
+    EntityStatus,
+    EnterpriseStatusLabel,
+    PaginatedResponse,
+)
 
 
 _ENTERPRISE_CREATE_EXAMPLE = {
@@ -231,6 +236,15 @@ class EnterpriseListItemResponse(EnterpriseResponse):
         None,
         description="Date the enterprise joined, derived from created_at.",
     )
+    reviews_count: int = Field(0, description="Total number of reviews for this enterprise.")
+    distance_miles: float | None = Field(
+        None,
+        description="Distance in miles to the nearest enterprise location (requires latitude/longitude).",
+    )
+    is_online: bool = Field(
+        False,
+        description="Whether the enterprise is currently open based on aggregated service hours.",
+    )
 
 
 class EnterpriseDetailResponse(EnterpriseResponse):
@@ -253,6 +267,23 @@ class EnterpriseDetailResponse(EnterpriseResponse):
     rating: float = Field(
         0,
         description="Computed rating (not yet tracked in database).",
+    )
+    reviews_count: int = Field(0, description="Total number of reviews for this enterprise.")
+    distance_miles: float | None = Field(
+        None,
+        description="Distance in miles to the nearest enterprise location (requires latitude/longitude).",
+    )
+    is_online: bool = Field(
+        False,
+        description="Whether the enterprise is currently open based on aggregated service hours.",
+    )
+    business_hours: list[BusinessHoursEntry] = Field(
+        default_factory=list,
+        description="Aggregated weekly business hours derived from active service schedules.",
+    )
+    email_address: str | None = Field(
+        None,
+        description="Primary contact email (alias of business_email).",
     )
 
 

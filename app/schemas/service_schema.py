@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.common_schema import (
     AvailabilityScheduleEntry,
+    CatalogReviewItem,
     EntityStatus,
     PaginatedResponse,
     ServiceAvailabilityDay,
@@ -296,6 +297,11 @@ class ServiceDetailResponse(ServiceResponse):
         default_factory=list,
         description="Weekly availability with generated time slots.",
     )
+    reviews: list[CatalogReviewItem] = Field(
+        default_factory=list,
+        description="Customer reviews for this service.",
+    )
+    reviews_count: int = Field(0, description="Total number of reviews for this service.")
 
 
 class ServicePaginatedResponse(PaginatedResponse[ServiceListItemResponse]):

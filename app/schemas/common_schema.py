@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -68,6 +69,21 @@ class ServiceAvailabilityDay(BaseModel):
         description="Time slot ranges for the day.",
         examples=[["09:00-10:00", "10:00-11:00"]],
     )
+
+
+class BusinessHoursEntry(BaseModel):
+    day: str = Field(..., description="Day name, e.g. Monday")
+    open: str | None = Field(None, description="Opening time in HH:MM format")
+    close: str | None = Field(None, description="Closing time in HH:MM format")
+    is_closed: bool = Field(False, description="Whether the business is closed on this day")
+
+
+class CatalogReviewItem(BaseModel):
+    id: str | None = None
+    rating: int = Field(..., ge=1, le=5)
+    comment: str | None = None
+    reviewer_name: str | None = None
+    created_at: datetime | str | None = None
 
 
 class PaginationMeta(BaseModel):

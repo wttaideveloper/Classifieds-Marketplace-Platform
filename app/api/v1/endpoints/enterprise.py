@@ -55,6 +55,8 @@ def get_enterprises(
         le=MAX_PAGE_SIZE,
         description="Items per page.",
     ),
+    latitude: float | None = Query(None, description="User latitude for distance_miles calculation."),
+    longitude: float | None = Query(None, description="User longitude for distance_miles calculation."),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -65,6 +67,8 @@ def get_enterprises(
         tenant_id=tenant_id,
         page=page,
         page_size=page_size,
+        latitude=latitude,
+        longitude=longitude,
     )
 
 
@@ -76,10 +80,17 @@ def get_enterprises(
 )
 def get_enterprise(
     enterprise_id: UUID = Path(..., description="Unique identifier of the enterprise"),
+    latitude: float | None = Query(None, description="User latitude for distance_miles calculation."),
+    longitude: float | None = Query(None, description="User longitude for distance_miles calculation."),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return get_enterprise_service(db, enterprise_id)
+    return get_enterprise_service(
+        db,
+        enterprise_id,
+        latitude=latitude,
+        longitude=longitude,
+    )
 
 
 @router.put(

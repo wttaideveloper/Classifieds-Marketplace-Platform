@@ -105,7 +105,7 @@ def get_product_service(db: Session, product_id: UUID) -> ProductDetailResponse:
             detail="Product not found",
         )
 
-    return ProductDetailResponse.model_validate(map_product_detail(product))
+    return ProductDetailResponse.model_validate(map_product_detail(product, db))
 
 
 def update_product_service(db: Session, product_id: UUID, update_data):

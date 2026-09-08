@@ -6,6 +6,13 @@ from app.models.location_model import EnterpriseLocation
 from app.models.product_model import Product
 from app.models.service_model import Service
 from app.schemas.common_schema import EnterpriseStatusLabel
+from app.services.catalog_enrichment import (
+    build_delivery_text,
+    enrich_enterprise_detail_fields,
+    enrich_enterprise_list_fields,
+    format_listing_type,
+    get_catalog_reviews,
+)
 
 _WEEKDAY_INDEX = {
     "monday": 0,
@@ -134,7 +141,13 @@ def _service_type_value(service: Service) -> str | None:
     return service.service_type or service.service_category
 
 
-def map_enterprise_list_item(enterprise: Enterprise) -> dict:
+def map_enterprise_list_item(
+    enterprise: Enterprise,
+    db: Session | None = None,
+    *,
+    user_lat: float | None = None,
+    user_lng: float | None = None,
+) -> dict:
     base = _enterprise_base_fields(enterprise)
     base.update(
         {
@@ -145,10 +158,27 @@ def map_enterprise_list_item(enterprise: Enterprise) -> dict:
             "joined_date": _joined_date(enterprise.created_at),
         }
     )
+    if db is not None:
+        base.update(
+            enrich_enterprise_list_fields(
+                db,
+                enterprise.id,
+                user_lat=user_lat,
+                user_lng=user_lng,
+            )
+        )
+    else:
+        base.update({"reviews_count": 0, "distance_miles": None, "is_online": False})
     return base
 
 
-def map_enterprise_detail(enterprise: Enterprise) -> dict:
+def map_enterprise_detail(
+    enterprise: Enterprise,
+    db: Session | None = None,
+    *,
+    user_lat: float | None = None,
+    user_lng: float | None = None,
+) -> dict:
     base = _enterprise_base_fields(enterprise)
     base.update(
         {
@@ -159,6 +189,26 @@ def map_enterprise_detail(enterprise: Enterprise) -> dict:
             "rating": 0,
         }
     )
+    if db is not None:
+        base.update(
+            enrich_enterprise_detail_fields(
+                db,
+                enterprise.id,
+                email_address=enterprise.business_email,
+                user_lat=user_lat,
+                user_lng=user_lng,
+            )
+        )
+    else:
+        base.update(
+            {
+                "reviews_count": 0,
+                "distance_miles": None,
+                "is_online": False,
+                "business_hours": [],
+                "email_address": enterprise.business_email,
+            }
+        )
     return base
 
 
@@ -224,19 +274,31 @@ def map_product_list_item(product: Product) -> dict:
     return {
         **_product_base_fields(product),
         "rating": 0,
+        "listing_type": format_listing_type(getattr(product, "listing_type", None)),
     }
 
 
-def map_product_detail(product: Product) -> dict:
+def map_product_detail(product: Product, db: Session | None = None) -> dict:
     enterprise_name = None
     if product.enterprise is not None:
         enterprise_name = product.enterprise.business_short_name
+
+    reviews, reviews_count = ([], 0)
+    if db is not None:
+        reviews, reviews_count = get_catalog_reviews(db, "product", product.id)
 
     return {
         **_product_base_fields(product),
         "enterprise_name": enterprise_name,
         "rating": 0,
         "stock_count": product.stock_quantity,
+        "listing_type": format_listing_type(getattr(product, "listing_type", None)),
+        "delivery_text": build_delivery_text(
+            getattr(product, "delivery_interval", None),
+            getattr(product, "delivery_fee", None),
+        ),
+        "reviews": reviews,
+        "reviews_count": reviews_count,
     }
 
 
@@ -276,6 +338,9 @@ def _product_base_fields(product: Product) -> dict:
         "low_stock_alert_threshold": product.low_stock_alert_threshold,
         "stock_management": product.stock_management,
         "publish_status": product.publish_status,
+        "listing_type": getattr(product, "listing_type", None) or "one_time",
+        "delivery_interval": getattr(product, "delivery_interval", None),
+        "delivery_fee": getattr(product, "delivery_fee", None),
         "created_at": product.created_at,
     }
 
@@ -286,10 +351,14 @@ def map_service_list_item(service: Service) -> dict:
     return base
 
 
-def map_service_detail(service: Service) -> dict:
+def map_service_detail(service: Service, db: Session | None = None) -> dict:
     enterprise_name = None
     if service.enterprise is not None:
         enterprise_name = service.enterprise.business_short_name
+
+    reviews, reviews_count = ([], 0)
+    if db is not None:
+        reviews, reviews_count = get_catalog_reviews(db, "service", service.id)
 
     base = _service_base_fields(service)
     base.update(
@@ -299,6 +368,8 @@ def map_service_detail(service: Service) -> dict:
             "trainer_name": service.instructor_name,
             "format": service.delivery_format,
             "availability": schedule_to_availability_days(service.availability_schedule),
+            "reviews": reviews,
+            "reviews_count": reviews_count,
         }
     )
     return base

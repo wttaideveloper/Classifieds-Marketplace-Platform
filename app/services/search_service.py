@@ -72,7 +72,9 @@ def search_enterprises_service(
     items, total = paginate_query(db_query, page, page_size)
     return EnterprisePaginatedResponse(
         items=[
-            EnterpriseListItemResponse.model_validate(map_enterprise_list_item(item))
+            EnterpriseListItemResponse.model_validate(
+                map_enterprise_list_item(item, db)
+            )
             for item in items
         ],
         pagination=build_pagination_meta(total, page, page_size),

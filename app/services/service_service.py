@@ -105,7 +105,7 @@ def get_service_service(db: Session, service_id: UUID) -> ServiceDetailResponse:
             detail="Service not found",
         )
 
-    return ServiceDetailResponse.model_validate(map_service_detail(service))
+    return ServiceDetailResponse.model_validate(map_service_detail(service, db))
 
 
 def update_service_service(db: Session, service_id: UUID, update_data):

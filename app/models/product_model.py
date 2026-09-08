@@ -89,6 +89,12 @@ class Product(Base):
 
     thick = Column(Float)
 
+    listing_type = Column(String(50), default="one_time", nullable=False)
+
+    delivery_interval = Column(String(100))
+
+    delivery_fee = Column(String(100))
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     enterprise = relationship("Enterprise", backref="products")

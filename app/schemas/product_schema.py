@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.common_schema import EntityStatus, PaginatedResponse
+from app.schemas.common_schema import EntityStatus, PaginatedResponse, CatalogReviewItem
 
 
 class ProductCreate(BaseModel):
@@ -65,6 +65,18 @@ class ProductCreate(BaseModel):
         "draft",
         description="Publication status (e.g. draft, published)",
     )
+    listing_type: str | None = Field(
+        "one_time",
+        description="Product listing type: one_time or subscription.",
+    )
+    delivery_interval: str | None = Field(
+        None,
+        description="Delivery cadence label, e.g. per week.",
+    )
+    delivery_fee: str | None = Field(
+        None,
+        description="Delivery fee label, e.g. free delivery.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -113,6 +125,9 @@ class ProductCreate(BaseModel):
             "low_stock_alert_threshold": self.low_stock_alert_threshold,
             "stock_management": self.stock_management,
             "publish_status": self.publish_status,
+            "listing_type": self.listing_type or "one_time",
+            "delivery_interval": self.delivery_interval,
+            "delivery_fee": self.delivery_fee,
         }
 
 
@@ -145,6 +160,9 @@ class ProductUpdate(BaseModel):
     low_stock_alert_threshold: int | None = None
     stock_management: str | None = None
     publish_status: str | None = None
+    listing_type: str | None = None
+    delivery_interval: str | None = None
+    delivery_fee: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -218,6 +236,9 @@ class ProductResponse(BaseModel):
     low_stock_alert_threshold: int | None = None
     stock_management: str | None = None
     publish_status: str | None = None
+    listing_type: str | None = None
+    delivery_interval: str | None = None
+    delivery_fee: str | None = None
     created_at: datetime | None = None
 
 
@@ -225,6 +246,10 @@ class ProductListItemResponse(ProductResponse):
     rating: float = Field(
         0,
         description="Computed rating (not yet tracked in database).",
+    )
+    listing_type: str = Field(
+        "One-time",
+        description="Display listing type, e.g. Subscription or One-time.",
     )
 
 
@@ -256,6 +281,19 @@ class ProductDetailResponse(ProductResponse):
         None,
         description="Available stock (alias of stock_quantity).",
     )
+    listing_type: str = Field(
+        "One-time",
+        description="Display listing type, e.g. Subscription or One-time.",
+    )
+    delivery_text: str | None = Field(
+        None,
+        description="Human-readable delivery summary, e.g. per week · free delivery.",
+    )
+    reviews: list[CatalogReviewItem] = Field(
+        default_factory=list,
+        description="Customer reviews for this product.",
+    )
+    reviews_count: int = Field(0, description="Total number of reviews for this product.")
 
 
 class ProductPaginatedResponse(PaginatedResponse[ProductListItemResponse]):

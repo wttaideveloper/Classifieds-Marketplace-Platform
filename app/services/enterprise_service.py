@@ -46,6 +46,8 @@ def get_all_enterprises_service(
     tenant_id: UUID | None = None,
     page: int = 1,
     page_size: int = 20,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> EnterprisePaginatedResponse:
     items, total = get_enterprises(
         db,
@@ -57,14 +59,27 @@ def get_all_enterprises_service(
     )
     return EnterprisePaginatedResponse(
         items=[
-            EnterpriseListItemResponse.model_validate(map_enterprise_list_item(enterprise))
+            EnterpriseListItemResponse.model_validate(
+                map_enterprise_list_item(
+                    enterprise,
+                    db,
+                    user_lat=latitude,
+                    user_lng=longitude,
+                )
+            )
             for enterprise in items
         ],
         pagination=build_pagination_meta(total, page, page_size),
     )
 
 
-def get_enterprise_service(db: Session, enterprise_id: UUID) -> EnterpriseDetailResponse:
+def get_enterprise_service(
+    db: Session,
+    enterprise_id: UUID,
+    *,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> EnterpriseDetailResponse:
     enterprise = get_enterprise_by_id(db, enterprise_id)
     if not enterprise:
         raise HTTPException(
@@ -72,7 +87,14 @@ def get_enterprise_service(db: Session, enterprise_id: UUID) -> EnterpriseDetail
             detail="Enterprise not found",
         )
 
-    return EnterpriseDetailResponse.model_validate(map_enterprise_detail(enterprise))
+    return EnterpriseDetailResponse.model_validate(
+        map_enterprise_detail(
+            enterprise,
+            db,
+            user_lat=latitude,
+            user_lng=longitude,
+        )
+    )
 
 
 def update_enterprise_service(db: Session, enterprise_id: UUID, update_data):
