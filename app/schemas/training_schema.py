@@ -40,6 +40,14 @@ class TrainingCreate(BaseModel):
     requires_approval: bool = Field(False, description="Provider must approve enrolment")
     access_duration_days: str | None = Field(None, description="Access expiry days, e.g. 30")
     status: TrainingStatus = Field("draft")
+    form_configuration_version_id: UUID | None = Field(
+        None,
+        description="Published Training form configuration version. If omitted, server resolves active form for tenant.",
+    )
+    custom_values: list | dict | None = Field(
+        None,
+        description="Custom field values as Record<key,value> or [{field_id,value}]. Core fields still use TrainingCreate scalars.",
+    )
 
     def to_model_data(self) -> dict:
         return {
@@ -103,9 +111,14 @@ class TrainingUpdate(BaseModel):
     requires_approval: bool | None = None
     access_duration_days: str | None = None
     status: TrainingStatus | None = None
+    form_configuration_version_id: UUID | None = None
+    custom_values: list | dict | None = None
 
     def to_model_data(self) -> dict:
-        return self.model_dump(exclude_unset=True)
+        data = self.model_dump(exclude_unset=True)
+        data.pop("custom_values", None)
+        data.pop("form_configuration_version_id", None)
+        return data
 
 
 class TrainingResponse(BaseModel):
@@ -148,6 +161,9 @@ class TrainingResponse(BaseModel):
     start_date: datetime | None = None
     end_date: datetime | None = None
     last_admin_notes: str | None = None
+    custom_values: list | None = None
+    form_configuration_id: UUID | None = None
+    form_configuration_version_id: UUID | None = None
 
 
 class TrainingListItemResponse(TrainingResponse):

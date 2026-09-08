@@ -28,8 +28,12 @@ def _validate(db: Session, eid: UUID, lid: UUID | None, current_user: dict | Non
         if not loc: raise HTTPException(status_code=404, detail="Location not found for this enterprise")
 
 def create_training_service(db: Session, data, current_user: dict | None = None):
+    from app.services.training_form_config_service import apply_form_configuration_to_training_data
+
+    form_meta = apply_form_configuration_to_training_data(db, data, current_user or {})
     _validate(db, data.enterprise_id, data.location_id, current_user)
     payload = data.to_model_data()
+    payload.update(form_meta)
     create_status = payload.get("status") or "draft"
     if create_status not in ("draft", "pending_approval"):
         create_status = "draft"
@@ -41,6 +45,8 @@ def create_training_service(db: Session, data, current_user: dict | None = None)
     for key in ("sections", "assessments", "assignments", "discussions", "announcements", "tags", "gallery_images", "documents", "moderation_history"):
         if payload.get(key) is None:
             payload[key] = []
+    if payload.get("custom_values") is None:
+        payload["custom_values"] = []
     from app.models.training_model import Training
     obj = Training(**payload)
     db.add(obj)
@@ -57,12 +63,21 @@ def get_training_service(db: Session, tid: UUID):
     if not obj: raise HTTPException(status_code=404, detail="Training not found")
     return TrainingDetailResponse.model_validate(map_training_detail(obj))
 
-def update_training_service(db: Session, tid: UUID, data):
+def update_training_service(db: Session, tid: UUID, data, current_user: dict | None = None):
+    from app.services.training_form_config_service import apply_form_configuration_to_training_update
+
     obj = get_training_by_id(db, tid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(status_code=404, detail="Training not found")
     lid = data.location_id if getattr(data,"location_id",None) is not None else obj.location_id
     _validate(db, obj.enterprise_id, lid)
-    return TrainingResponse.model_validate(map_training_write(update_training(db, obj, data)))
+    extra = apply_form_configuration_to_training_update(db, obj, data, current_user or {})
+    updated = update_training(db, obj, data)
+    if extra:
+        for key, val in extra.items():
+            setattr(updated, key, val)
+        db.commit()
+        db.refresh(updated)
+    return TrainingResponse.model_validate(map_training_write(updated))
 
 def delete_training_service(db: Session, tid: UUID):
     obj = get_training_by_id(db, tid)

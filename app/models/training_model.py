@@ -54,6 +54,10 @@ class Training(Base):
     moderation_history = Column(JSONB, default=list)
     last_admin_notes = Column(Text)
 
+    form_configuration_id = Column(UUID(as_uuid=True), ForeignKey("training_form_configurations.id"), nullable=True, index=True)
+    form_configuration_version_id = Column(UUID(as_uuid=True), ForeignKey("training_form_configuration_versions.id"), nullable=True, index=True)
+    custom_values = Column(JSONB, default=list)
+
     status = Column(String(20), default="draft", nullable=False, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

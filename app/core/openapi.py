@@ -165,7 +165,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "(`started_at`), assignment due-date/file-type validation, module/lesson assessment filters, "
             "persisted announcements + list, live attendance GET/export, Q&A replies, moderation history.\n\n"
             "**Partial:** Certificate returns URL placeholder (PDF generation not yet implemented). "
-            "Admin moderation queue UI is API-only via `/moderation-history`."
+            "Admin moderation queue UI is API-only via `/moderation-history`.\n\n"
+            "**Form config:** `GET /trainings/form-configuration/active` (selective → global → 404), "
+            "`GET /trainings/{id}/form-configuration`, create with `form_configuration_version_id` + `custom_values`."
         ),
     },
     {
@@ -202,8 +204,29 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "Training Form Configuration (Super Admin)",
+        "description": (
+            "Training form builder (clone of Events). "
+            "Preferred: `/trainings/form-configuration/admin/*` — field-registry, CRUD, versions, "
+            "publish/activate/deactivate/retire, assignments (`PUT` with `enterprise_ids: []` = global). "
+            "Legacy alias: `/admin/training-form-configurations/*`.\n\n"
+            "**Enterprise Admin runtime:** `GET /trainings/form-configuration/active` resolves selective → global → 404. "
+            "`GET /trainings/{id}/form-configuration` loads the historic version. "
+            "Create Training with `form_configuration_version_id` + `custom_values`."
+        ),
+    },
+    {
         "name": "Event Categories",
         "description": "Event category taxonomy.",
+    },
+    {
+        "name": "CMS — Blogs",
+        "description": (
+            "Platform CMS blog posts. "
+            "**Public:** `GET /cms/blogs` and `GET /cms/blogs/{slug}` return published posts only. "
+            "**Admin:** `/cms/blogs/admin/posts/*` for draft/publish/archive CRUD "
+            "(requires `admin` or `super_admin` Bearer/cookie)."
+        ),
     },
 ]
 
@@ -226,6 +249,8 @@ PUBLIC_OPERATIONS: set[tuple[str, str]] = {
     ("get", "/api/v1/health"),
     ("get", "/api/v1/inventory"),
     ("get", "/health"),
+    ("get", "/api/v1/cms/blogs"),
+    ("get", "/api/v1/cms/blogs/{slug}"),
 }
 
 

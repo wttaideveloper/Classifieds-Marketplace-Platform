@@ -89,18 +89,42 @@ def get_current_admin(current_user=Depends(get_current_user)):
     return current_user
 
 
-def get_current_super_admin(current_user=Depends(get_current_user)):
-    """Platform Super Admin approval/admin operations.
+def get_current_super_admin(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Platform Super Admin for approval / reject / request-changes / audits.
 
-    Allows dedicated Super Admin (`super_admin` from isSuperAdmin JWT claim) and
-    Enterprise Admin (`admin`) for backwards-compatible testing.
-    Used for approve/reject/request-changes, audits, and platform-wide queues.
+    Same Keycloak/Bearer (or WebAuth cookie) validation as Event list/detail via
+    ``get_current_user``, then resolves Platform Super Admin identity:
+
+    authenticated token → subject → internal user / claims
+    → ``isSuperAdmin == true`` and ``status == active`` → allow
+
+    Does **not** require Enterprise tenancy. Enterprise Admin (`admin`) remains
+    allowed for backwards-compatible testing of shared admin tools.
     """
-    if current_user.get("role") not in ("admin", "super_admin"):
-        if not settings.is_production and current_user.get("id") == settings.DEV_DEFAULT_USER_ID:
-            return {**current_user, "role": "admin"}
-        raise HTTPException(status_code=403, detail="Super Admin access required")
-    return current_user
+    from app.services.super_admin_identity import resolve_platform_super_admin_user
+
+    token = None
+    credentials_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    if credentials_header and credentials_header.lower().startswith("bearer "):
+        token = credentials_header.split(" ", 1)[1].strip()
+    if not token:
+        token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+
+    resolved = resolve_platform_super_admin_user(current_user, access_token=token)
+    if resolved:
+        return resolved
+
+    # Backwards-compatible: Enterprise Admin (`admin`) for shared testing flows
+    if current_user.get("role") == "admin":
+        return current_user
+
+    if not settings.is_production and current_user.get("id") == settings.DEV_DEFAULT_USER_ID:
+        return {**current_user, "role": "admin"}
+
+    raise HTTPException(status_code=403, detail="Super Admin access required")
 
 
 def require_event_form_builder_admin(current_user=Depends(get_current_user)):

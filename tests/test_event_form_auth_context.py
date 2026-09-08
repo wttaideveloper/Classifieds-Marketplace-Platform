@@ -17,6 +17,11 @@ def test_resolve_auth_tenant_id_from_membership():
     assert resolve_auth_tenant_id(user) == "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"
 
 
+def test_resolve_auth_tenant_id_from_nested_membership_tenant():
+    user = {"membership": {"tenant": {"id": "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"}}}
+    assert resolve_auth_tenant_id(user) == "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"
+
+
 def test_resolve_auth_tenant_id_with_db_from_enterprise():
     tenant_id = uuid4()
     enterprise_id = uuid4()
@@ -43,6 +48,65 @@ def test_payload_to_user_maps_tenant_and_membership():
     assert user["id"] == "user-1"
     assert user["role"] == "provider"
     assert user["tenant_id"] == "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"
+
+
+def test_payload_to_user_maps_nested_membership_tenant():
+    from app.core.token_auth import payload_to_user
+
+    user = payload_to_user(
+        {
+            "sub": "user-2",
+            "tenant_role": "tenant_admin",
+            "membership": {"tenant": {"id": "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"}},
+        }
+    )
+    assert user["tenant_id"] == "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"
+
+
+def test_resolve_enterprise_context_from_payload_enterprise_without_auth_tenant():
+    from app.services.event_form_config_service import resolve_enterprise_context
+
+    tenant_id = uuid4()
+    enterprise_id = uuid4()
+    enterprise = MagicMock()
+    enterprise.id = enterprise_id
+    enterprise.tenant_id = tenant_id
+    enterprise.status = "approved"
+    enterprise.is_deleted = False
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = enterprise
+
+    resolved_enterprise, resolved_tenant = resolve_enterprise_context(
+        db,
+        {"role": "provider", "id": "user-1"},
+        payload_enterprise_id=enterprise_id,
+        payload_tenant_id=None,
+    )
+    assert resolved_enterprise is enterprise
+    assert resolved_tenant == tenant_id
+
+
+def test_resolve_enterprise_context_from_payload_tenant_without_auth_tenant(monkeypatch):
+    from app.services import event_form_config_service as svc
+
+    tenant_id = uuid4()
+    enterprise_id = uuid4()
+    enterprise = MagicMock()
+    enterprise.id = enterprise_id
+    enterprise.tenant_id = tenant_id
+    enterprise.status = "approved"
+
+    monkeypatch.setattr(svc, "_resolve_enterprise_for_tenant", lambda db, tid: enterprise)
+
+    resolved_enterprise, resolved_tenant = svc.resolve_enterprise_context(
+        MagicMock(),
+        {"role": "provider", "id": "user-1"},
+        payload_enterprise_id=None,
+        payload_tenant_id=tenant_id,
+    )
+    assert resolved_enterprise is enterprise
+    assert resolved_tenant == tenant_id
 
 
 def test_get_active_form_without_tenant_falls_back_to_legacy(monkeypatch):

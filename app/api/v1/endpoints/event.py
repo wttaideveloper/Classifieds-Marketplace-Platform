@@ -1,9 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_current_super_admin, get_current_user, require_roles
+from app.core.config import settings
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.event_schema import (
@@ -234,18 +235,35 @@ def duplicate_event(event_id: UUID = Path(..., description="Event ID"), db: Sess
 def update_status(
     event_id: UUID,
     payload: EventStatusUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"])),
+    current_user: dict = Depends(get_current_user),
 ):
-    from fastapi import HTTPException
+    """Enterprise lifecycle transitions for admin/provider; Platform approvals for Super Admin."""
+    from app.services.super_admin_identity import resolve_platform_super_admin_user
+
+    token = None
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+
+    resolved_super = resolve_platform_super_admin_user(current_user, access_token=token)
+    if resolved_super:
+        current_user = resolved_super
+
     role = current_user.get("role")
-    # Platform Super Admin (or Enterprise Admin during testing) — approve / reject / request_changes
     _super_admin_only = {"approved", "rejected", "needs_revision"}
-    if payload.status in _super_admin_only and role not in ("admin", "super_admin"):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Only Super Admin can set status to '{payload.status}'.",
-        )
+    if payload.status in _super_admin_only:
+        if role not in ("admin", "super_admin"):
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+    elif role not in ("admin", "provider", "super_admin"):
+        if not settings.is_production and current_user.get("id") == settings.DEV_DEFAULT_USER_ID:
+            pass
+        else:
+            raise HTTPException(status_code=403, detail="Not authorized")
+
     return update_event_status_service(db, event_id, payload.status, current_user)
 
 

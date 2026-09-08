@@ -5,6 +5,7 @@ Import all model modules so metadata is registered on ``Base``.
 
 from . import (  # noqa: F401
     attribute_model,
+    blog_model,
     cart_model,
     chat_model,
     enterprise_model,
@@ -17,11 +18,13 @@ from . import (  # noqa: F401
     product_model,
     program_model,
     service_model,
+    training_form_config_model,
     training_model,
 )
 
 __all__ = [
     "attribute_model",
+    "blog_model",
     "chat_model",
     "enterprise_model",
     "event_aux_models",
@@ -33,5 +36,6 @@ __all__ = [
     "product_model",
     "program_model",
     "service_model",
+    "training_form_config_model",
     "training_model",
 ]

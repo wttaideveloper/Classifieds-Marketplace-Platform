@@ -602,18 +602,66 @@ def list_audit_service(db: Session, config_id: UUID) -> list[dict]:
     ]
 
 
-def resolve_enterprise_context(db: Session, current_user: dict) -> tuple[Enterprise, UUID]:
-    """Resolve Enterprise + tenant from authenticated user — do not trust client tenant_id query params."""
+def resolve_enterprise_context(
+    db: Session,
+    current_user: dict,
+    *,
+    payload_enterprise_id: UUID | None = None,
+    payload_tenant_id: UUID | None = None,
+) -> tuple[Enterprise, UUID]:
+    """Resolve Enterprise + tenant for Event create.
+
+    Order (WebAuth cookie / Bearer — never query-param tenant_id):
+    1. Session/JWT tenant claims (+ enterprise_id / tenant_slug fallbacks)
+    2. Event body ``enterprise_id`` → ``Enterprise.tenant_id``
+    3. Event body ``tenant_id`` (same as templates / Enterprise create when session lacks claim)
+    """
     if current_user.get("role") not in ("admin", "super_admin", "provider"):
         raise HTTPException(status_code=403, detail="Enterprise Admin access required")
-    tenant_id = resolve_auth_tenant_id_with_db(db, current_user)
+
+    auth_tenant_id = resolve_auth_tenant_id_with_db(db, current_user)
+    tenant_id = auth_tenant_id
+    enterprise: Enterprise | None = None
+
+    if payload_enterprise_id:
+        enterprise = (
+            db.query(Enterprise)
+            .filter(Enterprise.id == payload_enterprise_id, Enterprise.is_deleted.is_(False))
+            .first()
+        )
+        if not enterprise:
+            raise HTTPException(status_code=404, detail="Enterprise not found")
+        if not tenant_id and enterprise.tenant_id:
+            tenant_id = str(enterprise.tenant_id)
+        if (
+            auth_tenant_id
+            and enterprise.tenant_id
+            and str(enterprise.tenant_id) != str(auth_tenant_id)
+            and current_user.get("role") not in ("admin", "super_admin")
+        ):
+            raise HTTPException(status_code=403, detail="enterprise_id does not match authenticated tenant")
+
+    if not tenant_id and payload_tenant_id:
+        # Authenticated Enterprise Admin WebAuth often has no tenant claim; body tenant_id
+        # comes from identity (/tenant/me) while the session cookie proves the user.
+        tenant_id = str(payload_tenant_id)
+
+    if auth_tenant_id and payload_tenant_id and str(auth_tenant_id) != str(payload_tenant_id):
+        if current_user.get("role") not in ("admin", "super_admin"):
+            raise HTTPException(status_code=403, detail="Supplied tenant_id does not belong to authenticated user")
+
     if not tenant_id:
         raise HTTPException(
             status_code=400,
-            detail="Authenticated tenant_id is required (derive from session/JWT — query param tenant_id is ignored)",
+            detail=(
+                "tenant_id could not be resolved from the WebAuth session or Event payload "
+                "(send enterprise_id or tenant_id on the Event body when the session token has no tenant claim)"
+            ),
         )
+
     tenant_uuid = UUID(str(tenant_id))
-    enterprise = _resolve_enterprise_for_tenant(db, tenant_uuid)
+    if enterprise is None:
+        enterprise = _resolve_enterprise_for_tenant(db, tenant_uuid)
     if not enterprise:
         raise HTTPException(status_code=404, detail="No enterprise found for authenticated tenant")
     if enterprise.status in ("draft", "pending", "inactive"):
@@ -855,7 +903,12 @@ def resolve_version_for_create(
 
 def apply_form_configuration_to_event_data(db: Session, event_data, current_user: dict) -> dict:
     """Returns extra Event columns: form_configuration_id, form_configuration_version_id, custom_values."""
-    enterprise, tenant_id = resolve_enterprise_context(db, current_user)
+    enterprise, tenant_id = resolve_enterprise_context(
+        db,
+        current_user,
+        payload_enterprise_id=getattr(event_data, "enterprise_id", None),
+        payload_tenant_id=getattr(event_data, "tenant_id", None),
+    )
     if event_data.enterprise_id and str(event_data.enterprise_id) != str(enterprise.id):
         if current_user.get("role") not in ("admin", "super_admin"):
             raise HTTPException(status_code=403, detail="enterprise_id does not match authenticated enterprise")

@@ -47,6 +47,9 @@ _safe_include("app.api.v1.endpoints.event_category", prefix="/event-categories",
 _safe_include("app.api.v1.endpoints.training", prefix="/trainings", tags=["Trainings"])
 _safe_include("app.api.v1.endpoints.program", prefix="/programs", tags=["Programs"])
 
+# CMS — Blogs
+_safe_include("app.api.v1.endpoints.blog", prefix="/cms/blogs", tags=["CMS — Blogs"])
+
 # Search APIs
 _safe_include("app.api.v1.endpoints.search", prefix="/search", tags=["Search"])
 
@@ -112,6 +115,17 @@ _safe_include(
     "app.api.v1.endpoints.event_form_config_admin",
     prefix="/admin/event-form-configurations",
     tags=["Event Form Configuration (Super Admin)"],
+)
+# Training form builder — preferred + legacy admin paths (mirror Events)
+_safe_include(
+    "app.api.v1.endpoints.training_form_config_admin",
+    prefix="/trainings/form-configuration/admin",
+    tags=["Training Form Configuration (Super Admin)"],
+)
+_safe_include(
+    "app.api.v1.endpoints.training_form_config_admin",
+    prefix="/admin/training-form-configurations",
+    tags=["Training Form Configuration (Super Admin)"],
 )
 
 # Cart + Orders (full cart: add multiple → view → checkout together)

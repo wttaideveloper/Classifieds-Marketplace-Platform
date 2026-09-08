@@ -21,13 +21,44 @@ def list_trainings(search: str | None = Query(None), category: str | None = Quer
     except: prov = None
     return get_trainings_service(db, search=search, category=category, provider_id=prov, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, delivery_mode=delivery_mode, min_price=min_price, max_price=max_price, duration=duration, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
 
+@router.get(
+    "/form-configuration/active",
+    summary="Resolved active Training form for authenticated Enterprise Admin",
+    description=(
+        "Authenticate → resolve tenant → active selective assignment → else active global. "
+        "Returns 404 when none (frontend uses static Create Training wizard fallback)."
+    ),
+)
+def get_active_training_form_configuration(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    from app.schemas.training_form_config_schema import ActiveFormConfigurationResponse
+    from app.services.training_form_config_service import get_active_form_configuration_service
+    return ActiveFormConfigurationResponse.model_validate(get_active_form_configuration_service(db, current_user))
+
+
+@router.get(
+    "/{training_id}/form-configuration",
+    summary="Historical Training form version used by this Training",
+)
+def get_training_form_configuration(
+    training_id: UUID = Path(..., description="Training ID"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    from app.schemas.training_form_config_schema import ActiveFormConfigurationResponse
+    from app.services.training_form_config_service import get_training_form_configuration_service
+    return ActiveFormConfigurationResponse.model_validate(get_training_form_configuration_service(db, training_id, current_user))
+
+
 @router.get("/{training_id}", response_model=TrainingDetailResponse, summary="Get training detail")
 def get_training(training_id: UUID = Path(...), db: Session = Depends(get_db)):
     return get_training_service(db, training_id)
 
 @router.put("/{training_id}", response_model=TrainingResponse)
 def update_training(data: TrainingUpdate, training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return update_training_service(db, training_id, data)
+    return update_training_service(db, training_id, data, current_user)
 
 @router.delete("/{training_id}")
 def delete_training(training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):

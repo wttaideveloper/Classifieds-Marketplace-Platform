@@ -127,3 +127,56 @@ def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
             except ValueError:
                 continue
     return user_ids
+
+
+def fetch_auth_me_profile(access_token: str) -> dict | None:
+    """Resolve the authenticated Invigorate user profile (isSuperAdmin, status, …)."""
+    if not access_token or not settings.INVIGORATE_AUTH_BASE_URL.strip():
+        return None
+
+    url = f"{settings.INVIGORATE_AUTH_BASE_URL.rstrip('/')}/api/v1/auth/me"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        logger.exception("Failed to fetch Invigorate /auth/me profile")
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def fetch_internal_user_by_id(user_id: str) -> dict | None:
+    """Look up an Invigorate internal user record by id / Keycloak sub."""
+    if not user_id or not settings.invigorate_internal_api_configured:
+        return None
+
+    base = settings.INVIGORATE_AUTH_BASE_URL.rstrip("/")
+    headers = {"X-Internal-Api-Key": settings.INVIGORATE_INTERNAL_API_KEY}
+    # Prefer explicit user id path; fall back to users?id= if the first 404s.
+    candidates = (
+        f"{base}/api/v1/internal/users/{user_id}",
+        f"{base}/api/v1/internal/users?id={user_id}",
+    )
+    for url in candidates:
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code == 404:
+                continue
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            logger.exception("Failed to fetch Invigorate internal user %s from %s", user_id, url)
+            continue
+
+        if isinstance(payload, dict):
+            items = payload.get("items") or payload.get("data")
+            if isinstance(items, list) and items and isinstance(items[0], dict):
+                return items[0]
+            return payload
+        if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+            return payload[0]
+    return None

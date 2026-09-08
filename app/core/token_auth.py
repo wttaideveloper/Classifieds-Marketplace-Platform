@@ -101,6 +101,26 @@ def _is_super_admin_claim(payload: dict) -> bool:
             return True
         if isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}:
             return True
+
+    nested_user = payload.get("user")
+    if isinstance(nested_user, dict):
+        for key in ("isSuperAdmin", "is_super_admin"):
+            value = nested_user.get(key)
+            if value is True:
+                return True
+            if isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}:
+                return True
+
+    # Some Keycloak clients put the flag under realm / client roles
+    roles: list[str] = []
+    realm_access = payload.get("realm_access") or {}
+    roles.extend(realm_access.get("roles") or [])
+    for client_roles in (payload.get("resource_access") or {}).values():
+        if isinstance(client_roles, dict):
+            roles.extend(client_roles.get("roles") or [])
+    normalized = {_normalize_slug(role) for role in roles if _normalize_slug(role)}
+    if normalized & {"super_admin", "superadmin", "platform_super_admin"}:
+        return True
     return False
 
 
@@ -193,11 +213,23 @@ def payload_to_user(payload: dict) -> dict:
         or payload.get("tenantId")
         or payload.get("org_id")
         or payload.get("organization_id")
+        or payload.get("organizationId")
     )
     if not tenant_id:
         membership = payload.get("membership")
         if isinstance(membership, dict):
-            tenant_id = membership.get("tenant_id") or membership.get("tenantId") or membership.get("id")
+            tenant_id = (
+                membership.get("tenant_id")
+                or membership.get("tenantId")
+                or membership.get("organization_id")
+                or membership.get("organizationId")
+            )
+            if not tenant_id:
+                nested = membership.get("tenant") or membership.get("organization")
+                if isinstance(nested, dict):
+                    tenant_id = nested.get("id") or nested.get("tenant_id") or nested.get("tenantId")
+            if not tenant_id:
+                tenant_id = membership.get("id")
     if tenant_id is not None:
         user["tenant_id"] = str(tenant_id)
 
@@ -205,7 +237,16 @@ def payload_to_user(payload: dict) -> dict:
     if enterprise_id is not None:
         user["enterprise_id"] = str(enterprise_id)
 
-    for passthrough in ("membership", "tenants", "tenant_slug", "tenant_id_claim", "isSuperAdmin"):
+    for passthrough in (
+        "membership",
+        "tenants",
+        "tenant_slug",
+        "tenant_id_claim",
+        "isSuperAdmin",
+        "is_super_admin",
+        "status",
+        "user",
+    ):
         if payload.get(passthrough) is not None:
             user[passthrough] = payload[passthrough]
 

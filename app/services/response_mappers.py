@@ -515,6 +515,9 @@ def _training_base_fields(t) -> dict:
         "promo_price": t.promo_price, "coupon_code": t.coupon_code,
         "duration": getattr(t, "duration", None),
         "last_admin_notes": getattr(t, "last_admin_notes", None),
+        "custom_values": getattr(t, "custom_values", None) or [],
+        "form_configuration_id": getattr(t, "form_configuration_id", None),
+        "form_configuration_version_id": getattr(t, "form_configuration_version_id", None),
     }
 
 def _event_base_fields(event) -> dict:
