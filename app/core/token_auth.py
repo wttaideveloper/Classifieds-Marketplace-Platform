@@ -11,11 +11,37 @@ logger = logging.getLogger(__name__)
 
 _JWKS_CACHE: dict = {"keys": None, "fetched_at": 0.0}
 _JWKS_TTL_SECONDS = 300
+# Tolerance for clock skew between this server and the token issuer when
+# validating `exp`/`iat`/`nbf`. Keeps a few seconds of drift from producing a
+# spurious "Token expired" right at the boundary.
+_CLOCK_SKEW_LEEWAY_SECONDS = 10
 
 
-def _fetch_jwks() -> dict:
+def _unverified_claims_for_log(token: str) -> dict:
+    """Best-effort, signature-unverified peek at non-secret claims for
+    diagnostic logging only — never used for auth decisions."""
+    try:
+        claims = jwt.get_unverified_claims(token)
+        header = jwt.get_unverified_header(token)
+        return {
+            "iss": claims.get("iss"),
+            "aud": claims.get("aud"),
+            "azp": claims.get("azp"),
+            "exp": claims.get("exp"),
+            "kid": header.get("kid"),
+            "alg": header.get("alg"),
+        }
+    except Exception:
+        return {}
+
+
+def _fetch_jwks(*, force_refresh: bool = False) -> dict:
     now = time.time()
-    if _JWKS_CACHE["keys"] is not None and now - _JWKS_CACHE["fetched_at"] < _JWKS_TTL_SECONDS:
+    if (
+        not force_refresh
+        and _JWKS_CACHE["keys"] is not None
+        and now - _JWKS_CACHE["fetched_at"] < _JWKS_TTL_SECONDS
+    ):
         return _JWKS_CACHE["keys"]
 
     url = settings.keycloak_jwks_url
@@ -31,6 +57,7 @@ def _decode_local_token(token: str) -> dict:
         token,
         settings.SECRET_KEY,
         algorithms=[settings.ALGORITHM],
+        options={"leeway": _CLOCK_SKEW_LEEWAY_SECONDS},
     )
 
 
@@ -59,9 +86,9 @@ def _validate_keycloak_audience(payload: dict) -> None:
     if expected in audiences or azp == expected:
         return
 
-    raise JWTError(
-        f"Token audience mismatch: expected aud or azp '{expected}', got aud={audiences} azp={azp!r}"
-    )
+    message = f"Token audience mismatch: expected aud or azp '{expected}', got aud={audiences} azp={azp!r}"
+    logger.warning("Keycloak token rejected: %s", message)
+    raise JWTError(message)
 
 
 def _decode_keycloak_token(token: str) -> dict:
@@ -73,16 +100,33 @@ def _decode_keycloak_token(token: str) -> dict:
     jwks = _fetch_jwks()
     key_data = next((item for item in jwks.get("keys", []) if item.get("kid") == kid), None)
     if key_data is None:
+        # Cached JWKS may be stale after a Keycloak key rotation — force one
+        # fresh fetch before giving up, instead of waiting out the TTL.
+        jwks = _fetch_jwks(force_refresh=True)
+        key_data = next((item for item in jwks.get("keys", []) if item.get("kid") == kid), None)
+    if key_data is None:
+        known_kids = [item.get("kid") for item in jwks.get("keys", [])]
+        logger.warning(
+            "Keycloak token rejected: no JWKS key matches kid=%r (known kids=%s, jwks_url=%s)",
+            kid, known_kids, settings.keycloak_jwks_url,
+        )
         raise JWTError("Unable to find matching Keycloak signing key")
 
     public_key = jwk.construct(key_data)
-    payload = jwt.decode(
-        token,
-        public_key,
-        algorithms=["RS256"],
-        issuer=settings.KEYCLOAK_ISSUER,
-        options={"verify_aud": False},
-    )
+    try:
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            issuer=settings.KEYCLOAK_ISSUER,
+            options={"verify_aud": False, "leeway": _CLOCK_SKEW_LEEWAY_SECONDS},
+        )
+    except JWTError as exc:
+        logger.warning(
+            "Keycloak token rejected: %s | expected_issuer=%r claims=%s",
+            exc, settings.KEYCLOAK_ISSUER, _unverified_claims_for_log(token),
+        )
+        raise
     _validate_keycloak_audience(payload)
     return payload
 
@@ -292,12 +336,18 @@ def resolve_user_from_token_or_raise(token: str) -> dict:
         payload = decode_access_token(token)
         return payload_to_user(payload)
     except ExpiredSignatureError as exc:
+        logger.warning("Token expired | claims=%s", _unverified_claims_for_log(token))
         raise HTTPException(status_code=401, detail="Token expired") from exc
     except JWTError as exc:
-        detail = "Invalid token"
+        reason = str(exc) or exc.__class__.__name__
+        logger.warning(
+            "Token rejected: %s | claims=%s",
+            reason, _unverified_claims_for_log(token),
+        )
+        detail = f"Invalid token ({reason})"
         if settings.keycloak_configured:
             detail = (
-                "Invalid token. Verify issuer, signature, expiry, and that aud or azp "
+                f"Invalid token ({reason}). Verify issuer, signature, expiry, and that aud or azp "
                 f"matches KEYCLOAK_AUDIENCE ({settings.KEYCLOAK_AUDIENCE or 'not set'})."
             )
         raise HTTPException(status_code=401, detail=detail) from exc
