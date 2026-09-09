@@ -236,6 +236,10 @@ class EnterpriseListItemResponse(EnterpriseResponse):
         None,
         description="Date the enterprise joined, derived from created_at.",
     )
+    rating: float = Field(
+        0,
+        description="Computed rating (not yet tracked in database).",
+    )
     reviews_count: int = Field(0, description="Total number of reviews for this enterprise.")
     distance_miles: float | None = Field(
         None,

@@ -35,6 +35,8 @@ def search_enterprises(
     category: str | None = Query(None, description="Filter by category."),
     city: str | None = Query(None, description="Filter by city."),
     status_filter: str | None = Query(None, alias="status", description="Filter by status."),
+    latitude: float | None = Query(None, description="User latitude for distance_miles calculation."),
+    longitude: float | None = Query(None, description="User longitude for distance_miles calculation."),
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
@@ -47,6 +49,8 @@ def search_enterprises(
         category=category,
         city=city,
         status_filter=status_filter,
+        latitude=latitude,
+        longitude=longitude,
         page=page,
         page_size=page_size,
     )

@@ -34,6 +34,8 @@ def search_enterprises_service(
     category: str | None = None,
     city: str | None = None,
     status_filter: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> EnterprisePaginatedResponse:
@@ -73,7 +75,9 @@ def search_enterprises_service(
     return EnterprisePaginatedResponse(
         items=[
             EnterpriseListItemResponse.model_validate(
-                map_enterprise_list_item(item, db)
+                map_enterprise_list_item(
+                    item, db, user_lat=latitude, user_lng=longitude
+                )
             )
             for item in items
         ],

@@ -255,6 +255,10 @@ class ServiceResponse(BaseModel):
 
 
 class ServiceListItemResponse(ServiceResponse):
+    enterprise_name: str | None = Field(
+        None,
+        description="Short name of the owning enterprise.",
+    )
     trainer_name: str | None = Field(
         None,
         description="Instructor name (alias of instructor_name).",

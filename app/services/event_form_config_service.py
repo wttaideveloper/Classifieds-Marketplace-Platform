@@ -748,11 +748,16 @@ def build_active_response(config: EventFormConfiguration, version: EventFormConf
     }
 
 
-def get_active_form_configuration_service(db: Session, current_user: dict) -> dict:
+def get_active_form_configuration_service(
+    db: Session,
+    current_user: dict,
+    *,
+    access_token: str | None = None,
+) -> dict:
     if current_user.get("role") not in ("admin", "super_admin", "provider"):
         raise HTTPException(status_code=403, detail="Enterprise Admin access required")
 
-    tenant_raw = resolve_auth_tenant_id_with_db(db, current_user)
+    tenant_raw = resolve_auth_tenant_id_with_db(db, current_user, access_token=access_token)
     tenant_uuid = UUID(str(tenant_raw)) if tenant_raw else None
     config, version = _resolve_active_form_configuration(db, tenant_uuid)
     return build_active_response(config, version)

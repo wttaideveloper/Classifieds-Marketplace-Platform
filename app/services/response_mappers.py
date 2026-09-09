@@ -155,6 +155,7 @@ def map_enterprise_list_item(
             "status_label": enterprise_status_label(enterprise.status),
             "members_count": 0,
             "revenue": 0,
+            "rating": 0,
             "joined_date": _joined_date(enterprise.created_at),
         }
     )
@@ -271,8 +272,13 @@ def map_location(location: EnterpriseLocation) -> dict:
 
 
 def map_product_list_item(product: Product) -> dict:
+    enterprise_name = None
+    if product.enterprise is not None:
+        enterprise_name = product.enterprise.business_short_name
+
     return {
         **_product_base_fields(product),
+        "enterprise_name": enterprise_name,
         "rating": 0,
         "listing_type": format_listing_type(getattr(product, "listing_type", None)),
     }
@@ -346,7 +352,12 @@ def _product_base_fields(product: Product) -> dict:
 
 
 def map_service_list_item(service: Service) -> dict:
+    enterprise_name = None
+    if service.enterprise is not None:
+        enterprise_name = service.enterprise.business_short_name
+
     base = _service_base_fields(service)
+    base["enterprise_name"] = enterprise_name
     base["trainer_name"] = service.instructor_name
     return base
 

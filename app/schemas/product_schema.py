@@ -243,6 +243,10 @@ class ProductResponse(BaseModel):
 
 
 class ProductListItemResponse(ProductResponse):
+    enterprise_name: str | None = Field(
+        None,
+        description="Short name of the owning enterprise.",
+    )
     rating: float = Field(
         0,
         description="Computed rating (not yet tracked in database).",

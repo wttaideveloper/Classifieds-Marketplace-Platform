@@ -84,8 +84,31 @@ def resolve_auth_enterprise_id(current_user: dict | None) -> str | None:
     return str(value) if value else None
 
 
-def resolve_auth_tenant_id_with_db(db: Session, current_user: dict | None) -> str | None:
-    """Resolve tenant from WebAuth/JWT claims, then Enterprise lookup fallbacks."""
+def _unwrap_auth_me_profile(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("data", "user", "profile"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            return nested
+    return None
+
+
+def resolve_auth_tenant_id_with_db(
+    db: Session,
+    current_user: dict | None,
+    *,
+    access_token: str | None = None,
+) -> str | None:
+    """Resolve tenant from WebAuth/JWT claims, then Enterprise lookup fallbacks.
+
+    Enterprise Admin WebAuth session tokens frequently carry no tenant claim at
+    all (Keycloak issues them without a tenant_id/membership claim for this
+    login flow). When ``access_token`` is supplied and local claim resolution
+    comes up empty, fall back to a live Invigorate ``GET /api/v1/auth/me`` call
+    with that same session token/cookie — the identical server-side lookup
+    ``/tenant/me`` performs — instead of trusting a frontend-supplied tenant_id.
+    """
     tenant_id = resolve_auth_tenant_id(current_user)
     if tenant_id:
         return tenant_id
@@ -116,5 +139,14 @@ def resolve_auth_tenant_id_with_db(db: Session, current_user: dict | None) -> st
                 return str(ent.tenant_id)
         except Exception:
             pass
+
+    if access_token:
+        from app.services.invigorate_auth_client import fetch_auth_me_profile
+
+        profile = fetch_auth_me_profile(access_token)
+        for candidate in (profile, _unwrap_auth_me_profile(profile)):
+            resolved = resolve_auth_tenant_id(candidate)
+            if resolved:
+                return resolved
 
     return None

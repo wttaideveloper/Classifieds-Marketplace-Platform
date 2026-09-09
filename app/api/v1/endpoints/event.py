@@ -187,12 +187,23 @@ def apply_template(template_id: UUID, payload: EventTemplateApplyRequest, db: Se
     ),
 )
 def get_active_event_form_configuration(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_roles(["admin", "provider"])),
 ):
     from app.schemas.event_form_config_schema import ActiveFormConfigurationResponse
     from app.services.event_form_config_service import get_active_form_configuration_service
-    return ActiveFormConfigurationResponse.model_validate(get_active_form_configuration_service(db, current_user))
+
+    access_token = None
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        access_token = auth_header.split(" ", 1)[1].strip()
+    if not access_token:
+        access_token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+
+    return ActiveFormConfigurationResponse.model_validate(
+        get_active_form_configuration_service(db, current_user, access_token=access_token)
+    )
 
 
 @router.get(
