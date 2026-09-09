@@ -105,6 +105,43 @@ def request_changes_training(
 def publish_training(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
     return update_training_status_service(db, training_id, "published", _admin)
 
+# Courses admin queue — alias of the Trainings queue above. Same model, same
+# table, same data; "Course" is just the frontend/product name for a Training.
+@router.get("/courses/pending", summary="Admin — Pending Courses Queue")
+def admin_pending_courses(page: int = Query(DEFAULT_PAGE, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE), enterprise_id: UUID | None = Query(None), category: str | None = Query(None), db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return get_trainings_service(db, status="pending_approval", enterprise_id=enterprise_id, category=category, page=page, page_size=page_size)
+
+@router.get("/courses/{training_id}", response_model=TrainingDetailResponse, summary="Admin — Course detail for approval review")
+def admin_get_course(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return get_training_service(db, training_id)
+
+@router.post("/courses/{training_id}/approve", summary="Admin — Approve Course")
+def approve_course(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return update_training_status_service(db, training_id, "approved", _admin)
+
+@router.post("/courses/{training_id}/reject", summary="Admin — Reject Course")
+def reject_course(
+    training_id: UUID,
+    payload: TrainingAdminActionRequest | None = None,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(get_current_super_admin),
+):
+    reason = payload.reason if payload else None
+    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason)
+
+@router.post("/courses/{training_id}/request-changes", summary="Admin — Request Changes on Course")
+def request_changes_course(
+    training_id: UUID,
+    payload: TrainingAdminActionRequest,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(get_current_super_admin),
+):
+    return update_training_status_service(db, training_id, "needs_revision", _admin, notes=payload.reason)
+
+@router.post("/courses/{training_id}/publish", summary="Admin — Publish Approved Course")
+def publish_course(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return update_training_status_service(db, training_id, "published", _admin)
+
 # Programs admin queue
 @router.get("/programs/pending", summary="Admin — Pending Programs Queue")
 def admin_pending_programs(page: int = Query(DEFAULT_PAGE, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE), enterprise_id: UUID | None = Query(None), category: str | None = Query(None), db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):

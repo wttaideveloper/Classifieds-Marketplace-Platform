@@ -45,6 +45,9 @@ _safe_include(
 _safe_include("app.api.v1.endpoints.event", prefix="/events", tags=["Events"])
 _safe_include("app.api.v1.endpoints.event_category", prefix="/event-categories", tags=["Event Categories"])
 _safe_include("app.api.v1.endpoints.training", prefix="/trainings", tags=["Trainings"])
+# Courses — alias of Trainings. Same model, same table, same data; "Course" is
+# just the frontend/product name for a Training. No separate entity.
+_safe_include("app.api.v1.endpoints.training", prefix="/courses", tags=["Courses"])
 _safe_include("app.api.v1.endpoints.program", prefix="/programs", tags=["Programs"])
 
 # CMS — Blogs
