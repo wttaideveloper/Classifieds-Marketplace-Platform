@@ -29,3 +29,33 @@ def test_http_only_web_session_cookie_authenticates_rest_request():
     assert response.status_code == 200
     assert response.json()["id"] == "550e8400-e29b-41d4-a716-446655440000"
     assert response.json()["role"] == "provider"
+
+
+def test_fallback_session_cookie_authenticates_when_primary_cookie_absent():
+    """Reproduces the reported incident: the browser carries he_session /
+    he_remember / refresh_token but never access_token — the fallback cookie
+    name (configured via WEB_SESSION_COOKIE_FALLBACK_NAMES) must still
+    authenticate the request instead of 401ing."""
+    token = jwt.encode(
+        {"id": "550e8400-e29b-41d4-a716-446655440001", "role": "admin"},
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+    )
+
+    response = client.get(
+        "/me",
+        cookies={
+            "he_session": token,
+            "he_remember": "irrelevant",
+            "refresh_token": "irrelevant",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "550e8400-e29b-41d4-a716-446655440001"
+    assert response.json()["role"] == "admin"
+
+
+def test_no_recognized_session_cookie_still_401s():
+    response = client.get("/me", cookies={"unrelated_cookie": "value"})
+    assert response.status_code == 401

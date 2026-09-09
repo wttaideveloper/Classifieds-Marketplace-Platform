@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 
 from app.core.config import settings
-from app.core.dependencies import get_current_user, get_current_web_session_user
+from app.core.dependencies import get_current_user, get_current_web_session_user, get_web_session_cookie_token
 from app.core.security import create_access_token, create_chat_access_token
 from app.core.token_auth import resolve_user_from_token
 from app.schemas.auth_schema import (
@@ -188,7 +188,7 @@ def list_tenants_endpoint(
 )
 def get_session(request: Request):
     # Try cookie first, then Authorization header (same as get_current_user but non-throwing)
-    token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+    token = get_web_session_cookie_token(request)
     if not token:
         auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
         if auth_header and auth_header.lower().startswith("bearer "):

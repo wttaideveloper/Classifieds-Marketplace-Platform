@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # is a Keycloak access token and is accepted by REST and Socket.IO in
     # addition to Authorization: Bearer for mobile/API clients.
     WEB_SESSION_COOKIE_NAME: str = "access_token"
+    # Comma-separated additional cookie names to check (in order) when
+    # WEB_SESSION_COOKIE_NAME is absent — covers a WebAuth provider issuing
+    # the session under a different cookie name (e.g. a rename/migration).
+    WEB_SESSION_COOKIE_FALLBACK_NAMES: str = "he_session"
     # Invigorate Auth internal API (tenant user lookup for bulk notifications)
     INVIGORATE_AUTH_BASE_URL: str = "https://admin.apis.invigor8.app"
     INVIGORATE_INTERNAL_API_KEY: str = ""
@@ -91,6 +95,20 @@ class Settings(BaseSettings):
     @property
     def celery_result_backend(self) -> str:
         return self.CELERY_RESULT_BACKEND.strip() or self.celery_broker_url
+
+    @property
+    def web_session_cookie_names(self) -> list[str]:
+        """Ordered cookie names to check for the WebAuth session token: the
+        configured primary name first, then WEB_SESSION_COOKIE_FALLBACK_NAMES
+        (comma separated) for a provider issuing the session under a
+        different cookie name."""
+        names = [self.WEB_SESSION_COOKIE_NAME]
+        names += [
+            name.strip()
+            for name in self.WEB_SESSION_COOKIE_FALLBACK_NAMES.split(",")
+            if name.strip() and name.strip() != self.WEB_SESSION_COOKIE_NAME
+        ]
+        return names
 
     @property
     def invigorate_internal_api_configured(self) -> bool:

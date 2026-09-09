@@ -3,7 +3,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_current_super_admin, get_current_user, require_roles
+from app.core.dependencies import (
+    get_current_admin,
+    get_current_super_admin,
+    get_current_user,
+    get_web_session_cookie_token,
+    require_roles,
+)
 from app.core.config import settings
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
@@ -199,7 +205,7 @@ def get_active_event_form_configuration(
     if auth_header and auth_header.lower().startswith("bearer "):
         access_token = auth_header.split(" ", 1)[1].strip()
     if not access_token:
-        access_token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+        access_token = get_web_session_cookie_token(request)
 
     return ActiveFormConfigurationResponse.model_validate(
         get_active_form_configuration_service(db, current_user, access_token=access_token)
@@ -258,7 +264,7 @@ def update_status(
     if auth_header and auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
     if not token:
-        token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+        token = get_web_session_cookie_token(request)
 
     resolved_super = resolve_platform_super_admin_user(current_user, access_token=token)
     if resolved_super:

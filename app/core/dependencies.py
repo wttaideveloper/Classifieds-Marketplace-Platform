@@ -33,13 +33,24 @@ def get_dev_user() -> dict:
     }
 
 
+def get_web_session_cookie_token(request: Request) -> str | None:
+    """Read the WebAuth session token from cookies, trying the configured
+    primary cookie name first, then any configured fallback names — covers a
+    WebAuth provider issuing the session under a different cookie name."""
+    for name in settings.web_session_cookie_names:
+        value = request.cookies.get(name)
+        if value:
+            return value
+    return None
+
+
 def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ):
     token = credentials.credentials if credentials and credentials.credentials else None
     if not token:
-        token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+        token = get_web_session_cookie_token(request)
 
     if not token:
         if settings.is_production or not settings.ENABLE_DEV_TOKEN:
@@ -61,7 +72,7 @@ def get_current_user(
 
 def get_current_web_session_user(request: Request) -> dict:
     """Authenticate only from the HttpOnly cookie set by Web complete-login."""
-    token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+    token = get_web_session_cookie_token(request)
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -111,7 +122,7 @@ def get_current_super_admin(
     if credentials_header and credentials_header.lower().startswith("bearer "):
         token = credentials_header.split(" ", 1)[1].strip()
     if not token:
-        token = request.cookies.get(settings.WEB_SESSION_COOKIE_NAME)
+        token = get_web_session_cookie_token(request)
 
     resolved = resolve_platform_super_admin_user(current_user, access_token=token)
     if resolved:
