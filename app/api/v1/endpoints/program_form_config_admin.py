@@ -6,21 +6,21 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import require_event_form_builder_admin
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_form_config_schema import (
+from app.schemas.program_form_config_schema import (
     ActivationResponse,
     AssignmentPutRequest,
     AssignmentResponse,
-    TrainingFormAuditEntry,
-    TrainingFormConfigurationCreate,
-    TrainingFormConfigurationCreateResponse,
-    TrainingFormConfigurationDetail,
-    TrainingFormConfigurationSummary,
-    TrainingFormConfigurationUpdate,
+    ProgramFormAuditEntry,
+    ProgramFormConfigurationCreate,
+    ProgramFormConfigurationCreateResponse,
+    ProgramFormConfigurationDetail,
+    ProgramFormConfigurationSummary,
+    ProgramFormConfigurationUpdate,
     ConfigurationVersionResponse,
     FieldRegistryEntry,
     PublishConfigurationResponse,
 )
-from app.services.training_form_config_service import (
+from app.services.program_form_config_service import (
     activate_configuration_service,
     create_configuration_service,
     deactivate_configuration_service,
@@ -36,9 +36,9 @@ from app.services.training_form_config_service import (
     retire_configuration_service,
     update_configuration_service,
 )
-from app.services.training_form_registry import get_field_registry
+from app.services.program_form_registry import get_field_registry
 
-router = APIRouter(tags=["Training Form Configuration (Super Admin)"])
+router = APIRouter(tags=["Program Form Configuration (Super Admin)"])
 
 _BUILDER_AUTH = Depends(require_event_form_builder_admin)
 
@@ -46,7 +46,7 @@ _BUILDER_AUTH = Depends(require_event_form_builder_admin)
 @router.get(
     "/field-registry",
     response_model=list[FieldRegistryEntry],
-    summary="Authoritative Training core field registry",
+    summary="Authoritative Program core field registry",
 )
 def field_registry(_: dict = _BUILDER_AUTH):
     return get_field_registry()
@@ -54,8 +54,8 @@ def field_registry(_: dict = _BUILDER_AUTH):
 
 @router.get(
     "/",
-    response_model=list[TrainingFormConfigurationSummary],
-    summary="List Training form configurations",
+    response_model=list[ProgramFormConfigurationSummary],
+    summary="List Program form configurations",
 )
 def list_configurations(
     status_filter: str | None = Query(None, alias="status", description="draft|published|active|archived"),
@@ -70,12 +70,12 @@ def list_configurations(
 
 @router.post(
     "/",
-    response_model=TrainingFormConfigurationCreateResponse,
+    response_model=ProgramFormConfigurationCreateResponse,
     status_code=201,
-    summary="Create Training form configuration (draft v1)",
+    summary="Create Program form configuration (draft v1)",
 )
 def create_configuration(
-    payload: TrainingFormConfigurationCreate,
+    payload: ProgramFormConfigurationCreate,
     db: Session = Depends(get_db),
     current_user: dict = _BUILDER_AUTH,
 ):
@@ -84,7 +84,7 @@ def create_configuration(
 
 @router.get(
     "/{config_id}",
-    response_model=TrainingFormConfigurationDetail,
+    response_model=ProgramFormConfigurationDetail,
     summary="Get configuration with draft/published versions",
 )
 def get_configuration(
@@ -97,11 +97,11 @@ def get_configuration(
 
 @router.patch(
     "/{config_id}",
-    response_model=TrainingFormConfigurationDetail,
+    response_model=ProgramFormConfigurationDetail,
     summary="Update draft configuration (forks new draft if editing published)",
 )
 def update_configuration(
-    payload: TrainingFormConfigurationUpdate,
+    payload: ProgramFormConfigurationUpdate,
     config_id: UUID = Path(...),
     db: Session = Depends(get_db),
     current_user: dict = _BUILDER_AUTH,
@@ -232,7 +232,7 @@ def put_assignments(
 
 @router.get(
     "/{config_id}/audit",
-    response_model=list[TrainingFormAuditEntry],
+    response_model=list[ProgramFormAuditEntry],
     summary="Configuration audit history",
 )
 def list_audit(

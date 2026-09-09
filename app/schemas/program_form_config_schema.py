@@ -114,20 +114,20 @@ class ConfigurationVersionResponse(BaseModel):
     published_at: datetime | None = None
 
 
-class TrainingFormConfigurationCreate(BaseModel):
+class ProgramFormConfigurationCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     scope: str = Field("global", description="global|selective")
     sections: list[FormSectionInput] = Field(default_factory=list)
 
 
-class TrainingFormConfigurationUpdate(BaseModel):
+class ProgramFormConfigurationUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     sections: list[FormSectionInput] | None = None
 
 
-class TrainingFormConfigurationSummary(BaseModel):
+class ProgramFormConfigurationSummary(BaseModel):
     id: UUID
     name: str
     description: str | None = None
@@ -142,12 +142,12 @@ class TrainingFormConfigurationSummary(BaseModel):
     published_at: datetime | None = None
 
 
-class TrainingFormConfigurationDetail(TrainingFormConfigurationSummary):
+class ProgramFormConfigurationDetail(ProgramFormConfigurationSummary):
     draft_version: ConfigurationVersionResponse | None = None
     published_version: ConfigurationVersionResponse | None = None
 
 
-class TrainingFormConfigurationCreateResponse(TrainingFormConfigurationSummary):
+class ProgramFormConfigurationCreateResponse(ProgramFormConfigurationSummary):
     draft_version: ConfigurationVersionResponse
 
 
@@ -202,7 +202,7 @@ class ActiveFormConfigurationResponse(BaseModel):
     configuration_version: str | None = None
 
 
-class TrainingFormAuditEntry(BaseModel):
+class ProgramFormAuditEntry(BaseModel):
     id: UUID
     configuration_id: UUID | None = None
     version_id: UUID | None = None

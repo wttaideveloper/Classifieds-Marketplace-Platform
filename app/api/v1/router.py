@@ -127,6 +127,17 @@ _safe_include(
     prefix="/admin/training-form-configurations",
     tags=["Training Form Configuration (Super Admin)"],
 )
+# Program form builder — preferred + legacy admin paths (mirror Training/Events)
+_safe_include(
+    "app.api.v1.endpoints.program_form_config_admin",
+    prefix="/programs/form-configuration/admin",
+    tags=["Program Form Configuration (Super Admin)"],
+)
+_safe_include(
+    "app.api.v1.endpoints.program_form_config_admin",
+    prefix="/admin/program-form-configurations",
+    tags=["Program Form Configuration (Super Admin)"],
+)
 
 # Cart + Orders (full cart: add multiple → view → checkout together)
 _safe_include("app.api.v1.endpoints.cart", prefix="/cart", tags=["Cart"])

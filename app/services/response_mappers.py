@@ -497,6 +497,9 @@ def _program_base_fields(p) -> dict:
         "phases": p.phases,
         "goals": getattr(p, "goals", None) or {},
         "last_admin_notes": getattr(p, "last_admin_notes", None),
+        "custom_values": getattr(p, "custom_values", None) or [],
+        "form_configuration_id": getattr(p, "form_configuration_id", None),
+        "form_configuration_version_id": getattr(p, "form_configuration_version_id", None),
     }
 def map_training_list_item(t) -> dict:
     return _training_base_fields(t)

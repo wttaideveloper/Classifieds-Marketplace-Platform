@@ -1,7 +1,7 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
-from app.core.dependencies import get_current_user, require_roles
+from app.core.dependencies import get_current_user, get_web_session_cookie_token, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.program_schema import ActivityCreate, CheckinCreate, EnrolmentCreate, PhaseCreate, PhaseResponse, ProgramAvailabilityResponse, ProgramCreate, ProgramDetailResponse, ProgramGoalsResponse, ProgramPaginatedResponse, ProgramResponse, ProgramStatusUpdate, ProgramUpdate, ReviewCreate, SurveyCreate, SurveyResponse
@@ -34,6 +34,48 @@ def my_enrolments(status: str | None = Query(None, description="enrolled|complet
     if status: q = q.filter(ProgramEnrolment.status==status)
     rows = q.order_by(ProgramEnrolment.created_at.desc()).all()
     return [{"program_id": str(r.program_id), "status": r.status, "enrolment_id": str(r.id), "created_at": r.created_at.isoformat()} for r in rows]
+
+@router.get(
+    "/form-configuration/active",
+    summary="Resolved active Program form for authenticated Enterprise Admin",
+    description=(
+        "Authenticate → resolve tenant → active selective assignment → else active global. "
+        "Returns 404 when none (frontend uses static Create Program wizard fallback)."
+    ),
+)
+def get_active_program_form_configuration(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    from app.schemas.program_form_config_schema import ActiveFormConfigurationResponse
+    from app.services.program_form_config_service import get_active_form_configuration_service
+
+    access_token = None
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        access_token = auth_header.split(" ", 1)[1].strip()
+    if not access_token:
+        access_token = get_web_session_cookie_token(request)
+
+    return ActiveFormConfigurationResponse.model_validate(
+        get_active_form_configuration_service(db, current_user, access_token=access_token)
+    )
+
+
+@router.get(
+    "/{program_id}/form-configuration",
+    summary="Historical Program form version used by this Program",
+)
+def get_program_form_configuration(
+    program_id: UUID = Path(..., description="Program ID"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    from app.schemas.program_form_config_schema import ActiveFormConfigurationResponse
+    from app.services.program_form_config_service import get_program_form_configuration_service
+    return ActiveFormConfigurationResponse.model_validate(get_program_form_configuration_service(db, program_id, current_user))
+
 
 @router.get("/{program_id}", response_model=ProgramDetailResponse, summary="Get program detail")
 def get_program(program_id: UUID=Path(...), db: Session=Depends(get_db)):
@@ -212,7 +254,7 @@ def list_waitlist(program_id: UUID, db: Session=Depends(get_db), current_user: d
     rows=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.status=="waitlisted").all()
     return [{"id": str(r.id), "participant_name": r.participant_name, "participant_email": r.participant_email, "created_at": r.created_at.isoformat()} for r in rows]
 @router.get("/{program_id}/availability", response_model=ProgramAvailabilityResponse, summary="Available seats & waitlist")
-def availability(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"]))):
+def availability(program_id: UUID, db: Session=Depends(get_db)):
     return get_program_availability_service(db, program_id)
 
 @router.get("/{program_id}/content", summary="Secure enrolled content — phases/files gated")
@@ -261,6 +303,8 @@ def list_checkins(program_id: UUID, participant_email: str | None = Query(None),
 @router.get("/{program_id}/progress")
 def progress(program_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = participant_email or (current_user.get("email") if current_user else None)
+    if participant_email and current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Not authorized to view this participant's progress")
     return get_program_progress_service(db, program_id, participant_email=email)
 @router.get("/{program_id}/dashboards/participant")
 def dash_participant(program_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -278,7 +322,12 @@ def update_goals(program_id: UUID, payload: dict, db: Session=Depends(get_db), c
     from app.services.program_service import update_program_goals_service
     return update_program_goals_service(db, program_id, payload.get("goals") or payload)
 @router.get("/{program_id}/certificate", summary="Completion certificate / provider acknowledgement")
-def get_certificate(program_id: UUID, participant_email: str = Query(...), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_certificate(program_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    participant_email = participant_email or (current_user.get("email") if current_user else None)
+    if not participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=400, detail="participant_email required")
+    if current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Not authorized to view this certificate")
     from app.services.program_service import get_program_certificate_service
     return get_program_certificate_service(db, program_id, participant_email)
 @router.patch("/{program_id}/enrolments/{enrol_id}/status", summary="Completion/withdrawal/cancellation/extension with new_end_date & withdrawal_reason")

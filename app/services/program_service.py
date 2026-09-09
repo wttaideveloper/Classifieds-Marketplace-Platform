@@ -22,7 +22,18 @@ def _validate(db, eid, lid, current_user: dict | None = None):
         if not loc: raise HTTPException(404, "Location not found")
 
 def create_program_service(db, data, current_user: dict | None = None):
-    _validate(db, data.enterprise_id, data.location_id, current_user); return ProgramResponse.model_validate(map_program_write(create_program(db, data)))
+    from app.services.program_form_config_service import apply_form_configuration_to_program_data
+
+    form_meta = apply_form_configuration_to_program_data(db, data, current_user or {})
+    _validate(db, data.enterprise_id, data.location_id, current_user)
+    payload = data.to_model_data()
+    payload.update(form_meta)
+    from app.models.program_model import Program
+    obj = Program(**payload)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return ProgramResponse.model_validate(map_program_write(obj))
 def get_programs_service(db, **kw):
     items,total=get_programs(db, **kw); return ProgramPaginatedResponse(items=[ProgramListItemResponse.model_validate(map_program_list_item(i)) for i in items], pagination=build_pagination_meta(total, kw.get("page",1), kw.get("page_size",20)))
 def get_program_service(db, pid):
@@ -32,13 +43,22 @@ def get_program_service(db, pid):
     detail["phases"] = normalize_program_phases(obj.phases)
     return ProgramDetailResponse.model_validate(detail)
 def update_program_service(db, pid, data, current_user: dict | None = None):
+    from app.services.program_form_config_service import apply_form_configuration_to_program_update
+
     obj=get_program_by_id(db, pid, include_deleted=True)
     if not obj or obj.is_deleted: raise HTTPException(404, "Program not found")
     if current_user and current_user.get("role") not in ("admin", "super_admin"):
         user_tid = current_user.get("tenant_id")
         if user_tid and obj.tenant_id and str(obj.tenant_id) != str(user_tid):
             raise HTTPException(403, "Not authorized for this tenant")
-    return ProgramResponse.model_validate(map_program_write(update_program(db, obj, data)))
+    extra = apply_form_configuration_to_program_update(db, obj, data, current_user or {})
+    updated = update_program(db, obj, data)
+    if extra:
+        for key, val in extra.items():
+            setattr(updated, key, val)
+        db.commit()
+        db.refresh(updated)
+    return ProgramResponse.model_validate(map_program_write(updated))
 def delete_program_service(db, pid, current_user: dict | None = None):
     obj=get_program_by_id(db, pid)
     if not obj: raise HTTPException(404, "Program not found")

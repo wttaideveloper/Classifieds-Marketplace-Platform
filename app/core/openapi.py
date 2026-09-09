@@ -251,6 +251,7 @@ PUBLIC_OPERATIONS: set[tuple[str, str]] = {
     ("get", "/health"),
     ("get", "/api/v1/cms/blogs"),
     ("get", "/api/v1/cms/blogs/{slug}"),
+    ("get", "/api/v1/programs/{program_id}/availability"),
 }
 
 

@@ -1,7 +1,7 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
-from app.core.dependencies import get_current_user, require_roles
+from app.core.dependencies import get_current_user, get_web_session_cookie_token, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingStatusUpdate, TrainingUpdate
@@ -30,12 +30,23 @@ def list_trainings(search: str | None = Query(None), category: str | None = Quer
     ),
 )
 def get_active_training_form_configuration(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_roles(["admin", "provider"])),
 ):
     from app.schemas.training_form_config_schema import ActiveFormConfigurationResponse
     from app.services.training_form_config_service import get_active_form_configuration_service
-    return ActiveFormConfigurationResponse.model_validate(get_active_form_configuration_service(db, current_user))
+
+    access_token = None
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        access_token = auth_header.split(" ", 1)[1].strip()
+    if not access_token:
+        access_token = get_web_session_cookie_token(request)
+
+    return ActiveFormConfigurationResponse.model_validate(
+        get_active_form_configuration_service(db, current_user, access_token=access_token)
+    )
 
 
 @router.get(
@@ -53,7 +64,7 @@ def get_training_form_configuration(
 
 
 @router.get("/{training_id}", response_model=TrainingDetailResponse, summary="Get training detail")
-def get_training(training_id: UUID = Path(...), db: Session = Depends(get_db)):
+def get_training(training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return get_training_service(db, training_id)
 
 @router.put("/{training_id}", response_model=TrainingResponse)
@@ -436,7 +447,10 @@ def live_attendance(training_id: UUID, session_id: str, payload: dict, db: Sessi
     return record_live_attendance_service(db, training_id, session_id, email)
 
 @router.get("/{training_id}/certificate", summary="Digital completion certificate")
-def get_certificate(training_id: UUID, participant_email: str = Query(...), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_certificate(training_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    participant_email = participant_email or (current_user.get("email") if current_user else None)
+    if not participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=400, detail="participant_email required")
     # Only owner or admin/provider can fetch certificate
     if current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:
         from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Not authorized to view this certificate")
@@ -444,8 +458,10 @@ def get_certificate(training_id: UUID, participant_email: str = Query(...), db: 
     return get_certificate_service(db, training_id, participant_email)
 
 @router.get("/{training_id}/progress")
-def progress(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    email = current_user.get("email") if current_user else None
+def progress(training_id: UUID, participant_email: str | None = Query(None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    email = participant_email or (current_user.get("email") if current_user else None)
+    if participant_email and current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Not authorized to view this participant's progress")
     return get_training_progress_service(db, training_id, participant_email=email)
 
 @router.post("/{training_id}/live-sessions", status_code=201)

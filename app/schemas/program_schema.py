@@ -23,6 +23,14 @@ class ProgramCreate(BaseModel):
     currency: str | None = "INR"
     capacity: str | None = None
     status: str = Field("draft")
+    form_configuration_version_id: UUID | None = Field(
+        None,
+        description="Published Program form configuration version to render/validate this Program against. Resolved from the active configuration when omitted.",
+    )
+    custom_values: list | dict | None = Field(
+        None,
+        description="Values for custom fields defined on the resolved form configuration. Accepts either {field_key: value} or [{field_id, value}].",
+    )
     def to_model_data(self): return {"tenant_id": self.tenant_id, "enterprise_id": self.enterprise_id, "location_id": self.location_id, "title": self.title, "description": self.description, "category": self.category, "provider_id": self.provider_id, "duration_weeks": self.duration_weeks, "eligibility": self.eligibility or {}, "start_date": self.start_date, "end_date": self.end_date, "enrolment_start": self.enrolment_start, "enrolment_end": self.enrolment_end, "enrol_type": self.enrol_type, "delivery_mode": self.delivery_mode, "price": self.price, "currency": self.currency, "capacity": self.capacity, "status": self.status}
 
 class ProgramUpdate(BaseModel):
@@ -42,7 +50,13 @@ class ProgramUpdate(BaseModel):
     currency: str | None = None
     capacity: str | None = None
     status: str | None = None
-    def to_model_data(self): return self.model_dump(exclude_unset=True)
+    form_configuration_version_id: UUID | None = None
+    custom_values: list | dict | None = None
+    def to_model_data(self):
+        data = self.model_dump(exclude_unset=True)
+        data.pop("custom_values", None)
+        data.pop("form_configuration_version_id", None)
+        return data
 
 class ProgramResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -72,6 +86,9 @@ class ProgramResponse(BaseModel):
     phases: list | None = None
     goals: dict | None = None
     last_admin_notes: str | None = None
+    custom_values: list | None = None
+    form_configuration_id: UUID | None = None
+    form_configuration_version_id: UUID | None = None
 
 class ProgramListItemResponse(ProgramResponse): pass
 class ProgramDetailResponse(ProgramResponse):
