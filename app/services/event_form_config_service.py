@@ -447,7 +447,7 @@ def deactivate_configuration_service(db: Session, config_id: UUID, current_user:
     config.is_active = False
     _audit(db, configuration_id=config.id, version_id=None, action="deactivated", actor_id=_actor(current_user))
     db.commit()
-    return {"id": config.id, "is_active": False}
+    return {"id": config.id, "is_active": False, "status": config.status}
 
 
 def retire_configuration_service(db: Session, config_id: UUID, current_user: dict) -> dict:
@@ -675,7 +675,10 @@ def _resolve_active_form_configuration(
     db: Session,
     tenant_id: UUID | None,
 ) -> tuple[EventFormConfiguration, EventFormConfigurationVersion]:
-    """selective tenant config → global config → legacy fallback."""
+    """active+published selective assigned to tenant → active+published global
+    → active+published legacy → 404. The seeded legacy config is a fallback
+    candidate like any other, not an unconditional last resort — if a Super
+    Admin has deliberately deactivated it, it must not be served."""
     if tenant_id is not None:
         resolved = _active_config_for_tenant(db, tenant_id)
         if resolved:
@@ -695,7 +698,11 @@ def _resolve_active_form_configuration(
             version = _get_published_version(db, global_config.id)
             if version:
                 return global_config, version
-    return _legacy_config_version(db)
+
+    legacy = _active_legacy_config_version(db)
+    if legacy:
+        return legacy
+    raise HTTPException(status_code=404, detail="No active Event form configuration found")
 
 
 def _active_config_for_tenant(db: Session, tenant_id: UUID) -> tuple[EventFormConfiguration, EventFormConfigurationVersion] | None:
@@ -729,7 +736,27 @@ def _active_config_for_tenant(db: Session, tenant_id: UUID) -> tuple[EventFormCo
     return None
 
 
+def _active_legacy_config_version(db: Session) -> tuple[EventFormConfiguration, EventFormConfigurationVersion] | None:
+    """The seeded legacy config, but only when it's actually active+published
+    — used by the active-resolution path, where a deactivated legacy config
+    must not be silently served as if it were still the default."""
+    config = db.query(EventFormConfiguration).filter(
+        EventFormConfiguration.id == UUID(LEGACY_CONFIGURATION_ID),
+        EventFormConfiguration.is_active.is_(True),
+        EventFormConfiguration.status == "published",
+    ).first()
+    if not config:
+        return None
+    version = _get_published_version(db, config.id)
+    if not version:
+        return None
+    return config, version
+
+
 def _legacy_config_version(db: Session) -> tuple[EventFormConfiguration, EventFormConfigurationVersion]:
+    """Unconditional legacy lookup — used only for reconstructing the
+    historical form an existing Event/draft was created against, where the
+    legacy config's current is_active state is irrelevant."""
     config = db.query(EventFormConfiguration).filter(EventFormConfiguration.id == UUID(LEGACY_CONFIGURATION_ID)).first()
     version = db.query(EventFormConfigurationVersion).filter(EventFormConfigurationVersion.id == UUID(LEGACY_VERSION_ID)).first()
     if config and version:

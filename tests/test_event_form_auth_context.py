@@ -1,5 +1,5 @@
 from uuid import uuid4
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.core.auth_context import resolve_auth_tenant_id, resolve_auth_tenant_id_with_db
 
@@ -165,6 +165,63 @@ def test_resolve_auth_tenant_id_with_db_ignores_invigorate_without_access_token(
     assert called["count"] == 0
 
 
+def test_resolve_active_form_configuration_does_not_serve_inactive_legacy(monkeypatch):
+    """Reproduces the reported bug: every configuration (selective, global,
+    and the seeded Legacy/Default) is inactive. The resolver must not
+    silently fall back to the legacy config just because it exists — it must
+    report no active configuration."""
+    from fastapi import HTTPException
+    from app.services import event_form_config_service as svc
+
+    db = MagicMock()
+
+    def query_side_effect(model):
+        q = MagicMock()
+        if model.__name__ == "EventFormAssignment":
+            q.filter.return_value.first.return_value = None
+        elif model.__name__ == "EventFormConfiguration":
+            # No config (global or the legacy one) satisfies is_active+published.
+            q.filter.return_value.first.return_value = None
+            q.filter.return_value.order_by.return_value.first.return_value = None
+        return q
+
+    db.query.side_effect = query_side_effect
+
+    try:
+        svc._resolve_active_form_configuration(db, tenant_id=None)
+        assert False, "expected HTTPException(404) — resolver served the inactive legacy config"
+    except HTTPException as exc:
+        assert exc.status_code == 404
+
+
+def test_resolve_active_form_configuration_uses_legacy_only_when_active(monkeypatch):
+    """The legacy config IS still usable — but only while it's actually
+    active+published, same as any other fallback candidate."""
+    from app.services import event_form_config_service as svc
+    from uuid import UUID as _UUID
+
+    legacy_config = MagicMock(id=_UUID(svc.LEGACY_CONFIGURATION_ID))
+    legacy_version = MagicMock()
+
+    db = MagicMock()
+
+    def query_side_effect(model):
+        q = MagicMock()
+        if model.__name__ == "EventFormAssignment":
+            q.filter.return_value.first.return_value = None
+        elif model.__name__ == "EventFormConfiguration":
+            q.filter.return_value.first.return_value = legacy_config
+            q.filter.return_value.order_by.return_value.first.return_value = None
+        return q
+
+    db.query.side_effect = query_side_effect
+    monkeypatch.setattr(svc, "_get_published_version", lambda db, config_id, version_num=None: legacy_version)
+
+    config, version = svc._resolve_active_form_configuration(db, tenant_id=None)
+    assert config is legacy_config
+    assert version is legacy_version
+
+
 def test_get_active_form_configuration_resolves_selective_config_via_access_token(monkeypatch):
     """Reproduces the reported bug: WebAuth session has no local tenant claim, but the
     tenant resolved through the live Invigorate lookup has an active selective config."""
@@ -201,3 +258,27 @@ def test_get_active_form_configuration_resolves_selective_config_via_access_toke
 
     assert result == {"configuration_id": "selective", "scope": "selective"}
     assert str(seen_tenant_ids[0]) == tenant_id
+
+
+def test_deactivate_configuration_service_returns_all_response_model_fields():
+    """Reproduces the reported 500: the DB mutation (is_active=False) always
+    succeeded, but the returned dict was missing `status`, a required field
+    on ActivationResponse — FastAPI's response-model validation raised an
+    uncaught error after the commit had already landed."""
+    from app.schemas.event_form_config_schema import ActivationResponse
+    from app.services.event_form_config_service import deactivate_configuration_service
+
+    config_id = uuid4()
+    config = MagicMock(id=config_id, status="published")
+    db = MagicMock()
+
+    with patch(
+        "app.services.event_form_config_service._get_config_or_404", return_value=config
+    ):
+        result = deactivate_configuration_service(db, config_id, {"id": "admin-1"})
+
+    assert config.is_active is False
+    # Must not raise — this is exactly what FastAPI's response_model does on return.
+    validated = ActivationResponse.model_validate(result)
+    assert validated.status == "published"
+    assert validated.is_active is False
