@@ -556,6 +556,7 @@ def put_assignments_service(db: Session, config_id: UUID, payload, current_user:
         if row.tenant_id not in new_tenant_ids:
             db.delete(row)
             _audit(db, configuration_id=config_id, version_id=None, action="tenant_removed", actor_id=_actor(current_user), before={"tenant_id": str(row.tenant_id)})
+    db.flush()
 
     for tid, eid in targets:
         conflict = db.query(EventFormAssignment).filter(EventFormAssignment.tenant_id == tid).first()
@@ -567,6 +568,7 @@ def put_assignments_service(db: Session, config_id: UUID, payload, current_user:
                     detail=f"Tenant {tid} already assigned to active configuration '{other.name}'. Deactivate or reassign first.",
                 )
             db.delete(conflict)
+            db.flush()
         existing_same = db.query(EventFormAssignment).filter(EventFormAssignment.configuration_id == config_id, EventFormAssignment.tenant_id == tid).first()
         if existing_same:
             existing_same.enterprise_id = eid

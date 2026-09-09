@@ -145,6 +145,9 @@ _safe_include(
 # Cart + Orders (full cart: add multiple → view → checkout together)
 _safe_include("app.api.v1.endpoints.cart", prefix="/cart", tags=["Cart"])
 
+# Saved addresses (per-user address book, e.g. for checkout)
+_safe_include("app.api.v1.endpoints.address", prefix="/addresses", tags=["Addresses"])
+
 # Authentication + system
 _safe_include("app.api.v1.endpoints.auth", prefix="/auth", tags=["Authentication"])
 _safe_include("app.api.v1.endpoints.system", prefix="", tags=["System"])
