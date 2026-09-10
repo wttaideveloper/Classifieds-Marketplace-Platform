@@ -126,11 +126,68 @@ def test_get_active_form_without_tenant_falls_back_to_legacy(monkeypatch):
     assert result["configuration_id"] == "cfg"
 
 
-def test_resolve_auth_tenant_id_with_db_falls_back_to_invigorate_auth_me(monkeypatch):
-    """Enterprise Admin WebAuth tokens often carry no tenant claim — resolve via the
-    same live Invigorate /auth/me lookup /tenant/me performs, not a frontend value."""
+def test_fetch_tenant_me_profile_parses_the_exact_reported_response_shape(monkeypatch):
+    """The exact /api/v1/tenant/me payload confirmed by the report:
+    {"message": ..., "data": {"id": "<tenant_id>", "slug": "tester-shop", ...}}."""
+    from app.services.invigorate_auth_client import fetch_tenant_me_profile
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "message": "Tenant retrieved successfully",
+                "data": {
+                    "id": "2122fbf0-64cd-4e3b-8ccb-22913912f1ea",
+                    "slug": "tester-shop",
+                    "name": "tester shop",
+                    "plan": "starter",
+                    "status": "active",
+                },
+            }
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _Resp())
+
+    profile = fetch_tenant_me_profile("session-cookie-value")
+    assert profile["id"] == "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"
+    assert profile["slug"] == "tester-shop"
+
+
+def test_resolve_auth_tenant_id_with_db_falls_back_to_invigorate_tenant_me(monkeypatch):
+    """Reproduces the confirmed root cause: /auth/me is a user-profile endpoint
+    with no tenant_id field anywhere in its response, so the fallback must use
+    /api/v1/tenant/me (data.id) instead — the same lookup the Web frontend's
+    own /tenant/me call performs."""
     import app.services.invigorate_auth_client as auth_client
 
+    monkeypatch.setattr(
+        auth_client,
+        "fetch_tenant_me_profile",
+        lambda token: {"id": "2122fbf0-64cd-4e3b-8ccb-22913912f1ea", "slug": "tester-shop"},
+    )
+    monkeypatch.setattr(
+        auth_client,
+        "fetch_auth_me_profile",
+        lambda token: (_ for _ in ()).throw(AssertionError("should not fall through to /auth/me when /tenant/me succeeds")),
+    )
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+
+    resolved = resolve_auth_tenant_id_with_db(
+        db, {"role": "admin", "id": "user-1"}, access_token="session-cookie-value"
+    )
+    assert resolved == "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"
+
+
+def test_resolve_auth_tenant_id_with_db_falls_back_to_invigorate_auth_me_when_tenant_me_empty(monkeypatch):
+    """/auth/me stays as a secondary fallback for when /tenant/me itself comes up empty."""
+    import app.services.invigorate_auth_client as auth_client
+
+    monkeypatch.setattr(auth_client, "fetch_tenant_me_profile", lambda token: None)
     monkeypatch.setattr(
         auth_client,
         "fetch_auth_me_profile",
@@ -155,6 +212,7 @@ def test_resolve_auth_tenant_id_with_db_ignores_invigorate_without_access_token(
         called["count"] += 1
         return {"tenant_id": "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"}
 
+    monkeypatch.setattr(auth_client, "fetch_tenant_me_profile", _fail_if_called)
     monkeypatch.setattr(auth_client, "fetch_auth_me_profile", _fail_if_called)
 
     db = MagicMock()
@@ -162,6 +220,7 @@ def test_resolve_auth_tenant_id_with_db_ignores_invigorate_without_access_token(
 
     resolved = resolve_auth_tenant_id_with_db(db, {"role": "admin", "id": "user-1"})
     assert resolved is None
+    assert called["count"] == 0
     assert called["count"] == 0
 
 

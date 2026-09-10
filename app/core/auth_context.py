@@ -105,9 +105,12 @@ def resolve_auth_tenant_id_with_db(
     Enterprise Admin WebAuth session tokens frequently carry no tenant claim at
     all (Keycloak issues them without a tenant_id/membership claim for this
     login flow). When ``access_token`` is supplied and local claim resolution
-    comes up empty, fall back to a live Invigorate ``GET /api/v1/auth/me`` call
-    with that same session token/cookie — the identical server-side lookup
-    ``/tenant/me`` performs — instead of trusting a frontend-supplied tenant_id.
+    comes up empty, fall back to a live Invigorate ``GET /api/v1/tenant/me``
+    call with that same session token/cookie — the exact same lookup the Web
+    frontend's own ``/tenant/me`` call performs, and the only one confirmed to
+    return the canonical tenant id (``data.id``). ``GET /api/v1/auth/me`` is
+    a user-profile endpoint with no direct tenant_id field and is kept only
+    as a secondary fallback in case a future response shape adds one.
     """
     tenant_id = resolve_auth_tenant_id(current_user)
     if tenant_id:
@@ -141,8 +144,14 @@ def resolve_auth_tenant_id_with_db(
             pass
 
     if access_token:
-        from app.services.invigorate_auth_client import fetch_auth_me_profile
+        from app.services.invigorate_auth_client import fetch_auth_me_profile, fetch_tenant_me_profile
 
+        tenant_profile = fetch_tenant_me_profile(access_token)
+        if isinstance(tenant_profile, dict) and tenant_profile.get("id"):
+            return str(tenant_profile["id"])
+
+        # Secondary fallback — kept in case /auth/me's response shape ever
+        # gains a direct tenant claim of its own.
         profile = fetch_auth_me_profile(access_token)
         for candidate in (profile, _unwrap_auth_me_profile(profile)):
             resolved = resolve_auth_tenant_id(candidate)

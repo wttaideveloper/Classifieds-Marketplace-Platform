@@ -129,6 +129,31 @@ def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
     return user_ids
 
 
+def fetch_tenant_me_profile(access_token: str) -> dict | None:
+    """Resolve the authenticated user's canonical tenant via Invigorate's
+    GET /api/v1/tenant/me — the same lookup the Web frontend's /tenant/me
+    call performs. Unlike /auth/me (a user profile with no direct tenant_id
+    field), this returns {"data": {"id": "<tenant_id>", "slug": ..., ...}} —
+    `id` here IS the tenant id, not a user id."""
+    if not access_token or not settings.INVIGORATE_AUTH_BASE_URL.strip():
+        return None
+
+    url = f"{settings.INVIGORATE_AUTH_BASE_URL.rstrip('/')}/api/v1/tenant/me"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        logger.exception("Failed to fetch Invigorate /tenant/me profile")
+        return None
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    return data if isinstance(data, dict) else None
+
+
 def fetch_auth_me_profile(access_token: str) -> dict | None:
     """Resolve the authenticated Invigorate user profile (isSuperAdmin, status, …)."""
     if not access_token or not settings.INVIGORATE_AUTH_BASE_URL.strip():

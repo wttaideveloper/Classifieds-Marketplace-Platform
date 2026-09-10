@@ -834,6 +834,46 @@ def _probe_auth_me(access_token: str | None) -> dict:
     return result
 
 
+def _probe_tenant_me(access_token: str | None) -> dict:
+    """Repeats the exact /tenant/me fallback call resolve_auth_tenant_id_with_db
+    now makes (the primary tenant-resolution fallback as of the fix for the
+    2026-09-10 case where /auth/me's response had no usable tenant_id field),
+    reporting the outcome instead of swallowing it on failure."""
+    from app.core.config import settings
+
+    if not access_token:
+        return {"attempted": False, "reason": "no access_token available"}
+    base = settings.INVIGORATE_AUTH_BASE_URL.strip()
+    if not base:
+        return {"attempted": False, "reason": "INVIGORATE_AUTH_BASE_URL not configured"}
+
+    import requests
+
+    url = f"{base.rstrip('/')}/api/v1/tenant/me"
+    try:
+        response = requests.get(url, headers={"Authorization": f"Bearer {access_token}"}, timeout=15)
+    except Exception as exc:
+        return {"attempted": True, "url": url, "error": f"{type(exc).__name__}: {exc}"}
+
+    result: dict = {"attempted": True, "url": url, "status_code": response.status_code}
+    if response.status_code == 404:
+        result["outcome"] = "404 — fetch_tenant_me_profile treats this as 'no tenant', returns None"
+        return result
+    try:
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        result["raw_body_snippet"] = response.text[:300]
+        return result
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    result["response_keys"] = list(payload.keys()) if isinstance(payload, dict) else f"non-dict: {type(payload).__name__}"
+    result["data_keys"] = list(data.keys()) if isinstance(data, dict) else None
+    result["tenant_id_extracted"] = str(data["id"]) if isinstance(data, dict) and data.get("id") else None
+    return result
+
+
 def _diagnose_active_resolution_failure(
     db: Session,
     tenant_uuid: UUID | None,
@@ -885,6 +925,11 @@ def _diagnose_active_resolution_failure(
             {"is_active": legacy_config.is_active, "status": legacy_config.status}
             if legacy_config is not None
             else None
+        ),
+        "tenant_me_fallback_probe": (
+            _probe_tenant_me(access_token)
+            if tenant_uuid is None and not local_tenant_claim and not local_enterprise_claim
+            else "skipped — local claims or resolved_tenant_id already present"
         ),
         "auth_me_fallback_probe": (
             _probe_auth_me(access_token)
