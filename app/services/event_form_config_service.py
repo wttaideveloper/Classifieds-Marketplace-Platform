@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from copy import deepcopy
@@ -13,6 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import resolve_auth_tenant_id_with_db
 from app.models.enterprise_model import Enterprise
+
+logger = logging.getLogger(__name__)
 from app.models.event_form_config_model import (
     EventFormAssignment,
     EventFormAudit,
@@ -708,16 +711,28 @@ def _resolve_active_form_configuration(
 def _active_config_for_tenant(db: Session, tenant_id: UUID) -> tuple[EventFormConfiguration, EventFormConfigurationVersion] | None:
     assignment = db.query(EventFormAssignment).filter(EventFormAssignment.tenant_id == tenant_id).first()
     if assignment:
+        raw_config = db.query(EventFormConfiguration).filter(
+            EventFormConfiguration.id == assignment.configuration_id,
+        ).first()
         config = db.query(EventFormConfiguration).filter(
             EventFormConfiguration.id == assignment.configuration_id,
             EventFormConfiguration.is_active.is_(True),
             EventFormConfiguration.status == "published",
             EventFormConfiguration.scope == "selective",
         ).first()
+        logger.info(
+            "Event selective assignment lookup: tenant_id=%s -> configuration_id=%s "
+            "(is_active=%s status=%s scope=%s) matched=%s",
+            tenant_id, assignment.configuration_id,
+            getattr(raw_config, "is_active", None), getattr(raw_config, "status", None), getattr(raw_config, "scope", None),
+            config is not None,
+        )
         if config:
             version = _get_published_version(db, config.id)
             if version:
                 return config, version
+    else:
+        logger.info("Event selective assignment lookup: no EventFormAssignment row for tenant_id=%s", tenant_id)
 
     global_config = (
         db.query(EventFormConfiguration)
@@ -786,9 +801,24 @@ def get_active_form_configuration_service(
     if current_user.get("role") not in ("admin", "super_admin", "provider"):
         raise HTTPException(status_code=403, detail="Enterprise Admin access required")
 
+    from app.core.auth_context import resolve_auth_enterprise_id, resolve_auth_tenant_id
+
     tenant_raw = resolve_auth_tenant_id_with_db(db, current_user, access_token=access_token)
     tenant_uuid = UUID(str(tenant_raw)) if tenant_raw else None
+    logger.info(
+        "Event active-form resolve: user_id=%s local_tenant_claim=%s local_enterprise_claim=%s "
+        "resolved_tenant_id=%s access_token_present=%s",
+        current_user.get("id"),
+        resolve_auth_tenant_id(current_user),
+        resolve_auth_enterprise_id(current_user),
+        tenant_uuid,
+        bool(access_token),
+    )
     config, version = _resolve_active_form_configuration(db, tenant_uuid)
+    logger.info(
+        "Event active-form resolved: tenant_id=%s -> configuration_id=%s scope=%s",
+        tenant_uuid, config.id, config.scope,
+    )
     return build_active_response(config, version)
 
 
@@ -930,9 +960,21 @@ def resolve_version_for_create(
         return config, version
 
     resolved = _active_config_for_tenant(db, tenant_id)
-    if not resolved:
-        return _legacy_config_version(db)
-    return resolved
+    if resolved:
+        return resolved
+
+    legacy = _active_legacy_config_version(db)
+    if legacy:
+        return legacy
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "No active Event form configuration available for this tenant "
+            "(no active selective assignment, no active global configuration, "
+            "and the Legacy/Default form is inactive) — cannot create Event."
+        ),
+    )
 
 
 def apply_form_configuration_to_event_data(db: Session, event_data, current_user: dict) -> dict:

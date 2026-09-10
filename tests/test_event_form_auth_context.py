@@ -282,3 +282,136 @@ def test_deactivate_configuration_service_returns_all_response_model_fields():
     validated = ActivationResponse.model_validate(result)
     assert validated.status == "published"
     assert validated.is_active is False
+
+
+def test_active_config_for_tenant_resolves_active_published_selective_assignment():
+    """Reproduces the reported case exactly: an active+published selective
+    config assigned to a tenant by tenant_id must resolve — proving the
+    resolver's own logic is correct once it's handed the right tenant_id."""
+    from app.services import event_form_config_service as svc
+
+    config_id = uuid4()
+    tenant_id = uuid4()
+    config = MagicMock(id=config_id, is_active=True, status="published", scope="selective")
+    version = MagicMock()
+    assignment = MagicMock(configuration_id=config_id, tenant_id=tenant_id)
+
+    db = MagicMock()
+
+    def query_side_effect(model):
+        q = MagicMock()
+        if model.__name__ == "EventFormAssignment":
+            q.filter.return_value.first.return_value = assignment
+        elif model.__name__ == "EventFormConfiguration":
+            q.filter.return_value.first.return_value = config
+        return q
+
+    db.query.side_effect = query_side_effect
+
+    with patch.object(svc, "_get_published_version", return_value=version):
+        result = svc._active_config_for_tenant(db, tenant_id)
+
+    assert result == (config, version)
+
+
+def test_active_config_for_tenant_matches_by_tenant_id_not_enterprise_id():
+    """The assignment lookup filters strictly on EventFormAssignment.tenant_id
+    — an enterprise_id must never be substituted for it."""
+    from app.services import event_form_config_service as svc
+    from app.models.event_form_config_model import EventFormAssignment
+
+    tenant_id = uuid4()
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+
+    svc._active_config_for_tenant(db, tenant_id)
+
+    # First call is the assignment lookup; assert it filtered by
+    # EventFormAssignment.tenant_id, not enterprise_id.
+    first_call_args = db.query.return_value.filter.call_args_list[0]
+    expr = first_call_args.args[0]
+    compiled = str(expr.compile(compile_kwargs={"literal_binds": False}))
+    assert "tenant_id" in compiled
+    assert "enterprise_id" not in compiled
+    assert expr.left.table.name == EventFormAssignment.__tablename__
+
+
+def test_resolve_version_for_create_uses_active_legacy_not_unconditional(monkeypatch):
+    """Event Create must not silently fall back to an inactive Legacy config
+    — it should reject with a clear 4xx when nothing active is available."""
+    from fastapi import HTTPException
+    from app.services import event_form_config_service as svc
+
+    tenant_id = uuid4()
+    monkeypatch.setattr(svc, "_active_config_for_tenant", lambda db, tid: None)
+    monkeypatch.setattr(svc, "_active_legacy_config_version", lambda db: None)
+
+    try:
+        svc.resolve_version_for_create(MagicMock(), version_id=None, tenant_id=tenant_id, enterprise_id=None)
+        assert False, "expected HTTPException — must not silently use an inactive Legacy config"
+    except HTTPException as exc:
+        assert 400 <= exc.status_code < 500
+
+
+def test_resolve_version_for_create_uses_legacy_when_it_is_actually_active(monkeypatch):
+    """Legacy remains usable for Event Create — but only while active+published."""
+    from app.services import event_form_config_service as svc
+
+    tenant_id = uuid4()
+    legacy_config = MagicMock()
+    legacy_version = MagicMock()
+    monkeypatch.setattr(svc, "_active_config_for_tenant", lambda db, tid: None)
+    monkeypatch.setattr(svc, "_active_legacy_config_version", lambda db: (legacy_config, legacy_version))
+
+    result = svc.resolve_version_for_create(MagicMock(), version_id=None, tenant_id=tenant_id, enterprise_id=None)
+    assert result == (legacy_config, legacy_version)
+
+
+def test_historical_event_form_lookup_still_uses_unconditional_legacy(monkeypatch):
+    """Historical lookups (an existing Event with no stored form version) must
+    keep resolving the Legacy config regardless of its current is_active
+    state — only new-Event creation and the active-resolution endpoint
+    changed."""
+    from app.services import event_form_config_service as svc
+
+    event = MagicMock(form_configuration_version_id=None)
+    monkeypatch.setattr("app.repository.event_repo.get_event_by_id", lambda db, eid: event)
+
+    legacy_config = MagicMock()
+    legacy_version = MagicMock()
+    monkeypatch.setattr(svc, "_legacy_config_version", lambda db: (legacy_config, legacy_version))
+    monkeypatch.setattr(svc, "build_active_response", lambda config, version: {"configuration_id": "legacy"})
+
+    result = svc.get_event_form_configuration_service(MagicMock(), uuid4(), {"id": "user-1"})
+    assert result == {"configuration_id": "legacy"}
+
+
+def test_active_form_endpoints_accept_super_admin_not_just_admin_provider():
+    """The active-form GET endpoints must accept super_admin — the service
+    layer underneath already allows it (`role not in (admin, super_admin,
+    provider)` -> 403), but the endpoints were gated with
+    require_roles(["admin", "provider"]), silently rejecting Super Admin
+    Bearer tokens before the service ever ran."""
+    from app.core.dependencies import require_event_form_builder_admin
+
+    # Must not raise for super_admin.
+    result = require_event_form_builder_admin(current_user={"role": "super_admin", "id": "sa-1"})
+    assert result["role"] == "super_admin"
+
+
+def test_active_form_endpoints_use_builder_admin_dependency_not_bare_require_roles():
+    """Guards against re-introducing the admin/provider-only gate on the
+    three active-form-configuration GET endpoints."""
+    import inspect
+
+    from app.api.v1.endpoints import event as event_ep
+    from app.api.v1.endpoints import program as program_ep
+    from app.api.v1.endpoints import training as training_ep
+
+    for module, func_name in (
+        (event_ep, "get_active_event_form_configuration"),
+        (training_ep, "get_active_training_form_configuration"),
+        (program_ep, "get_active_program_form_configuration"),
+    ):
+        source = inspect.getsource(getattr(module, func_name))
+        assert "require_event_form_builder_admin" in source, f"{func_name} regressed to a narrower role gate"

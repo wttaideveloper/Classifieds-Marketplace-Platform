@@ -61,7 +61,21 @@ def get_trainings_service(db: Session, **kw):
 def get_training_service(db: Session, tid: UUID):
     obj = get_training_by_id(db, tid)
     if not obj: raise HTTPException(status_code=404, detail="Training not found")
-    return TrainingDetailResponse.model_validate(map_training_detail(obj))
+    detail = map_training_detail(obj)
+    from app.models.training_model import TrainingEnrolment
+    enrolled_count = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.status.in_(ACTIVE_ENROLMENT_STATUSES),
+    ).count()
+    detail["enrolled_count"] = enrolled_count
+    available_slots = None
+    try:
+        if obj.capacity is not None and str(obj.capacity).strip():
+            available_slots = max(0, int(str(obj.capacity)) - enrolled_count)
+    except (TypeError, ValueError):
+        available_slots = None
+    detail["available_slots"] = available_slots
+    return TrainingDetailResponse.model_validate(detail)
 
 def update_training_service(db: Session, tid: UUID, data, current_user: dict | None = None):
     from app.services.training_form_config_service import apply_form_configuration_to_training_update

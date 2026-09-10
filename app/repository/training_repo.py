@@ -14,7 +14,7 @@ def create_training(db: Session, data):
 
 
 def get_trainings(db: Session, *, search=None, category=None, tenant_id=None, enterprise_id=None, location_id=None, status=None, delivery_mode=None, provider_id=None, min_price=None, max_price=None, duration=None, date_from=None, date_to=None, page=1, page_size=20, include_deleted=False):
-    q = db.query(Training).options(joinedload(Training.enterprise))
+    q = db.query(Training).options(joinedload(Training.enterprise)).distinct()
     q = apply_soft_delete_filter(q, Training, include_deleted)
     if tenant_id: q = q.filter(Training.tenant_id == tenant_id)
     if enterprise_id: q = q.filter(Training.enterprise_id == enterprise_id)
@@ -47,7 +47,12 @@ def get_trainings(db: Session, *, search=None, category=None, tenant_id=None, en
             q = q.filter(Training.end_date <= dt)
         except: pass
     if search: q = apply_ilike_search(q, [Training.title, Training.description, Training.category], search)
-    q = q.order_by(Training.created_at.desc())
+    # A secondary tiebreaker is required: rows sharing the same created_at
+    # (bulk-seeded/rapidly-created records are common) have no guaranteed
+    # stable order across separate paginated queries without one — Postgres
+    # can return the same row on two different pages, or skip one, when the
+    # sort key alone doesn't uniquely order the result set.
+    q = q.order_by(Training.created_at.desc(), Training.id.desc())
     return paginate_query(q, page, page_size)
 
 

@@ -8,6 +8,7 @@ from app.core.dependencies import (
     get_current_super_admin,
     get_current_user,
     get_web_session_cookie_token,
+    require_event_form_builder_admin,
     require_roles,
 )
 from app.core.config import settings
@@ -195,7 +196,7 @@ def apply_template(template_id: UUID, payload: EventTemplateApplyRequest, db: Se
 def get_active_event_form_configuration(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["admin", "provider"])),
+    current_user: dict = Depends(require_event_form_builder_admin),
 ):
     from app.schemas.event_form_config_schema import ActiveFormConfigurationResponse
     from app.services.event_form_config_service import get_active_form_configuration_service

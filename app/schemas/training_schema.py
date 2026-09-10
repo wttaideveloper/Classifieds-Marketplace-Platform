@@ -19,7 +19,10 @@ class TrainingCreate(BaseModel):
     subcategory: str | None = None
     tags: list[str] | None = None
     instructor_id: UUID | None = None
+    instructor_name: str | None = Field(None, description="Instructor display name")
+    instructor_bio: str | None = Field(None, description="Instructor biography")
     requirements: str | None = None
+    learning_objectives: list[str] | None = Field(None, description="What participants will learn")
     primary_image: str | None = None
     gallery_images: list | None = None
     promotional_video: str | None = None
@@ -29,6 +32,12 @@ class TrainingCreate(BaseModel):
     duration: str | None = Field(None, description="Duration e.g. 1 day, half_day, custom, 2 weeks")
     start_date: datetime | None = None
     end_date: datetime | None = None
+    start_time: str | None = Field(None, description="Daily start time, e.g. 09:00")
+    end_time: str | None = Field(None, description="Daily end time, e.g. 17:00")
+    venue: str | None = Field(None, description="In-person venue name")
+    address: str | None = Field(None, description="Venue address")
+    meeting_link: str | None = Field(None, description="Online meeting URL")
+    delivery_instructions: str | None = Field(None, description="Instructions for joining/attending")
     enrolment_start: datetime | None = None
     enrolment_end: datetime | None = None
     time_zone: str | None = Field("Asia/Kolkata", description="Time zone")
@@ -60,7 +69,10 @@ class TrainingCreate(BaseModel):
             "subcategory": self.subcategory,
             "tags": self.tags or [],
             "instructor_id": self.instructor_id,
+            "instructor_name": self.instructor_name,
+            "instructor_bio": self.instructor_bio,
             "requirements": self.requirements,
+            "learning_objectives": self.learning_objectives or [],
             "primary_image": self.primary_image,
             "gallery_images": self.gallery_images or [],
             "promotional_video": self.promotional_video,
@@ -70,6 +82,12 @@ class TrainingCreate(BaseModel):
             "duration": self.duration,
             "start_date": self.start_date,
             "end_date": self.end_date,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "venue": self.venue,
+            "address": self.address,
+            "meeting_link": self.meeting_link,
+            "delivery_instructions": self.delivery_instructions,
             "enrolment_start": self.enrolment_start,
             "enrolment_end": self.enrolment_end,
             "time_zone": self.time_zone,
@@ -91,7 +109,10 @@ class TrainingUpdate(BaseModel):
     subcategory: str | None = None
     tags: list | None = None
     instructor_id: UUID | None = None
+    instructor_name: str | None = None
+    instructor_bio: str | None = None
     requirements: str | None = None
+    learning_objectives: list | None = None
     primary_image: str | None = None
     gallery_images: list | None = None
     promotional_video: str | None = None
@@ -100,6 +121,12 @@ class TrainingUpdate(BaseModel):
     course_type: str | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    venue: str | None = None
+    address: str | None = None
+    meeting_link: str | None = None
+    delivery_instructions: str | None = None
     enrolment_start: datetime | None = None
     enrolment_end: datetime | None = None
     time_zone: str | None = None
@@ -133,6 +160,8 @@ class TrainingResponse(BaseModel):
     subcategory: str | None = None
     tags: list | None = None
     instructor_id: UUID | None = None
+    instructor_name: str | None = None
+    instructor_bio: str | None = None
     delivery_mode: str | None = None
     course_type: str | None = None
     capacity: str | None = None
@@ -150,6 +179,7 @@ class TrainingResponse(BaseModel):
     promo_price: str | None = None
     coupon_code: str | None = None
     requirements: str | None = None
+    learning_objectives: list | None = None
     primary_image: str | None = None
     gallery_images: list | None = None
     promotional_video: str | None = None
@@ -160,6 +190,12 @@ class TrainingResponse(BaseModel):
     enrolment_end: datetime | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    venue: str | None = None
+    address: str | None = None
+    meeting_link: str | None = None
+    delivery_instructions: str | None = None
     last_admin_notes: str | None = None
     custom_values: list | None = None
     form_configuration_id: UUID | None = None
@@ -172,6 +208,10 @@ class TrainingListItemResponse(TrainingResponse):
 
 class TrainingDetailResponse(TrainingResponse):
     enterprise_name: str | None = None
+    enrolled_count: int = Field(0, description="Active enrolments (enrolled/active/completed/approved).")
+    available_slots: int | None = Field(
+        None, description="capacity minus enrolled_count; null when capacity is not set/numeric."
+    )
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -22,7 +22,10 @@ class Training(Base):
     subcategory = Column(String(100))
     tags = Column(JSONB, default=list)
     instructor_id = Column(UUID(as_uuid=True), nullable=True)
+    instructor_name = Column(String(255))
+    instructor_bio = Column(Text)
     requirements = Column(Text)
+    learning_objectives = Column(JSONB, default=list)
 
     primary_image = Column(Text)
     gallery_images = Column(JSONB, default=list)
@@ -34,6 +37,12 @@ class Training(Base):
     duration = Column(String(50))  # e.g. 1 day, 2 weeks, custom
     start_date = Column(DateTime)
     end_date = Column(DateTime)
+    start_time = Column(String(20))
+    end_time = Column(String(20))
+    venue = Column(String(255))
+    address = Column(Text)
+    meeting_link = Column(Text)
+    delivery_instructions = Column(Text)
     enrolment_start = Column(DateTime)
     enrolment_end = Column(DateTime)
     time_zone = Column(String(100), default="Asia/Kolkata")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from copy import deepcopy
 from datetime import datetime
@@ -12,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import resolve_auth_tenant_id_with_db
 from app.models.enterprise_model import Enterprise
+
+logger = logging.getLogger(__name__)
 from app.models.training_form_config_model import (
     TrainingFormAssignment,
     TrainingFormAudit,
@@ -509,16 +512,28 @@ def list_audit_service(db: Session, config_id: UUID) -> list[dict]:
 def _active_config_for_tenant(db: Session, tenant_id: UUID) -> tuple[TrainingFormConfiguration, TrainingFormConfigurationVersion] | None:
     assignment = db.query(TrainingFormAssignment).filter(TrainingFormAssignment.tenant_id == tenant_id).first()
     if assignment:
+        raw_config = db.query(TrainingFormConfiguration).filter(
+            TrainingFormConfiguration.id == assignment.configuration_id,
+        ).first()
         config = db.query(TrainingFormConfiguration).filter(
             TrainingFormConfiguration.id == assignment.configuration_id,
             TrainingFormConfiguration.is_active.is_(True),
             TrainingFormConfiguration.status == "published",
             TrainingFormConfiguration.scope == "selective",
         ).first()
+        logger.info(
+            "Training selective assignment lookup: tenant_id=%s -> configuration_id=%s "
+            "(is_active=%s status=%s scope=%s) matched=%s",
+            tenant_id, assignment.configuration_id,
+            getattr(raw_config, "is_active", None), getattr(raw_config, "status", None), getattr(raw_config, "scope", None),
+            config is not None,
+        )
         if config:
             version = _get_published_version(db, config.id)
             if version:
                 return config, version
+    else:
+        logger.info("Training selective assignment lookup: no TrainingFormAssignment row for tenant_id=%s", tenant_id)
 
     global_config = (
         db.query(TrainingFormConfiguration)
@@ -555,8 +570,19 @@ def get_active_form_configuration_service(db: Session, current_user: dict, acces
     if current_user.get("role") not in ("admin", "super_admin", "provider"):
         raise HTTPException(status_code=403, detail="Enterprise Admin access required")
 
+    from app.core.auth_context import resolve_auth_enterprise_id, resolve_auth_tenant_id
+
     tenant_raw = resolve_auth_tenant_id_with_db(db, current_user, access_token=access_token)
     tenant_uuid = UUID(str(tenant_raw)) if tenant_raw else None
+    logger.info(
+        "Training active-form resolve: user_id=%s local_tenant_claim=%s local_enterprise_claim=%s "
+        "resolved_tenant_id=%s access_token_present=%s",
+        current_user.get("id"),
+        resolve_auth_tenant_id(current_user),
+        resolve_auth_enterprise_id(current_user),
+        tenant_uuid,
+        bool(access_token),
+    )
 
     resolved = None
     if tenant_uuid is not None:
@@ -578,8 +604,13 @@ def get_active_form_configuration_service(db: Session, current_user: dict, acces
                 resolved = (global_config, version)
 
     if not resolved:
+        logger.info("Training active-form resolve: no active configuration found for tenant_id=%s", tenant_uuid)
         raise HTTPException(status_code=404, detail="No active Training form configuration found")
     config, version = resolved
+    logger.info(
+        "Training active-form resolved: tenant_id=%s -> configuration_id=%s scope=%s",
+        tenant_uuid, config.id, config.scope,
+    )
     return build_active_response(config, version)
 
 

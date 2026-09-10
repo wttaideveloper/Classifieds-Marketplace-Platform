@@ -1,7 +1,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
-from app.core.dependencies import get_current_user, get_web_session_cookie_token, require_roles
+from app.core.dependencies import get_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.program_schema import ActivityCreate, CheckinCreate, EnrolmentCreate, PhaseCreate, PhaseResponse, ProgramAvailabilityResponse, ProgramCreate, ProgramDetailResponse, ProgramGoalsResponse, ProgramPaginatedResponse, ProgramResponse, ProgramStatusUpdate, ProgramUpdate, ReviewCreate, SurveyCreate, SurveyResponse
@@ -46,7 +46,7 @@ def my_enrolments(status: str | None = Query(None, description="enrolled|complet
 def get_active_program_form_configuration(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["admin", "provider"])),
+    current_user: dict = Depends(require_event_form_builder_admin),
 ):
     from app.schemas.program_form_config_schema import ActiveFormConfigurationResponse
     from app.services.program_form_config_service import get_active_form_configuration_service
