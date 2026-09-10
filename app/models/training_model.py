@@ -26,11 +26,15 @@ class Training(Base):
     instructor_bio = Column(Text)
     requirements = Column(Text)
     learning_objectives = Column(JSONB, default=list)
+    target_audience = Column(Text)
+    level = Column(String(20))  # beginner|intermediate|advanced|all_levels
+    language = Column(String(50), default="English")
 
     primary_image = Column(Text)
     gallery_images = Column(JSONB, default=list)
     promotional_video = Column(Text)
     documents = Column(JSONB, default=list)
+    notes_documents = Column(JSONB, default=list)  # [{title, url}] — instructor-uploaded notes (pre-uploaded to storage; API stores the URL)
 
     delivery_mode = Column(String(20), default="self_paced", index=True)  # self_paced|instructor_led|blended
     course_type = Column(String(50))  # one_day|workshop|virtual|certification
@@ -43,6 +47,7 @@ class Training(Base):
     address = Column(Text)
     meeting_link = Column(Text)
     delivery_instructions = Column(Text)
+    offline_access_enabled = Column(Boolean, default=False)
     enrolment_start = Column(DateTime)
     enrolment_end = Column(DateTime)
     time_zone = Column(String(100), default="Asia/Kolkata")
@@ -179,3 +184,31 @@ class TrainingLiveSession(Base):
     recording_url = Column(Text)
     attendance = Column(JSONB, default=list)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class TrainingReview(Base):
+    __tablename__ = "training_reviews"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    participant_email = Column(String(255), nullable=False)
+    rating = Column(String(20), nullable=False)
+    comment = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_training_reviews_training_email", "training_id", "participant_email", unique=True),
+    )
+
+
+class TrainingWishlistItem(Base):
+    __tablename__ = "training_wishlist_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_training_wishlist_user_training", "user_id", "training_id", unique=True),
+    )

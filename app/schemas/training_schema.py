@@ -9,6 +9,13 @@ from app.schemas.common_schema import PaginatedResponse
 TrainingStatus = str  # draft|published|unpublished|archived|cancelled
 
 
+class TrainingNoteDocument(BaseModel):
+    """An instructor-uploaded notes file — the file itself is uploaded to
+    storage by the client; this just records where it lives."""
+    title: str | None = Field(None, description="Display name, e.g. 'Week 1 Handout'")
+    url: str = Field(..., description="URL of the already-uploaded notes file (e.g. PDF)")
+
+
 class TrainingCreate(BaseModel):
     tenant_id: UUID | None = None
     enterprise_id: UUID = Field(..., description="Enterprise ID")
@@ -23,10 +30,16 @@ class TrainingCreate(BaseModel):
     instructor_bio: str | None = Field(None, description="Instructor biography")
     requirements: str | None = None
     learning_objectives: list[str] | None = Field(None, description="What participants will learn")
+    target_audience: str | None = Field(None, description="Who this training is for")
+    level: str | None = Field(None, description="beginner|intermediate|advanced|all_levels")
+    language: str | None = Field("English", description="Course language")
     primary_image: str | None = None
     gallery_images: list | None = None
     promotional_video: str | None = None
     documents: list | None = None
+    notes_documents: list[TrainingNoteDocument] | None = Field(
+        None, description="Instructor-uploaded notes files, e.g. [{title: 'Week 1 Handout', url: 'https://...'}]"
+    )
     delivery_mode: str | None = Field("self_paced", description="self_paced|instructor_led|blended")
     course_type: str | None = Field(None, description="one_day|workshop|virtual|certification")
     duration: str | None = Field(None, description="Duration e.g. 1 day, half_day, custom, 2 weeks")
@@ -38,6 +51,7 @@ class TrainingCreate(BaseModel):
     address: str | None = Field(None, description="Venue address")
     meeting_link: str | None = Field(None, description="Online meeting URL")
     delivery_instructions: str | None = Field(None, description="Instructions for joining/attending")
+    offline_access_enabled: bool = Field(False, description="Allow enrolled learners to download lessons for offline viewing")
     enrolment_start: datetime | None = None
     enrolment_end: datetime | None = None
     time_zone: str | None = Field("Asia/Kolkata", description="Time zone")
@@ -73,10 +87,14 @@ class TrainingCreate(BaseModel):
             "instructor_bio": self.instructor_bio,
             "requirements": self.requirements,
             "learning_objectives": self.learning_objectives or [],
+            "target_audience": self.target_audience,
+            "level": self.level,
+            "language": self.language,
             "primary_image": self.primary_image,
             "gallery_images": self.gallery_images or [],
             "promotional_video": self.promotional_video,
             "documents": self.documents or [],
+            "notes_documents": [n.model_dump() for n in self.notes_documents] if self.notes_documents else [],
             "delivery_mode": self.delivery_mode,
             "course_type": self.course_type,
             "duration": self.duration,
@@ -88,6 +106,7 @@ class TrainingCreate(BaseModel):
             "address": self.address,
             "meeting_link": self.meeting_link,
             "delivery_instructions": self.delivery_instructions,
+            "offline_access_enabled": self.offline_access_enabled,
             "enrolment_start": self.enrolment_start,
             "enrolment_end": self.enrolment_end,
             "time_zone": self.time_zone,
@@ -113,10 +132,14 @@ class TrainingUpdate(BaseModel):
     instructor_bio: str | None = None
     requirements: str | None = None
     learning_objectives: list | None = None
+    target_audience: str | None = None
+    level: str | None = None
+    language: str | None = None
     primary_image: str | None = None
     gallery_images: list | None = None
     promotional_video: str | None = None
     documents: list | None = None
+    notes_documents: list[TrainingNoteDocument] | None = None
     delivery_mode: str | None = None
     course_type: str | None = None
     start_date: datetime | None = None
@@ -127,6 +150,7 @@ class TrainingUpdate(BaseModel):
     address: str | None = None
     meeting_link: str | None = None
     delivery_instructions: str | None = None
+    offline_access_enabled: bool | None = None
     enrolment_start: datetime | None = None
     enrolment_end: datetime | None = None
     time_zone: str | None = None
@@ -180,10 +204,14 @@ class TrainingResponse(BaseModel):
     coupon_code: str | None = None
     requirements: str | None = None
     learning_objectives: list | None = None
+    target_audience: str | None = None
+    level: str | None = None
+    language: str | None = None
     primary_image: str | None = None
     gallery_images: list | None = None
     promotional_video: str | None = None
     documents: list | None = None
+    notes_documents: list | None = None
     duration: str | None = None
     time_zone: str | None = None
     enrolment_start: datetime | None = None
@@ -196,6 +224,7 @@ class TrainingResponse(BaseModel):
     address: str | None = None
     meeting_link: str | None = None
     delivery_instructions: str | None = None
+    offline_access_enabled: bool | None = None
     last_admin_notes: str | None = None
     custom_values: list | None = None
     form_configuration_id: UUID | None = None
@@ -203,7 +232,8 @@ class TrainingResponse(BaseModel):
 
 
 class TrainingListItemResponse(TrainingResponse):
-    pass
+    average_rating: float = Field(0, description="Mean of all review ratings, rounded to 2 decimals.")
+    reviews_count: int = Field(0, description="Total number of reviews.")
 
 
 class TrainingDetailResponse(TrainingResponse):
@@ -212,6 +242,8 @@ class TrainingDetailResponse(TrainingResponse):
     available_slots: int | None = Field(
         None, description="capacity minus enrolled_count; null when capacity is not set/numeric."
     )
+    average_rating: float = Field(0, description="Mean of all review ratings, rounded to 2 decimals.")
+    reviews_count: int = Field(0, description="Total number of reviews.")
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -246,6 +278,7 @@ class LessonCreate(BaseModel):
     is_preview: bool | None = Field(False, description="Preview allowed without enrolment")
     is_draft: bool | None = Field(False, description="Draft mode — hidden until published")
     is_mandatory: bool | None = Field(False, description="Mandatory lesson")
+    is_downloadable: bool | None = Field(False, description="Allow offline download/caching of this lesson's content_url")
     completion_rule: str | None = Field(None, description="Completion rule, e.g. mandatory")
     prerequisites: list | None = Field(None, description="Lesson IDs that must be completed first — sequential learning")
     release_rule: dict | None = Field(None, description="Release: {mode: 'date'|'enrolment_day'|'previous_lesson', date: '2026-01-01', days: 2, lesson_id: '...'}")
@@ -404,3 +437,41 @@ class TrainingRefundRequest(BaseModel):
 class TrainingRefundApproveRequest(BaseModel):
     action: str = Field(..., description="approve|reject")
     reason: str | None = Field(None, description="Reason for approval/rejection")
+
+
+# ---- Reviews ----
+
+class TrainingReviewCreate(BaseModel):
+    rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5")
+    comment: str | None = None
+    participant_email: str = Field(..., description="Participant email — must be enrolled to review")
+
+
+class TrainingReviewResponse(BaseModel):
+    id: str
+    training_id: str
+    rating: int
+    comment: str | None = None
+    participant_email: str
+    verified: bool = True
+    created_at: str
+
+
+class TrainingReviewListResponse(BaseModel):
+    reviews: list[TrainingReviewResponse] = Field(default_factory=list)
+    average_rating: float = 0
+    count: int = 0
+
+
+# ---- Wishlist ----
+
+class TrainingWishlistItemResponse(BaseModel):
+    id: str
+    training_id: str
+    title: str | None = None
+    primary_image: str | None = None
+    price: str | None = None
+    currency: str | None = None
+    average_rating: float = 0
+    reviews_count: int = 0
+    added_at: str

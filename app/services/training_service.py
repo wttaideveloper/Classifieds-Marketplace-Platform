@@ -56,7 +56,27 @@ def create_training_service(db: Session, data, current_user: dict | None = None)
 
 def get_trainings_service(db: Session, **kw):
     items, total = get_trainings(db, **kw)
-    return TrainingPaginatedResponse(items=[TrainingListItemResponse.model_validate(map_training_list_item(i)) for i in items], pagination=build_pagination_meta(total, kw.get("page",1), kw.get("page_size",20)))
+
+    from app.models.training_model import TrainingReview
+    rating_rows = (
+        db.query(TrainingReview.training_id, TrainingReview.rating)
+        .filter(TrainingReview.training_id.in_([i.id for i in items]))
+        .all()
+        if items else []
+    )
+    ratings_by_training: dict = {}
+    for training_id, rating in rating_rows:
+        ratings_by_training.setdefault(training_id, []).append(int(rating))
+
+    mapped = []
+    for i in items:
+        d = map_training_list_item(i)
+        ratings = ratings_by_training.get(i.id, [])
+        d["average_rating"] = round(sum(ratings) / len(ratings), 2) if ratings else 0
+        d["reviews_count"] = len(ratings)
+        mapped.append(TrainingListItemResponse.model_validate(d))
+
+    return TrainingPaginatedResponse(items=mapped, pagination=build_pagination_meta(total, kw.get("page",1), kw.get("page_size",20)))
 
 def get_training_service(db: Session, tid: UUID):
     obj = get_training_by_id(db, tid)
@@ -75,6 +95,12 @@ def get_training_service(db: Session, tid: UUID):
     except (TypeError, ValueError):
         available_slots = None
     detail["available_slots"] = available_slots
+
+    from app.models.training_model import TrainingReview
+    ratings = [int(r.rating) for r in db.query(TrainingReview).filter(TrainingReview.training_id == tid).all()]
+    detail["average_rating"] = round(sum(ratings) / len(ratings), 2) if ratings else 0
+    detail["reviews_count"] = len(ratings)
+
     return TrainingDetailResponse.model_validate(detail)
 
 def update_training_service(db: Session, tid: UUID, data, current_user: dict | None = None):
@@ -1145,6 +1171,143 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
     return {"training_id": str(tid), "sections": sections, "assessments": assessments}
 
 
+def _require_enrolled_or_staff(db: Session, tid: UUID, current_user: dict):
+    """Shared access gate: an enrolled participant, or admin/provider staff.
+    Mirrors get_secure_training_content_service's gating exactly."""
+    from app.models.training_model import TrainingEnrolment
+    email = current_user.get("email")
+    enrol = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email == email,
+        TrainingEnrolment.status.in_(["enrolled", "active", "completed"]),
+    ).first() if email else None
+    if not enrol and current_user.get("role") not in ["admin", "provider"]:
+        raise HTTPException(status_code=403, detail="Enrolled participants only")
+    training = _get_training_or_404(db, tid)
+    if training.status in ("draft", "cancelled", "archived") and current_user.get("role") not in ["admin", "provider"]:
+        raise HTTPException(status_code=403, detail=f"Content not available — training is {training.status}")
+    return training
+
+
+def list_downloadable_lessons_service(db: Session, tid: UUID, current_user: dict) -> dict:
+    """Offline-download manifest — a mobile app fetches this once to know
+    which lesson content and notes it's allowed to cache for offline use."""
+    training = _require_enrolled_or_staff(db, tid, current_user)
+    if not training.offline_access_enabled:
+        raise HTTPException(status_code=403, detail="Offline access is not enabled for this training")
+    items = []
+    for section in training.sections or []:
+        for lesson in section.get("lessons", []):
+            if not lesson.get("is_downloadable"):
+                continue
+            if lesson.get("is_draft") and not lesson.get("is_preview"):
+                continue
+            items.append({
+                "section_id": section.get("id"), "section_title": section.get("title"),
+                "lesson_id": lesson.get("id"), "title": lesson.get("title"),
+                "type": lesson.get("type"), "content_url": lesson.get("content_url"),
+            })
+
+    notes = [
+        {"title": n.get("title") or "Notes", "url": n.get("url")}
+        for n in (getattr(training, "notes_documents", None) or [])
+        if n.get("url")
+    ]
+
+    return {
+        "training_id": str(tid),
+        "downloadable_lessons": items,
+        "count": len(items),
+        "notes": notes,
+        "notes_pdf_url": f"/api/v1/trainings/{tid}/notes.pdf",
+    }
+
+
+def get_lesson_download_service(db: Session, tid: UUID, section_id: str, lesson_id: str, current_user: dict) -> dict:
+    training = _require_enrolled_or_staff(db, tid, current_user)
+    if not training.offline_access_enabled:
+        raise HTTPException(status_code=403, detail="Offline access is not enabled for this training")
+    _section, lesson = _find_lesson(training, section_id, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    if not lesson.get("is_downloadable"):
+        raise HTTPException(status_code=403, detail="This lesson is not marked available for offline download")
+    if not lesson.get("content_url"):
+        raise HTTPException(status_code=404, detail="This lesson has no content URL to download")
+    return {
+        "training_id": str(tid), "section_id": section_id, "lesson_id": lesson_id,
+        "title": lesson.get("title"), "type": lesson.get("type"), "content_url": lesson.get("content_url"),
+    }
+
+
+def generate_training_notes_pdf_service(db: Session, tid: UUID, current_user: dict) -> bytes:
+    """Auto-generated PDF summary — title, description, what-you'll-learn,
+    requirements, audience, and the curriculum outline — for offline reading."""
+    training = _require_enrolled_or_staff(db, tid, current_user)
+
+    from io import BytesIO
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
+
+    def _p(text: str | None, style) -> Paragraph | None:
+        if not text:
+            return None
+        return Paragraph(escape(str(text)).replace("\n", "<br/>"), style)
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.75 * inch, bottomMargin=0.75 * inch)
+    styles = getSampleStyleSheet()
+    story = []
+
+    story.append(_p(training.title or "Training Notes", styles["Title"]))
+    meta_bits = [b for b in (training.category, training.level, training.language) if b]
+    if meta_bits:
+        story.append(_p(" · ".join(meta_bits), styles["Normal"]))
+    if training.instructor_name:
+        story.append(_p(f"Instructor: {training.instructor_name}", styles["Normal"]))
+    story.append(Spacer(1, 0.2 * inch))
+
+    for heading, value in (
+        ("Description", training.description),
+        ("Requirements", training.requirements),
+        ("Who This Is For", training.target_audience),
+    ):
+        if value:
+            story.append(_p(heading, styles["Heading2"]))
+            story.append(_p(value, styles["Normal"]))
+            story.append(Spacer(1, 0.15 * inch))
+
+    objectives = getattr(training, "learning_objectives", None) or []
+    if objectives:
+        story.append(_p("What You'll Learn", styles["Heading2"]))
+        story.append(ListFlowable(
+            [ListItem(_p(obj, styles["Normal"])) for obj in objectives if obj],
+            bulletType="bullet",
+        ))
+        story.append(Spacer(1, 0.15 * inch))
+
+    sections = training.sections or []
+    if sections:
+        story.append(_p("Curriculum", styles["Heading2"]))
+        for section in sections:
+            title = section.get("title") or "Section"
+            story.append(_p(title, styles["Heading3"]))
+            lessons = section.get("lessons") or []
+            if lessons:
+                story.append(ListFlowable(
+                    [ListItem(_p(l.get("title") or "Lesson", styles["Normal"])) for l in lessons],
+                    bulletType="bullet",
+                ))
+            story.append(Spacer(1, 0.1 * inch))
+
+    doc.build([item for item in story if item is not None])
+    return buffer.getvalue()
+
+
 def reply_discussion_service(db: Session, tid: UUID, discussion_id: str, payload: dict, current_user: dict):
     from sqlalchemy.orm.attributes import flag_modified
     from datetime import datetime
@@ -1177,3 +1340,112 @@ def reply_discussion_service(db: Session, tid: UUID, discussion_id: str, payload
 def get_moderation_history_service(db: Session, tid: UUID):
     training = _get_training_or_404(db, tid)
     return list(getattr(training, "moderation_history", None) or [])
+
+
+# ---- Reviews (verified — must be enrolled) ----
+
+def create_training_review_service(db: Session, tid: UUID, data):
+    from app.models.training_model import TrainingEnrolment, TrainingReview
+
+    _get_training_or_404(db, tid)
+    enrolled = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email == data.participant_email,
+        TrainingEnrolment.status.in_(ACTIVE_ENROLMENT_STATUSES),
+    ).first()
+    if not enrolled:
+        raise HTTPException(status_code=400, detail="Verified reviews only — must be enrolled to review")
+
+    existing = db.query(TrainingReview).filter(
+        TrainingReview.training_id == tid,
+        TrainingReview.participant_email == data.participant_email,
+    ).first()
+    if existing:
+        existing.rating = str(data.rating)
+        existing.comment = data.comment
+        db.commit()
+        db.refresh(existing)
+        r = existing
+    else:
+        r = TrainingReview(training_id=tid, participant_email=data.participant_email, rating=str(data.rating), comment=data.comment)
+        db.add(r)
+        db.commit()
+        db.refresh(r)
+
+    return {
+        "id": str(r.id), "training_id": str(r.training_id), "rating": int(r.rating),
+        "comment": r.comment, "participant_email": r.participant_email,
+        "verified": True, "created_at": r.created_at.isoformat(),
+    }
+
+
+def list_training_reviews_service(db: Session, tid: UUID):
+    from app.models.training_model import TrainingReview
+
+    _get_training_or_404(db, tid)
+    rows = db.query(TrainingReview).filter(TrainingReview.training_id == tid).order_by(TrainingReview.created_at.desc()).all()
+    reviews = [
+        {"id": str(r.id), "training_id": str(r.training_id), "rating": int(r.rating), "comment": r.comment,
+         "participant_email": r.participant_email, "verified": True, "created_at": r.created_at.isoformat()}
+        for r in rows
+    ]
+    avg = round(sum(item["rating"] for item in reviews) / len(reviews), 2) if reviews else 0
+    return {"reviews": reviews, "average_rating": avg, "count": len(reviews)}
+
+
+# ---- Wishlist ----
+
+def add_training_wishlist_service(db: Session, user_id: UUID, tid: UUID):
+    from app.models.training_model import TrainingReview, TrainingWishlistItem
+
+    training = _get_training_or_404(db, tid)
+    existing = db.query(TrainingWishlistItem).filter(
+        TrainingWishlistItem.user_id == user_id, TrainingWishlistItem.training_id == tid,
+    ).first()
+    if existing:
+        item = existing
+    else:
+        item = TrainingWishlistItem(user_id=user_id, training_id=tid)
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+
+    ratings = [int(r.rating) for r in db.query(TrainingReview).filter(TrainingReview.training_id == tid).all()]
+    return {
+        "id": str(item.id), "training_id": str(training.id), "title": training.title,
+        "primary_image": training.primary_image, "price": training.price, "currency": training.currency,
+        "average_rating": round(sum(ratings) / len(ratings), 2) if ratings else 0, "reviews_count": len(ratings),
+        "added_at": item.created_at.isoformat(),
+    }
+
+
+def remove_training_wishlist_service(db: Session, user_id: UUID, tid: UUID):
+    from app.models.training_model import TrainingWishlistItem
+
+    item = db.query(TrainingWishlistItem).filter(
+        TrainingWishlistItem.user_id == user_id, TrainingWishlistItem.training_id == tid,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Not in wishlist")
+    db.delete(item)
+    db.commit()
+    return {"message": "Removed from wishlist"}
+
+
+def list_training_wishlist_service(db: Session, user_id: UUID):
+    from app.models.training_model import TrainingReview, TrainingWishlistItem
+
+    rows = db.query(TrainingWishlistItem).filter(TrainingWishlistItem.user_id == user_id).order_by(TrainingWishlistItem.created_at.desc()).all()
+    items = []
+    for item in rows:
+        training = get_training_by_id(db, item.training_id, include_deleted=True)
+        if not training:
+            continue
+        ratings = [int(r.rating) for r in db.query(TrainingReview).filter(TrainingReview.training_id == item.training_id).all()]
+        items.append({
+            "id": str(item.id), "training_id": str(training.id), "title": training.title,
+            "primary_image": training.primary_image, "price": training.price, "currency": training.currency,
+            "average_rating": round(sum(ratings) / len(ratings), 2) if ratings else 0, "reviews_count": len(ratings),
+            "added_at": item.created_at.isoformat(),
+        })
+    return items

@@ -64,6 +64,7 @@ def _training_stub(**overrides):
         title="Intro to Widgets", description="desc", category="General", subcategory=None,
         tags=["a"], instructor_id=None, instructor_name="Jane Doe", instructor_bio="10 years experience",
         requirements="none", learning_objectives=["Learn widgets"],
+        target_audience=None, level=None, language="English",
         primary_image=None, gallery_images=[], promotional_video=None, documents=[],
         delivery_mode="self_paced", course_type=None, duration=None,
         start_date=datetime(2026, 1, 1), end_date=datetime(2026, 1, 2),
@@ -93,6 +94,7 @@ def test_get_training_service_computes_enrolled_count_and_available_slots(monkey
 
     db = MagicMock()
     db.query.return_value.filter.return_value.count.return_value = 3
+    db.query.return_value.filter.return_value.all.return_value = []
 
     result = training_service.get_training_service(db, training.id)
 
@@ -112,6 +114,7 @@ def test_get_training_service_available_slots_null_when_capacity_not_numeric(mon
 
     db = MagicMock()
     db.query.return_value.filter.return_value.count.return_value = 5
+    db.query.return_value.filter.return_value.all.return_value = []
 
     result = training_service.get_training_service(db, training.id)
 
@@ -129,6 +132,7 @@ def test_get_training_service_available_slots_never_negative(monkeypatch):
 
     db = MagicMock()
     db.query.return_value.filter.return_value.count.return_value = 5
+    db.query.return_value.filter.return_value.all.return_value = []
 
     result = training_service.get_training_service(db, training.id)
 

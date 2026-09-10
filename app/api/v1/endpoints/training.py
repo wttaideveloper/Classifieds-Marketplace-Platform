@@ -4,8 +4,18 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingStatusUpdate, TrainingUpdate
+from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
+from app.services.training_service import (
+    add_training_wishlist_service,
+    create_training_review_service,
+    generate_training_notes_pdf_service,
+    get_lesson_download_service,
+    list_downloadable_lessons_service,
+    list_training_reviews_service,
+    list_training_wishlist_service,
+    remove_training_wishlist_service,
+)
 
 router = APIRouter(tags=["Trainings"])
 
@@ -271,6 +281,10 @@ def my_enrolments(status: str | None = Query(None, description="enrolled|pending
     rows = q.order_by(TrainingEnrolment.created_at.desc()).all()
     return [{"training_id": str(r.training_id), "status": r.status, "enrolment_id": str(r.id), "created_at": r.created_at.isoformat()} for r in rows]
 
+@router.get("/my/wishlist", response_model=list[TrainingWishlistItemResponse], summary="My saved/wishlisted trainings")
+def my_wishlist(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return list_training_wishlist_service(db, UUID(str(current_user["id"])))
+
 @router.post("/{training_id}/enrol", status_code=201, summary="Enrol in Training")
 def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import create_training_enrol_service
@@ -287,6 +301,27 @@ def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), curre
 def enroll(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return enrol(training_id, payload, db, current_user)
 
+
+@router.post("/{training_id}/reviews", response_model=TrainingReviewResponse, status_code=201, summary="Rate & review — verified (must be enrolled)")
+def create_review(training_id: UUID, payload: TrainingReviewCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_training_review_service(db, training_id, payload)
+
+
+@router.get("/{training_id}/reviews", response_model=TrainingReviewListResponse, summary="List reviews with average rating")
+def list_reviews(training_id: UUID, db: Session = Depends(get_db)):
+    return list_training_reviews_service(db, training_id)
+
+
+@router.post("/{training_id}/wishlist", response_model=TrainingWishlistItemResponse, status_code=201, summary="Save training to wishlist")
+def add_wishlist(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return add_training_wishlist_service(db, UUID(str(current_user["id"])), training_id)
+
+
+@router.delete("/{training_id}/wishlist", summary="Remove training from wishlist")
+def remove_wishlist(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return remove_training_wishlist_service(db, UUID(str(current_user["id"])), training_id)
+
+
 @router.get("/{training_id}/enrolments")
 def list_enrolments(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.models.training_model import TrainingEnrolment
@@ -295,6 +330,25 @@ def list_enrolments(training_id: UUID, db: Session=Depends(get_db), current_user
 @router.get("/{training_id}/content", summary="Secure enrolled content — draft/preview/release gated")
 def secure_content(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     return get_secure_training_content_service(db, training_id, current_user)
+
+@router.get("/{training_id}/downloads", summary="Offline-download manifest — lessons cacheable for offline viewing")
+def list_downloads(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return list_downloadable_lessons_service(db, training_id, current_user)
+
+@router.get("/{training_id}/sections/{section_id}/lessons/{lesson_id}/download", summary="Download URL for one offline-enabled lesson")
+def download_lesson(training_id: UUID, section_id: str, lesson_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return get_lesson_download_service(db, training_id, section_id, lesson_id, current_user)
+
+@router.get("/{training_id}/notes.pdf", summary="Auto-generated course notes PDF — offline reading")
+def download_notes_pdf(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+    pdf_bytes = generate_training_notes_pdf_service(db, training_id, current_user)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=training_{training_id}_notes.pdf"},
+    )
 
 @router.delete("/{training_id}/enrolments/{enrol_id}", summary="Cancel enrolment — access-expiry & waitlist")
 def cancel_enrol(training_id: UUID, enrol_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
