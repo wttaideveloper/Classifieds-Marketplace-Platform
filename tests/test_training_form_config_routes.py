@@ -34,3 +34,17 @@ def test_training_create_schema_accepts_form_fields():
     props = app.openapi()["components"]["schemas"]["TrainingCreate"]["properties"]
     assert "form_configuration_version_id" in props
     assert "custom_values" in props
+
+
+def test_training_enroll_alias_registered_alongside_enrol():
+    """Reported as 'missing from Swagger' — the route was always registered
+    under the British spelling (/enrol), matching the rest of this domain's
+    naming (TrainingEnrolment, enrolment_start, etc). Both spellings must
+    resolve to the same underlying enrolment logic."""
+    paths = app.openapi()["paths"]
+    assert "/api/v1/trainings/{training_id}/enrol" in paths
+    assert "/api/v1/trainings/{training_id}/enroll" in paths
+
+    enrol_op = paths["/api/v1/trainings/{training_id}/enrol"]["post"]
+    enroll_op = paths["/api/v1/trainings/{training_id}/enroll"]["post"]
+    assert enrol_op["operationId"] != enroll_op["operationId"]

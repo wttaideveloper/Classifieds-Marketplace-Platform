@@ -271,11 +271,21 @@ def my_enrolments(status: str | None = Query(None, description="enrolled|pending
     rows = q.order_by(TrainingEnrolment.created_at.desc()).all()
     return [{"training_id": str(r.training_id), "status": r.status, "enrolment_id": str(r.id), "created_at": r.created_at.isoformat()} for r in rows]
 
-@router.post("/{training_id}/enrol", status_code=201)
+@router.post("/{training_id}/enrol", status_code=201, summary="Enrol in Training")
 def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import create_training_enrol_service
     coupon = payload.get("coupon_code")
     return create_training_enrol_service(db, training_id, payload, coupon_code=coupon)
+
+
+@router.post(
+    "/{training_id}/enroll",
+    status_code=201,
+    summary="Enroll in Training (alias of /enrol)",
+    description="Identical to POST /{training_id}/enrol — American-spelling alias for frontend clients that call /enroll.",
+)
+def enroll(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return enrol(training_id, payload, db, current_user)
 
 @router.get("/{training_id}/enrolments")
 def list_enrolments(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
