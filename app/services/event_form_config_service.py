@@ -792,6 +792,48 @@ def build_active_response(config: EventFormConfiguration, version: EventFormConf
     }
 
 
+def _probe_auth_me(access_token: str | None) -> dict:
+    """Repeats the exact /auth/me fallback call resolve_auth_tenant_id_with_db
+    makes, but reports the outcome instead of swallowing it on failure — the
+    fallback's own exception handling makes it invisible without server logs,
+    which is exactly the blocker we need to route around."""
+    from app.core.auth_context import _unwrap_auth_me_profile, resolve_auth_tenant_id
+    from app.core.config import settings
+
+    if not access_token:
+        return {"attempted": False, "reason": "no access_token available"}
+    base = settings.INVIGORATE_AUTH_BASE_URL.strip()
+    if not base:
+        return {"attempted": False, "reason": "INVIGORATE_AUTH_BASE_URL not configured"}
+
+    import requests
+
+    url = f"{base.rstrip('/')}/api/v1/auth/me"
+    try:
+        response = requests.get(url, headers={"Authorization": f"Bearer {access_token}"}, timeout=15)
+    except Exception as exc:
+        return {"attempted": True, "url": url, "error": f"{type(exc).__name__}: {exc}"}
+
+    result: dict = {"attempted": True, "url": url, "status_code": response.status_code}
+    if response.status_code == 404:
+        result["outcome"] = "404 — fetch_auth_me_profile treats this as 'no profile', returns None"
+        return result
+    try:
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        result["raw_body_snippet"] = response.text[:300]
+        return result
+
+    result["response_keys"] = list(payload.keys()) if isinstance(payload, dict) else f"non-dict: {type(payload).__name__}"
+    unwrapped = _unwrap_auth_me_profile(payload) if isinstance(payload, dict) else None
+    result["unwrapped_keys"] = list(unwrapped.keys()) if unwrapped else None
+    result["tenant_id_extracted_from_top_level"] = resolve_auth_tenant_id(payload) if isinstance(payload, dict) else None
+    result["tenant_id_extracted_from_unwrapped"] = resolve_auth_tenant_id(unwrapped) if unwrapped else None
+    return result
+
+
 def _diagnose_active_resolution_failure(
     db: Session,
     tenant_uuid: UUID | None,
@@ -800,6 +842,7 @@ def _diagnose_active_resolution_failure(
     local_tenant_claim: str | None,
     local_enterprise_claim: str | None,
     access_token_present: bool,
+    access_token: str | None = None,
 ) -> dict:
     """Build a JSON-visible explanation of why no active config resolved —
     lets the caller self-diagnose from the API response body when they have
@@ -843,6 +886,11 @@ def _diagnose_active_resolution_failure(
             if legacy_config is not None
             else None
         ),
+        "auth_me_fallback_probe": (
+            _probe_auth_me(access_token)
+            if tenant_uuid is None and not local_tenant_claim and not local_enterprise_claim
+            else "skipped — local claims or resolved_tenant_id already present"
+        ),
     }
 
 
@@ -883,6 +931,7 @@ def get_active_form_configuration_service(
                     local_tenant_claim=local_tenant_claim,
                     local_enterprise_claim=local_enterprise_claim,
                     access_token_present=bool(access_token),
+                    access_token=access_token,
                 ),
             }
         raise

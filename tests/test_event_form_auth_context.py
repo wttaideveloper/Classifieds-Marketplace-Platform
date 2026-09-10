@@ -299,6 +299,74 @@ def test_get_active_form_configuration_404_includes_diagnostics_when_nothing_res
         svc.resolve_auth_tenant_id_with_db = monkeypatch_target
 
 
+def test_probe_auth_me_reports_no_access_token():
+    from app.services.event_form_config_service import _probe_auth_me
+
+    result = _probe_auth_me(None)
+    assert result == {"attempted": False, "reason": "no access_token available"}
+
+
+def test_probe_auth_me_reports_network_error(monkeypatch):
+    """Reproduces the reported bug: fetch_auth_me_profile silently swallows
+    any exception and returns None, making a real outage or misconfiguration
+    indistinguishable from 'user genuinely has no tenant'. The probe must
+    surface the actual failure instead."""
+    import requests as requests_module
+    from app.services import event_form_config_service as svc
+
+    def _raise(*a, **kw):
+        raise requests_module.exceptions.ConnectionError("connection refused")
+
+    monkeypatch.setattr("requests.get", _raise)
+
+    result = svc._probe_auth_me("some-session-token")
+    assert result["attempted"] is True
+    assert "ConnectionError" in result["error"]
+
+
+def test_probe_auth_me_reports_non_2xx_status(monkeypatch):
+    import requests as requests_module
+    from app.services import event_form_config_service as svc
+
+    class _Resp:
+        status_code = 401
+        text = "Unauthorized"
+
+        def raise_for_status(self):
+            raise requests_module.exceptions.HTTPError("401 Unauthorized")
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _Resp())
+
+    result = svc._probe_auth_me("some-session-token")
+    assert result["attempted"] is True
+    assert result["status_code"] == 401
+    assert "error" in result
+
+
+def test_probe_auth_me_extracts_tenant_id_from_successful_profile(monkeypatch):
+    """When /auth/me succeeds, the probe must show exactly what tenant_id
+    (if any) our own claim-extraction logic would pull from the response —
+    proving whether a shape mismatch, not a network failure, is the cause."""
+    from app.services import event_form_config_service as svc
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": {"tenant_id": "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"}}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _Resp())
+
+    result = svc._probe_auth_me("some-session-token")
+    assert result["status_code"] == 200
+    assert result["unwrapped_keys"] == ["tenant_id"]
+    assert result["tenant_id_extracted_from_unwrapped"] == "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"
+    assert result["tenant_id_extracted_from_top_level"] is None  # top-level has no tenant_id, only nested under "data"
+
+
 def test_deactivate_configuration_service_returns_all_response_model_fields():
     """Reproduces the reported 500: the DB mutation (is_active=False) always
     succeeded, but the returned dict was missing `status`, a required field
