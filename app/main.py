@@ -8,6 +8,17 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
 from app.core.config import settings
+
+# Must run before any other app module logs anything: nothing else in this
+# codebase calls logging.basicConfig, so without this the root logger stays
+# at Python's default WARNING level and every logger.info(...) call across
+# the whole app — including diagnostic logging added to debug production
+# issues — is silently dropped, never reaching stdout/the log aggregator.
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 from app.core.openapi import OPENAPI_TAGS, configure_openapi, register_docs_routes
 from app.db.database import Base, engine
 from app.api.v1.router import api_router

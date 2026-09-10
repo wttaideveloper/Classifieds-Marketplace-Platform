@@ -10,6 +10,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class Settings(BaseSettings):
     ENVIRONMENT: Literal["development", "production"] = "development"
+    # Root logger level. Nothing in this app calls logging.basicConfig, so
+    # without this, Python's root logger defaults to WARNING and every
+    # logger.info(...) call anywhere in the codebase is silently dropped —
+    # including diagnostic logging added specifically to debug production
+    # issues. Override via env var if a deployment wants less verbosity.
+    LOG_LEVEL: str = "INFO"
     DATABASE_URL: str
     AUTO_CREATE_TABLES: bool = True
     SECRET_KEY: str
