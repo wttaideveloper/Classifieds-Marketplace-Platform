@@ -792,6 +792,60 @@ def build_active_response(config: EventFormConfiguration, version: EventFormConf
     }
 
 
+def _diagnose_active_resolution_failure(
+    db: Session,
+    tenant_uuid: UUID | None,
+    current_user: dict,
+    *,
+    local_tenant_claim: str | None,
+    local_enterprise_claim: str | None,
+    access_token_present: bool,
+) -> dict:
+    """Build a JSON-visible explanation of why no active config resolved —
+    lets the caller self-diagnose from the API response body when they have
+    no access to server logs, instead of us needing to pull runtime logs."""
+    assignment = None
+    assignment_config = None
+    if tenant_uuid is not None:
+        assignment = db.query(EventFormAssignment).filter(EventFormAssignment.tenant_id == tenant_uuid).first()
+        if assignment:
+            assignment_config = db.query(EventFormConfiguration).filter(
+                EventFormConfiguration.id == assignment.configuration_id,
+            ).first()
+
+    global_config = (
+        db.query(EventFormConfiguration)
+        .filter(EventFormConfiguration.scope == "global", EventFormConfiguration.is_active.is_(True), EventFormConfiguration.status == "published")
+        .order_by(EventFormConfiguration.published_at.desc().nullslast())
+        .first()
+    )
+    legacy_config = db.query(EventFormConfiguration).filter(EventFormConfiguration.id == UUID(LEGACY_CONFIGURATION_ID)).first()
+
+    return {
+        "resolved_tenant_id": str(tenant_uuid) if tenant_uuid else None,
+        "local_tenant_claim": local_tenant_claim,
+        "local_enterprise_claim": local_enterprise_claim,
+        "access_token_present": access_token_present,
+        "assignment_found_for_tenant": assignment is not None,
+        "assignment_configuration_id": str(assignment.configuration_id) if assignment else None,
+        "assignment_configuration_state": (
+            {
+                "is_active": assignment_config.is_active,
+                "status": assignment_config.status,
+                "scope": assignment_config.scope,
+            }
+            if assignment_config is not None
+            else None
+        ),
+        "active_published_global_config_id": str(global_config.id) if global_config else None,
+        "legacy_config_state": (
+            {"is_active": legacy_config.is_active, "status": legacy_config.status}
+            if legacy_config is not None
+            else None
+        ),
+    }
+
+
 def get_active_form_configuration_service(
     db: Session,
     current_user: dict,
@@ -803,18 +857,35 @@ def get_active_form_configuration_service(
 
     from app.core.auth_context import resolve_auth_enterprise_id, resolve_auth_tenant_id
 
+    local_tenant_claim = resolve_auth_tenant_id(current_user)
+    local_enterprise_claim = resolve_auth_enterprise_id(current_user)
     tenant_raw = resolve_auth_tenant_id_with_db(db, current_user, access_token=access_token)
     tenant_uuid = UUID(str(tenant_raw)) if tenant_raw else None
     logger.info(
         "Event active-form resolve: user_id=%s local_tenant_claim=%s local_enterprise_claim=%s "
         "resolved_tenant_id=%s access_token_present=%s",
         current_user.get("id"),
-        resolve_auth_tenant_id(current_user),
-        resolve_auth_enterprise_id(current_user),
+        local_tenant_claim,
+        local_enterprise_claim,
         tenant_uuid,
         bool(access_token),
     )
-    config, version = _resolve_active_form_configuration(db, tenant_uuid)
+    try:
+        config, version = _resolve_active_form_configuration(db, tenant_uuid)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            exc.detail = {
+                "message": "No active Event form configuration found",
+                "diagnostics": _diagnose_active_resolution_failure(
+                    db,
+                    tenant_uuid,
+                    current_user,
+                    local_tenant_claim=local_tenant_claim,
+                    local_enterprise_claim=local_enterprise_claim,
+                    access_token_present=bool(access_token),
+                ),
+            }
+        raise
     logger.info(
         "Event active-form resolved: tenant_id=%s -> configuration_id=%s scope=%s",
         tenant_uuid, config.id, config.scope,

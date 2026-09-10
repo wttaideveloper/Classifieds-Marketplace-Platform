@@ -260,6 +260,45 @@ def test_get_active_form_configuration_resolves_selective_config_via_access_toke
     assert str(seen_tenant_ids[0]) == tenant_id
 
 
+def test_get_active_form_configuration_404_includes_diagnostics_when_nothing_resolves():
+    """When resolution fails, the 404 body must carry enough diagnostic
+    detail (resolved tenant_id, local claims, assignment lookup state) for
+    the caller to self-diagnose without needing server log access — this is
+    the exact info previously only available via logger.info() calls."""
+    from fastapi import HTTPException
+    from app.services import event_form_config_service as svc
+
+    tenant_id = "2122fbf0-64cd-4e3b-8ccb-22913912f1ea"
+
+    monkeypatch_target = svc.resolve_auth_tenant_id_with_db
+    try:
+        svc.resolve_auth_tenant_id_with_db = lambda db, current_user, access_token=None: tenant_id
+
+        def _raise_404(db, tenant_uuid):
+            raise HTTPException(status_code=404, detail="No active Event form configuration found")
+
+        orig_resolve = svc._resolve_active_form_configuration
+        svc._resolve_active_form_configuration = _raise_404
+
+        orig_diagnose = svc._diagnose_active_resolution_failure
+        svc._diagnose_active_resolution_failure = lambda *a, **kw: {"assignment_found_for_tenant": True, "assignment_configuration_state": {"is_active": False, "status": "published", "scope": "selective"}}
+
+        try:
+            svc.get_active_form_configuration_service(MagicMock(), {"role": "admin", "id": "user-1"})
+            assert False, "expected HTTPException(404)"
+        except HTTPException as exc:
+            assert exc.status_code == 404
+            assert isinstance(exc.detail, dict)
+            assert exc.detail["message"] == "No active Event form configuration found"
+            assert exc.detail["diagnostics"]["assignment_found_for_tenant"] is True
+            assert exc.detail["diagnostics"]["assignment_configuration_state"]["is_active"] is False
+        finally:
+            svc._resolve_active_form_configuration = orig_resolve
+            svc._diagnose_active_resolution_failure = orig_diagnose
+    finally:
+        svc.resolve_auth_tenant_id_with_db = monkeypatch_target
+
+
 def test_deactivate_configuration_service_returns_all_response_model_fields():
     """Reproduces the reported 500: the DB mutation (is_active=False) always
     succeeded, but the returned dict was missing `status`, a required field
