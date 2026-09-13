@@ -277,14 +277,11 @@ def delete_lesson(training_id: UUID, section_id: str, lesson_id: str, db: Sessio
 # Enrol, waitlist, assessments, assignments, progress, live-sessions, announcements
 @router.get("/my/enrolments", summary="Participant dashboard — enrolled/active/completed/cancelled")
 def my_enrolments(status: str | None = Query(None, description="enrolled|pending_approval|cancelled|waitlisted"), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.training_model import TrainingEnrolment
+    from app.services.training_service import list_my_enrolments_service
     email = current_user.get("email")
     if not email:
         from fastapi import HTTPException; raise HTTPException(400, "Email not found in token")
-    q = db.query(TrainingEnrolment).filter(TrainingEnrolment.participant_email==email)
-    if status: q = q.filter(TrainingEnrolment.status==status)
-    rows = q.order_by(TrainingEnrolment.created_at.desc()).all()
-    return [{"training_id": str(r.training_id), "status": r.status, "enrolment_id": str(r.id), "qr_code": r.qr_code, "created_at": r.created_at.isoformat()} for r in rows]
+    return list_my_enrolments_service(db, email, status_filter=status)
 
 @router.get("/my/wishlist", response_model=list[TrainingWishlistItemResponse], summary="My saved/wishlisted trainings")
 def my_wishlist(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

@@ -471,16 +471,23 @@ class SectionCreate(BaseModel):
 
 class LessonCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
-    type: str = Field("text", description="text|video|audio|webpage|pdf|live|presentation|worksheet|document")
+    type: str = Field("text", description="text|video|audio|webpage|pdf|live|presentation|worksheet|document|venue|exam")
     title: str
     content_url: str | None = None
     topics: list | None = Field(None, description="Topics within lesson: [{title, content_url}]")
-    duration: int | None = None
+    duration: int | str | None = Field(None, description="Minutes (int) for content lessons, or a display string (e.g. 'Tue 7:00–7:40 AM') for live/venue lessons")
     is_preview: bool | None = Field(False, description="Preview allowed without enrolment")
     is_draft: bool | None = Field(False, description="Draft mode — hidden until published")
     is_mandatory: bool | None = Field(False, description="Mandatory lesson")
     is_downloadable: bool | None = Field(False, description="Allow offline download/caching of this lesson's content_url")
     meeting_link: str | None = Field(None, description="Live-session join link for this lesson (video call URL)")
+    join_meta: str | None = Field(None, description="Join instructions for a live lesson, e.g. 'Opens 10 min before · muted on join'")
+    thumbnail_url: str | None = Field(None, description="Thumbnail image URL shown on the lesson card")
+    venue: str | None = Field(None, description="In-person venue name for this specific lesson (e.g. 'Restwell Studio · Room B')")
+    address: str | None = Field(None, description="Address for this lesson's venue")
+    pass_code: str | None = Field(None, description="Check-in pass code for this lesson's venue")
+    check_in_window: str | None = Field(None, description="Display string for the check-in window, e.g. 'Opens 8:40 AM · closes 9:20 AM'")
+    assessment_id: str | None = Field(None, description="Linked assessment id, for type='exam' lessons — matched against Training.assessments[].id")
     file_size: str | None = Field(None, description="Content file size, e.g. '24 MB' — informational, client-supplied")
     completion_rule: str | None = Field(None, description="Completion rule, e.g. mandatory")
     prerequisites: list | None = Field(None, description="Lesson IDs that must be completed first — sequential learning")

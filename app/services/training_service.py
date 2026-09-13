@@ -95,10 +95,48 @@ def get_trainings_service(db: Session, **kw):
 
     return TrainingPaginatedResponse(items=mapped, pagination=build_pagination_meta(total, kw.get("page",1), kw.get("page_size",20)))
 
+def _sanitize_assessment_for_learner(assessment: dict) -> dict:
+    """Deep copy of an assessment with correct_answer and reusable (an
+    authoring/question-bank flag) stripped from every question — never
+    expose grading keys to a learner-facing response."""
+    import copy
+
+    sanitized = copy.deepcopy(assessment)
+    for q in sanitized.get("questions") or []:
+        if isinstance(q, dict):
+            q.pop("correct_answer", None)
+            q.pop("reusable", None)
+    return sanitized
+
+
+def _embed_assessments_into_sections(sections: list | None, assessments: list | None) -> list:
+    """Embed the matching sanitized assessment object (by assessment_id)
+    directly onto each section/lesson that references one, alongside the
+    existing assessment_id — so mobile can render a quiz without a second
+    round trip. Operates on a deep copy; never mutates the ORM-tracked
+    sections/assessments JSONB columns."""
+    import copy
+
+    by_id = {a.get("id"): a for a in (assessments or []) if isinstance(a, dict) and a.get("id")}
+    out = copy.deepcopy(sections or [])
+    for section in out:
+        if not isinstance(section, dict):
+            continue
+        sec_aid = section.get("assessment_id")
+        section["assessment"] = _sanitize_assessment_for_learner(by_id[sec_aid]) if sec_aid in by_id else None
+        for lesson in section.get("lessons") or []:
+            if not isinstance(lesson, dict):
+                continue
+            les_aid = lesson.get("assessment_id")
+            lesson["assessment"] = _sanitize_assessment_for_learner(by_id[les_aid]) if les_aid in by_id else None
+    return out
+
+
 def get_training_service(db: Session, tid: UUID):
     obj = get_training_by_id(db, tid)
     if not obj: raise HTTPException(status_code=404, detail="Training not found")
     detail = map_training_detail(obj)
+    detail["sections"] = _embed_assessments_into_sections(detail.get("sections"), obj.assessments)
     from app.models.training_model import TrainingEnrolment
     enrolled_count = db.query(TrainingEnrolment).filter(
         TrainingEnrolment.training_id == tid,
@@ -1309,6 +1347,65 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
     except: pass
     return e
 
+
+def list_my_enrolments_service(db: Session, email: str, status_filter: str | None = None):
+    """Participant dashboard rows — enough card data (title, image, vendor,
+    price, progress) for mobile to render without a follow-up call per
+    training."""
+    from sqlalchemy.orm import joinedload
+
+    from app.models.training_model import Training, TrainingEnrolment, TrainingProgress
+
+    q = db.query(TrainingEnrolment).filter(TrainingEnrolment.participant_email == email)
+    if status_filter:
+        q = q.filter(TrainingEnrolment.status == status_filter)
+    rows = q.order_by(TrainingEnrolment.created_at.desc()).all()
+
+    training_ids = [r.training_id for r in rows]
+    trainings_by_id: dict = {}
+    progress_by_id: dict = {}
+    if training_ids:
+        trainings = (
+            db.query(Training)
+            .options(joinedload(Training.enterprise))
+            .filter(Training.id.in_(training_ids))
+            .all()
+        )
+        trainings_by_id = {t.id: t for t in trainings}
+        progress_rows = (
+            db.query(TrainingProgress)
+            .filter(TrainingProgress.training_id.in_(training_ids), TrainingProgress.participant_email == email)
+            .all()
+        )
+        progress_by_id = {p.training_id: p for p in progress_rows}
+
+    out = []
+    for r in rows:
+        t = trainings_by_id.get(r.training_id)
+        prog = progress_by_id.get(r.training_id)
+        total_lessons = sum(len(s.get("lessons", []) or []) for s in (t.sections or [])) if t else 0
+        completed_lessons = len(prog.lessons_completed or []) if prog else 0
+        progress_percent = round(completed_lessons / total_lessons * 100, 2) if total_lessons else 0
+        out.append({
+            "training_id": str(r.training_id),
+            "status": r.status,
+            "enrolment_id": str(r.id),
+            "qr_code": r.qr_code,
+            "created_at": r.created_at.isoformat(),
+            "title": t.title if t else None,
+            "primary_image": t.primary_image if t else None,
+            "enterprise_name": (t.enterprise.business_short_name if t and t.enterprise else None),
+            "delivery_mode": t.delivery_mode if t else None,
+            "price": t.price if t else None,
+            "currency": t.currency if t else None,
+            "duration": t.duration if t else None,
+            "progress_percent": progress_percent,
+            "completed_lessons": completed_lessons,
+            "total_lessons": total_lessons,
+        })
+    return out
+
+
 def cancel_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, participant_email: str | None = None):
     from app.models.training_model import TrainingEnrolment
     q=db.query(TrainingEnrolment).filter(TrainingEnrolment.id==enrol_id, TrainingEnrolment.training_id==tid)
@@ -1612,50 +1709,258 @@ def filter_assessments(assessments: list, module_id: str | None, lesson_id: str 
     return filtered
 
 
+def _format_duration(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return f"{int(value)} min"
+    return str(value)
+
+
+def _section_summary(lessons: list) -> str:
+    content_count = sum(1 for l in lessons if l.get("type") != "exam")
+    quiz_count = sum(1 for l in lessons if l.get("type") == "exam")
+    parts = [f"{content_count} lesson{'s' if content_count != 1 else ''}"]
+    if quiz_count:
+        parts.append(f"{quiz_count} quiz{'zes' if quiz_count != 1 else ''}")
+    return " · ".join(parts)
+
+
+def _extract_schedule(value):
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("datetime", "date", "start", "scheduled_at"):
+            if value.get(key):
+                return value.get(key)
+    return None
+
+
+_DEFAULT_LESSON_DETAIL_BY_TYPE = {
+    "video": "Watch inside this session",
+    "live": "Online live · tap to join",
+    "venue": "Show QR at venue",
+}
+
+
+def _default_lesson_detail(ltype: str, is_locked: bool, is_completed: bool) -> str | None:
+    if ltype == "exam":
+        if is_locked:
+            return "Unlocks after content lessons"
+        return "View results" if is_completed else "Take the quiz"
+    return _DEFAULT_LESSON_DETAIL_BY_TYPE.get(ltype)
+
+
+def _base_lesson_payload(lesson: dict, is_locked: bool, is_completed: bool, completed_at: str | None) -> dict:
+    ltype = lesson.get("type") or "text"
+    return {
+        "id": lesson.get("id"),
+        "type": ltype,
+        "title": lesson.get("title"),
+        "duration": _format_duration(lesson.get("duration")),
+        "detail": lesson.get("detail") or _default_lesson_detail(ltype, is_locked, is_completed),
+        "thumbnail_url": lesson.get("thumbnail_url"),
+        "content_url": lesson.get("content_url") if not is_locked else None,
+        "is_preview": bool(lesson.get("is_preview", False)),
+        "is_mandatory": bool(lesson.get("is_mandatory", False)),
+        "is_downloadable": bool(lesson.get("is_downloadable", False)),
+        "is_locked": is_locked,
+        "is_completed": is_completed,
+        "completed_at": completed_at,
+        "meeting_link": lesson.get("meeting_link") if not is_locked else None,
+        "join_meta": lesson.get("join_meta"),
+        "venue": lesson.get("venue"),
+        "address": lesson.get("address"),
+        "pass_code": lesson.get("pass_code") if not is_locked else None,
+        "check_in_window": lesson.get("check_in_window"),
+    }
+
+
+def _build_exam_questions_for_learner(questions: list | None, *, include_answer: bool = False) -> list:
+    """Allowlist transform — only known-safe fields are copied across, so a
+    new grading key added to question storage later can't leak by default.
+    Also normalizes plain-string options into {id, label} pairs (a, b, c, ...)."""
+    import string
+
+    out = []
+    for q in questions or []:
+        if not isinstance(q, dict):
+            continue
+        options = q.get("options")
+        norm_options = None
+        if isinstance(options, list) and options:
+            if isinstance(options[0], dict):
+                norm_options = [{"id": o.get("id"), "label": o.get("label", o.get("value"))} for o in options]
+            else:
+                letters = string.ascii_lowercase
+                norm_options = [
+                    {"id": letters[i] if i < len(letters) else str(i), "label": str(opt)}
+                    for i, opt in enumerate(options)
+                ]
+        entry = {
+            "id": q.get("id"),
+            "question_text": q.get("question_text"),
+            "question_type": q.get("question_type"),
+            "points": q.get("points"),
+            "options": norm_options,
+            "explanation": q.get("explanation"),
+        }
+        if include_answer:
+            entry["correct_answer"] = q.get("correct_answer")
+        out.append(entry)
+    return out
+
+
+def _build_exam_assessment_payload(assessment: dict, submission, *, include_answer: bool = False) -> dict:
+    score_percent = None
+    if submission is not None and submission.score is not None:
+        try:
+            score_percent = int(submission.score)
+        except (TypeError, ValueError):
+            try:
+                score_percent = float(submission.score)
+            except (TypeError, ValueError):
+                score_percent = None
+    return {
+        "id": assessment.get("id"),
+        "type": assessment.get("type", "quiz"),
+        "title": assessment.get("title"),
+        "pass_percent": assessment.get("pass_percent"),
+        "is_submitted": submission is not None,
+        "score_percent": score_percent,
+        "passed": submission.passed if submission is not None else None,
+        "questions": _build_exam_questions_for_learner(assessment.get("questions"), include_answer=include_answer),
+    }
+
+
 def get_secure_training_content_service(db: Session, tid: UUID, current_user: dict):
-    from app.models.training_model import TrainingEnrolment
     import copy
+
+    from app.models.training_model import TrainingAssessmentSubmission, TrainingEnrolment, TrainingProgress
+
     email = current_user.get("email")
+    role = current_user.get("role")
+    is_staff = role in ("admin", "provider")
     enrol = db.query(TrainingEnrolment).filter(
         TrainingEnrolment.training_id == tid,
         TrainingEnrolment.participant_email == email,
         TrainingEnrolment.status.in_(["enrolled", "active", "completed"]),
     ).first() if email else None
-    if not enrol and current_user.get("role") not in ["admin", "provider"]:
+    if not enrol and not is_staff:
         raise HTTPException(status_code=403, detail="Enrolled participants only")
     training = _get_training_or_404(db, tid)
-    if training.status in ("draft", "cancelled", "archived") and current_user.get("role") not in ["admin", "provider"]:
+    if training.status in ("draft", "cancelled", "archived") and not is_staff:
         raise HTTPException(status_code=403, detail=f"Content not available — training is {training.status}")
-    sections = copy.deepcopy(training.sections or [])
-    assessments = copy.deepcopy(training.assessments or [])
-    role = current_user.get("role")
-    if role not in ["admin", "provider"]:
-        filtered_sections = []
-        completed = set()
-        if email:
-            from app.models.training_model import TrainingProgress
-            prog = db.query(TrainingProgress).filter(
-                TrainingProgress.training_id == tid,
-                TrainingProgress.participant_email == email,
-            ).first()
-            if prog:
-                completed = set(prog.lessons_completed or [])
-        for section in sections:
-            section_copy = {**section, "lessons": []}
-            for lesson in section.get("lessons", []):
-                if lesson.get("is_draft") and not lesson.get("is_preview"):
-                    continue
-                accessible, _ = _lesson_is_accessible(lesson, completed, enrol, training)
-                if accessible or lesson.get("is_preview"):
-                    section_copy["lessons"].append(lesson)
-            if section_copy["lessons"]:
-                filtered_sections.append(section_copy)
-        sections = filtered_sections
-        for assessment in assessments:
-            for question in assessment.get("questions", []):
-                question.pop("correct_answer", None)
-                question.pop("explanation", None)
-    return {"training_id": str(tid), "sections": sections, "assessments": assessments}
+
+    sections_raw = copy.deepcopy(training.sections or [])
+    assessments_by_id = {a.get("id"): a for a in (training.assessments or []) if isinstance(a, dict) and a.get("id")}
+
+    completed_lesson_ids: set = set()
+    if email:
+        prog = db.query(TrainingProgress).filter(
+            TrainingProgress.training_id == tid,
+            TrainingProgress.participant_email == email,
+        ).first()
+        if prog:
+            completed_lesson_ids = set(prog.lessons_completed or [])
+
+    submissions_by_assessment_id: dict = {}
+    if email:
+        subs = (
+            db.query(TrainingAssessmentSubmission)
+            .filter(TrainingAssessmentSubmission.training_id == tid, TrainingAssessmentSubmission.participant_email == email)
+            .order_by(TrainingAssessmentSubmission.submitted_at.desc())
+            .all()
+        )
+        for s in subs:
+            submissions_by_assessment_id.setdefault(s.assessment_id, s)  # newest first, first-seen wins
+
+    total_lessons = sum(len(s.get("lessons") or []) for s in sections_raw)
+    completed_lessons_count = len(completed_lesson_ids)
+    progress_percent = round(completed_lessons_count / total_lessons * 100, 2) if total_lessons else 0
+
+    out_sections = []
+    prev_section_done = True  # section 0 is always unlocked
+    prev_section_title = None
+    for idx, section in enumerate(sections_raw):
+        visible_lessons = [
+            l for l in (section.get("lessons") or [])
+            if not (isinstance(l, dict) and l.get("is_draft") and not l.get("is_preview"))
+        ]
+
+        section_unlocked = True if (idx == 0 or is_staff) else prev_section_done
+        unlock_hint = None
+        if not section_unlocked:
+            unlock_hint = f"Complete {prev_section_title} quiz to unlock" if prev_section_title else "Complete the previous session to unlock"
+
+        content_ids_this_section = [str(l.get("id")) for l in visible_lessons if l.get("type") != "exam"]
+        content_done_this_section = all(cid in completed_lesson_ids for cid in content_ids_this_section) if content_ids_this_section else True
+        has_exam = any(l.get("type") == "exam" for l in visible_lessons)
+        section_exam_passed = not has_exam
+
+        lessons_out = []
+        for lesson in visible_lessons:
+            ltype = lesson.get("type") or "text"
+            accessible, _reason = _lesson_is_accessible(lesson, completed_lesson_ids, enrol, training)
+            locked = (not section_unlocked) or (not accessible)
+
+            if ltype == "exam":
+                aid = lesson.get("assessment_id")
+                assessment = assessments_by_id.get(aid)
+                submission = submissions_by_assessment_id.get(aid)
+                if not is_staff:
+                    locked = locked or (not content_done_this_section)
+                if is_staff:
+                    locked = False
+                if submission is not None and submission.passed:
+                    section_exam_passed = True
+                is_completed = submission is not None
+                completed_at = submission.submitted_at.isoformat() if submission else None
+                lesson_payload = _base_lesson_payload(lesson, locked, is_completed, completed_at)
+                lesson_payload["assessment"] = (
+                    _build_exam_assessment_payload(assessment, submission, include_answer=is_staff)
+                    if assessment and not locked
+                    else None
+                )
+            else:
+                if is_staff:
+                    locked = False
+                is_completed = str(lesson.get("id")) in completed_lesson_ids
+                lesson_payload = _base_lesson_payload(lesson, locked, is_completed, None)
+            lessons_out.append(lesson_payload)
+
+        prev_section_done = content_done_this_section and section_exam_passed
+        prev_section_title = section.get("title")
+
+        out_sections.append({
+            "id": section.get("id"),
+            "type": section.get("type", "section"),
+            "order": section.get("order", idx + 1),
+            "title": section.get("title"),
+            "summary": _section_summary(visible_lessons),
+            "schedule": _extract_schedule(section.get("schedule")),
+            "is_unlocked": section_unlocked,
+            "unlock_hint": unlock_hint,
+            "lessons": lessons_out,
+        })
+
+    enterprise_name = training.enterprise.business_short_name if getattr(training, "enterprise", None) else None
+
+    return {
+        "training_id": str(tid),
+        "title": training.title,
+        "primary_image": training.primary_image,
+        "enterprise_name": enterprise_name,
+        "instructor_name": training.instructor_name,
+        "delivery_mode": training.delivery_mode,
+        "progress_percent": progress_percent,
+        "completed_lessons": completed_lessons_count,
+        "total_lessons": total_lessons,
+        "qr_code": enrol.qr_code if enrol else None,
+        "sections": out_sections,
+    }
 
 
 def _require_enrolled_or_staff(db: Session, tid: UUID, current_user: dict):
