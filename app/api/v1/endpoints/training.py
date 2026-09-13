@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingWishlistItemResponse
-from app.services.training_service import add_assessment_question_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
+from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCheckInRequest, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingWishlistItemResponse
+from app.services.training_service import add_assessment_question_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 from app.services.training_service import (
     add_training_wishlist_service,
     create_training_review_service,
@@ -30,6 +30,11 @@ def list_trainings(search: str | None = Query(None), category: str | None = Quer
     try: prov = _UUID(provider) if provider else None
     except: prov = None
     return get_trainings_service(db, search=search, category=category, provider_id=prov, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, delivery_mode=delivery_mode, min_price=min_price, max_price=max_price, duration=duration, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
+
+@router.get("/reports/summary", summary="Training portfolio summary")
+def training_summary(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import get_training_summary_service
+    return get_training_summary_service(db, enterprise_id)
 
 @router.get(
     "/form-configuration/active",
@@ -521,12 +526,49 @@ def get_certificate(training_id: UUID, participant_email: str | None = Query(Non
     from app.services.training_service import get_certificate_service
     return get_certificate_service(db, training_id, participant_email)
 
+@router.get("/{training_id}/certificate.pdf", summary="Certificate of Completion — real generated PDF")
+def download_certificate_pdf(training_id: UUID, participant_email: str | None = Query(None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+    from app.services.training_service import generate_certificate_pdf_service
+    participant_email = participant_email or (current_user.get("email") if current_user else None)
+    if not participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=400, detail="participant_email required")
+    if current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Not authorized to view this certificate")
+    pdf_bytes = generate_certificate_pdf_service(db, training_id, participant_email)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=training_{training_id}_certificate.pdf"},
+    )
+
 @router.get("/{training_id}/progress")
 def progress(training_id: UUID, participant_email: str | None = Query(None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = participant_email or (current_user.get("email") if current_user else None)
     if participant_email and current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:
         from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Not authorized to view this participant's progress")
     return get_training_progress_service(db, training_id, participant_email=email)
+
+@router.get("/{training_id}/dashboards/participant")
+def dash_participant(training_id: UUID, participant_email: str | None = Query(None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.training_service import get_training_participant_dashboard_service
+    email = participant_email or (current_user.get("email") if current_user else None)
+    return get_training_participant_dashboard_service(db, training_id, participant_email=email)
+
+@router.get("/{training_id}/dashboards/provider")
+def dash_provider(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import get_training_provider_dashboard_service
+    return get_training_provider_dashboard_service(db, training_id)
+
+@router.get("/{training_id}/reports", summary="Training reports with optional date range")
+def training_reports(training_id: UUID, type: str = Query("enrolment", description="enrolment|attendance|engagement|assessment|progress|completion|revenue"), date_from: str | None = Query(None), date_to: str | None = Query(None), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import get_training_reports_service
+    return get_training_reports_service(db, training_id, type, date_from=date_from, date_to=date_to)
+
+@router.post("/{training_id}/check-in", summary="Participant self-check-in via pass_code/qr_payload")
+def check_in(training_id: UUID, payload: TrainingCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return check_in_training_service(db, training_id, payload.participant_email, payload.pass_code)
 
 @router.post("/{training_id}/live-sessions", status_code=201)
 def create_live(training_id: UUID, payload: TrainingLiveSessionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):

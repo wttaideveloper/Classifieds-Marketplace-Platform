@@ -14,6 +14,16 @@ ACTIVE_ENROLMENT_STATUSES = frozenset({"enrolled", "active", "completed", "appro
 def _is_active_enrolment(enrolment) -> bool:
     return bool(enrolment and enrolment.status in ACTIVE_ENROLMENT_STATUSES)
 
+
+def _generate_pass_code() -> str:
+    import secrets
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _build_qr_payload(training_id, pass_code: str) -> str:
+    import json
+    return json.dumps({"training_id": str(training_id), "pass_code": pass_code})
+
 def _validate(db: Session, eid: UUID, lid: UUID | None, current_user: dict | None = None):
     ent = db.query(Enterprise).filter(Enterprise.id==eid, Enterprise.is_deleted.is_(False)).first()
     if not ent: raise HTTPException(status_code=404, detail="Enterprise not found")
@@ -47,6 +57,12 @@ def create_training_service(db: Session, data, current_user: dict | None = None)
             payload[key] = []
     if payload.get("custom_values") is None:
         payload["custom_values"] = []
+    if payload.get("check_in"):
+        import uuid as _uuid
+        training_id = payload.get("id") or _uuid.uuid4()
+        payload["id"] = training_id
+        payload["pass_code"] = _generate_pass_code()
+        payload["qr_payload"] = _build_qr_payload(training_id, payload["pass_code"])
     from app.models.training_model import Training
     obj = Training(**payload)
     db.add(obj)
@@ -96,10 +112,24 @@ def get_training_service(db: Session, tid: UUID):
         available_slots = None
     detail["available_slots"] = available_slots
 
-    from app.models.training_model import TrainingReview
-    ratings = [int(r.rating) for r in db.query(TrainingReview).filter(TrainingReview.training_id == tid).all()]
+    from app.models.training_model import TrainingReview, TrainingWaitlist
+    all_reviews = db.query(TrainingReview).filter(TrainingReview.training_id == tid).all()
+    ratings = [int(r.rating) for r in all_reviews]
     detail["average_rating"] = round(sum(ratings) / len(ratings), 2) if ratings else 0
     detail["reviews_count"] = len(ratings)
+    recent_reviews = sorted(all_reviews, key=lambda r: r.created_at, reverse=True)[:50]
+    detail["reviews"] = [
+        {
+            "id": r.id,
+            "training_id": r.training_id,
+            "participant_email": r.participant_email,
+            "rating": r.rating,
+            "comment": r.comment,
+            "created_at": r.created_at,
+        }
+        for r in recent_reviews
+    ]
+    detail["waitlist_count"] = db.query(TrainingWaitlist).filter(TrainingWaitlist.training_id == tid).count()
 
     return TrainingDetailResponse.model_validate(detail)
 
@@ -112,6 +142,11 @@ def update_training_service(db: Session, tid: UUID, data, current_user: dict | N
     _validate(db, obj.enterprise_id, lid)
     extra = apply_form_configuration_to_training_update(db, obj, data, current_user or {})
     updated = update_training(db, obj, data)
+    if updated.check_in and not updated.pass_code:
+        updated.pass_code = _generate_pass_code()
+        updated.qr_payload = _build_qr_payload(updated.id, updated.pass_code)
+        db.commit()
+        db.refresh(updated)
     if extra:
         for key, val in extra.items():
             setattr(updated, key, val)
@@ -639,7 +674,7 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
     # completion when 100% or mandatory done
     if overall==100 or (mandatory_total and mandatory_done==mandatory_total):
         prog.completed_at=datetime.utcnow()
-        prog.certificate_url=f"/api/v1/trainings/{tid}/certificate?participant_email={participant_email}"
+        prog.certificate_url=f"/api/v1/trainings/{tid}/certificate.pdf?participant_email={participant_email}"
     db.commit(); db.refresh(prog)
     # last completed for resume
     return {"lesson_id": lesson_id, "overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url, "resume_lesson": lesson_id}
@@ -708,8 +743,233 @@ def get_certificate_service(db: Session, tid: UUID, participant_email: str):
     from app.models.training_model import TrainingProgress
     prog=db.query(TrainingProgress).filter(TrainingProgress.training_id==tid, TrainingProgress.participant_email==participant_email).first()
     if not prog or not prog.certificate_url:
-        raise HTTPException(400, "Certificate not yet available — complete mandatory lessons")
+        raise HTTPException(status_code=404, detail="Certificate not yet available — complete mandatory lessons")
     return {"training_id": str(tid), "participant_email": participant_email, "certificate_url": prog.certificate_url, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "overall_percent": prog.overall_percent}
+
+
+def generate_certificate_pdf_service(db: Session, tid: UUID, participant_email: str) -> bytes:
+    """Real Certificate of Completion PDF — 404s (via get_certificate_service)
+    if the participant hasn't earned one yet, rather than serving a static
+    placeholder URL."""
+    from xml.sax.saxutils import escape
+
+    training = _get_training_or_404(db, tid)
+    cert = get_certificate_service(db, tid, participant_email)  # raises 404 if not earned
+
+    enrol = _get_enrolment(db, tid, participant_email)
+    participant_name = (enrol.participant_name if enrol else None) or participant_email
+
+    from io import BytesIO
+
+    from reportlab.lib.pagesizes import landscape, A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.colors import HexColor
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1 * inch, bottomMargin=1 * inch)
+    styles = getSampleStyleSheet()
+    centered = ParagraphStyle("Centered", parent=styles["Normal"], alignment=TA_CENTER)
+    title_style = ParagraphStyle("CertTitle", parent=styles["Title"], alignment=TA_CENTER, fontSize=28)
+    name_style = ParagraphStyle("CertName", parent=styles["Title"], alignment=TA_CENTER, fontSize=22, spaceBefore=20)
+
+    completed_at = cert.get("completed_at") or ""
+    story = [
+        Paragraph("Certificate of Completion", title_style),
+        Spacer(1, 0.4 * inch),
+        Paragraph("This certifies that", centered),
+        Paragraph(escape(str(participant_name)), name_style),
+        Spacer(1, 0.2 * inch),
+        Paragraph("has successfully completed", centered),
+        Paragraph(escape(str(training.title or "the training")), ParagraphStyle("CertCourse", parent=styles["Heading2"], alignment=TA_CENTER)),
+        Spacer(1, 0.3 * inch),
+        Paragraph(f"Completed on {escape(str(completed_at)[:10])}" if completed_at else "", centered),
+        Spacer(1, 0.2 * inch),
+        Paragraph(f"Certificate ID: {tid}", ParagraphStyle("CertId", parent=styles["Normal"], alignment=TA_CENTER, fontSize=8, textColor=HexColor("#888888"))),
+    ]
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def check_in_training_service(db: Session, tid: UUID, participant_email: str, pass_code: str):
+    from datetime import datetime
+
+    training = _get_training_or_404(db, tid)
+    if not training.check_in:
+        raise HTTPException(status_code=400, detail="Check-in is not enabled for this training")
+    if not training.pass_code or pass_code != training.pass_code:
+        raise HTTPException(status_code=403, detail="Invalid pass code")
+    enrol = _get_enrolment(db, tid, participant_email)
+    if not _is_active_enrolment(enrol):
+        raise HTTPException(status_code=403, detail="Active enrolment required")
+    enrol.checked_in_at = datetime.utcnow()
+    db.commit()
+    db.refresh(enrol)
+    return {"training_id": str(tid), "participant_email": participant_email, "checked_in_at": enrol.checked_in_at.isoformat()}
+
+
+def get_training_participant_dashboard_service(db: Session, tid: UUID, participant_email: str | None = None):
+    from app.models.training_model import TrainingLiveSession
+
+    training = _get_training_or_404(db, tid)
+    enrol = _get_enrolment(db, tid, participant_email) if participant_email else None
+    prog_data = get_training_progress_service(db, tid, participant_email=participant_email)
+
+    recent_sessions = (
+        db.query(TrainingLiveSession)
+        .filter(TrainingLiveSession.training_id == tid)
+        .order_by(TrainingLiveSession.scheduled_at.desc())
+        .limit(5)
+        .all()
+    )
+    return {
+        "training_id": str(tid),
+        "enrolment_status": enrol.status if enrol else "not_enrolled",
+        "overall_percent": prog_data["overall_percent"],
+        "sections_done": prog_data["sections_done"],
+        "total_sections": prog_data["total_sections"],
+        "lessons_done": prog_data["lessons_done"],
+        "total_lessons": prog_data["total_lessons"],
+        "certificate_url": prog_data["certificate_url"],
+        "expired": prog_data["expired"],
+        "recent_live_sessions": [
+            {"id": str(s.id), "title": s.title, "scheduled_at": s.scheduled_at.isoformat(), "status": s.status}
+            for s in recent_sessions
+        ],
+    }
+
+
+def get_training_provider_dashboard_service(db: Session, tid: UUID):
+    from sqlalchemy import func
+    from app.models.training_model import TrainingEnrolment
+
+    training = _get_training_or_404(db, tid)
+    total = db.query(func.count(TrainingEnrolment.id)).filter(TrainingEnrolment.training_id == tid).scalar() or 0
+    by_status_rows = (
+        db.query(TrainingEnrolment.status, func.count(TrainingEnrolment.id))
+        .filter(TrainingEnrolment.training_id == tid)
+        .group_by(TrainingEnrolment.status)
+        .all()
+    )
+    by_status = {r[0]: r[1] for r in by_status_rows}
+    capacity_utilization = 0
+    if training.capacity:
+        try:
+            cap = int(training.capacity)
+            capacity_utilization = round(total / cap * 100, 2) if cap else 0
+        except (TypeError, ValueError):
+            pass
+    recent = (
+        db.query(TrainingEnrolment)
+        .filter(TrainingEnrolment.training_id == tid)
+        .order_by(TrainingEnrolment.created_at.desc())
+        .limit(5)
+        .all()
+    )
+    return {
+        "training_id": str(tid),
+        "total_enrolments": total,
+        "by_status": by_status,
+        "capacity_utilization": capacity_utilization,
+        "recent_enrolments": [
+            {"participant_email": r.participant_email, "status": r.status, "created_at": r.created_at.isoformat()}
+            for r in recent
+        ],
+    }
+
+
+def get_training_reports_service(db: Session, tid: UUID, report_type: str = "enrolment", date_from=None, date_to=None):
+    from datetime import datetime
+
+    from app.models.training_model import TrainingAssessmentSubmission, TrainingEnrolment, TrainingLiveSession, TrainingOrder, TrainingReview
+
+    training = _get_training_or_404(db, tid)
+
+    def _in_range(dt):
+        if not dt:
+            return True
+        if date_from:
+            try:
+                if dt < datetime.fromisoformat(str(date_from)):
+                    return False
+            except (TypeError, ValueError):
+                pass
+        if date_to:
+            try:
+                if dt > datetime.fromisoformat(str(date_to)):
+                    return False
+            except (TypeError, ValueError):
+                pass
+        return True
+
+    if report_type == "enrolment":
+        rows = [r for r in db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id == tid).all() if _in_range(r.created_at)]
+        by_status: dict = {}
+        for r in rows:
+            by_status[r.status] = by_status.get(r.status, 0) + 1
+        data = {"total": len(rows), "by_status": by_status}
+    elif report_type == "attendance":
+        sessions = db.query(TrainingLiveSession).filter(TrainingLiveSession.training_id == tid).all()
+        total_attended = sum(len(s.attendance or []) for s in sessions)
+        enrol_count = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id == tid).count()
+        data = {
+            "total_sessions": len(sessions),
+            "total_attendance_marks": total_attended,
+            "attendance_rate": round(total_attended / max(1, enrol_count * max(1, len(sessions))) * 100, 2),
+        }
+    elif report_type == "progress":
+        data = get_training_progress_service(db, tid)
+    elif report_type == "engagement":
+        enrol_cnt = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id == tid).count()
+        review_cnt = db.query(TrainingReview).filter(TrainingReview.training_id == tid).count()
+        data = {"enrolments": enrol_cnt, "reviews": review_cnt, "engagement_rate": round(review_cnt / max(1, enrol_cnt) * 100, 2)}
+    elif report_type == "assessment":
+        submission_cnt = db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.training_id == tid).count()
+        passed_cnt = db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.training_id == tid, TrainingAssessmentSubmission.passed.is_(True)).count()
+        data = {"submissions": submission_cnt, "passed": passed_cnt, "pass_rate": round(passed_cnt / max(1, submission_cnt) * 100, 2) if submission_cnt else 0}
+    elif report_type == "completion":
+        data = get_training_progress_service(db, tid)
+        data["completion_rate"] = data.get("overall_percent", 0)
+    elif report_type == "revenue":
+        rows = [r for r in db.query(TrainingOrder).filter(TrainingOrder.training_id == tid).all() if _in_range(r.created_at)]
+        try:
+            total_amount = sum(float(r.amount or 0) for r in rows)
+        except (TypeError, ValueError):
+            total_amount = 0
+        data = {"total_revenue": str(total_amount), "currency": training.currency or "INR", "orders": len(rows)}
+    else:
+        data = {}
+    return {"training_id": str(tid), "type": report_type, "data": data}
+
+
+def get_training_summary_service(db: Session, enterprise_id: UUID | None = None):
+    from sqlalchemy import func
+    from app.models.training_model import Training, TrainingEnrolment
+
+    q = db.query(Training).filter(Training.is_deleted.is_(False))
+    if enterprise_id:
+        q = q.filter(Training.enterprise_id == enterprise_id)
+    status_rows = q.with_entities(Training.status, func.count(Training.id)).group_by(Training.status).all()
+    by_status = {r[0]: r[1] for r in status_rows}
+    cat_rows = q.with_entities(Training.category, func.count(Training.id)).group_by(Training.category).all()
+    by_category = {r[0]: r[1] for r in cat_rows if r[0]}
+    del_rows = q.with_entities(Training.delivery_mode, func.count(Training.id)).group_by(Training.delivery_mode).all()
+    by_delivery = {r[0]: r[1] for r in del_rows if r[0]}
+    total = sum(by_status.values())
+    tids = [t.id for t in q.all()]
+    total_enrol = 0
+    if tids:
+        total_enrol = db.query(func.count(TrainingEnrolment.id)).filter(TrainingEnrolment.training_id.in_(tids)).scalar() or 0
+    return {
+        "total_trainings": total,
+        "by_status": by_status,
+        "by_category": by_category,
+        "by_delivery_mode": by_delivery,
+        "total_enrolments": total_enrol,
+    }
+
 
 def create_training_announcement_service(db: Session, tid: UUID, data, current_user: dict | None = None):
     import uuid as _uuid
@@ -778,8 +1038,10 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
     if t.status not in ("published", "approved"):
         raise HTTPException(status_code=400, detail=f"Training not open for enrolment (status={t.status})")
     _enforce_enrolment_window(t)
-    # coupon validation
-    if t.coupon_code and coupon_code != t.coupon_code:
+    # coupon validation — only enforced when the caller actually supplies a
+    # code to redeem; a training having a promo coupon_code configured must
+    # not block plain (non-discounted) enrolment.
+    if coupon_code and t.coupon_code and coupon_code != t.coupon_code:
         raise HTTPException(status_code=400, detail="Invalid coupon code")
     # if promo price exists and coupon not needed, keep
     # capacity
@@ -867,7 +1129,7 @@ def create_training_checkout_service(db: Session, tid: UUID, payload):
     t = _get_training_or_404(db, tid)
     # coupon check
     coupon = getattr(payload, "coupon_code", None) or payload.get("coupon_code") if isinstance(payload, dict) else None
-    if t.coupon_code and coupon != t.coupon_code:
+    if coupon and t.coupon_code and coupon != t.coupon_code:
         raise HTTPException(status_code=400, detail="Invalid coupon code")
     # price - use promo_price if coupon valid
     price = t.promo_price if (coupon and t.promo_price) else t.price or "0"

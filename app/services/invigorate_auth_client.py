@@ -79,7 +79,7 @@ def resolve_tenant_ids_from_slugs(slugs: list[str]) -> list[UUID]:
 
     if unknown:
         raise HTTPException(
-            status_code=400,
+            status_code=422,
             detail={
                 "message": "Unknown tenant slug(s)",
                 "unknown_slugs": unknown,

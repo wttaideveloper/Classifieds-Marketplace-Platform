@@ -33,7 +33,7 @@ def test_resolve_tenant_ids_from_slugs_unknown(mock_list_tenants, mock_settings)
 
     with pytest.raises(HTTPException) as exc:
         resolve_tenant_ids_from_slugs(["missing-shop"])
-    assert exc.value.status_code == 400
+    assert exc.value.status_code == 422
     assert "missing-shop" in exc.value.detail["unknown_slugs"]
 
 

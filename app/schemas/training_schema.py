@@ -16,6 +16,33 @@ class TrainingNoteDocument(BaseModel):
     url: str = Field(..., description="URL of the already-uploaded notes file (e.g. PDF)")
 
 
+class TrainingRecurrence(BaseModel):
+    frequency: str = Field(..., description="daily|weekly|monthly")
+    interval: int = Field(1, description="Repeat every N frequency units, e.g. 2 = every 2 weeks")
+    days_of_week: list[str] | None = Field(None, description="For weekly: ['mon','wed','fri']")
+    end_date: datetime | None = Field(None, description="Recurrence ends on/after this date")
+
+
+class TrainingInstructor(BaseModel):
+    """Nested view of instructor_id/instructor_name/instructor_bio/instructor_role.
+    Accepted on create/update as an alternative to the flat fields (flattened
+    into them); always returned on GET, populated from those same columns."""
+    id: UUID | None = None
+    name: str | None = None
+    bio: str | None = None
+    role: str | None = None
+
+
+class TrainingFaq(BaseModel):
+    question: str
+    answer: str
+
+
+class TrainingCheckInRequest(BaseModel):
+    participant_email: str = Field(..., description="Enrolled participant's email")
+    pass_code: str = Field(..., description="Pass code shown/scanned at the training (matches Training.pass_code)")
+
+
 class TrainingCreate(BaseModel):
     tenant_id: UUID | None = None
     enterprise_id: UUID = Field(..., description="Enterprise ID")
@@ -28,11 +55,20 @@ class TrainingCreate(BaseModel):
     instructor_id: UUID | None = None
     instructor_name: str | None = Field(None, description="Instructor display name")
     instructor_bio: str | None = Field(None, description="Instructor biography")
+    instructor: TrainingInstructor | None = Field(
+        None,
+        description="Alternative to the flat instructor_id/instructor_name/instructor_bio fields — "
+        "flattened into them. The flat fields win if both are sent.",
+    )
+    instructor_photo: str | None = Field(None, description="Instructor photo URL")
+    instructor_credentials: str | None = Field(None, description="Instructor credentials/qualifications")
     requirements: str | None = None
+    prerequisites: list[str] | None = Field(None, description="Course-level prerequisites, e.g. ['Basic Excel']")
     learning_objectives: list[str] | None = Field(None, description="What participants will learn")
     target_audience: str | None = Field(None, description="Who this training is for")
     level: str | None = Field(None, description="beginner|intermediate|advanced|all_levels")
     language: str | None = Field("English", description="Course language")
+    subtitle: str | None = Field(None, description="Short tagline, separate from description")
     primary_image: str | None = None
     gallery_images: list | None = None
     promotional_video: str | None = None
@@ -50,8 +86,21 @@ class TrainingCreate(BaseModel):
     venue: str | None = Field(None, description="In-person venue name")
     address: str | None = Field(None, description="Venue address")
     meeting_link: str | None = Field(None, description="Online meeting URL")
+    meeting_provider: str | None = Field(None, description="zoom|google_meet|teams|other")
+    access_information: str | None = Field(None, description="Login/access details for joining (separate from delivery_instructions)")
     delivery_instructions: str | None = Field(None, description="Instructions for joining/attending")
     offline_access_enabled: bool = Field(False, description="Allow enrolled learners to download lessons for offline viewing")
+    recurring: TrainingRecurrence | None = Field(None, description="Recurrence rule, e.g. {frequency: weekly, interval: 1, days_of_week: ['mon','wed']}")
+    schedule_exceptions: list[str] | None = Field(None, description="ISO dates skipped from the recurrence")
+    instructor_notes: str | None = Field(None, description="Instructor-facing notes, separate from participant-facing instructor_bio")
+    session_mode: str | None = Field(None, description="e.g. live|recorded|hybrid")
+    check_in: bool = Field(False, description="Enable pass_code/qr_payload self-check-in for this training (server-generated on create)")
+    release_rule: dict | None = Field(None, description="Course-wide content release policy: {mode: 'date'|'enrolment_day'|'immediate', date, days}")
+    scheduled_publication: datetime | None = Field(None, description="Future timestamp to auto-publish this training")
+    randomise: bool = Field(False, description="Randomise assessment question order")
+    is_mandatory: bool = Field(False, description="Whole-course mandatory flag (compliance tracking)")
+    faqs: list[TrainingFaq] | None = Field(None, description="Frequently asked questions")
+    badges: list | None = Field(None, description="Completion badges, e.g. [{name, icon_url}]")
     enrolment_start: datetime | None = None
     enrolment_end: datetime | None = None
     time_zone: str | None = Field("Asia/Kolkata", description="Time zone")
@@ -82,14 +131,19 @@ class TrainingCreate(BaseModel):
             "category": self.category,
             "subcategory": self.subcategory,
             "tags": self.tags or [],
-            "instructor_id": self.instructor_id,
-            "instructor_name": self.instructor_name,
-            "instructor_bio": self.instructor_bio,
+            "instructor_id": self.instructor_id or (self.instructor.id if self.instructor else None),
+            "instructor_name": self.instructor_name or (self.instructor.name if self.instructor else None),
+            "instructor_bio": self.instructor_bio or (self.instructor.bio if self.instructor else None),
+            "instructor_role": self.instructor.role if self.instructor else None,
+            "instructor_photo": self.instructor_photo,
+            "instructor_credentials": self.instructor_credentials,
             "requirements": self.requirements,
+            "prerequisites": self.prerequisites or [],
             "learning_objectives": self.learning_objectives or [],
             "target_audience": self.target_audience,
             "level": self.level,
             "language": self.language,
+            "subtitle": self.subtitle,
             "primary_image": self.primary_image,
             "gallery_images": self.gallery_images or [],
             "promotional_video": self.promotional_video,
@@ -105,8 +159,21 @@ class TrainingCreate(BaseModel):
             "venue": self.venue,
             "address": self.address,
             "meeting_link": self.meeting_link,
+            "meeting_provider": self.meeting_provider,
+            "access_information": self.access_information,
             "delivery_instructions": self.delivery_instructions,
             "offline_access_enabled": self.offline_access_enabled,
+            "recurring": self.recurring.model_dump() if self.recurring else None,
+            "schedule_exceptions": self.schedule_exceptions or [],
+            "instructor_notes": self.instructor_notes,
+            "session_mode": self.session_mode,
+            "check_in": self.check_in,
+            "release_rule": self.release_rule,
+            "scheduled_publication": self.scheduled_publication,
+            "randomise": self.randomise,
+            "is_mandatory": self.is_mandatory,
+            "faqs": [f.model_dump() for f in self.faqs] if self.faqs else [],
+            "badges": self.badges or [],
             "enrolment_start": self.enrolment_start,
             "enrolment_end": self.enrolment_end,
             "time_zone": self.time_zone,
@@ -130,11 +197,16 @@ class TrainingUpdate(BaseModel):
     instructor_id: UUID | None = None
     instructor_name: str | None = None
     instructor_bio: str | None = None
+    instructor: TrainingInstructor | None = None
+    instructor_photo: str | None = None
+    instructor_credentials: str | None = None
     requirements: str | None = None
+    prerequisites: list[str] | None = None
     learning_objectives: list | None = None
     target_audience: str | None = None
     level: str | None = None
     language: str | None = None
+    subtitle: str | None = None
     primary_image: str | None = None
     gallery_images: list | None = None
     promotional_video: str | None = None
@@ -149,8 +221,21 @@ class TrainingUpdate(BaseModel):
     venue: str | None = None
     address: str | None = None
     meeting_link: str | None = None
+    meeting_provider: str | None = None
+    access_information: str | None = None
     delivery_instructions: str | None = None
     offline_access_enabled: bool | None = None
+    recurring: TrainingRecurrence | None = None
+    schedule_exceptions: list[str] | None = None
+    instructor_notes: str | None = None
+    session_mode: str | None = None
+    check_in: bool | None = None
+    release_rule: dict | None = None
+    scheduled_publication: datetime | None = None
+    randomise: bool | None = None
+    is_mandatory: bool | None = None
+    faqs: list[TrainingFaq] | None = None
+    badges: list | None = None
     enrolment_start: datetime | None = None
     enrolment_end: datetime | None = None
     time_zone: str | None = None
@@ -169,6 +254,16 @@ class TrainingUpdate(BaseModel):
         data = self.model_dump(exclude_unset=True)
         data.pop("custom_values", None)
         data.pop("form_configuration_version_id", None)
+        instructor = data.pop("instructor", None)
+        if instructor:
+            if data.get("instructor_id") is None and instructor.get("id") is not None:
+                data["instructor_id"] = instructor["id"]
+            if data.get("instructor_name") is None and instructor.get("name") is not None:
+                data["instructor_name"] = instructor["name"]
+            if data.get("instructor_bio") is None and instructor.get("bio") is not None:
+                data["instructor_bio"] = instructor["bio"]
+            if instructor.get("role") is not None:
+                data["instructor_role"] = instructor["role"]
         return data
 
 
@@ -186,6 +281,8 @@ class TrainingResponse(BaseModel):
     instructor_id: UUID | None = None
     instructor_name: str | None = None
     instructor_bio: str | None = None
+    instructor_photo: str | None = None
+    instructor_credentials: str | None = None
     delivery_mode: str | None = None
     course_type: str | None = None
     capacity: str | None = None
@@ -203,10 +300,12 @@ class TrainingResponse(BaseModel):
     promo_price: str | None = None
     coupon_code: str | None = None
     requirements: str | None = None
+    prerequisites: list | None = None
     learning_objectives: list | None = None
     target_audience: str | None = None
     level: str | None = None
     language: str | None = None
+    subtitle: str | None = None
     primary_image: str | None = None
     gallery_images: list | None = None
     promotional_video: str | None = None
@@ -223,8 +322,25 @@ class TrainingResponse(BaseModel):
     venue: str | None = None
     address: str | None = None
     meeting_link: str | None = None
+    meeting_provider: str | None = None
+    access_information: str | None = None
     delivery_instructions: str | None = None
     offline_access_enabled: bool | None = None
+    recurring: dict | None = None
+    schedule_exceptions: list | None = None
+    instructor_notes: str | None = None
+    session_mode: str | None = None
+    check_in: bool | None = None
+    pass_code: str | None = None
+    qr_payload: str | None = None
+    release_rule: dict | None = None
+    scheduled_publication: datetime | None = None
+    randomise: bool | None = None
+    is_mandatory: bool | None = None
+    faqs: list | None = None
+    badges: list | None = None
+    notes_pdf_url: str | None = None
+    instructor: TrainingInstructor | None = None
     last_admin_notes: str | None = None
     custom_values: list | None = None
     form_configuration_id: UUID | None = None
@@ -244,6 +360,8 @@ class TrainingDetailResponse(TrainingResponse):
     )
     average_rating: float = Field(0, description="Mean of all review ratings, rounded to 2 decimals.")
     reviews_count: int = Field(0, description="Total number of reviews.")
+    waitlist_count: int = Field(0, description="Participants currently on the waitlist.")
+    reviews: list[dict] = Field(default_factory=list, description="Most recent reviews (up to 50), newest first.")
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -279,6 +397,8 @@ class LessonCreate(BaseModel):
     is_draft: bool | None = Field(False, description="Draft mode — hidden until published")
     is_mandatory: bool | None = Field(False, description="Mandatory lesson")
     is_downloadable: bool | None = Field(False, description="Allow offline download/caching of this lesson's content_url")
+    meeting_link: str | None = Field(None, description="Live-session join link for this lesson (video call URL)")
+    file_size: str | None = Field(None, description="Content file size, e.g. '24 MB' — informational, client-supplied")
     completion_rule: str | None = Field(None, description="Completion rule, e.g. mandatory")
     prerequisites: list | None = Field(None, description="Lesson IDs that must be completed first — sequential learning")
     release_rule: dict | None = Field(None, description="Release: {mode: 'date'|'enrolment_day'|'previous_lesson', date: '2026-01-01', days: 2, lesson_id: '...'}")

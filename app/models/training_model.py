@@ -24,11 +24,16 @@ class Training(Base):
     instructor_id = Column(UUID(as_uuid=True), nullable=True)
     instructor_name = Column(String(255))
     instructor_bio = Column(Text)
+    instructor_role = Column(String(100))
+    instructor_photo = Column(Text)  # URL, same convention as primary_image
+    instructor_credentials = Column(Text)
     requirements = Column(Text)
+    prerequisites = Column(JSONB, default=list)  # course-level prerequisites, e.g. ["Basic Excel", "Prior course X"]
     learning_objectives = Column(JSONB, default=list)
     target_audience = Column(Text)
     level = Column(String(20))  # beginner|intermediate|advanced|all_levels
     language = Column(String(50), default="English")
+    subtitle = Column(String(255))  # short tagline, separate from description
 
     primary_image = Column(Text)
     gallery_images = Column(JSONB, default=list)
@@ -46,8 +51,23 @@ class Training(Base):
     venue = Column(String(255))
     address = Column(Text)
     meeting_link = Column(Text)
+    meeting_provider = Column(String(20))  # zoom|google_meet|teams|other
+    access_information = Column(Text)  # login/access details separate from delivery_instructions
     delivery_instructions = Column(Text)
     offline_access_enabled = Column(Boolean, default=False)
+    recurring = Column(JSONB)  # {frequency: daily|weekly|monthly, interval, days_of_week, end_date}
+    schedule_exceptions = Column(JSONB, default=list)  # [ISO date strings skipped from the recurrence]
+    instructor_notes = Column(Text)  # instructor-facing notes, separate from participant-facing instructor_bio
+    session_mode = Column(String(20))  # e.g. live|recorded|hybrid
+    check_in = Column(Boolean, default=False)  # enables pass_code/qr_payload self-check-in
+    pass_code = Column(String(20))  # server-generated when check_in is enabled
+    qr_payload = Column(Text)  # server-generated QR-encodable payload when check_in is enabled
+    release_rule = Column(JSONB)  # course-wide content release policy: {mode: 'date'|'enrolment_day'|'immediate', date, days}
+    scheduled_publication = Column(DateTime)  # future timestamp to auto-publish this training
+    randomise = Column(Boolean, default=False)  # randomise assessment question order
+    is_mandatory = Column(Boolean, default=False)  # whole-course mandatory flag (compliance tracking)
+    faqs = Column(JSONB, default=list)  # [{question, answer}]
+    badges = Column(JSONB, default=list)  # [{name, icon_url}] or plain strings — completion badges
     enrolment_start = Column(DateTime)
     enrolment_end = Column(DateTime)
     time_zone = Column(String(100), default="Asia/Kolkata")
@@ -96,6 +116,7 @@ class TrainingEnrolment(Base):
     status = Column(String(20), default="enrolled")  # enrolled|pending_approval|cancelled|waitlisted|expired
     coupon_code = Column(String(50))
     access_expires_at = Column(DateTime)
+    checked_in_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
