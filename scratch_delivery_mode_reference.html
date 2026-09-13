@@ -1,0 +1,325 @@
+<title>delivery_mode Reference</title>
+<style>
+:root{
+  --bg:#f4f5f7; --surface:#ffffff; --surface-2:#eceef2;
+  --border:#dde1e8; --border-strong:#c7ccd6;
+  --ink:#1a1d24; --ink-soft:#565d6b; --ink-faint:#8990a0;
+  --accent:#3d4ff0; --accent-soft:#eceeff; --accent-ink:#2f3bc4;
+  --bad:#c4380a; --bad-soft:#fdeee7; --bad-ink:#9c2e08;
+  --good:#177a4c; --good-soft:#e7f6ee;
+  --warn:#9a6b00; --warn-soft:#fff4dd;
+  --code-bg:#1a1d24; --code-ink:#e4e7ee; --code-accent:#8fb3ff;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#14161b; --surface:#1b1e25; --surface-2:#22252e;
+    --border:#2d313c; --border-strong:#3a3f4c;
+    --ink:#eceef3; --ink-soft:#aab0bf; --ink-faint:#787f8f;
+    --accent:#7c88ff; --accent-soft:#262a44; --accent-ink:#a8b2ff;
+    --bad:#ff7a52; --bad-soft:#3a2118; --bad-ink:#ff9a7c;
+    --good:#4ad393; --good-soft:#16281f;
+    --warn:#e0b13d; --warn-soft:#332a10;
+    --code-bg:#0f1115; --code-ink:#dde1ea; --code-accent:#8fb3ff;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14161b; --surface:#1b1e25; --surface-2:#22252e;
+  --border:#2d313c; --border-strong:#3a3f4c;
+  --ink:#eceef3; --ink-soft:#aab0bf; --ink-faint:#787f8f;
+  --accent:#7c88ff; --accent-soft:#262a44; --accent-ink:#a8b2ff;
+  --bad:#ff7a52; --bad-soft:#3a2118; --bad-ink:#ff9a7c;
+  --good:#4ad393; --good-soft:#16281f;
+  --warn:#e0b13d; --warn-soft:#332a10;
+  --code-bg:#0f1115; --code-ink:#dde1ea; --code-accent:#8fb3ff;
+}
+
+*{box-sizing:border-box;}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;
+  line-height:1.55; font-size:15px;
+}
+.page{max-width:880px; margin:0 auto; padding:48px 28px 96px;}
+
+code, .mono{font-family:'IBM Plex Mono',ui-monospace,Consolas,monospace;}
+
+/* header */
+.header{margin-bottom:36px;}
+.eyebrow{
+  font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--accent-ink); font-weight:600;
+}
+h1{
+  font-size:30px; font-weight:700; letter-spacing:-0.01em; margin:8px 0 6px;
+  text-wrap:balance;
+}
+.subtitle{color:var(--ink-soft); font-size:15.5px; max-width:640px;}
+.meta-row{
+  display:flex; gap:18px; margin-top:16px; flex-wrap:wrap;
+  font-size:13px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace;
+}
+.meta-row span{display:flex; align-items:center; gap:6px;}
+.dot{width:6px; height:6px; border-radius:50%; background:var(--ink-faint); flex:none;}
+
+/* headline stat strip */
+.stats{
+  display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:28px 0 40px;
+}
+.stat{
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:16px 16px 14px;
+}
+.stat .k{font-size:12px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.05em; font-weight:600;}
+.stat .v{font-family:'IBM Plex Mono',monospace; font-size:17px; font-weight:600; margin-top:6px; color:var(--ink);}
+.stat.bad .v{color:var(--bad-ink);}
+
+/* section */
+section{margin-bottom:40px;}
+.sec-head{display:flex; align-items:baseline; gap:10px; margin-bottom:4px;}
+.sec-num{
+  font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--ink-faint);
+  font-weight:600;
+}
+h2{font-size:19px; font-weight:700; letter-spacing:-0.005em; margin:0;}
+.sec-sub{color:var(--ink-soft); font-size:14px; margin:6px 0 16px; max-width:620px;}
+
+/* verdict pill */
+.pill{
+  display:inline-flex; align-items:center; gap:6px;
+  font-family:'IBM Plex Mono',monospace; font-size:11.5px; font-weight:600;
+  padding:3px 9px 4px; border-radius:100px; letter-spacing:.01em;
+  white-space:nowrap;
+}
+.pill.bad{background:var(--bad-soft); color:var(--bad-ink);}
+.pill.good{background:var(--good-soft); color:var(--good);}
+.pill.warn{background:var(--warn-soft); color:var(--warn);}
+.pill.neutral{background:var(--surface-2); color:var(--ink-soft);}
+
+/* answer card */
+.card{
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding:18px 20px;
+}
+.q{font-weight:600; font-size:14.5px; margin-bottom:8px; color:var(--ink);}
+.a{font-size:14.5px; color:var(--ink-soft);}
+.a p{margin:0 0 8px;}
+.a p:last-child{margin-bottom:0;}
+.a code{
+  background:var(--surface-2); padding:1px 6px; border-radius:5px; font-size:13px;
+  color:var(--ink);
+}
+
+/* matrix table */
+.matrix-wrap{overflow-x:auto; border:1px solid var(--border); border-radius:12px; background:var(--surface);}
+table.matrix{width:100%; border-collapse:collapse; font-size:13.5px; min-width:640px;}
+table.matrix th, table.matrix td{
+  padding:12px 16px; text-align:left; border-bottom:1px solid var(--border);
+}
+table.matrix th{
+  font-family:'IBM Plex Mono',monospace; font-size:11.5px; text-transform:uppercase;
+  letter-spacing:.04em; color:var(--ink-faint); font-weight:600; background:var(--surface-2);
+}
+table.matrix th:first-child, table.matrix td:first-child{
+  font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--ink);
+  white-space:nowrap;
+}
+table.matrix tr:last-child td{border-bottom:none;}
+table.matrix td .pill{margin:0;}
+
+/* code block */
+pre{
+  background:var(--code-bg); color:var(--code-ink); border-radius:10px;
+  padding:16px 18px; font-size:12.8px; overflow-x:auto; line-height:1.6;
+  font-family:'IBM Plex Mono',monospace; margin:14px 0 0;
+}
+pre .c{color:#7b8494;}
+pre .kw{color:#ff8dc7;}
+pre .fn{color:var(--code-accent);}
+pre .str{color:#a8e6a1;}
+.src-tag{
+  font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ink-faint);
+  margin-top:8px; display:flex; align-items:center; gap:6px;
+}
+.src-tag svg{flex:none;}
+
+/* recommendation list */
+.reco{
+  background:var(--accent-soft); border:1px solid var(--border); border-radius:12px;
+  padding:20px 22px;
+}
+.reco h2{color:var(--accent-ink);}
+.reco ol{margin:14px 0 0; padding-left:0; list-style:none; counter-reset:reco;}
+.reco li{
+  counter-increment:reco; position:relative; padding:10px 0 10px 34px;
+  border-top:1px solid var(--border); font-size:14.5px;
+}
+.reco li:first-child{border-top:none;}
+.reco li::before{
+  content:counter(reco); position:absolute; left:0; top:10px;
+  width:22px; height:22px; border-radius:6px; background:var(--surface);
+  border:1px solid var(--border-strong); color:var(--accent-ink);
+  font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:700;
+  display:flex; align-items:center; justify-content:center;
+}
+.reco li b{color:var(--ink);}
+.reco li .why{color:var(--ink-soft); font-size:13.5px; display:block; margin-top:2px;}
+
+footer{
+  margin-top:48px; padding-top:20px; border-top:1px solid var(--border);
+  font-size:12.5px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace;
+}
+
+@media (max-width:600px){
+  .stats{grid-template-columns:1fr;}
+  h1{font-size:24px;}
+}
+</style>
+
+<div class="page">
+
+  <div class="header">
+    <div class="eyebrow">Backend reference · Events API</div>
+    <h1>delivery_mode validation — what's actually enforced</h1>
+    <div class="subtitle">Traced directly against the current backend code (schema + service layer + form-registry publish validation) for the Event entity. Short version: almost nothing about delivery_mode is validated server-side — build your client-side checks accordingly.</div>
+    <div class="meta-row">
+      <span><span class="dot"></span>Entity: Event</span>
+      <span><span class="dot"></span>Endpoint: /api/v1/events/</span>
+      <span><span class="dot"></span>Source: event_schema.py, event_service.py, event_form_registry.py</span>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat bad">
+      <div class="k">delivery_mode type</div>
+      <div class="v">free string</div>
+    </div>
+    <div class="stat">
+      <div class="k">default value</div>
+      <div class="v">"in_person" (create only)</div>
+    </div>
+    <div class="stat bad">
+      <div class="k">cross-field rules enforced</div>
+      <div class="v">0</div>
+    </div>
+  </div>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>Accepted values</h2></div>
+    <div class="card">
+      <div class="q">Are the valid values in_person, online, and hybrid?</div>
+      <div class="a">
+        <p>That's the documented convention, but it is <b style="color:var(--bad-ink)">not enforced</b>. <code>DeliveryMode = str</code> in <code>event_schema.py:11</code> is a bare type alias, not an <code>Enum</code>/<code>Literal</code> — Pydantic accepts any string, including typos, for both create and update.</p>
+      </div>
+      <div class="src-tag">event_schema.py:11 &nbsp;·&nbsp; no model_validator exists anywhere in the file</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>Required-field matrix</h2></div>
+    <div class="sec-sub">Per delivery_mode, does the backend require the field to be present? Checked line-by-line in create_event_service / update_event_service.</div>
+    <div class="matrix-wrap">
+      <table class="matrix">
+        <thead>
+          <tr><th>delivery_mode</th><th>location_id</th><th>venue</th><th>meeting_link</th><th>meeting_provider</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>in_person</td>
+            <td><span class="pill bad">not required</span></td>
+            <td><span class="pill bad">not required</span></td>
+            <td><span class="pill neutral">n/a</span></td>
+            <td><span class="pill neutral">n/a</span></td>
+          </tr>
+          <tr>
+            <td>online</td>
+            <td><span class="pill neutral">n/a</span></td>
+            <td><span class="pill neutral">n/a</span></td>
+            <td><span class="pill bad">not required</span></td>
+            <td><span class="pill bad">not required</span></td>
+          </tr>
+          <tr>
+            <td>hybrid</td>
+            <td><span class="pill bad">not required</span></td>
+            <td><span class="pill bad">not required</span></td>
+            <td><span class="pill bad">not required</span></td>
+            <td><span class="pill bad">not required</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="src-tag">
+      Every cell above can legally be saved as <code>null</code> — an "online" event with no meeting_link and no meeting_provider persists without error.
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>The one piece of mode-aware logic that exists</h2></div>
+    <div class="sec-sub">This is the entire delivery_mode-related logic in the backend — nothing else references it.</div>
+    <pre><span class="kw">def</span> <span class="fn">_auto_meeting_link</span>(delivery_mode, provider, existing):
+    <span class="kw">if</span> existing:
+        <span class="kw">return</span> existing
+    <span class="kw">if</span> delivery_mode <span class="kw">in</span> (<span class="str">"online"</span>, <span class="str">"hybrid"</span>) <span class="kw">and</span> provider:
+        <span class="c"># generates a fake zoom / meet / teams link</span>
+        <span class="kw">return</span> f<span class="str">"https://zoom.us/j/{...}"</span>  <span class="c"># etc, provider-dependent</span>
+    <span class="kw">return</span> existing  <span class="c"># i.e. still null if provider wasn't set</span></pre>
+    <div class="src-tag">event_service.py:80 — _auto_meeting_link()</div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>Missing delivery_mode</h2></div>
+    <div class="matrix-wrap">
+      <table class="matrix">
+        <thead><tr><th>Operation</th><th>Behavior if omitted</th></tr></thead>
+        <tbody>
+          <tr><td>POST /events/</td><td><span class="pill good">defaults to "in_person"</span> — <code>Field("in_person", ...)</code> on EventCreate</td></tr>
+          <tr><td>PUT /events/{id}</td><td><span class="pill neutral">left untouched</span> — partial merge, existing value preserved</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>Form-configuration publish — no cross-field guard</h2></div>
+    <div class="card">
+      <div class="a">
+        <p>Publish validation (<code>validate_sections_for_publish</code>) only force-keeps five fields enabled: <code>title, description, category, start_date, end_date</code>. <code>delivery_mode</code>, <code>venue</code>, <code>location_id</code>, <code>meeting_link</code>, <code>meeting_provider</code> are <b style="color:var(--bad-ink)">not in that set</b>.</p>
+        <p>Consequence: a Super Admin can publish a config where <code>delivery_mode</code> offers "Online" as a choice while <code>meeting_link</code> and <code>meeting_provider</code> are both hidden from the same form. Nothing blocks that publish, and nothing catches it at event-create time either.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Does the registry expose delivery_mode's options?</h2></div>
+    <div class="card">
+      <div class="a">
+        <p><span class="pill warn">partially</span> — the registry entry itself (<code>FIELD_REGISTRY</code>) carries no <code>options</code> list. The three values only appear if a config is built from <code>build_default_sections()</code>'s hardcoded template. A config built from scratch has no registry-level constraint on what options get attached to delivery_mode — could be anything, or nothing.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>Can Super Admin disable a field the backend "needs"?</h2></div>
+    <div class="card">
+      <div class="a">
+        <p><span class="pill bad">yes, freely</span> — <code>venue</code> has <code>removable: false</code> (can't delete it from the registry) but <code>hideable: true</code>. Since none of the location/meeting fields are domain-required (see §05), any of them can be set <code>is_enabled: false</code> in a published config with no warning, no matter what delivery_mode options are offered alongside it.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="reco">
+    <h2>What this means for the client</h2>
+    <div class="sec-sub" style="margin-bottom:0; color:var(--ink-soft);">The backend will not stop you from saving invalid combinations — so the form has to.</div>
+    <ol>
+      <li><b>Validate delivery_mode client-side against a fixed enum</b><span class="why">Backend accepts any string — don't rely on a 422 to catch a bad value.</span></li>
+      <li><b>Make venue/location required in the UI when in_person or hybrid is selected</b><span class="why">Backend will silently save nulls otherwise.</span></li>
+      <li><b>Make meeting_link or meeting_provider required in the UI when online or hybrid is selected</b><span class="why">Only meeting_provider triggers an auto-generated fake link — that's a dev convenience, not something to depend on in production forms.</span></li>
+      <li><b>Don't assume the active form config's field set matches delivery_mode's needs</b><span class="why">A Super Admin can hide venue/meeting fields independently of which delivery_mode options are shown — check what's actually enabled before deciding what's required.</span></li>
+      <li><b>Treat auto-generated meeting links as placeholders, not real ones</b><span class="why">zoom/meet/teams links from _auto_meeting_link are randomly generated stand-ins, not live meetings.</span></li>
+    </ol>
+  </div>
+
+  <footer>
+    Classifieds Marketplace Platform · Events API · verified against current backend source, not documentation
+  </footer>
+
+</div>

@@ -113,10 +113,13 @@ class TrainingEnrolment(Base):
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False, index=True)
     group_enrol = Column(Boolean, default=False)
-    status = Column(String(20), default="enrolled")  # enrolled|pending_approval|cancelled|waitlisted|expired
+    status = Column(String(20), default="enrolled")  # enrolled|pending_approval|cancelled|waitlisted|expired|attended
     coupon_code = Column(String(50))
     access_expires_at = Column(DateTime)
+    qr_code = Column(String(255), unique=True, index=True)  # server-generated at enrolment time
     checked_in_at = Column(DateTime, nullable=True)
+    checked_out_at = Column(DateTime, nullable=True)
+    checked_in_by = Column(UUID(as_uuid=True), nullable=True)  # user id of the admin/provider who scanned them in
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 

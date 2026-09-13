@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingCheckInRequest, TrainingCreate, TrainingDetailResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingWishlistItemResponse
+from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 from app.services.training_service import (
     add_training_wishlist_service,
@@ -284,7 +284,7 @@ def my_enrolments(status: str | None = Query(None, description="enrolled|pending
     q = db.query(TrainingEnrolment).filter(TrainingEnrolment.participant_email==email)
     if status: q = q.filter(TrainingEnrolment.status==status)
     rows = q.order_by(TrainingEnrolment.created_at.desc()).all()
-    return [{"training_id": str(r.training_id), "status": r.status, "enrolment_id": str(r.id), "created_at": r.created_at.isoformat()} for r in rows]
+    return [{"training_id": str(r.training_id), "status": r.status, "enrolment_id": str(r.id), "qr_code": r.qr_code, "created_at": r.created_at.isoformat()} for r in rows]
 
 @router.get("/my/wishlist", response_model=list[TrainingWishlistItemResponse], summary="My saved/wishlisted trainings")
 def my_wishlist(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -330,7 +330,24 @@ def remove_wishlist(training_id: UUID, db: Session = Depends(get_db), current_us
 @router.get("/{training_id}/enrolments")
 def list_enrolments(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.models.training_model import TrainingEnrolment
-    return db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==training_id).all()
+    rows = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==training_id).all()
+    return [
+        {
+            "id": str(r.id),
+            "training_id": str(r.training_id),
+            "participant_name": r.participant_name,
+            "participant_email": r.participant_email,
+            "group_enrol": r.group_enrol,
+            "status": r.status,
+            "coupon_code": r.coupon_code,
+            "access_expires_at": r.access_expires_at.isoformat() if r.access_expires_at else None,
+            "qr_code": r.qr_code,
+            "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None,
+            "checked_out_at": r.checked_out_at.isoformat() if r.checked_out_at else None,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
 
 @router.get("/{training_id}/content", summary="Secure enrolled content — draft/preview/release gated")
 def secure_content(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -369,6 +386,31 @@ def approve_enrol(training_id: UUID, enrol_id: UUID, payload: dict, db: Session 
     action = payload.get("action", "approve")
     reason = payload.get("reason")
     return approve_training_enrol_service(db, training_id, enrol_id, action, reason=reason, current_user=current_user)
+
+@router.post("/{training_id}/enrolments/validate-qr", response_model=TrainingValidateQrResponse, summary="Validate an enrolment QR code (read-only scan)")
+def validate_enrolment_qr(training_id: UUID, payload: TrainingValidateQrRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import validate_training_qr_service
+    return validate_training_qr_service(db, training_id, payload.qr_code)
+
+@router.post("/{training_id}/enrolments/check-in", response_model=TrainingEnrolCheckInResponse, summary="Check in a participant by enrolment_id or qr_code")
+def check_in_enrolment(training_id: UUID, payload: TrainingEnrolCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import check_in_enrolment_service
+    return check_in_enrolment_service(db, training_id, payload.enrolment_id, payload.qr_code, current_user)
+
+@router.post("/{training_id}/enrolments/uncheck-in", response_model=TrainingEnrolUncheckInResponse, summary="Undo a participant check-in")
+def uncheck_in_enrolment(training_id: UUID, payload: TrainingEnrolUncheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import uncheck_in_enrolment_service
+    return uncheck_in_enrolment_service(db, training_id, payload.enrolment_id, payload.qr_code)
+
+@router.get("/{training_id}/enrolments/check-in-preview", response_model=list[TrainingCheckInPreviewItem], summary="Batch check-in — list enrolments with eligibility computed server-side")
+def enrolment_check_in_preview(training_id: UUID, status_filter: str | None = Query(None, alias="status", description="Filter: enrolled|attended|cancelled|waitlisted"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import list_training_checkin_preview_service
+    return list_training_checkin_preview_service(db, training_id, status_filter)
+
+@router.post("/{training_id}/batch-check-in", response_model=TrainingBatchCheckInResponse, summary="Batch check-in multiple participants")
+def batch_check_in_enrolments(training_id: UUID, payload: TrainingBatchCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.services.training_service import batch_check_in_training_enrolments_service
+    return batch_check_in_training_enrolments_service(db, training_id, payload.participants, current_user)
 
 @router.post("/{training_id}/checkout", status_code=201, summary="Checkout — Training")
 def checkout_training(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

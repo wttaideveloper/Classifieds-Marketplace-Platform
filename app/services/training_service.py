@@ -9,6 +9,7 @@ from app.schemas.training_schema import TrainingDetailResponse, TrainingListItem
 from app.services.response_mappers import map_training_detail, map_training_list_item, map_training_write
 
 ACTIVE_ENROLMENT_STATUSES = frozenset({"enrolled", "active", "completed", "approved"})
+CHECKIN_ELIGIBLE_STATUSES = frozenset({"enrolled", "active", "approved"})
 
 
 def _is_active_enrolment(enrolment) -> bool:
@@ -810,6 +811,225 @@ def check_in_training_service(db: Session, tid: UUID, participant_email: str, pa
     return {"training_id": str(tid), "participant_email": participant_email, "checked_in_at": enrol.checked_in_at.isoformat()}
 
 
+# --- Per-enrolment QR check-in (admin/scanner-driven; mirrors the Event registration QR system) ---
+
+
+def _find_enrolment_by_id_or_qr(db: Session, tid: UUID, enrolment_id, qr_code: str | None):
+    from app.models.training_model import TrainingEnrolment
+
+    if enrolment_id:
+        return db.query(TrainingEnrolment).filter(
+            TrainingEnrolment.id == enrolment_id,
+            TrainingEnrolment.training_id == tid,
+        ).first()
+    if qr_code:
+        return db.query(TrainingEnrolment).filter(
+            TrainingEnrolment.qr_code == qr_code,
+            TrainingEnrolment.training_id == tid,
+        ).first()
+    raise HTTPException(status_code=400, detail="enrolment_id or qr_code is required")
+
+
+def validate_training_qr_service(db: Session, tid: UUID, qr_code: str | None):
+    from datetime import datetime
+
+    from app.models.training_model import TrainingEnrolment
+
+    if not qr_code:
+        raise HTTPException(status_code=400, detail="qr_code is required")
+
+    training = _get_training_or_404(db, tid)
+    enrol = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.qr_code == qr_code,
+        TrainingEnrolment.training_id == tid,
+    ).first()
+    if not enrol:
+        raise HTTPException(status_code=404, detail="QR code not found for this training")
+    if enrol.status == "cancelled":
+        raise HTTPException(status_code=410, detail="QR code has been revoked — enrolment is cancelled")
+    if enrol.access_expires_at and enrol.access_expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="QR code has expired — enrolment access has ended")
+
+    return {
+        "valid": True,
+        "enrolment_id": enrol.id,
+        "participant_name": enrol.participant_name,
+        "participant_email": enrol.participant_email,
+        "training_id": tid,
+        "training_title": training.title,
+        "status": enrol.status,
+        "message": f"Valid enrolment: {enrol.participant_name} ({enrol.status})",
+    }
+
+
+def check_in_enrolment_service(db: Session, tid: UUID, enrolment_id, qr_code: str | None, current_user: dict | None = None):
+    from datetime import datetime
+
+    training = _get_training_or_404(db, tid)
+    if training.status in ("cancelled", "archived"):
+        raise HTTPException(status_code=400, detail=f"Cannot check-in: training is {training.status}")
+
+    enrol = _find_enrolment_by_id_or_qr(db, tid, enrolment_id, qr_code)
+    if not enrol:
+        raise HTTPException(status_code=404, detail="Enrolment not found")
+    if enrol.status == "cancelled":
+        raise HTTPException(status_code=400, detail="Cannot check-in: enrolment is cancelled")
+    if enrol.status == "attended":
+        return {
+            "message": "Already checked in",
+            "enrolment_id": enrol.id,
+            "participant_name": enrol.participant_name,
+            "participant_email": enrol.participant_email,
+            "status": enrol.status,
+            "checked_in_at": enrol.checked_in_at.isoformat() if enrol.checked_in_at else None,
+        }
+    if enrol.status not in CHECKIN_ELIGIBLE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Cannot check-in: enrolment status is '{enrol.status}'")
+
+    enrol.status = "attended"
+    enrol.checked_in_at = datetime.utcnow()
+    enrol.checked_in_by = current_user.get("id") if current_user else None
+    db.commit()
+    db.refresh(enrol)
+
+    return {
+        "message": "Checked in successfully",
+        "enrolment_id": enrol.id,
+        "participant_name": enrol.participant_name,
+        "participant_email": enrol.participant_email,
+        "status": enrol.status,
+        "checked_in_at": enrol.checked_in_at.isoformat() if enrol.checked_in_at else None,
+    }
+
+
+def uncheck_in_enrolment_service(db: Session, tid: UUID, enrolment_id, qr_code: str | None):
+    enrol = _find_enrolment_by_id_or_qr(db, tid, enrolment_id, qr_code)
+    if not enrol:
+        raise HTTPException(status_code=404, detail="Enrolment not found")
+    if enrol.status != "attended":
+        raise HTTPException(status_code=400, detail=f"Cannot undo: enrolment status is '{enrol.status}', not 'attended'")
+
+    enrol.status = "enrolled"
+    enrol.checked_in_at = None
+    enrol.checked_in_by = None
+    db.commit()
+    db.refresh(enrol)
+
+    return {
+        "message": "Check-in undone",
+        "enrolment_id": enrol.id,
+        "participant_name": enrol.participant_name,
+        "participant_email": enrol.participant_email,
+        "status": enrol.status,
+        "restored_to": "enrolled",
+    }
+
+
+def list_training_checkin_preview_service(db: Session, tid: UUID, status_filter: str | None = None):
+    from app.models.training_model import TrainingEnrolment
+
+    _get_training_or_404(db, tid)
+    q = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id == tid)
+    if status_filter:
+        q = q.filter(TrainingEnrolment.status == status_filter)
+    rows = q.order_by(TrainingEnrolment.participant_name).all()
+
+    out = []
+    for r in rows:
+        can = r.status in CHECKIN_ELIGIBLE_STATUSES
+        if r.status == "attended":
+            reason = "Already checked in"
+        elif r.status == "cancelled":
+            reason = "Cancelled — cannot check in"
+        elif r.status == "waitlisted":
+            reason = "Waitlisted — not yet enrolled"
+        elif can:
+            reason = "Ready to check in"
+        else:
+            reason = f"Status {r.status}"
+        out.append({
+            "enrolment_id": r.id,
+            "participant_name": r.participant_name,
+            "participant_email": r.participant_email,
+            "status": r.status,
+            "qr_code": r.qr_code,
+            "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None,
+            "checked_out_at": r.checked_out_at.isoformat() if r.checked_out_at else None,
+            "can_check_in": can,
+            "eligibility_reason": reason,
+        })
+    return out
+
+
+def batch_check_in_training_enrolments_service(db: Session, tid: UUID, participants: list, current_user: dict | None = None):
+    from datetime import datetime
+
+    training = _get_training_or_404(db, tid)
+    if training.status in ("cancelled", "archived"):
+        raise HTTPException(status_code=400, detail=f"Cannot check-in: training is {training.status}")
+
+    results = []
+    succeeded = 0
+    failed = 0
+    for item in participants:
+        enrolment_id = item.enrolment_id if hasattr(item, "enrolment_id") else item.get("enrolment_id")
+        qr_code = item.qr_code if hasattr(item, "qr_code") else item.get("qr_code")
+        enrol = _find_enrolment_by_id_or_qr(db, tid, enrolment_id, qr_code) if (enrolment_id or qr_code) else None
+        if not enrol:
+            results.append({
+                "enrolment_id": str(enrolment_id or qr_code or ""),
+                "status": "failed",
+                "message": "Enrolment not found",
+            })
+            failed += 1
+            continue
+        if enrol.status == "cancelled":
+            results.append({
+                "enrolment_id": enrol.id,
+                "participant_name": enrol.participant_name,
+                "participant_email": enrol.participant_email,
+                "status": "failed",
+                "message": "Enrolment is cancelled",
+            })
+            failed += 1
+            continue
+        if enrol.status == "attended":
+            results.append({
+                "enrolment_id": enrol.id,
+                "participant_name": enrol.participant_name,
+                "participant_email": enrol.participant_email,
+                "status": enrol.status,
+                "checked_in_at": enrol.checked_in_at.isoformat() if enrol.checked_in_at else None,
+                "message": "Already checked in",
+            })
+            succeeded += 1
+            continue
+        if enrol.status not in CHECKIN_ELIGIBLE_STATUSES:
+            results.append({
+                "enrolment_id": enrol.id,
+                "participant_name": enrol.participant_name,
+                "participant_email": enrol.participant_email,
+                "status": "failed",
+                "message": f"Cannot check-in: status is '{enrol.status}'",
+            })
+            failed += 1
+            continue
+        enrol.status = "attended"
+        enrol.checked_in_at = datetime.utcnow()
+        enrol.checked_in_by = current_user.get("id") if current_user else None
+        results.append({
+            "enrolment_id": enrol.id,
+            "participant_name": enrol.participant_name,
+            "participant_email": enrol.participant_email,
+            "status": enrol.status,
+            "checked_in_at": enrol.checked_in_at.isoformat() if enrol.checked_in_at else None,
+            "message": "Checked in successfully",
+        })
+        succeeded += 1
+    db.commit()
+    return {"total": len(participants), "succeeded": succeeded, "failed": failed, "results": results}
+
+
 def get_training_participant_dashboard_service(db: Session, tid: UUID, participant_email: str | None = None):
     from app.models.training_model import TrainingLiveSession
 
@@ -1063,7 +1283,8 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             expires = datetime.utcnow() + timedelta(days=days)
         except Exception:
             pass
-    e = TrainingEnrolment(training_id=tid, participant_name=payload.get("participant_name","User"), participant_email=payload.get("participant_email","user@example.com"), group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires)
+    import uuid as _uuid
+    e = TrainingEnrolment(training_id=tid, participant_name=payload.get("participant_name","User"), participant_email=payload.get("participant_email","user@example.com"), group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
     db.add(e); db.commit(); db.refresh(e)
     # group enrolment — create additional members if provided
     if payload.get("group_members"):
@@ -1073,7 +1294,7 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
                 email=m.get("email") or m.get("participant_email")
                 if not email or email==payload.get("participant_email"):
                     continue
-                extra=TrainingEnrolment(training_id=tid, participant_name=name, participant_email=email, group_enrol=True, status=status, coupon_code=coupon_code, access_expires_at=expires)
+                extra=TrainingEnrolment(training_id=tid, participant_name=name, participant_email=email, group_enrol=True, status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
                 db.add(extra)
             except: pass
         db.commit()

@@ -43,6 +43,89 @@ class TrainingCheckInRequest(BaseModel):
     pass_code: str = Field(..., description="Pass code shown/scanned at the training (matches Training.pass_code)")
 
 
+# --- Per-enrolment QR check-in (admin/scanner-driven; mirrors the Event registration QR system) ---
+
+
+class TrainingValidateQrRequest(BaseModel):
+    qr_code: str = Field(..., description="QR code scanned from the enrolment")
+
+
+class TrainingValidateQrResponse(BaseModel):
+    valid: bool
+    enrolment_id: UUID | None = None
+    participant_name: str | None = None
+    participant_email: str | None = None
+    training_id: UUID | None = None
+    training_title: str | None = None
+    status: str | None = None
+    message: str
+
+
+class TrainingEnrolCheckInRequest(BaseModel):
+    enrolment_id: UUID | None = Field(None, description="Enrolment ID to check in")
+    qr_code: str | None = Field(None, description="QR code scanned from the enrolment — alternative to enrolment_id")
+
+
+class TrainingEnrolCheckInResponse(BaseModel):
+    message: str
+    enrolment_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    checked_in_at: str | None = None
+
+
+class TrainingEnrolUncheckInRequest(BaseModel):
+    enrolment_id: UUID | None = Field(None, description="Enrolment ID to undo check-in for")
+    qr_code: str | None = Field(None, description="QR code of the enrolment — alternative to enrolment_id")
+
+
+class TrainingEnrolUncheckInResponse(BaseModel):
+    message: str
+    enrolment_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    restored_to: str
+
+
+class TrainingCheckInPreviewItem(BaseModel):
+    enrolment_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    qr_code: str | None = None
+    checked_in_at: str | None = None
+    checked_out_at: str | None = None
+    can_check_in: bool
+    eligibility_reason: str
+
+
+class TrainingBatchCheckInItem(BaseModel):
+    enrolment_id: UUID | None = None
+    qr_code: str | None = None
+
+
+class TrainingBatchCheckInRequest(BaseModel):
+    participants: list[TrainingBatchCheckInItem] = Field(..., min_length=1)
+
+
+class TrainingBatchCheckInResultItem(BaseModel):
+    enrolment_id: UUID | str
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    checked_in_at: str | None = None
+    message: str
+
+
+class TrainingBatchCheckInResponse(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    results: list[TrainingBatchCheckInResultItem]
+
+
 class TrainingCreate(BaseModel):
     tenant_id: UUID | None = None
     enterprise_id: UUID = Field(..., description="Enterprise ID")
