@@ -69,6 +69,70 @@ def test_enrol_with_correct_coupon_succeeds(monkeypatch):
     assert result is not None
 
 
+def test_enrol_falls_back_to_authenticated_user_email_when_payload_omits_it(monkeypatch):
+    """Reproduces the reported bug: POST /enroll succeeded but the row was
+    stored under the literal placeholder 'user@example.com' (since the
+    client's body carried no participant_email), so GET /my/enrolments —
+    which filters by the authenticated user's real email — always came back
+    empty. participant_email must fall back to current_user's email."""
+    from app.services import training_service
+
+    training = _training()
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.count.return_value = 0
+
+    created = {}
+    db.add.side_effect = lambda obj: created.setdefault("obj", obj)
+
+    create_training_enrol_service(
+        db, training.id, {}, current_user={"email": "real.user@example.com", "name": "Real User"},
+    )
+    assert created["obj"].participant_email == "real.user@example.com"
+    assert created["obj"].participant_name == "Real User"
+
+
+def test_enrol_raises_400_when_no_email_available_anywhere(monkeypatch):
+    """No more silent 'user@example.com' placeholder — if neither the
+    request body nor the authenticated session carries an email, fail loudly
+    instead of persisting an unfindable enrolment."""
+    from app.services import training_service
+
+    training = _training()
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.count.return_value = 0
+
+    with pytest.raises(HTTPException) as exc:
+        create_training_enrol_service(db, training.id, {}, current_user=None)
+    assert exc.value.status_code == 400
+    assert "participant_email" in exc.value.detail
+
+
+def test_enrol_payload_email_wins_over_authenticated_user_email(monkeypatch):
+    """An explicit participant_email in the body (e.g. admin enrolling
+    someone else) must not be silently overridden by the caller's own
+    session email."""
+    from app.services import training_service
+
+    training = _training()
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.count.return_value = 0
+
+    created = {}
+    db.add.side_effect = lambda obj: created.setdefault("obj", obj)
+
+    create_training_enrol_service(
+        db, training.id, {"participant_email": "someone.else@example.com"},
+        current_user={"email": "admin@example.com"},
+    )
+    assert created["obj"].participant_email == "someone.else@example.com"
+
+
 def test_checkout_without_coupon_succeeds_even_when_training_has_a_coupon_code(monkeypatch):
     from app.services import training_service
 

@@ -56,6 +56,20 @@ class FieldRegistryEntry(BaseModel):
     supports_composite_config: bool = False
     composite_subfields: list[CompositeSubfieldDefinition] = Field(default_factory=list)
     default_composite_config: CompositeFieldConfig | None = None
+    options: list[FieldOption] | None = Field(
+        None, description="Static value/label options for this field, when value_source is a fixed list (e.g. currency, time_zone, duration_type, delivery_mode)."
+    )
+    value_source: str | None = Field(
+        None,
+        description="Where this field's valid values come from: 'static' (see options), 'event_categories', "
+        "or 'enterprise_locations'. Null when the field has no constrained value set (free text).",
+    )
+    source_endpoint: str | None = Field(
+        None, description="For non-static value_source fields, the authoritative endpoint to fetch live options from."
+    )
+    depends_on: str | None = Field(
+        None, description="Key of another core field this one's options depend on, e.g. subcategory depends_on category."
+    )
 
 
 class FormFieldInput(BaseModel):

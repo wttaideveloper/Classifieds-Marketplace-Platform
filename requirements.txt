@@ -18,3 +18,5 @@ firebase-admin
 celery
 qrcode[pil]
 reportlab
+pycountry
+tzdata

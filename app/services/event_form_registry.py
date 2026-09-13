@@ -4,6 +4,28 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+
+def _currency_options() -> list[dict]:
+    """Full ISO-4217 currency list (code + display name) — computed once at
+    import time from pycountry's bundled reference data."""
+    import pycountry
+
+    codes = sorted({c.alpha_3: c.name for c in pycountry.currencies}.items())
+    return [{"value": code, "label": f"{code} — {name}", "position": i} for i, (code, name) in enumerate(codes, start=1)]
+
+
+def _timezone_options() -> list[dict]:
+    """Full IANA time zone list — computed once at import time from the
+    stdlib zoneinfo database (backed by the tzdata package)."""
+    from zoneinfo import available_timezones
+
+    zones = sorted(available_timezones())
+    return [{"value": tz, "label": tz, "position": i} for i, tz in enumerate(zones, start=1)]
+
+
+CURRENCY_OPTIONS: list[dict] = _currency_options()
+TIME_ZONE_OPTIONS: list[dict] = _timezone_options()
+
 # Stable renderer identifiers (V1)
 RENDERERS = {
     "text",
@@ -196,7 +218,18 @@ def _entry(
     hideable: bool = True,
     configurable: dict | None = None,
     default_renderer: str = "text",
+    options: list[dict] | None = None,
+    value_source: str | None = None,
+    source_endpoint: str | None = None,
+    depends_on: str | None = None,
 ) -> dict:
+    """`options`/`value_source`/`source_endpoint`/`depends_on` are purely
+    informational metadata for the frontend builder — they describe where a
+    field's valid values come from (a static list, an admin-managed
+    reference table, another field's selection) so the FE can render the
+    correct control without hardcoding. They do not affect publish
+    validation, Event create/update behavior, or any existing required/
+    removable/hideable/renderer semantics."""
     if required_by_domain:
         removable = False
         hideable = False
@@ -214,6 +247,10 @@ def _entry(
         "supports_composite_config": composite is not None,
         "composite_subfields": deepcopy(composite["subfields"]) if composite else [],
         "default_composite_config": deepcopy(composite["default"]) if composite else None,
+        "options": options,
+        "value_source": value_source,
+        "source_endpoint": source_endpoint,
+        "depends_on": depends_on,
     }
     if composite:
         entry["configurable"]["composite_config"] = True
@@ -224,28 +261,60 @@ EVENT_FIELD_REGISTRY: list[dict] = [
     # Basic
     _entry("title", "Event Name", "string", ["text"], required_by_domain=True, configurable=_cfg(required=False, renderer=False)),
     _entry("description", "Description", "string", ["textarea"], required_by_domain=True, default_renderer="textarea", configurable=_cfg(required=False, renderer=False)),
-    _entry("category", "Category", "string", ["text", "select"], required_by_domain=True, configurable=_cfg(required=False, renderer=True)),
-    _entry("subcategory", "Subcategory", "string", ["text", "select"]),
+    _entry(
+        "category", "Category", "string", ["text", "select"], required_by_domain=True,
+        configurable=_cfg(required=False, renderer=True),
+        value_source="event_categories", source_endpoint="/api/v1/event-categories/",
+    ),
+    _entry(
+        "subcategory", "Subcategory", "string", ["text", "select"],
+        value_source="event_categories", source_endpoint="/api/v1/event-categories/", depends_on="category",
+    ),
     _entry("tags", "Tags", "string[]", ["tags"], default_renderer="tags", configurable=_cfg(renderer=False)),
     _entry("organiser_name", "Organiser Name", "string", ["text"]),
     _entry("organiser_contact", "Organiser Contact", "string", ["text"]),
     # Schedule
     _entry("start_date", "Start Date", "datetime", ["datetime"], required_by_domain=True, default_renderer="datetime", configurable=_cfg(required=False, renderer=False)),
     _entry("end_date", "End Date", "datetime", ["datetime"], required_by_domain=True, default_renderer="datetime", configurable=_cfg(required=False, renderer=False)),
-    _entry("duration_type", "Duration Type", "string", ["select"], default_renderer="select"),
-    _entry("time_zone", "Time Zone", "string", ["text", "select"], default_renderer="text"),
+    _entry(
+        "duration_type", "Duration Type", "string", ["select"], default_renderer="select",
+        value_source="static",
+        options=[
+            {"value": "one_day", "label": "One Day", "position": 1},
+            {"value": "half_day", "label": "Half Day", "position": 2},
+            {"value": "custom", "label": "Custom", "position": 3},
+        ],
+    ),
+    _entry(
+        "time_zone", "Time Zone", "string", ["text", "select"], default_renderer="text",
+        value_source="static", options=TIME_ZONE_OPTIONS,
+    ),
     _entry("registration_open_at", "Registration Opens", "datetime", ["datetime"], default_renderer="datetime"),
     _entry("registration_close_at", "Registration Closes", "datetime", ["datetime"], default_renderer="datetime"),
     _entry("registration_cutoff", "Registration Cutoff", "datetime", ["datetime"], default_renderer="datetime"),
     # Location
-    _entry("delivery_mode", "Delivery Mode", "string", ["select"], default_renderer="select", configurable=_cfg(renderer=True)),
-    _entry("location_id", "Location", "string", ["select"], default_renderer="select"),
+    _entry(
+        "delivery_mode", "Delivery Mode", "string", ["select"], default_renderer="select", configurable=_cfg(renderer=True),
+        value_source="static",
+        options=[
+            {"value": "in_person", "label": "In Person", "position": 1},
+            {"value": "online", "label": "Online", "position": 2},
+            {"value": "hybrid", "label": "Hybrid", "position": 3},
+        ],
+    ),
+    _entry(
+        "location_id", "Location", "string", ["select"], default_renderer="select",
+        value_source="enterprise_locations", source_endpoint="/api/v1/enterprises/{enterprise_id}/locations",
+    ),
     _entry("venue", "Venue", "object", ["venue"], default_renderer="venue", removable=False, hideable=True, configurable=_cfg(renderer=False, required=True)),
     _entry("meeting_provider", "Meeting Provider", "string", ["select"], default_renderer="select"),
     _entry("meeting_link", "Meeting Link", "string", ["url"], default_renderer="url"),
     # Pricing
     _entry("price", "Price", "string", ["text", "number"], default_renderer="text"),
-    _entry("currency", "Currency", "string", ["text", "select"], default_renderer="text"),
+    _entry(
+        "currency", "Currency", "string", ["text", "select"], default_renderer="text",
+        value_source="static", options=CURRENCY_OPTIONS,
+    ),
     _entry("ticket_types", "Ticket Types", "array", ["ticket_types"], default_renderer="ticket_types", configurable=_cfg(renderer=False)),
     _entry("capacity", "Capacity", "string", ["number", "text"], default_renderer="number"),
     _entry("min_participants", "Minimum Participants", "string", ["number", "text"], default_renderer="number"),

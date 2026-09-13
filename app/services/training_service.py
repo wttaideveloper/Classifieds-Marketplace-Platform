@@ -1251,7 +1251,7 @@ def export_live_attendance_service(db: Session, tid: UUID, session_id: str):
     output.seek(0)
     return output.getvalue(), data["session_id"]
 
-def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_code: str | None = None):
+def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_code: str | None = None, current_user: dict | None = None):
     from app.models.training_model import TrainingEnrolment
     from datetime import datetime, timedelta
     t = _get_training_or_404(db, tid)
@@ -1284,15 +1284,19 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
         except Exception:
             pass
     import uuid as _uuid
-    e = TrainingEnrolment(training_id=tid, participant_name=payload.get("participant_name","User"), participant_email=payload.get("participant_email","user@example.com"), group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
+    participant_email = payload.get("participant_email") or (current_user or {}).get("email")
+    if not participant_email:
+        raise HTTPException(status_code=400, detail="participant_email is required (send it in the request body, or authenticate with a session that carries an email claim)")
+    participant_name = payload.get("participant_name") or (current_user or {}).get("name") or participant_email
+    e = TrainingEnrolment(training_id=tid, participant_name=participant_name, participant_email=participant_email, group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
     db.add(e); db.commit(); db.refresh(e)
     # group enrolment — create additional members if provided
     if payload.get("group_members"):
         for m in payload.get("group_members") or []:
             try:
-                name=m.get("name") or m.get("participant_name") or payload.get("participant_name")
+                name=m.get("name") or m.get("participant_name") or participant_name
                 email=m.get("email") or m.get("participant_email")
-                if not email or email==payload.get("participant_email"):
+                if not email or email==participant_email:
                     continue
                 extra=TrainingEnrolment(training_id=tid, participant_name=name, participant_email=email, group_enrol=True, status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
                 db.add(extra)

@@ -294,7 +294,7 @@ def my_wishlist(db: Session = Depends(get_db), current_user: dict = Depends(get_
 def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import create_training_enrol_service
     coupon = payload.get("coupon_code")
-    return create_training_enrol_service(db, training_id, payload, coupon_code=coupon)
+    return create_training_enrol_service(db, training_id, payload, coupon_code=coupon, current_user=current_user)
 
 
 @router.post(
