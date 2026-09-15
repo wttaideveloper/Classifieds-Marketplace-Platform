@@ -159,17 +159,20 @@ class TrainingCreate(BaseModel):
     notes_documents: list[TrainingNoteDocument] | None = Field(
         None, description="Instructor-uploaded notes files, e.g. [{title: 'Week 1 Handout', url: 'https://...'}]"
     )
-    delivery_mode: str | None = Field("self_paced", description="self_paced|instructor_led|blended")
+    delivery_mode: str | None = Field("self_paced", description="online|physical|hybrid|self_paced — online requires meeting_link; physical/hybrid require venue; hybrid requires both")
     course_type: str | None = Field(None, description="one_day|workshop|virtual|certification")
     duration: str | None = Field(None, description="Duration e.g. 1 day, half_day, custom, 2 weeks")
+    duration_hours: str | None = Field(None, description="Numeric duration in hours, e.g. '20'")
     start_date: datetime | None = None
     end_date: datetime | None = None
     start_time: str | None = Field(None, description="Daily start time, e.g. 09:00")
     end_time: str | None = Field(None, description="Daily end time, e.g. 17:00")
-    venue: str | None = Field(None, description="In-person venue name")
+    venue: str | None = Field(None, description="In-person venue name — required when delivery_mode is physical or hybrid")
     address: str | None = Field(None, description="Venue address")
-    meeting_link: str | None = Field(None, description="Online meeting URL")
+    meeting_link: str | None = Field(None, description="Online meeting URL — required when delivery_mode is online or hybrid")
     meeting_provider: str | None = Field(None, description="zoom|google_meet|teams|other")
+    meeting_id: str | None = Field(None, description="Meeting ID, for platforms that separate it from the join link")
+    meeting_passcode: str | None = Field(None, description="Meeting passcode, for platforms that separate it from the join link")
     access_information: str | None = Field(None, description="Login/access details for joining (separate from delivery_instructions)")
     delivery_instructions: str | None = Field(None, description="Instructions for joining/attending")
     offline_access_enabled: bool = Field(False, description="Allow enrolled learners to download lessons for offline viewing")
@@ -235,6 +238,7 @@ class TrainingCreate(BaseModel):
             "delivery_mode": self.delivery_mode,
             "course_type": self.course_type,
             "duration": self.duration,
+            "duration_hours": self.duration_hours,
             "start_date": self.start_date,
             "end_date": self.end_date,
             "start_time": self.start_time,
@@ -243,6 +247,8 @@ class TrainingCreate(BaseModel):
             "address": self.address,
             "meeting_link": self.meeting_link,
             "meeting_provider": self.meeting_provider,
+            "meeting_id": self.meeting_id,
+            "meeting_passcode": self.meeting_passcode,
             "access_information": self.access_information,
             "delivery_instructions": self.delivery_instructions,
             "offline_access_enabled": self.offline_access_enabled,
@@ -297,6 +303,7 @@ class TrainingUpdate(BaseModel):
     notes_documents: list[TrainingNoteDocument] | None = None
     delivery_mode: str | None = None
     course_type: str | None = None
+    duration_hours: str | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
     start_time: str | None = None
@@ -305,6 +312,8 @@ class TrainingUpdate(BaseModel):
     address: str | None = None
     meeting_link: str | None = None
     meeting_provider: str | None = None
+    meeting_id: str | None = None
+    meeting_passcode: str | None = None
     access_information: str | None = None
     delivery_instructions: str | None = None
     offline_access_enabled: bool | None = None
@@ -395,6 +404,7 @@ class TrainingResponse(BaseModel):
     documents: list | None = None
     notes_documents: list | None = None
     duration: str | None = None
+    duration_hours: str | None = None
     time_zone: str | None = None
     enrolment_start: datetime | None = None
     enrolment_end: datetime | None = None
@@ -406,6 +416,9 @@ class TrainingResponse(BaseModel):
     address: str | None = None
     meeting_link: str | None = None
     meeting_provider: str | None = None
+    meeting_platform: str | None = None  # alias of meeting_provider (contract naming)
+    meeting_id: str | None = None
+    meeting_passcode: str | None = None
     access_information: str | None = None
     delivery_instructions: str | None = None
     offline_access_enabled: bool | None = None
@@ -416,6 +429,20 @@ class TrainingResponse(BaseModel):
     check_in: bool | None = None
     pass_code: str | None = None
     qr_payload: str | None = None
+    qr_image_base64: str | None = Field(None, description="PNG render of qr_payload as a data: URI — present when qr_payload is set")
+    access_type: str | None = Field(None, description="Derived from delivery_mode: online|venue|both|on_demand")
+    difficulty_level: str | None = None  # alias of level (contract naming)
+    promotional_video_url: str | None = None  # alias of promotional_video (contract naming)
+    notes: list | None = None  # alias of notes_documents (contract naming)
+    access_expiry_days: str | None = None  # alias of access_duration_days (contract naming)
+    current_participants: int | None = None  # alias of enrolled_count (contract naming) — Detail only, requires a query
+    moderation_status: str | None = None
+    rejection_reason: str | None = None
+    published_at: datetime | None = None
+    approved_at: datetime | None = None
+    archived_at: datetime | None = None
+    suspended_at: datetime | None = None
+    cancelled_at: datetime | None = None
     release_rule: dict | None = None
     scheduled_publication: datetime | None = None
     randomise: bool | None = None

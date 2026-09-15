@@ -25,6 +25,37 @@ def _build_qr_payload(training_id, pass_code: str) -> str:
     import json
     return json.dumps({"training_id": str(training_id), "pass_code": pass_code})
 
+
+# Contract delivery_mode vocabulary (online|physical|hybrid|self_paced). The
+# older self_paced|instructor_led|blended values already stored on existing
+# trainings are left ungated for backward compatibility — only these four
+# values trigger the field-gating rules below.
+DELIVERY_MODE_ACCESS_TYPE = {
+    "online": "online",
+    "physical": "venue",
+    "hybrid": "both",
+    "self_paced": "on_demand",
+}
+
+
+def _access_type_for_delivery_mode(delivery_mode: str | None) -> str | None:
+    return DELIVERY_MODE_ACCESS_TYPE.get(delivery_mode)
+
+
+def _validate_delivery_mode_fields(delivery_mode: str | None, venue, meeting_link) -> None:
+    if delivery_mode == "online":
+        if not meeting_link:
+            raise HTTPException(status_code=400, detail="meeting_link is required when delivery_mode is 'online'")
+    elif delivery_mode == "physical":
+        if not venue:
+            raise HTTPException(status_code=400, detail="venue is required when delivery_mode is 'physical'")
+    elif delivery_mode == "hybrid":
+        if not venue:
+            raise HTTPException(status_code=400, detail="venue is required when delivery_mode is 'hybrid'")
+        if not meeting_link:
+            raise HTTPException(status_code=400, detail="meeting_link is required when delivery_mode is 'hybrid'")
+    # self_paced and any legacy/unrecognized value: no gating.
+
 def _validate(db: Session, eid: UUID, lid: UUID | None, current_user: dict | None = None):
     ent = db.query(Enterprise).filter(Enterprise.id==eid, Enterprise.is_deleted.is_(False)).first()
     if not ent: raise HTTPException(status_code=404, detail="Enterprise not found")
@@ -58,6 +89,7 @@ def create_training_service(db: Session, data, current_user: dict | None = None)
             payload[key] = []
     if payload.get("custom_values") is None:
         payload["custom_values"] = []
+    _validate_delivery_mode_fields(payload.get("delivery_mode"), payload.get("venue"), payload.get("meeting_link"))
     if payload.get("check_in"):
         import uuid as _uuid
         training_id = payload.get("id") or _uuid.uuid4()
@@ -143,6 +175,7 @@ def get_training_service(db: Session, tid: UUID):
         TrainingEnrolment.status.in_(ACTIVE_ENROLMENT_STATUSES),
     ).count()
     detail["enrolled_count"] = enrolled_count
+    detail["current_participants"] = enrolled_count
     available_slots = None
     try:
         if obj.capacity is not None and str(obj.capacity).strip():
@@ -179,6 +212,10 @@ def update_training_service(db: Session, tid: UUID, data, current_user: dict | N
     if not obj or obj.is_deleted: raise HTTPException(status_code=404, detail="Training not found")
     lid = data.location_id if getattr(data,"location_id",None) is not None else obj.location_id
     _validate(db, obj.enterprise_id, lid)
+    final_delivery_mode = data.delivery_mode if getattr(data, "delivery_mode", None) is not None else obj.delivery_mode
+    final_venue = data.venue if getattr(data, "venue", None) is not None else obj.venue
+    final_meeting_link = data.meeting_link if getattr(data, "meeting_link", None) is not None else obj.meeting_link
+    _validate_delivery_mode_fields(final_delivery_mode, final_venue, final_meeting_link)
     extra = apply_form_configuration_to_training_update(db, obj, data, current_user or {})
     updated = update_training(db, obj, data)
     if updated.check_in and not updated.pass_code:
@@ -234,11 +271,39 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
     allowed = VALID.get(obj.status, [])
     if st not in allowed:
         raise HTTPException(status_code=400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
+    from datetime import datetime
+
     obj.status = st
     if st == "draft":
         obj.is_deleted = False
+        obj.moderation_status = "draft"
     if st in ("rejected", "needs_revision") and notes:
         obj.last_admin_notes = notes
+        obj.rejection_reason = notes
+    _MODERATION_STATUS_BY_TRANSITION = {
+        "pending_approval": "pending",
+        "approved": "approved",
+        "rejected": "rejected",
+        "needs_revision": "changes_requested",
+    }
+    if st in _MODERATION_STATUS_BY_TRANSITION:
+        obj.moderation_status = _MODERATION_STATUS_BY_TRANSITION[st]
+    now = datetime.utcnow()
+    if st == "approved":
+        obj.approved_at = now
+    elif st == "published":
+        obj.published_at = now
+        obj.moderation_status = "approved"
+        if obj.delivery_mode in ("physical", "hybrid") and not obj.pass_code:
+            obj.check_in = True
+            obj.pass_code = _generate_pass_code()
+            obj.qr_payload = _build_qr_payload(obj.id, obj.pass_code)
+    elif st == "archived":
+        obj.archived_at = now
+    elif st == "suspended":
+        obj.suspended_at = now
+    elif st == "cancelled":
+        obj.cancelled_at = now
     db.commit(); db.refresh(obj); return TrainingResponse.model_validate(map_training_write(obj))
 
 

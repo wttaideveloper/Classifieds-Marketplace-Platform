@@ -41,9 +41,10 @@ class Training(Base):
     documents = Column(JSONB, default=list)
     notes_documents = Column(JSONB, default=list)  # [{title, url}] — instructor-uploaded notes (pre-uploaded to storage; API stores the URL)
 
-    delivery_mode = Column(String(20), default="self_paced", index=True)  # self_paced|instructor_led|blended
+    delivery_mode = Column(String(20), default="self_paced", index=True)  # online|physical|hybrid|self_paced (legacy self_paced|instructor_led|blended still accepted, ungated)
     course_type = Column(String(50))  # one_day|workshop|virtual|certification
     duration = Column(String(50))  # e.g. 1 day, 2 weeks, custom
+    duration_hours = Column(String(20))  # numeric hours, e.g. "20" — distinct from the free-text `duration` above
     start_date = Column(DateTime)
     end_date = Column(DateTime)
     start_time = Column(String(20))
@@ -52,6 +53,8 @@ class Training(Base):
     address = Column(Text)
     meeting_link = Column(Text)
     meeting_provider = Column(String(20))  # zoom|google_meet|teams|other
+    meeting_id = Column(String(100))
+    meeting_passcode = Column(String(50))
     access_information = Column(Text)  # login/access details separate from delivery_instructions
     delivery_instructions = Column(Text)
     offline_access_enabled = Column(Boolean, default=False)
@@ -93,6 +96,13 @@ class Training(Base):
     custom_values = Column(JSONB, default=list)
 
     status = Column(String(20), default="draft", nullable=False, index=True)
+    moderation_status = Column(String(20), default="draft")  # draft|pending|approved|rejected|changes_requested
+    rejection_reason = Column(Text)
+    published_at = Column(DateTime)
+    approved_at = Column(DateTime)
+    archived_at = Column(DateTime)
+    suspended_at = Column(DateTime)
+    cancelled_at = Column(DateTime)
     is_deleted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

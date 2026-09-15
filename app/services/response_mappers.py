@@ -513,6 +513,31 @@ def map_training_detail(t) -> dict:
 def map_training_write(t) -> dict:
     return _training_base_fields(t)
 
+_TRAINING_DELIVERY_MODE_ACCESS_TYPE = {
+    "online": "online",
+    "physical": "venue",
+    "hybrid": "both",
+    "self_paced": "on_demand",
+}
+
+
+def _qr_image_base64(payload) -> str | None:
+    if not payload:
+        return None
+    try:
+        import base64
+        import io
+
+        import qrcode
+
+        img = qrcode.make(payload)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return None
+
+
 def _training_base_fields(t) -> dict:
     return {
         "id": t.id, "tenant_id": t.tenant_id, "enterprise_id": t.enterprise_id, "location_id": t.location_id,
@@ -538,6 +563,9 @@ def _training_base_fields(t) -> dict:
         "address": getattr(t, "address", None),
         "meeting_link": getattr(t, "meeting_link", None),
         "meeting_provider": getattr(t, "meeting_provider", None),
+        "meeting_platform": getattr(t, "meeting_provider", None),
+        "meeting_id": getattr(t, "meeting_id", None),
+        "meeting_passcode": getattr(t, "meeting_passcode", None),
         "access_information": getattr(t, "access_information", None),
         "delivery_instructions": getattr(t, "delivery_instructions", None),
         "offline_access_enabled": getattr(t, "offline_access_enabled", None) or False,
@@ -548,6 +576,19 @@ def _training_base_fields(t) -> dict:
         "check_in": getattr(t, "check_in", None) or False,
         "pass_code": getattr(t, "pass_code", None),
         "qr_payload": getattr(t, "qr_payload", None),
+        "qr_image_base64": _qr_image_base64(getattr(t, "qr_payload", None)),
+        "access_type": _TRAINING_DELIVERY_MODE_ACCESS_TYPE.get(t.delivery_mode),
+        "difficulty_level": getattr(t, "level", None),
+        "promotional_video_url": t.promotional_video,
+        "notes": getattr(t, "notes_documents", None) or [],
+        "access_expiry_days": getattr(t, "access_duration_days", None),
+        "moderation_status": getattr(t, "moderation_status", None),
+        "rejection_reason": getattr(t, "rejection_reason", None),
+        "published_at": getattr(t, "published_at", None),
+        "approved_at": getattr(t, "approved_at", None),
+        "archived_at": getattr(t, "archived_at", None),
+        "suspended_at": getattr(t, "suspended_at", None),
+        "cancelled_at": getattr(t, "cancelled_at", None),
         "release_rule": getattr(t, "release_rule", None),
         "scheduled_publication": getattr(t, "scheduled_publication", None),
         "randomise": getattr(t, "randomise", None) or False,
@@ -568,6 +609,7 @@ def _training_base_fields(t) -> dict:
         "access_duration_days": getattr(t, "access_duration_days", None),
         "promo_price": t.promo_price, "coupon_code": t.coupon_code,
         "duration": getattr(t, "duration", None),
+        "duration_hours": getattr(t, "duration_hours", None),
         "last_admin_notes": getattr(t, "last_admin_notes", None),
         "custom_values": getattr(t, "custom_values", None) or [],
         "form_configuration_id": getattr(t, "form_configuration_id", None),
