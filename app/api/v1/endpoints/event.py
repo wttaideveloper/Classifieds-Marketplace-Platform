@@ -41,6 +41,7 @@ from app.schemas.event_schema import (
     EventTemplateResponse,
     EventTemplateUpdateRequest,
     EventUncheckInRequest,
+    MyWaitlistResponse,
 )
 from app.services.event_service import (
     get_template_service,
@@ -134,6 +135,23 @@ def my_registrations(status: str | None = Query(None, description="Filter by reg
     if not email:
         raise HTTPException(status_code=400, detail="Email not found in token")
     return my_registrations_service(db, email, status)
+
+
+@router.get(
+    "/my/waitlist",
+    response_model=list[MyWaitlistResponse],
+    summary="My waitlist entries — waiting/promoted/left"
+)
+def my_waitlist(
+    status: str | None = Query(None, description="Filter by status: waiting|promoted|left"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    from app.services.event_service import my_waitlist_service
+    email = current_user.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Email not found in token")
+    return my_waitlist_service(db, email, status)
 
 
 @router.post(
@@ -543,11 +561,13 @@ def get_qr_image(event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), cu
     ).first()
     if not reg:
         raise HTTPException(status_code=404, detail="Registration not found")
-    # IDOR: only owner or admin/provider can view QR
+        
+    # IDOR: only owner or admin/provider can view QR. Case-insensitive email check.
     role = current_user.get("role")
-    email = current_user.get("email")
-    if role not in ["admin", "provider"] and reg.participant_email != email:
-        raise HTTPException(status_code=403, detail="Not authorized to view this QR code")
+    email = current_user.get("email", "")
+    if role not in ["admin", "provider", "super_admin"]:
+        if not reg.participant_email or reg.participant_email.strip().lower() != email.strip().lower():
+            raise HTTPException(status_code=403, detail="Not authorized to view this QR code")
 
     try:
         import qrcode
@@ -560,8 +580,7 @@ def get_qr_image(event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), cu
         buf.seek(0)
         return StreamingResponse(buf, media_type="image/png", headers={"Content-Disposition": f"inline; filename=qr_{reg.qr_code}.png"})
     except ImportError:
-        # Fallback: return QR code as text if qrcode not installed
-        return {"qr_code": reg.qr_code, "message": "Install 'qrcode' package for image generation"}
+        raise HTTPException(status_code=500, detail="QR code generation library is not installed on the server.")
 
 
 @router.get("/{event_id}/calendar.ics", summary="Add to calendar — Event + Sessions (ICS)")

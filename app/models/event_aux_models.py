@@ -35,6 +35,8 @@ class EventWaitlist(Base):
     event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False, index=True)
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False)
+    status = Column(String(20), default="waiting", index=True)  # waiting|promoted|left
+    registration_id = Column(UUID(as_uuid=True), nullable=True)  # Linked registration if promoted
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     event = relationship("Event", backref="waitlist_entries")

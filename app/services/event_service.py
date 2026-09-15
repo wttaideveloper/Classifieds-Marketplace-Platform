@@ -687,9 +687,43 @@ def delete_waitlist_entry_service(
                 # Return 404 to avoid leaking that another user's entry exists.
                 raise HTTPException(status_code=404, detail="Waitlist entry not found")
 
-    db.delete(entry)
+    entry.status = "left"
     db.commit()
     return {"message": "Removed from waitlist"}
+
+def my_waitlist_service(db: Session, email: str, status: str | None = None):
+    from app.models.event_aux_models import EventWaitlist
+    import sqlalchemy as sa
+    from sqlalchemy.orm import joinedload
+    
+    email_normalized = email.strip().lower()
+    
+    q = db.query(EventWaitlist).options(
+        joinedload(EventWaitlist.event)
+    ).filter(
+        sa.func.lower(EventWaitlist.participant_email) == email_normalized
+    )
+    
+    if status:
+        q = q.filter(EventWaitlist.status == status)
+        
+    entries = q.order_by(EventWaitlist.created_at.desc()).all()
+    
+    results = []
+    for w in entries:
+        results.append({
+            "id": w.id,
+            "event_id": w.event_id,
+            "event_title": w.event.title if w.event else None,
+            "event_status": w.event.status if w.event else None,
+            "event_start_date": w.event.start_date if w.event else None,
+            "participant_name": w.participant_name,
+            "participant_email": w.participant_email,
+            "status": w.status,
+            "registration_id": w.registration_id,
+            "created_at": w.created_at
+        })
+    return results
 
 
 def get_sessions_service(db: Session, event_id: UUID):
@@ -1521,21 +1555,41 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
         max_capacity = int(float(str(event.capacity).strip()))
     except ValueError:
         return
+        
     current_count = db.query(EventRegistration).filter(
         EventRegistration.event_id == event_id,
         EventRegistration.status.in_(["confirmed", "attended"])
     ).count()
+    
     if current_count >= max_capacity:
         return
-    # Get oldest waitlist entry
+        
+    # Lock the oldest waitlist entry using with_for_update(skip_locked=True)
     next_in_line = (
         db.query(EventWaitlist)
-        .filter(EventWaitlist.event_id == event_id)
+        .filter(EventWaitlist.event_id == event_id, EventWaitlist.status == "waiting")
         .order_by(EventWaitlist.created_at.asc())
+        .with_for_update(skip_locked=True)
         .first()
     )
+    
     if not next_in_line:
         return
+        
+    # Verify they don't already have a confirmed registration (Phase A check)
+    import sqlalchemy as sa
+    existing_reg = db.query(EventRegistration).filter(
+        EventRegistration.event_id == event_id,
+        sa.func.lower(EventRegistration.participant_email) == next_in_line.participant_email.strip().lower(),
+        EventRegistration.status.in_(["confirmed", "attended"])
+    ).first()
+    
+    if existing_reg:
+        # If they somehow registered already, just mark waitlist as left and abort promotion
+        next_in_line.status = "left"
+        db.flush()
+        return
+
     # Auto-promote
     reg = EventRegistration(
         event_id=event_id,
@@ -1545,8 +1599,15 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
         qr_code=str(uuid.uuid4())[:12].upper(),
     )
     db.add(reg)
-    db.delete(next_in_line)
+    db.flush() # ensure reg.id is available
+
+    # Update waitlist entry instead of deleting
+    next_in_line.status = "promoted"
+    next_in_line.registration_id = reg.id
     db.flush()
+
+    # The caller manages the db.commit() for the transaction.
+    
     # Notify
     try:
         from app.services.notification_triggers import notify_registration_confirmation
@@ -1921,23 +1982,25 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
         raise HTTPException(status_code=400, detail=f"Failed to create Event from template: {msg}")
     return event
 
+
 def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict):
     """Get meeting link — admin/provider or registered participant only."""
     from app.models.event_aux_models import EventRegistration
+    import sqlalchemy as sa
 
-    ev = get_event_by_id(db, event_id)
-    if not ev:
-        raise HTTPException(status_code=404, detail="Event not found")
+    ev = _get_event_or_404(db, event_id)
     role = current_user.get("role")
-    email = current_user.get("email")
-    if role not in ("admin", "provider"):
+    email = current_user.get("email", "")
+    
+    if role not in ("admin", "provider", "super_admin"):
         reg = db.query(EventRegistration).filter(
             EventRegistration.event_id == event_id,
-            EventRegistration.participant_email == email,
+            sa.func.lower(EventRegistration.participant_email) == email.strip().lower(),
             EventRegistration.status.in_(["confirmed", "attended"]),
         ).first()
         if not reg:
             raise HTTPException(status_code=403, detail="Only registered participants can access meeting link")
+            
     return {
         "event_id": str(event_id),
         "meeting_link": ev.meeting_link,
@@ -1947,10 +2010,8 @@ def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict):
 
 
 # ---- Contact Organiser ----
-
-
 def contact_organiser_service(db: Session, event_id: UUID, payload: dict, current_user: dict):
-    ev = get_event_by_id(db, event_id)
+    ev = _get_event_or_404(db, event_id)
     if not ev:
         raise HTTPException(status_code=404, detail="Event not found")
     msg = payload.get("message") or payload.get("text") or ""

@@ -47,6 +47,20 @@ class EventOrderResponse(BaseModel):
     created_at: datetime | None = None
 
 
+class MyWaitlistResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    event_id: UUID
+    event_title: str | None = None
+    event_status: str | None = None
+    event_start_date: datetime | None = None
+    participant_name: str
+    participant_email: str
+    status: str
+    registration_id: UUID | None = None
+    created_at: datetime
+
+
 class EventRefundRequest(BaseModel):
     reason: str | None = Field(None, description="Reason for refund")
     amount: str | None = Field(None, description="Partial amount if partial refund")
