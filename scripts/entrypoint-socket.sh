@@ -3,7 +3,7 @@
 set -e
 
 echo "Running database migrations..."
-alembic upgrade head
+alembic upgrade heads || alembic upgrade head
 
 if [ -n "${WEB_CONCURRENCY}" ] && [ "${WEB_CONCURRENCY}" -gt 1 ]; then
   echo "WARNING: WEB_CONCURRENCY=${WEB_CONCURRENCY} breaks Engine.IO polling." >&2
