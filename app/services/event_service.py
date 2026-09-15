@@ -1161,11 +1161,18 @@ def _ticket_effective_price(ticket: dict, event) -> str:
 def create_event_checkout_service(db: Session, event_id: UUID, payload):
     import uuid
     from app.models.event_aux_models import EventOrder, EventRegistration
+    import sqlalchemy as sa
+    from sqlalchemy.exc import IntegrityError
+    
+    # Normalize email as established in Phase A
+    participant_email = payload.participant_email.strip().lower()
+
     event = _get_event_or_404(db, event_id)
     if event.status in ["cancelled", "completed", "archived", "suspended"]:
         raise HTTPException(status_code=400, detail=f"Checkout closed — event is {event.status}")
     if event.status not in ["published"]:
         raise HTTPException(status_code=400, detail=f"Event not open for checkout (status: {event.status})")
+    
     # Registration window enforcement (same as free registration)
     from datetime import datetime
     now = datetime.utcnow()
@@ -1175,60 +1182,94 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
         raise HTTPException(status_code=400, detail=f"Registration closed (closed {event.registration_close_at})")
     if event.registration_cutoff and now > event.registration_cutoff:
         raise HTTPException(status_code=400, detail=f"Registration cutoff passed ({event.registration_cutoff})")
+    
     ticket = _resolve_ticket(event, payload.ticket_type_id)
     if payload.ticket_type_id and not ticket:
         raise HTTPException(status_code=404, detail="Ticket type not found")
-    # capacity per ticket type — lock Event row to prevent race
+        
     try:
+        # capacity per ticket type — lock Event row to prevent race
         db.query(Event).filter(Event.id == event_id).with_for_update().first()
-    except Exception:
-        pass
-    if ticket and ticket.get("capacity"):
+        
+        # Duplicate registration protection (Phase A rule)
+        existing_reg = db.query(EventRegistration).filter(
+            EventRegistration.event_id == event_id,
+            sa.func.lower(EventRegistration.participant_email) == participant_email,
+            EventRegistration.status.in_(["confirmed", "attended"])
+        ).first()
+        
+        if existing_reg:
+            raise HTTPException(status_code=409, detail="Participant is already registered for this event.")
+
+        if ticket and ticket.get("capacity"):
+            try:
+                cap = int(float(str(ticket["capacity"]).strip()))
+                cnt = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.ticket_type_id==payload.ticket_type_id, EventOrder.status.in_(["confirmed"])).count()
+                cnt += db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).count()
+                if cnt + payload.quantity > cap:
+                    raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
+            except ValueError:
+                pass
+                
+        price = _ticket_effective_price(ticket or {}, event)
         try:
-            cap = int(float(str(ticket["capacity"]).strip()))
-            cnt = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.ticket_type_id==payload.ticket_type_id, EventOrder.status.in_(["confirmed"])).count()
-            cnt += db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).count()
-            if cnt + payload.quantity > cap:
-                raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
-        except ValueError:
-            pass
-    price = _ticket_effective_price(ticket or {}, event)
-    try:
-        total = float(price) * payload.quantity
-        amount = str(total)
-    except Exception:
-        amount = str(price)
-    currency = ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
-    # Free check — handle 0, 0.0, 0.00, 00, empty
-    try:
-        is_free = not price or float(str(price).strip()) == 0
-    except Exception:
-        is_free = not price
-    payment_status = "confirmed"  # stub: payment always confirmed (marketplace/merchant)
-    order = EventOrder(
-        event_id=event_id,
-        participant_name=payload.participant_name,
-        participant_email=payload.participant_email,
-        ticket_type_id=payload.ticket_type_id,
-        quantity=str(payload.quantity),
-        amount=amount,
-        currency=currency,
-        payment_status=payment_status,
-        status="confirmed",
-        payment_provider=payload.payment_provider or "marketplace",
-    )
-    db.add(order); db.commit(); db.refresh(order)
+            total = float(price) * payload.quantity
+            amount = str(total)
+        except Exception:
+            amount = str(price)
+            
+        currency = ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
+        
+        payment_status = "confirmed"  # stub: payment always confirmed (marketplace/merchant)
+        order = EventOrder(
+            event_id=event_id,
+            participant_name=payload.participant_name,
+            participant_email=participant_email, # Normalized email
+            ticket_type_id=payload.ticket_type_id,
+            quantity=str(payload.quantity),
+            amount=amount,
+            currency=currency,
+            payment_status=payment_status,
+            status="confirmed",
+            payment_provider=payload.payment_provider or "marketplace",
+        )
+        db.add(order)
+        db.flush() # Secure order details without committing
+
+        # also create registration for attendance tracking (Atomic with order)
+        reg = EventRegistration(
+            event_id=event_id, 
+            participant_name=payload.participant_name, 
+            participant_email=participant_email, # Normalized email
+            ticket_type_id=payload.ticket_type_id, 
+            status="confirmed", 
+            qr_code=str(uuid.uuid4())[:8].upper()
+        )
+        db.add(reg)
+        
+        # Commit BOTH order and registration atomically
+        db.commit()
+        db.refresh(order)
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError as e:
+        db.rollback()
+        logger.error(f"IntegrityError during checkout: {e}")
+        # Triggers if race condition bypasses select for unique index
+        raise HTTPException(status_code=409, detail="Participant is already registered for this event.")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Unexpected error during checkout: {e}")
+        raise HTTPException(status_code=500, detail="An error occurred during checkout processing.")
+
     try:
         from app.services.notification_triggers import notify_payment_success
         notify_payment_success(db, event, order)
-    except Exception:
-        pass
-    # also create registration for attendance tracking
-    try:
-        reg = EventRegistration(event_id=event_id, participant_name=payload.participant_name, participant_email=payload.participant_email, ticket_type_id=payload.ticket_type_id, status="confirmed", qr_code=str(uuid.uuid4())[:8].upper())
-        db.add(reg); db.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to send checkout notification: {e}")
+
     return order
 
 def get_event_orders_service(db: Session, event_id: UUID):
