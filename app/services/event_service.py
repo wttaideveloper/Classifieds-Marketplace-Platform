@@ -426,12 +426,33 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     if group_size < 1:
         group_size = 1
 
-    # Capacity enforcement — lock Event row first to prevent race (READ COMMITTED)
-    need = group_size
+    # --- Phase A: Duplicate registration protection ---
+    # Normalise email for comparison — strip + lowercase, matching project convention.
+    # Only block if an *active* (confirmed/attended) registration already exists.
+    # Cancelled registrations allow re-registration (legitimate product behaviour).
+    norm_email = payload.participant_email.strip().lower()
     try:
         db.query(Event).filter(Event.id == event_id).with_for_update().first()
     except Exception:
         pass
+    active_reg = (
+        db.query(EventRegistration)
+        .filter(
+            EventRegistration.event_id == event_id,
+            sa.func.lower(EventRegistration.participant_email) == norm_email,
+            EventRegistration.status.in_(["confirmed", "attended"]),
+        )
+        .first()
+    )
+    if active_reg:
+        raise HTTPException(
+            status_code=409,
+            detail="Already registered for this event. Cancel your existing registration before registering again.",
+        )
+    # --------------------------------------------------
+
+    # Capacity enforcement (lock already acquired above)
+    need = group_size
     if event.capacity:
         try:
             max_capacity = int(float(str(event.capacity).strip()))
@@ -475,7 +496,7 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     reg = EventRegistration(
         event_id=event_id,
         participant_name=payload.participant_name,
-        participant_email=payload.participant_email,
+        participant_email=norm_email,
         custom_fields=cf,
         ticket_type_id=payload.ticket_type_id,
         status="confirmed",
@@ -489,17 +510,22 @@ def create_registration_service(db: Session, event_id: UUID, payload):
             try:
                 name = m.get("name") or m.get("participant_name") or payload.participant_name
                 email = m.get("email") or m.get("participant_email")
-                if not email or email == payload.participant_email:
+                if not email or email.strip().lower() == norm_email:
                     continue
-                # prevent duplicate email per event
-                exists = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==email).first()
+                norm_member_email = email.strip().lower()
+                # prevent duplicate email per event (active registrations)
+                exists = db.query(EventRegistration).filter(
+                    EventRegistration.event_id == event_id,
+                    sa.func.lower(EventRegistration.participant_email) == norm_member_email,
+                    EventRegistration.status.in_(["confirmed", "attended"]),
+                ).first()
                 if exists:
                     continue
                 extra = EventRegistration(
                     event_id=event_id,
                     participant_name=name,
-                    participant_email=email,
-                    custom_fields={"group_leader": payload.participant_email},
+                    participant_email=norm_member_email,
+                    custom_fields={"group_leader": norm_email},
                     ticket_type_id=payload.ticket_type_id,
                     status="confirmed",
                     qr_code=str(uuid.uuid4())[:12].upper(),
@@ -526,10 +552,94 @@ def get_event_registrations_service(db: Session, event_id: UUID):
 
 
 def create_waitlist_entry_service(db: Session, event_id: UUID, payload):
-    _get_event_or_404(db, event_id)
-    from app.models.event_aux_models import EventWaitlist
+    """Join event waitlist.
 
-    entry = EventWaitlist(event_id=event_id, participant_name=payload.participant_name, participant_email=payload.participant_email)
+    Phase A hardening:
+    - Event must be published and registration window must be open.
+    - Waitlist is the overflow mechanism — only available when event is at capacity.
+    - Duplicate entries (same event_id + normalised email) are rejected.
+    """
+    from datetime import datetime
+    event = _get_event_or_404(db, event_id)
+    from app.models.event_aux_models import EventRegistration, EventWaitlist
+
+    # --- Status validation ---
+    # Waitlist only makes sense for published events.
+    if event.status in ("cancelled", "completed", "archived", "suspended"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Waitlist closed — event is {event.status}",
+        )
+    if event.status != "published":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Waitlist is only available for published events (current status: {event.status})",
+        )
+
+    # --- Registration window ---
+    now = datetime.utcnow()
+    if event.registration_open_at and now < event.registration_open_at:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Registration not yet open (opens {event.registration_open_at})",
+        )
+    if event.registration_close_at and now > event.registration_close_at:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Registration closed (closed {event.registration_close_at})",
+        )
+    if event.registration_cutoff and now > event.registration_cutoff:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Registration cutoff passed ({event.registration_cutoff})",
+        )
+
+    # --- Capacity gate: waitlist is the overflow mechanism ---
+    # Only allow joining when the event is full. If there are still open seats
+    # the participant should register directly.
+    if event.capacity:
+        try:
+            max_capacity = int(float(str(event.capacity).strip()))
+            current_count = db.query(EventRegistration).filter(
+                EventRegistration.event_id == event_id,
+                EventRegistration.status.in_(["confirmed", "attended"]),
+            ).count()
+            if current_count < max_capacity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Event still has {max_capacity - current_count} seat(s) available. "
+                        "Please register directly instead of joining the waitlist."
+                    ),
+                )
+        except ValueError:
+            pass  # capacity not parseable — allow waitlist join
+
+    # --- Duplicate waitlist protection (race-safe with FOR UPDATE on event row) ---
+    norm_email = payload.participant_email.strip().lower()
+    try:
+        db.query(Event).filter(Event.id == event_id).with_for_update().first()
+    except Exception:
+        pass
+    existing = (
+        db.query(EventWaitlist)
+        .filter(
+            EventWaitlist.event_id == event_id,
+            sa.func.lower(EventWaitlist.participant_email) == norm_email,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="Already on the waitlist for this event.",
+        )
+
+    entry = EventWaitlist(
+        event_id=event_id,
+        participant_name=payload.participant_name,
+        participant_email=norm_email,
+    )
     db.add(entry)
     db.commit()
     db.refresh(entry)
@@ -543,12 +653,40 @@ def get_event_waitlist_service(db: Session, event_id: UUID):
     return db.query(EventWaitlist).filter(EventWaitlist.event_id == event_id).all()
 
 
-def delete_waitlist_entry_service(db: Session, event_id: UUID, entry_id: UUID):
+def delete_waitlist_entry_service(
+    db: Session,
+    event_id: UUID,
+    entry_id: UUID,
+    current_user: dict | None = None,
+):
+    """Leave / remove a waitlist entry.
+
+    Phase A IDOR fix:
+    - Customer role: can only remove their own entry (verified by email).
+    - Admin / provider: can remove any entry for events they manage.
+    - Returns 404 (not 403) when entry is absent or unauthorised to avoid
+      leaking the existence of another user's entry.
+    """
     from app.models.event_aux_models import EventWaitlist
 
-    entry = db.query(EventWaitlist).filter(EventWaitlist.id == entry_id, EventWaitlist.event_id == event_id).first()
+    entry = (
+        db.query(EventWaitlist)
+        .filter(EventWaitlist.id == entry_id, EventWaitlist.event_id == event_id)
+        .first()
+    )
     if not entry:
         raise HTTPException(status_code=404, detail="Waitlist entry not found")
+
+    # Ownership check — customers can only remove their own entry.
+    if current_user:
+        role = current_user.get("role")
+        if role not in ("admin", "super_admin", "provider"):
+            user_email = (current_user.get("email") or "").strip().lower()
+            entry_email = (entry.participant_email or "").strip().lower()
+            if user_email != entry_email:
+                # Return 404 to avoid leaking that another user's entry exists.
+                raise HTTPException(status_code=404, detail="Waitlist entry not found")
+
     db.delete(entry)
     db.commit()
     return {"message": "Removed from waitlist"}

@@ -214,6 +214,53 @@ def get_active_event_form_configuration(
 
 
 @router.get(
+    "/{event_id}/registration-form",
+    summary="Get Registration Form (Customer)",
+    description=(
+        "Returns the dynamic registration form fields for a **published** event. "
+        "Available to any authenticated user (customer, admin, provider). "
+        "Raises 404 for non-existent events and 403 for non-published events "
+        "so customers cannot retrieve configuration for events they cannot register for."
+    ),
+    responses={
+        403: {"description": "Event is not published"},
+        404: {"description": "Event not found"},
+    },
+)
+def get_event_registration_form(
+    event_id: UUID = Path(..., description="Event ID"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Customer-safe form configuration endpoint.
+
+    - Requires authentication (any role).
+    - Only returns form config for *published* events.
+    - Does NOT expose internal admin diagnostics, tenant internals, or
+      private configuration not needed by the mobile registration flow.
+    """
+    from app.repository.event_repo import get_event_by_id
+    from app.services.event_form_config_service import get_event_form_configuration_service
+
+    # Verify the event exists and is in a state the customer can register for.
+    event = get_event_by_id(db, event_id)
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if event.status != "published":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Registration form is only available for published events "
+                f"(current status: {event.status})"
+            ),
+        )
+
+    # Reuse the existing service — it returns sections/fields sufficient for
+    # the mobile registration flow without exposing admin-only internals.
+    return get_event_form_configuration_service(db, event_id, current_user)
+
+
+@router.get(
     "/{event_id}/form-configuration",
     summary="Historical Event form version used by this Event",
     description="Loads the exact published configuration version stored on the Event at creation time.",
@@ -335,7 +382,14 @@ def list_registrations(event_id: UUID, db: Session = Depends(get_db), current_us
     return get_event_registrations_service(db, event_id)
 
 
-@router.post("/{event_id}/registrations", status_code=status.HTTP_201_CREATED, summary="Register for Event")
+@router.post(
+    "/{event_id}/registrations",
+    status_code=status.HTTP_201_CREATED,
+    summary="Register for Event",
+    responses={
+        409: {"description": "Already registered", "content": {"application/json": {"example": {"detail": "Already registered for this event."}}}},
+    },
+)
 def register(event_id: UUID, payload: EventRegistrationCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return create_registration_service(db, event_id, payload)
 
@@ -416,14 +470,21 @@ def list_waitlist(event_id: UUID, db: Session = Depends(get_db), current_user: d
     return get_event_waitlist_service(db, event_id)
 
 
-@router.post("/{event_id}/waitlist", status_code=status.HTTP_201_CREATED, summary="Join Waitlist")
+@router.post(
+    "/{event_id}/waitlist",
+    status_code=status.HTTP_201_CREATED,
+    summary="Join Waitlist",
+    responses={
+        409: {"description": "Already on waitlist", "content": {"application/json": {"example": {"detail": "Already on the waitlist for this event."}}}},
+    },
+)
 def join_waitlist(event_id: UUID, payload: EventRegistrationCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return create_waitlist_entry_service(db, event_id, payload)
 
 
 @router.delete("/{event_id}/waitlist/{entry_id}", summary="Leave Waitlist")
 def leave_waitlist(event_id: UUID, entry_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return delete_waitlist_entry_service(db, event_id, entry_id)
+    return delete_waitlist_entry_service(db, event_id, entry_id, current_user)
 
 
 # ---- Sessions & Attendance (E11-E12) ----
