@@ -283,6 +283,7 @@ def learning_response(result, curriculum, training, enrolment, assignment_submis
                     "due_at": assignment.get("due_at") or assignment.get("due_date"),
                     "max_score": assignment.get("max_score"), "is_submitted": submitted is not None,
                     "score": submitted.grade if submitted else None, "feedback": submitted.feedback if submitted else None,
+                    "files": [dict(f) for f in (submitted.files or [])] if submitted else [],
                 }
                 item["completed_at"] = submitted.submitted_at.isoformat() if submitted else None
             flat.append(item)

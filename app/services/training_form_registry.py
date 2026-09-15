@@ -198,9 +198,10 @@ def build_default_sections() -> list[dict]:
                 _core_field("category", "Category", "text", 3, required=True),
                 _core_field("subcategory", "Subcategory", "text", 4),
                 _core_field("delivery_mode", "Delivery Mode", "select", 5, options=[
-                    {"value": "self_paced", "label": "Self Paced", "position": 1},
-                    {"value": "instructor_led", "label": "Instructor Led", "position": 2},
-                    {"value": "blended", "label": "Blended", "position": 3},
+                    {"value": "online", "label": "Online", "position": 1},
+                    {"value": "physical", "label": "Physical (In-Person)", "position": 2},
+                    {"value": "hybrid", "label": "Hybrid", "position": 3},
+                    {"value": "self_paced", "label": "Self Paced", "position": 4},
                 ]),
             ],
         },

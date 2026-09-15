@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -156,6 +157,7 @@ class TrainingCreate(BaseModel):
     learning_objectives: list[str] | None = Field(None, description="What participants will learn")
     target_audience: str | None = Field(None, description="Who this training is for")
     level: str | None = Field(None, description="beginner|intermediate|advanced|all_levels")
+    difficulty_level: str | None = Field(None, description="Contract alias for level — maps onto the level column on create/update")
     language: str | None = Field("English", description="Course language")
     subtitle: str | None = Field(None, description="Short tagline, separate from description")
     primary_image: str | None = None
@@ -165,7 +167,7 @@ class TrainingCreate(BaseModel):
     notes_documents: list[TrainingNoteDocument] | None = Field(
         None, description="Instructor-uploaded notes files, e.g. [{title: 'Week 1 Handout', url: 'https://...'}]"
     )
-    delivery_mode: str | None = Field("self_paced", description="online|physical|hybrid|self_paced — online requires meeting_link; physical/hybrid require venue; hybrid requires both")
+    delivery_mode: Literal["online", "physical", "hybrid", "self_paced"] | None = Field("self_paced", description="online|physical|hybrid|self_paced — online requires meeting_link; physical/hybrid require venue; hybrid requires both")
     course_type: str | None = Field(None, description="one_day|workshop|virtual|certification")
     duration: str | None = Field(None, description="Duration e.g. 1 day, half_day, custom, 2 weeks")
     duration_hours: str | None = Field(None, description="Numeric duration in hours, e.g. '20'")
@@ -237,7 +239,7 @@ class TrainingCreate(BaseModel):
             "prerequisites": self.prerequisites or [],
             "learning_objectives": self.learning_objectives or [],
             "target_audience": self.target_audience,
-            "level": self.level,
+            "level": self.level or self.difficulty_level,
             "language": self.language,
             "subtitle": self.subtitle,
             "primary_image": self.primary_image,
@@ -309,6 +311,7 @@ class TrainingUpdate(BaseModel):
     learning_objectives: list | None = None
     target_audience: str | None = None
     level: str | None = None
+    difficulty_level: str | None = None
     language: str | None = None
     subtitle: str | None = None
     primary_image: str | None = None
@@ -316,7 +319,7 @@ class TrainingUpdate(BaseModel):
     promotional_video: str | None = None
     documents: list | None = None
     notes_documents: list[TrainingNoteDocument] | None = None
-    delivery_mode: str | None = None
+    delivery_mode: Literal["online", "physical", "hybrid", "self_paced"] | None = None
     course_type: str | None = None
     duration_hours: str | None = None
     start_date: datetime | None = None
@@ -361,6 +364,9 @@ class TrainingUpdate(BaseModel):
         data = self.model_dump(exclude_unset=True)
         data.pop("custom_values", None)
         data.pop("form_configuration_version_id", None)
+        difficulty_level = data.pop("difficulty_level", None)
+        if difficulty_level is not None and data.get("level") is None:
+            data["level"] = difficulty_level
         instructor = data.pop("instructor", None)
         if instructor:
             if data.get("instructor_id") is None and instructor.get("id") is not None:
@@ -511,12 +517,23 @@ class SectionCreate(BaseModel):
     instructor_id: UUID | None = Field(None, description="Section instructor allocation")
     schedule: str | dict | None = Field(None, description="ISO timestamp or schedule/agenda object")
 
+
+class TopicCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    title: str = Field(..., description="Topic title")
+    content_url: str | None = Field(None, description="Topic content URL (e.g. PDF, page)")
+    videos: list[str] | None = Field(None, description="Topic media video URLs, e.g. uploaded via /trainings/upload")
+    documents: list[dict] | None = Field(None, description="Topic attachments: [{url, name, visibility, downloadable}]")
+    notes: list[str] | None = Field(None, description="Topic notes URLs (e.g. generated notes PDFs / uploads)")
+    duration: str | int | None = Field(None, description="Display duration for the topic")
+
+
 class LessonCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
     type: str = Field("text", description="text|video|audio|webpage|pdf|live|presentation|worksheet|document|venue|exam")
     title: str
     content_url: str | None = None
-    topics: list | None = Field(None, description="Topics within lesson: [{title, content_url}]")
+    topics: list[TopicCreate] | None = Field(None, description="Topics within lesson: [{title, content_url, videos, documents, notes}]")
     duration: int | str | None = Field(None, description="Minutes (int) for content lessons, or a display string (e.g. 'Tue 7:00–7:40 AM') for live/venue lessons")
     is_preview: bool | None = Field(False, description="Preview allowed without enrolment")
     is_draft: bool | None = Field(False, description="Draft mode — hidden until published")
@@ -530,6 +547,7 @@ class LessonCreate(BaseModel):
     pass_code: str | None = Field(None, description="Check-in pass code for this lesson's venue")
     check_in_window: str | None = Field(None, description="Display string for the check-in window, e.g. 'Opens 8:40 AM · closes 9:20 AM'")
     assessment_id: str | None = Field(None, description="Linked assessment id, for type='exam' lessons — matched against Training.assessments[].id")
+    assignment_id: str | None = Field(None, description="Linked assignment id, for type='assignment' lessons — matched against Training.assignments[].id")
     file_size: str | None = Field(None, description="Content file size, e.g. '24 MB' — informational, client-supplied")
     completion_rule: str | None = Field(None, description="Completion rule, e.g. mandatory")
     prerequisites: list | None = Field(None, description="Lesson IDs that must be completed first — sequential learning")
@@ -549,6 +567,25 @@ class AssessmentQuestionCreate(BaseModel):
     points: int = Field(1, description="Points for correct answer")
     explanation: str | None = Field(None, description="Answer explanation")
     reusable: bool | None = Field(False, description="Store in question bank for reuse")
+
+
+class AssessmentCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    title: str = Field(..., description="Assessment title")
+    type: str = Field("quiz", description="quiz|exam|test|survey")
+    instructions: str | None = Field(None, description="Instructions shown before starting the assessment")
+    level: str | None = Field(None, description="pre_course|module|final|feedback — where the assessment sits in the course")
+    module_id: str | None = Field(None, description="Section/module id this assessment targets (for level='module')")
+    lesson_id: str | None = Field(None, description="Lesson id this assessment is attached to")
+    time_limit_minutes: int | None = Field(None, description="Time limit — enforced on submit")
+    pass_percent: int | None = Field(None, description="Pass threshold as a percentage of total points")
+    passing_score: int | None = Field(None, description="Alternative absolute pass score")
+    attempts_allowed: int | None = Field(None, description="Number of attempts permitted")
+    publish_at: datetime | None = Field(None, description="Scheduled result publication timestamp")
+    publication: str | None = Field(None, description="immediate|scheduled — result release mode")
+    randomise: bool | None = Field(None, description="Randomise question order")
+    is_published: bool | None = Field(True, description="Whether learners can see/attempt the assessment")
+    questions: list[AssessmentQuestionCreate] | None = Field(None, description="Inline questions")
 
 
 class AssessmentSubmitCreate(BaseModel):
@@ -578,8 +615,15 @@ class AssignmentCreate(BaseModel):
     )
 
 
+class AssignmentSubmitFile(BaseModel):
+    url: str = Field(..., description="URL to the submitted file/asset")
+    name: str = Field("", description="Display name of the submitted file")
+    type: str = Field("document", description="image|video|document|link")
+
+
 class AssignmentSubmitCreate(BaseModel):
-    file_url: str | None = Field(None, description="URL to uploaded file")
+    file_url: str | None = Field(None, description="URL to uploaded file (single-file shorthand)")
+    files: list[AssignmentSubmitFile] | None = Field(None, description="Multi-media submission — images/videos/documents/links")
     submission_text: str | None = Field(None, description="Text submission content")
 
 
@@ -588,6 +632,7 @@ class AssignmentSubmitResponse(BaseModel):
     submitted_at: str
     grade: int | None = None
     feedback: str | None = None
+    files: list[dict] = Field(default_factory=list)
 
 
 class TrainingProgressSection(BaseModel):

@@ -10,6 +10,9 @@ from app.services.response_mappers import _qr_image_base64, map_training_detail,
 
 ACTIVE_ENROLMENT_STATUSES = frozenset({"enrolled", "active", "completed", "approved"})
 CHECKIN_ELIGIBLE_STATUSES = frozenset({"enrolled", "active", "approved"})
+# Statuses that occupy a capacity slot — used both when enrolling and when
+# promoting from the waitlist so the two stay in agreement.
+ENROLMENT_CAPACITY_STATUSES = frozenset({"enrolled", "pending_approval", "active", "attended"})
 
 
 def _is_active_enrolment(enrolment) -> bool:
@@ -408,7 +411,7 @@ def _promote_waitlist(db: Session, tid: UUID) -> dict | None:
         return None
     enrolled = db.query(TrainingEnrolment).filter(
         TrainingEnrolment.training_id == tid,
-        TrainingEnrolment.status.in_(["enrolled", "pending_approval", "active"]),
+        TrainingEnrolment.status.in_(ENROLMENT_CAPACITY_STATUSES),
     ).count()
     if enrolled >= cap:
         return None
@@ -420,18 +423,80 @@ def _promote_waitlist(db: Session, tid: UUID) -> dict | None:
     )
     if not next_wait:
         return None
+    import uuid as _uuid
+    from datetime import datetime as _dt, timedelta
     status = "pending_approval" if getattr(training, "requires_approval", False) else "enrolled"
+    expires = None
+    if getattr(training, "access_duration_days", None):
+        try:
+            expires = _dt.utcnow() + timedelta(days=int(training.access_duration_days))
+        except Exception:
+            pass
     promoted = TrainingEnrolment(
         training_id=tid,
         participant_name=next_wait.participant_name,
         participant_email=next_wait.participant_email,
         status=status,
+        qr_code=str(_uuid.uuid4())[:12].upper(),
+        access_expires_at=expires,
     )
     db.add(promoted)
     db.delete(next_wait)
     db.commit()
     db.refresh(promoted)
     return {"enrolment_id": str(promoted.id), "participant_email": promoted.participant_email, "status": promoted.status}
+
+
+def join_waitlist_service(db: Session, tid: UUID, payload: dict | None = None, current_user: dict | None = None):
+    from app.models.training_model import TrainingEnrolment, TrainingWaitlist
+    _get_training_or_404(db, tid)
+    participant_email = (payload or {}).get("participant_email") or (current_user or {}).get("email")
+    if not participant_email:
+        raise HTTPException(status_code=400, detail="participant_email is required")
+    participant_name = (payload or {}).get("participant_name") or (current_user or {}).get("name") or participant_email
+    existing_enrol = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email == participant_email,
+    ).first()
+    if existing_enrol and existing_enrol.status not in ("cancelled", "expired"):
+        raise HTTPException(status_code=400, detail="Already enrolled on this training")
+    existing_wait = db.query(TrainingWaitlist).filter(
+        TrainingWaitlist.training_id == tid,
+        TrainingWaitlist.participant_email == participant_email,
+    ).first()
+    if existing_wait:
+        raise HTTPException(status_code=400, detail="Already on the waitlist for this training")
+    w = TrainingWaitlist(training_id=tid, participant_name=participant_name, participant_email=participant_email)
+    db.add(w)
+    db.commit()
+    db.refresh(w)
+    position = db.query(TrainingWaitlist).filter(TrainingWaitlist.training_id == tid).count()
+    return {
+        "id": str(w.id),
+        "training_id": str(tid),
+        "participant_name": participant_name,
+        "participant_email": participant_email,
+        "status": "waitlisted",
+        "position": position,
+        "created_at": w.created_at.isoformat() if w.created_at else None,
+    }
+
+
+def leave_waitlist_service(db: Session, tid: UUID, entry_id: UUID, participant_email: str | None = None):
+    from app.models.training_model import TrainingWaitlist
+    q = db.query(TrainingWaitlist).filter(TrainingWaitlist.id == entry_id, TrainingWaitlist.training_id == tid)
+    if participant_email:
+        q = q.filter(TrainingWaitlist.participant_email == participant_email)
+    w = q.first()
+    if not w:
+        raise HTTPException(status_code=404, detail="Waitlist entry not found")
+    db.delete(w)
+    db.commit()
+    promoted = _promote_waitlist(db, tid)
+    result = {"message": "Removed from waitlist"}
+    if promoted:
+        result["waitlist_promoted"] = promoted
+    return result
 
 
 def _append_moderation(db: Session, training, action: str, reason: str | None, actor: dict | None):
@@ -650,17 +715,29 @@ def submit_assignment_service(db: Session, tid: UUID, aid: str, payload, partici
         except (TypeError, ValueError):
             pass
     accepted = target.get("accepted_file_types") or []
-    file_url = payload.file_url if hasattr(payload, "file_url") else payload.get("file_url") if isinstance(payload, dict) else None
+    normalized = {str(x).lower() if str(x).startswith(".") else f".{str(x).lower()}" for x in accepted}
+    import os
+    is_model = hasattr(payload, "model_dump")
+    file_url = payload.file_url if is_model else payload.get("file_url") if isinstance(payload, dict) else None
+    files = [f.model_dump() if hasattr(f, "model_dump") else dict(f)
+             for f in (payload.files if is_model else payload.get("files") if isinstance(payload, dict) else []) or []]
+    def _validate_files(files_to_check, label):
+        for f in files_to_check:
+            ftype = str(f.get("name") or f.get("url") or "")
+            ext = os.path.splitext(ftype)[-1].lower()
+            if ext and normalized and ext not in normalized:
+                raise HTTPException(status_code=400, detail=f"File type {ext} not allowed. Accepted: {sorted(normalized)}")
+    _validate_files(files, "multi-file")
     if accepted and file_url:
-        import os
         ext = os.path.splitext(str(file_url))[-1].lower()
-        normalized = {str(t).lower() if str(t).startswith(".") else f".{str(t).lower()}" for t in accepted}
-        if ext and ext not in normalized:
+        if ext and normalized and ext not in normalized:
             raise HTTPException(status_code=400, detail=f"File type {ext} not allowed. Accepted: {sorted(normalized)}")
-    text = payload.submission_text if hasattr(payload, "submission_text") else payload.get("submission_text") if isinstance(payload, dict) else None
-    sub = TrainingAssignmentSubmission(training_id=tid, assignment_id=str(aid), participant_email=participant_email, file_url=file_url, submission_text=text)
+    if not file_url and files:
+        file_url = files[0].get("url")
+    text = payload.submission_text if is_model else payload.get("submission_text") if isinstance(payload, dict) else None
+    sub = TrainingAssignmentSubmission(training_id=tid, assignment_id=str(aid), participant_email=participant_email, file_url=file_url, files=files, submission_text=text)
     db.add(sub); db.commit(); db.refresh(sub)
-    return {"id": str(sub.id), "submitted_at": sub.submitted_at.isoformat(), "grade": None, "feedback": None, "assignment_id": str(aid)}
+    return {"id": str(sub.id), "submitted_at": sub.submitted_at.isoformat(), "grade": None, "feedback": None, "assignment_id": str(aid), "files": [dict(f) for f in (sub.files or [])]}
 
 def _check_access_expiry(db: Session, tid: UUID, participant_email: str | None):
     if not participant_email:
@@ -720,7 +797,7 @@ def grade_assignment_service(db: Session, tid: UUID, aid: str, submission_id: st
     sub=db.query(TrainingAssignmentSubmission).filter(TrainingAssignmentSubmission.id==submission_id, TrainingAssignmentSubmission.training_id==tid).first()
     if not sub: raise HTTPException(404, "Submission not found")
     sub.grade=str(grade); sub.feedback=feedback; db.commit(); db.refresh(sub)
-    return {"id": str(sub.id), "grade": sub.grade, "feedback": sub.feedback, "resubmission_allowed": True}
+    return {"id": str(sub.id), "grade": sub.grade, "feedback": sub.feedback, "files": [dict(f) for f in (sub.files or [])], "resubmission_allowed": True}
 
 def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_email: str):
     from app.models.training_model import TrainingProgress
@@ -1380,13 +1457,27 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
     # not block plain (non-discounted) enrolment.
     if coupon_code and t.coupon_code and coupon_code != t.coupon_code:
         raise HTTPException(status_code=400, detail="Invalid coupon code")
-    # if promo price exists and coupon not needed, keep
-    # capacity
+    import uuid as _uuid
+    participant_email = payload.get("participant_email") or (current_user or {}).get("email")
+    if not participant_email:
+        raise HTTPException(status_code=400, detail="participant_email is required (send it in the request body, or authenticate with a session that carries an email claim)")
+    participant_name = payload.get("participant_name") or (current_user or {}).get("name") or participant_email
+    # dedup — block a second active enrolment for the same participant
+    existing = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email == participant_email,
+    ).first()
+    if existing and existing.status in ENROLMENT_CAPACITY_STATUSES:
+        raise HTTPException(status_code=400, detail="Already enrolled on this training")
+    # capacity — when full, optionally auto-add the learner to the waitlist
     if t.capacity:
         try:
             cap = int(t.capacity)
-            cnt = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==tid, TrainingEnrolment.status.in_(["enrolled","pending_approval"])).count()
+            cnt = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==tid, TrainingEnrolment.status.in_(ENROLMENT_CAPACITY_STATUSES)).count()
             if cnt >= cap:
+                if payload.get("auto_waitlist"):
+                    wl = join_waitlist_service(db, tid, {"participant_email": participant_email, "participant_name": participant_name}, current_user)
+                    return {"waitlisted": True, "position": wl.get("position"), "id": wl.get("id"), "training_id": str(tid), "message": f"Training at capacity ({cap}) — added to waitlist"}
                 raise HTTPException(status_code=400, detail=f"Training at capacity ({cap})")
         except ValueError:
             pass
@@ -1400,11 +1491,6 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             expires = datetime.utcnow() + timedelta(days=days)
         except Exception:
             pass
-    import uuid as _uuid
-    participant_email = payload.get("participant_email") or (current_user or {}).get("email")
-    if not participant_email:
-        raise HTTPException(status_code=400, detail="participant_email is required (send it in the request body, or authenticate with a session that carries an email claim)")
-    participant_name = payload.get("participant_name") or (current_user or {}).get("name") or participant_email
     e = TrainingEnrolment(training_id=tid, participant_name=participant_name, participant_email=participant_email, group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
     db.add(e); db.commit(); db.refresh(e)
     # group enrolment — create additional members if provided
@@ -1680,15 +1766,16 @@ def list_lesson_topics_service(db: Session, tid: UUID, section_id: str, lesson_i
     return lesson.get("topics") or []
 
 
-def add_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_id: str, payload: dict):
+def add_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_id: str, payload):
     import uuid as _uuid
     from sqlalchemy.orm.attributes import flag_modified
     training = _get_training_or_404(db, tid)
     _, lesson = _find_lesson(training, section_id, lesson_id)
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
+    data = payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload
     topics = list(lesson.get("topics") or [])
-    new_topic = {"id": str(_uuid.uuid4()), **payload}
+    new_topic = {"id": str(_uuid.uuid4()), **data}
     topics.append(new_topic)
     lesson["topics"] = topics
     flag_modified(training, "sections")
@@ -1696,15 +1783,16 @@ def add_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_id:
     return new_topic
 
 
-def update_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_id: str, topic_id: str, payload: dict):
+def update_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_id: str, topic_id: str, payload):
     from sqlalchemy.orm.attributes import flag_modified
     training = _get_training_or_404(db, tid)
     _, lesson = _find_lesson(training, section_id, lesson_id)
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
+    data = payload.model_dump(exclude_unset=True, mode="json") if hasattr(payload, "model_dump") else payload
     for topic in lesson.get("topics") or []:
         if topic.get("id") == topic_id:
-            topic.update({k: v for k, v in payload.items() if k != "id"})
+            topic.update({k: v for k, v in data.items() if k != "id"})
             flag_modified(training, "sections")
             db.commit()
             return topic

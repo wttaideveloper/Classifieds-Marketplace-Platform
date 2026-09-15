@@ -165,6 +165,7 @@ class TrainingAssignmentSubmission(Base):
     assignment_id = Column(String(255), nullable=False, index=True)
     participant_email = Column(String(255), nullable=False, index=True)
     file_url = Column(Text)
+    files = Column(JSONB, default=list)  # [{url, name, type}] — multi-media submission (image|video|document|link)
     submission_text = Column(Text)
     grade = Column(String(20))
     feedback = Column(Text)

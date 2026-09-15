@@ -5,7 +5,7 @@ from app.core.dependencies import get_current_user, get_web_session_cookie_token
 from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
+from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 from app.services.training_service import (
     add_training_wishlist_service,
@@ -239,11 +239,11 @@ def list_topics(training_id: UUID, section_id: str, lesson_id: str, db: Session 
     return list_lesson_topics_service(db, training_id, section_id, lesson_id)
 
 @router.post("/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics", status_code=201, summary="Add lesson topic")
-def add_topic(training_id: UUID, section_id: str, lesson_id: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def add_topic(training_id: UUID, section_id: str, lesson_id: str, payload: TopicCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return add_lesson_topic_service(db, training_id, section_id, lesson_id, payload)
 
 @router.put("/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics/{topic_id}", summary="Update lesson topic")
-def update_topic(training_id: UUID, section_id: str, lesson_id: str, topic_id: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def update_topic(training_id: UUID, section_id: str, lesson_id: str, topic_id: str, payload: TopicCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return update_lesson_topic_service(db, training_id, section_id, lesson_id, topic_id, payload)
 
 @router.delete("/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics/{topic_id}", summary="Delete lesson topic")
@@ -491,27 +491,24 @@ def list_training_orders(training_id: UUID, db: Session = Depends(get_db), curre
     from app.services.training_service import get_training_orders_service
     return get_training_orders_service(db, training_id)
 
-@router.post("/{training_id}/waitlist", status_code=201)
+@router.post("/{training_id}/waitlist", status_code=201, summary="Join waitlist — dedup + capacity aware")
 def join_waitlist(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.training_model import TrainingWaitlist
-    w = TrainingWaitlist(training_id=training_id, participant_name=payload.get("participant_name","User"), participant_email=payload.get("participant_email","user@example.com"))
-    db.add(w); db.commit(); db.refresh(w); return w
+    from app.services.training_service import join_waitlist_service
+    return join_waitlist_service(db, training_id, payload, current_user)
 
 @router.delete("/{training_id}/waitlist/{entry_id}")
 def leave_waitlist(training_id: UUID, entry_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.training_model import TrainingWaitlist
-    from fastapi import HTTPException
-    w = db.query(TrainingWaitlist).filter(TrainingWaitlist.id==entry_id).first()
-    if not w: raise HTTPException(404, "Not found")
-    db.delete(w); db.commit(); return {"message":"Removed"}
+    from app.services.training_service import leave_waitlist_service
+    email = current_user.get("email") if current_user and current_user.get("role") not in ("admin", "provider") else None
+    return leave_waitlist_service(db, training_id, entry_id, participant_email=email)
 
 @router.post("/{training_id}/assessments", status_code=201, summary="Create quizzes/tests/assessments/surveys — supports pre-course/module/final/feedback level, pass/attempt/time, publication, randomise")
-def create_assessment(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def create_assessment(training_id: UUID, payload: AssessmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.repository.training_repo import get_training_by_id
     import uuid
     t = get_training_by_id(db, training_id)
     if not t: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
-    arr = list(t.assessments or []); new={"id": str(uuid.uuid4()), **payload}; arr.append(new); t.assessments=arr; db.commit(); return new
+    arr = list(t.assessments or []); new={"id": str(uuid.uuid4()), **payload.model_dump(mode="json")}; arr.append(new); t.assessments=arr; db.commit(); return new
 
 @router.get("/{training_id}/assessments", summary="List assessments — filter by module_id / lesson_id")
 def list_assessments(training_id: UUID, module_id: str | None = Query(None, description="Filter by section/module id"), lesson_id: str | None = Query(None, description="Filter by lesson id"), randomize: bool = Query(False, description="Randomise questions/answers"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
