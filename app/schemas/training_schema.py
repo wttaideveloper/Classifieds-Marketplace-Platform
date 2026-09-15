@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -534,6 +535,9 @@ class LessonCreate(BaseModel):
     prerequisites: list | None = Field(None, description="Lesson IDs that must be completed first — sequential learning")
     release_rule: dict | None = Field(None, description="Release: {mode: 'date'|'enrolment_day'|'previous_lesson', date: '2026-01-01', days: 2, lesson_id: '...'}")
     instructor_id: UUID | None = Field(None, description="Lesson instructor allocation")
+    videos: list[str] | None = Field(None, description="Lesson media video URLs, e.g. uploaded via /trainings/upload")
+    documents: list[dict] | None = Field(None, description="Lesson attachments: [{url, name, visibility, downloadable}]")
+    notes: list[str] | None = Field(None, description="Lesson notes URLs (e.g. generated notes PDFs / uploads)")
 
 
 class AssessmentQuestionCreate(BaseModel):
@@ -726,3 +730,19 @@ class TrainingWishlistItemResponse(BaseModel):
     average_rating: float = 0
     reviews_count: int = 0
     added_at: str
+
+
+# ---- Training media upload ----
+
+class TrainingUploadPurpose(str, Enum):
+    lesson_video = "lesson_video"
+    lesson_pdf = "lesson_pdf"
+    lesson_document = "lesson_document"
+
+
+class TrainingUploadResponse(BaseModel):
+    url: str
+    name: str
+    size: int
+    type: str | None = None
+    purpose: str | None = None

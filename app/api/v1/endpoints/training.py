@@ -20,6 +20,55 @@ from app.services.training_service import (
 
 router = APIRouter(tags=["Trainings"])
 
+from fastapi import File, Form, UploadFile
+from fastapi.responses import FileResponse as FastAPIFileResponse
+from app.schemas.training_schema import TrainingUploadPurpose, TrainingUploadResponse
+from app.services.training_upload_service import save_training_upload, resolve_training_upload
+
+
+@router.post(
+    "/upload",
+    response_model=TrainingUploadResponse,
+    status_code=201,
+    summary="Upload training media (lesson videos, PDFs, documents)",
+    description=(
+        "Upload a lesson video, PDF, or document. Validates file type, size, and "
+        "purpose. Returns a publicly-served URL under /api/v1/trainings/upload/."
+    ),
+)
+def upload_training_media(
+    file: UploadFile = File(..., description="File to upload."),
+    purpose: TrainingUploadPurpose | None = Form(
+        None,
+        description="lesson_video | lesson_pdf | lesson_document (inferred from content type when omitted)",
+    ),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    file_bytes = file.file.read() if file.file else b""
+    return save_training_upload(
+        file_bytes,
+        file.filename or "upload",
+        file.content_type,
+        purpose.value if purpose else None,
+        db,
+        current_user,
+    )
+
+
+@router.get(
+    "/upload/{stored_name}",
+    summary="Serve uploaded training media file",
+    description="Streams a previously uploaded training media file by its stored name.",
+)
+def download_training_media(
+    stored_name: str = Path(..., description="Stored file name returned by the upload endpoint."),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    path = resolve_training_upload(stored_name)
+    return FastAPIFileResponse(path=str(path))
+
 @router.post("/", response_model=TrainingResponse, status_code=201)
 def create_training(data: TrainingCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_training_service(db, data, current_user)

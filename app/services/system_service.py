@@ -72,6 +72,8 @@ def inventory_service():
             {"method": "POST", "endpoint": "/api/v1/attachments/upload", "description": "Upload Attachment"},
             {"method": "GET", "endpoint": "/api/v1/attachments/{id}", "description": "Get/Download Attachment"},
             {"method": "DELETE", "endpoint": "/api/v1/attachments/{id}", "description": "Delete Attachment"},
+            {"method": "POST", "endpoint": "/api/v1/trainings/upload", "description": "Upload training media (lesson videos/PDFs/documents)"},
+            {"method": "GET", "endpoint": "/api/v1/trainings/upload/{stored_name}", "description": "Serve uploaded training media file"},
             {"method": "POST", "endpoint": "/api/v1/providers/assign", "description": "Assign Provider"},
             {"method": "GET", "endpoint": "/api/v1/notifications/unread-count", "description": "Unread Count"},
             {"method": "GET", "endpoint": "/api/v1/notifications/history", "description": "Notification History"},
