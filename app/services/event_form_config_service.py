@@ -94,6 +94,15 @@ def normalize_sections(raw_sections: list, *, assign_ids: bool = True) -> list[d
             reg = REGISTRY_BY_KEY.get(core_key) if source == "core" and core_key else None
             renderer = field.get("renderer") or (reg["default_renderer"] if reg else "text")
             value_type = field.get("value_type") or (reg["value_type"] if reg else "string")
+            # A core field with no options of its own defaults to the registry's
+            # static reference list (currency/time_zone/duration_type/delivery_mode)
+            # — captured here at normalize time, so it's what gets snapshotted into
+            # a published version. category/subcategory/location_id have no static
+            # registry options (they're resolved live by the FE via source_endpoint),
+            # so this is a no-op for them.
+            field_options = field.get("options")
+            if not field_options and reg and reg.get("value_source") == "static" and reg.get("options"):
+                field_options = reg["options"]
             entry = {
                 "id": field.get("id") or (str(uuid.uuid4()) if assign_ids else field.get("id")),
                 "source": source,
@@ -107,7 +116,7 @@ def normalize_sections(raw_sections: list, *, assign_ids: bool = True) -> list[d
                 "position": int(field.get("position") or len(fields) + 1),
                 "placeholder": field.get("placeholder"),
                 "help_text": field.get("help_text"),
-                "options": list(field.get("options") or []),
+                "options": list(field_options or []),
                 "validation": dict(field.get("validation") or {}),
             }
             if source == "core" and core_key in COMPOSITE_CORE_KEYS:

@@ -33,7 +33,7 @@ router = APIRouter(tags=["Enterprise"])
 def create_enterprise(
     enterprise: EnterpriseCreate = Body(...),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["admin", "provider"])),
+    current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"])),
 ):
     return create_enterprise_service(db, enterprise)
 
@@ -103,7 +103,7 @@ def update_enterprise(
     enterprise: EnterpriseUpdate,
     enterprise_id: UUID = Path(..., description="Unique identifier of the enterprise"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["admin", "provider"])),
+    current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"])),
 ):
     return update_enterprise_service(db, enterprise_id, enterprise)
 
@@ -116,7 +116,7 @@ def update_enterprise(
 def delete_enterprise(
     enterprise_id: UUID = Path(..., description="Unique identifier of the enterprise"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["admin", "provider"])),
+    current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"])),
 ):
     delete_enterprise_service(db, enterprise_id)
     return {"message": "Enterprise marked inactive successfully"}

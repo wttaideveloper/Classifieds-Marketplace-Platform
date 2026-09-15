@@ -286,7 +286,7 @@ EVENT_FIELD_REGISTRY: list[dict] = [
         ],
     ),
     _entry(
-        "time_zone", "Time Zone", "string", ["text", "select"], default_renderer="text",
+        "time_zone", "Time Zone", "string", ["text", "select"], default_renderer="select",
         value_source="static", options=TIME_ZONE_OPTIONS,
     ),
     _entry("registration_open_at", "Registration Opens", "datetime", ["datetime"], default_renderer="datetime"),
@@ -312,7 +312,7 @@ EVENT_FIELD_REGISTRY: list[dict] = [
     # Pricing
     _entry("price", "Price", "string", ["text", "number"], default_renderer="text"),
     _entry(
-        "currency", "Currency", "string", ["text", "select"], default_renderer="text",
+        "currency", "Currency", "string", ["text", "select"], default_renderer="select",
         value_source="static", options=CURRENCY_OPTIONS,
     ),
     _entry("ticket_types", "Ticket Types", "array", ["ticket_types"], default_renderer="ticket_types", configurable=_cfg(renderer=False)),
@@ -440,7 +440,7 @@ def build_default_sections() -> list[dict]:
                     {"value": "half_day", "label": "Half Day", "position": 2},
                     {"value": "custom", "label": "Custom", "position": 3},
                 ]),
-                core_field("time_zone", "Time Zone", "text", 4),
+                core_field("time_zone", "Time Zone", "select", 4),
                 core_field("registration_open_at", "Registration Opens", "datetime", 5),
                 core_field("registration_close_at", "Registration Closes", "datetime", 6),
                 core_field("registration_cutoff", "Registration Cutoff", "datetime", 7),
@@ -486,7 +486,7 @@ def build_default_sections() -> list[dict]:
             "is_enabled": True,
             "fields": [
                 core_field("price", "Price", "text", 1),
-                core_field("currency", "Currency", "text", 2),
+                core_field("currency", "Currency", "select", 2),
                 core_field(
                     "ticket_types",
                     "Ticket Types",

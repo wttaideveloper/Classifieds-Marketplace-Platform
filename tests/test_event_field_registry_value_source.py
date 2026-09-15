@@ -85,17 +85,22 @@ def test_required_removable_hideable_configurable_unchanged_for_touched_fields()
         for flag, value in expected_flags.items():
             assert e[flag] == value, f"{key}.{flag} changed: expected {value}, got {e[flag]}"
 
-    # Renderers (allowed_renderers / default_renderer) also unchanged
+    # allowed_renderers unchanged for all touched fields
     assert REGISTRY_BY_KEY["category"]["allowed_renderers"] == ["text", "select"]
     assert REGISTRY_BY_KEY["duration_type"]["allowed_renderers"] == ["select"]
     assert REGISTRY_BY_KEY["duration_type"]["default_renderer"] == "select"
     assert REGISTRY_BY_KEY["currency"]["allowed_renderers"] == ["text", "select"]
-    assert REGISTRY_BY_KEY["currency"]["default_renderer"] == "text"
     assert REGISTRY_BY_KEY["time_zone"]["allowed_renderers"] == ["text", "select"]
-    assert REGISTRY_BY_KEY["time_zone"]["default_renderer"] == "text"
     assert REGISTRY_BY_KEY["delivery_mode"]["allowed_renderers"] == ["select"]
     assert REGISTRY_BY_KEY["delivery_mode"]["default_renderer"] == "select"
     assert REGISTRY_BY_KEY["location_id"]["allowed_renderers"] == ["select"]
+
+    # currency/time_zone now default to "select" for newly-created fields, since
+    # both carry an authoritative options list — a deliberate follow-up change,
+    # not a regression. Historical field instances are unaffected (see
+    # test_normalize_sections_never_overrides_an_explicit_renderer below).
+    assert REGISTRY_BY_KEY["currency"]["default_renderer"] == "select"
+    assert REGISTRY_BY_KEY["time_zone"]["default_renderer"] == "select"
 
 
 def test_get_field_registry_returns_a_fresh_copy_each_call():
