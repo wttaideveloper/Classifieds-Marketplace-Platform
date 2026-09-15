@@ -1161,7 +1161,7 @@ def create_template_service(db: Session, payload: dict, current_user: dict | Non
     db.refresh(tmpl)
     return tmpl
 
-# ---- Free/Paid: checkout / orders / refund ----
+# ---- Free/Paid: checkout / orders / refund. ----
 
 def _resolve_ticket(event, ticket_type_id: str | None):
     if not ticket_type_id:
