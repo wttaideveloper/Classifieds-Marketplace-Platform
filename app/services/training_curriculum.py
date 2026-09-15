@@ -208,7 +208,7 @@ def curriculum_preview(sections):
             for key in ("meeting_link", "join_url", "join_meta", "pass_code", "qr_code"):
                 item[key] = None
             if not preview:
-                for key in ("content", "detail", "content_url", "video_url", "topics", "assignment"):
+                for key in ("content", "detail", "content_url", "video_url", "topics", "assignment", "videos", "documents", "notes"):
                     item[key] = None
             item["is_locked"] = not preview
             if item.get("assessment"):

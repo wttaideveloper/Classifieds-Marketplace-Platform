@@ -1866,6 +1866,9 @@ def _base_lesson_payload(lesson: dict, is_locked: bool, is_completed: bool, comp
         "address": lesson.get("address"),
         "pass_code": lesson.get("pass_code") if not is_locked else None,
         "check_in_window": lesson.get("check_in_window"),
+        "videos": lesson.get("videos") if not is_locked else None,
+        "documents": lesson.get("documents") if not is_locked else None,
+        "notes": lesson.get("notes") if not is_locked else None,
     }
 
 
