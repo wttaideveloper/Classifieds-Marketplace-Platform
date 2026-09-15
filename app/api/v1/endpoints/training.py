@@ -80,7 +80,8 @@ def get_training_form_configuration(
 
 @router.get("/{training_id}", response_model=TrainingDetailResponse, summary="Get training detail")
 def get_training(training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return get_training_service(db, training_id)
+    from app.services.training_service import get_learner_training_detail_service
+    return get_learner_training_detail_service(db, training_id, current_user)
 
 @router.put("/{training_id}", response_model=TrainingResponse)
 def update_training(data: TrainingUpdate, training_id: UUID = Path(...), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
@@ -306,6 +307,11 @@ def enroll(training_id: UUID, payload: dict, db: Session = Depends(get_db), curr
 
 @router.post("/{training_id}/reviews", response_model=TrainingReviewResponse, status_code=201, summary="Rate & review — verified (must be enrolled)")
 def create_review(training_id: UUID, payload: TrainingReviewCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from fastapi import HTTPException
+    email = current_user.get("email")
+    if not email:
+        raise HTTPException(403, "Enrolled participants only")
+    payload = payload.model_copy(update={"participant_email": email})
     return create_training_review_service(db, training_id, payload)
 
 

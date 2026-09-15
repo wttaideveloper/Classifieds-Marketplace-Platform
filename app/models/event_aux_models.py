@@ -48,6 +48,9 @@ class EventTemplate(Base):
     enterprise_id = Column(UUID(as_uuid=True), ForeignKey("enterprises.id"), nullable=True)
     name = Column(String(255), nullable=False)
     template_data = Column(JSONB, nullable=False)
+    # Historical provenance only; apply always resolves the current active form.
+    configuration_id = Column(UUID(as_uuid=True), nullable=True)
+    configuration_version_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 

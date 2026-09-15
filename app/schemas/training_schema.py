@@ -681,7 +681,7 @@ class TrainingRefundApproveRequest(BaseModel):
 class TrainingReviewCreate(BaseModel):
     rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5")
     comment: str | None = None
-    participant_email: str = Field(..., description="Participant email — must be enrolled to review")
+    participant_email: str | None = Field(None, description="Deprecated: identity comes from the authenticated user")
 
 
 class TrainingReviewResponse(BaseModel):

@@ -33,7 +33,7 @@ def test_create_review_rejects_unenrolled_participant(monkeypatch):
 
     with pytest.raises(HTTPException) as exc:
         create_training_review_service(db, training_id, _ReviewPayload(5, "Great!", "student@example.com"))
-    assert exc.value.status_code == 400
+    assert exc.value.status_code == 403
     assert "enrolled" in exc.value.detail.lower()
 
 

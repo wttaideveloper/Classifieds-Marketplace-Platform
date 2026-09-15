@@ -35,11 +35,11 @@ class Event(Base):
         index=True,
     )
 
-    title = Column(String(255), nullable=False, index=True)
+    title = Column(String(255), nullable=True, index=True)  # incomplete template draft
 
     description = Column(Text)
 
-    category = Column(String(100), nullable=False, index=True)
+    category = Column(String(100), nullable=True, index=True)
 
     subcategory = Column(String(100))
 
@@ -49,9 +49,9 @@ class Event(Base):
 
     organiser_contact = Column(String(255))
 
-    start_date = Column(DateTime, nullable=False)
+    start_date = Column(DateTime, nullable=True)
 
-    end_date = Column(DateTime, nullable=False)
+    end_date = Column(DateTime, nullable=True)
 
     duration_type = Column(String(20), default="custom", index=True)  # one_day|half_day|custom
 

@@ -6,7 +6,7 @@ from app.models.location_model import EnterpriseLocation
 from app.repository.training_repo import create_training, delete_training, get_training_by_id, get_trainings, update_training
 from app.repository.query_utils import build_pagination_meta
 from app.schemas.training_schema import TrainingDetailResponse, TrainingListItemResponse, TrainingPaginatedResponse, TrainingResponse
-from app.services.response_mappers import map_training_detail, map_training_list_item, map_training_write
+from app.services.response_mappers import _qr_image_base64, map_training_detail, map_training_list_item, map_training_write
 
 ACTIVE_ENROLMENT_STATUSES = frozenset({"enrolled", "active", "completed", "approved"})
 CHECKIN_ELIGIBLE_STATUSES = frozenset({"enrolled", "active", "approved"})
@@ -1456,6 +1456,7 @@ def list_my_enrolments_service(db: Session, email: str, status_filter: str | Non
             "status": r.status,
             "enrolment_id": str(r.id),
             "qr_code": r.qr_code,
+            "qr_image_base64": _qr_image_base64(r.qr_code),
             "created_at": r.created_at.isoformat(),
             "title": t.title if t else None,
             "primary_image": t.primary_image if t else None,
@@ -1911,7 +1912,7 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
     enrol = db.query(TrainingEnrolment).filter(
         TrainingEnrolment.training_id == tid,
         TrainingEnrolment.participant_email == email,
-        TrainingEnrolment.status.in_(["enrolled", "active", "completed"]),
+        TrainingEnrolment.status.in_(ACTIVE_ENROLMENT_STATUSES),
     ).first() if email else None
     if not enrol and not is_staff:
         raise HTTPException(status_code=403, detail="Enrolled participants only")
@@ -2036,7 +2037,7 @@ def _require_enrolled_or_staff(db: Session, tid: UUID, current_user: dict):
     enrol = db.query(TrainingEnrolment).filter(
         TrainingEnrolment.training_id == tid,
         TrainingEnrolment.participant_email == email,
-        TrainingEnrolment.status.in_(["enrolled", "active", "completed"]),
+        TrainingEnrolment.status.in_(ACTIVE_ENROLMENT_STATUSES),
     ).first() if email else None
     if not enrol and current_user.get("role") not in ["admin", "provider"]:
         raise HTTPException(status_code=403, detail="Enrolled participants only")
@@ -2211,7 +2212,7 @@ def create_training_review_service(db: Session, tid: UUID, data):
         TrainingEnrolment.status.in_(ACTIVE_ENROLMENT_STATUSES),
     ).first()
     if not enrolled:
-        raise HTTPException(status_code=400, detail="Verified reviews only — must be enrolled to review")
+        raise HTTPException(status_code=403, detail="Verified reviews only — must be enrolled to review")
 
     existing = db.query(TrainingReview).filter(
         TrainingReview.training_id == tid,
@@ -2306,3 +2307,61 @@ def list_training_wishlist_service(db: Session, user_id: UUID):
             "added_at": item.created_at.isoformat(),
         })
     return items
+
+
+def _learner_enrolment(db: Session, tid: UUID, current_user: dict):
+    from app.models.training_model import TrainingEnrolment
+    email = current_user.get("email")
+    if not email:
+        return None
+    return db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email == email,
+        TrainingEnrolment.status.in_(ACTIVE_ENROLMENT_STATUSES),
+    ).first()
+
+
+def get_learner_training_detail_service(db: Session, tid: UUID, current_user: dict):
+    detail = get_training_service(db, tid).model_dump()
+    if current_user.get("role") in ("admin", "provider", "super_admin"):
+        return TrainingDetailResponse.model_validate(detail)
+    enrolment = _learner_enrolment(db, tid, current_user)
+    detail["sections"] = []
+    detail["assessments"] = []
+    if not enrolment:
+        detail["assignments"] = []
+    for field in ("instructor_notes", "last_admin_notes", "rejection_reason"):
+        detail[field] = None
+    if enrolment:
+        detail["sections"] = get_secure_training_content_service(db, tid, current_user)["sections"]
+    else:
+        for field in ("meeting_link", "meeting_id", "meeting_passcode", "access_information",
+                      "delivery_instructions", "pass_code", "qr_payload", "qr_image_base64",
+                      "documents", "notes_documents", "notes", "notes_pdf_url"):
+            detail[field] = None
+    return TrainingDetailResponse.model_validate(detail)
+
+
+def show_training_qr_service(db: Session, tid: UUID, current_user: dict):
+    _get_training_or_404(db, tid)
+    enrolment = _learner_enrolment(db, tid, current_user)
+    if not enrolment:
+        raise HTTPException(403, "Enrolled participants only")
+    validate_training_qr_service(db, tid, enrolment.qr_code)
+    return {"training_id": str(tid), "qr_code": enrolment.qr_code,
+            "qr_image_base64": _qr_image_base64(enrolment.qr_code)}
+
+
+def toggle_training_wishlist_service(db: Session, user_id: UUID, tid: UUID):
+    from app.models.training_model import TrainingWishlistItem
+    _get_training_or_404(db, tid)
+    item = db.query(TrainingWishlistItem).filter(
+        TrainingWishlistItem.user_id == user_id, TrainingWishlistItem.training_id == tid,
+    ).first()
+    if item:
+        db.delete(item)
+    else:
+        db.add(TrainingWishlistItem(user_id=user_id, training_id=tid))
+    db.commit()
+    return {"training_id": str(tid), "wishlisted": item is None,
+            "message": "Removed from wishlist" if item else "Added to wishlist"}

@@ -151,3 +151,4 @@ _safe_include("app.api.v1.endpoints.address", prefix="/addresses", tags=["Addres
 # Authentication + system
 _safe_include("app.api.v1.endpoints.auth", prefix="/auth", tags=["Authentication"])
 _safe_include("app.api.v1.endpoints.system", prefix="", tags=["System"])
+_safe_include("app.api.v1.endpoints.my_trainings", prefix="/me", tags=["Trainings"])

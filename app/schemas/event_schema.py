@@ -283,9 +283,9 @@ class EventResponse(BaseModel):
     tenant_id: UUID | None = None
     enterprise_id: UUID | None = None
     location_id: UUID | None = None
-    title: str
+    title: str | None = None
     description: str | None = None
-    category: str
+    category: str | None = None
     subcategory: str | None = None
     tags: list | None = None
     organiser_name: str | None = None
@@ -635,6 +635,8 @@ class EventBatchCheckInResponse(BaseModel):
 
 # --- Event Templates (explicit schemas for OpenAPI) ---
 class EventTemplateUpdateRequest(BaseModel):
+    configuration_id: UUID | None = None
+    configuration_version_id: UUID | None = None
     name: str | None = Field(None, min_length=1, max_length=255, description="New template name")
     template_data: dict | None = Field(None, description="New template_data (Event draft JSON). enterprise_id is ignored on update.")
 
@@ -646,6 +648,8 @@ class EventTemplateUpdateRequest(BaseModel):
 
 
 class EventTemplateCreateRequest(BaseModel):
+    configuration_id: UUID | None = Field(None, description="Source form provenance, never used to select the new Event form")
+    configuration_version_id: UUID | None = Field(None, description="Source form version for compatibility mapping")
     tenant_id: UUID | None = Field(None, description="Tenant ID (from /tenant/me). Required when auth token lacks tenant claim; validated against auth user if both present.")
     enterprise_id: UUID | None = Field(None, description="Optional Enterprise ID. If supplied, tenant_id is derived as Enterprise.tenant_id if tenant_id absent.")
     name: str = Field(..., min_length=1, max_length=255, description="Template name")
@@ -659,6 +663,8 @@ class EventTemplateCreateRequest(BaseModel):
 
 
 class EventTemplateResponse(BaseModel):
+    configuration_id: UUID | None = None
+    configuration_version_id: UUID | None = None
     id: UUID
     tenant_id: UUID | None = None
     enterprise_id: UUID | None = None
