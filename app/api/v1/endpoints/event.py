@@ -173,7 +173,7 @@ def get_template(template_id: UUID, db: Session = Depends(get_db), current_user:
     response_model=EventResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Apply Template",
-    description="Apply template to create a new Event (status=draft). Accepts optional tenant_id/enterprise_id; if only enterprise_id sent, tenant_id is derived as Enterprise.tenant_id. enterprise_id may stay null.",
+    description="Create an incomplete draft using the tenant's current active Event Form. Map compatible core/custom/composite values; ignore removed fields and never select the template's historical version. Complete required fields before submission. Accepts optional tenant_id/enterprise_id.",
     responses={
         404: {"description": "Template not found", "content": {"application/json": {"example": {"detail": "Template not found"}}}},
         403: {"description": "Tenant mismatch", "content": {"application/json": {"example": {"detail": "Template does not belong to your tenant"}}}},

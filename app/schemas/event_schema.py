@@ -653,7 +653,7 @@ class EventTemplateCreateRequest(BaseModel):
     tenant_id: UUID | None = Field(None, description="Tenant ID (from /tenant/me). Required when auth token lacks tenant claim; validated against auth user if both present.")
     enterprise_id: UUID | None = Field(None, description="Optional Enterprise ID. If supplied, tenant_id is derived as Enterprise.tenant_id if tenant_id absent.")
     name: str = Field(..., min_length=1, max_length=255, description="Template name")
-    template_data: dict = Field(..., description="Event draft JSON to store as template (title, category, sessions, ticket_types, etc.). location_id/ticket_type IDs are preserved as reusable config.")
+    template_data: dict = Field(..., description="Reusable values: {core_values: {}, custom_values: [{field_id or stable_key, value}], composites: {}}. Legacy flat Event JSON remains supported. Apply maps to the current active form.")
 
     model_config = ConfigDict(
         json_schema_extra={

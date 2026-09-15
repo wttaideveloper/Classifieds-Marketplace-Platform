@@ -508,16 +508,20 @@ def map_training_detail(t) -> dict:
     name = None
     if getattr(t, "enterprise", None) is not None:
         name = t.enterprise.business_short_name
-    b = _training_base_fields(t); b["enterprise_name"] = name; return b
+    b = map_training_write(t); b["enterprise_name"] = name; return b
 
 def map_training_write(t) -> dict:
-    return _training_base_fields(t)
+    from app.services.training_curriculum import normalize_curriculum, apply_mode_to_response
+    result = _training_base_fields(t)
+    result.update(normalize_curriculum(t.sections, t.assessments, t.assignments))
+    return apply_mode_to_response(result)
 
 _TRAINING_DELIVERY_MODE_ACCESS_TYPE = {
     "online": "online",
     "physical": "venue",
     "hybrid": "both",
     "self_paced": "on_demand",
+    "recorded": "on_demand",
 }
 
 
@@ -595,7 +599,7 @@ def _training_base_fields(t) -> dict:
         "is_mandatory": getattr(t, "is_mandatory", None) or False,
         "faqs": getattr(t, "faqs", None) or [],
         "badges": getattr(t, "badges", None) or [],
-        "notes_pdf_url": f"/api/v1/trainings/{t.id}/notes.pdf",
+        "notes_pdf_url": getattr(t, "notes_pdf_url", None) or f"/api/v1/trainings/{t.id}/notes.pdf",
         "instructor": {
             "id": t.instructor_id,
             "name": getattr(t, "instructor_name", None),

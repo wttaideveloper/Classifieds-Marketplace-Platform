@@ -100,12 +100,15 @@ def map_template_values(template_data, target_sections, source_sections=None):
             value = _composite(value, field, old)
         else:
             try:
+                from app.schemas.event_schema import EventUpdate
+                from pydantic import ValidationError
+                value = EventUpdate.model_validate({key: value}).model_dump(exclude_unset=True)[key]
                 # Dynamic select options are validated by the domain, not an empty option list.
                 check = {**field, "required": False}
                 if not check.get("options"):
                     check["renderer"] = None
                 _validate_custom_value(check, value)
-            except HTTPException:
+            except (HTTPException, ValidationError):
                 continue
         if value is not None:
             result[key] = value
@@ -118,6 +121,9 @@ def map_template_values(template_data, target_sections, source_sections=None):
     for item in custom:
         fid = str(item.get("field_id") or item.get("id") or "")
         old = source_custom.get(fid)
+        if old is None and not fid and item.get("stable_key"):
+            matches = [f for f in source_custom.values() if f.get("stable_key") == item["stable_key"]]
+            old = matches[0] if len(matches) == 1 else None
         stable_key = old.get("stable_key") if old else item.get("stable_key")
         if source_sections is not None and old is None:
             continue
@@ -147,7 +153,9 @@ def validate_event_submission(db, event, overrides=None):
     data = {column.key: getattr(event, column.key) for column in event.__table__.columns}
     data.update(overrides or {})
     try:
-        EventCreate.model_validate(data)
+        # Optional blank draft fields must not acquire defaults or become required.
+        validation_data = {key: value for key, value in data.items() if value is not None}
+        EventCreate.model_validate(validation_data)
     except ValidationError as exc:
         raise HTTPException(400, detail={"code": "EVENT_FORM_INCOMPLETE", "errors": exc.errors(include_context=False)})
     version_id = data.get("form_configuration_version_id")

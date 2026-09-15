@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
+from app.services.training_curriculum import save_builder_curriculum
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.training_schema import AnnouncementCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
@@ -155,7 +156,11 @@ def add_section(training_id: UUID, payload: SectionCreate, db: Session = Depends
     import uuid
     obj = get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
-    secs = list(obj.sections or []); new={"id": str(uuid.uuid4()), **payload.model_dump()}; secs.append(new); obj.sections=secs; db.commit(); return new
+    secs = list(obj.sections or [])
+    new = {"id": str(uuid.uuid4()), **payload.model_dump(mode="json")}
+    secs.append(new)
+    obj.sections = secs
+    return save_builder_curriculum(db, obj, new["id"])
 
 @router.put("/{training_id}/sections/{section_id}")
 def update_section(training_id: UUID, section_id: str, payload: SectionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
@@ -165,7 +170,11 @@ def update_section(training_id: UUID, section_id: str, payload: SectionCreate, d
     if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
     for s in obj.sections or []:
         if s.get("id")==section_id:
-            s.update(payload.model_dump(exclude_unset=True)); flag_modified(obj, "sections"); db.commit(); return s
+            changes = payload.model_dump(exclude_unset=True, mode="json")
+            if "items" in changes and "lessons" not in changes:
+                s.pop("lessons", None)
+            s.update(changes)
+            return save_builder_curriculum(db, obj, section_id)
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
 @router.delete("/{training_id}/sections/{section_id}", summary="Delete section/module")
@@ -248,7 +257,11 @@ def add_lesson(training_id: UUID, section_id: str, payload: LessonCreate, db: Se
                 from fastapi import HTTPException; raise HTTPException(status_code=400, detail=f"Prerequisite lesson {pid} not found")
     for s in obj.sections or []:
         if s.get("id")==section_id:
-            lessons = s.get("lessons", []); new={"id": str(uuid.uuid4()), **payload.model_dump()}; lessons.append(new); s["lessons"]=lessons; from sqlalchemy.orm.attributes import flag_modified; flag_modified(obj, "sections"); db.commit(); return new
+            lessons = s.get("lessons", [])
+            new = {"id": str(uuid.uuid4()), **payload.model_dump(mode="json")}
+            lessons.append(new)
+            s["lessons"] = lessons
+            return save_builder_curriculum(db, obj, section_id, new["id"])
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
 @router.put("/{training_id}/sections/{section_id}/lessons/{lesson_id}")
@@ -261,7 +274,8 @@ def update_lesson(training_id: UUID, section_id: str, lesson_id: str, payload: L
         if s.get("id")==section_id:
             for ls in s.get("lessons", []):
                 if ls.get("id")==lesson_id:
-                    ls.update(payload.model_dump(exclude_unset=True)); flag_modified(obj, "sections"); db.commit(); return ls
+                    ls.update(payload.model_dump(exclude_unset=True, mode="json"))
+                    return save_builder_curriculum(db, obj, section_id, lesson_id)
     from fastapi import HTTPException; raise HTTPException(404, "Lesson not found")
 
 @router.delete("/{training_id}/sections/{section_id}/lessons/{lesson_id}")

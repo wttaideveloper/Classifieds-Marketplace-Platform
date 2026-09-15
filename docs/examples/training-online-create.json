@@ -1,0 +1,90 @@
+{
+  "sections": [
+    {
+      "id": "s1",
+      "title": "Session",
+      "schedule": "2026-09-20T09:00:00+05:30",
+      "items": [
+        {
+          "id": "topic",
+          "type": "topic",
+          "title": "Safety",
+          "content": "Read this",
+          "is_mandatory": true
+        },
+        {
+          "id": "live",
+          "type": "live",
+          "title": "Live",
+          "join_url": "https://meet.example.com/room",
+          "join_meta": "Secret",
+          "duration_minutes": 60
+        },
+        {
+          "id": "pdf",
+          "type": "pdf",
+          "title": "Handbook",
+          "content_url": "https://cdn.example.com/book.pdf",
+          "file_size": "420 KB",
+          "is_downloadable": true
+        },
+        {
+          "id": "task",
+          "type": "assignment",
+          "title": "Task",
+          "assignment": {
+            "id": "a1",
+            "kind": "text",
+            "instructions": "Write steps",
+            "max_score": 10
+          }
+        },
+        {
+          "id": "quiz",
+          "type": "quiz",
+          "title": "Quiz",
+          "is_mandatory": true,
+          "assessment": {
+            "id": "qz",
+            "pass_percent": 70,
+            "questions": [
+              {
+                "id": "q1",
+                "question_text": "First step?",
+                "question_type": "single_choice",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "Safety"
+                  },
+                  {
+                    "id": "b",
+                    "label": "Run"
+                  }
+                ],
+                "correct_answer": "a"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "notes_pdf_url": "https://cdn.example.com/notes.pdf",
+  "enterprise_id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "First Aid - online",
+  "category": "Safety",
+  "documents": [
+    {
+      "id": "doc-1",
+      "title": "Handbook",
+      "type": "pdf",
+      "url": "https://cdn.example.com/handbook.pdf",
+      "size": "420 KB",
+      "downloadable": true,
+      "visibility": "enrolled"
+    }
+  ],
+  "delivery_mode": "online",
+  "venue": null
+}

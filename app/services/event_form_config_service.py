@@ -1198,4 +1198,9 @@ def apply_form_configuration_to_event_update(db: Session, event, update_data, cu
         if not version:
             raise HTTPException(status_code=400, detail="Event linked to missing form configuration version")
     sections = normalize_sections(version.sections or [], assign_ids=False)
+    if event.status == "draft":
+        # Template drafts can be saved incrementally; submission enforces required fields.
+        for section in sections:
+            for field in section.get("fields") or []:
+                field["required"] = False
     return {"custom_values": validate_custom_values(update_data.custom_values, sections)}

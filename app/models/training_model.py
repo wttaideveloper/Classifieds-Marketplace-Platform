@@ -9,6 +9,7 @@ from app.db.database import Base
 
 
 class Training(Base):
+    notes_pdf_url = Column(Text, nullable=True)
     __tablename__ = "trainings"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

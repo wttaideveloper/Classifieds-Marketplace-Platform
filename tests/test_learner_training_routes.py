@@ -89,6 +89,7 @@ def test_detail_gates_private_fields_and_uses_secure_sections(monkeypatch, enrol
         assert result["sections"] == [{"is_unlocked": False}]
         secure.assert_called_once()
     else:
-        assert result["sections"] == []
+        assert result["sections"][0]["content_url"] is None
+        assert result["sections"][0]["items"] == []
         assert all(result[key] is None for key in private)
         secure.assert_not_called()

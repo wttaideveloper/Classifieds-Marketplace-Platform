@@ -3,6 +3,7 @@ moderation_status/timestamp fields that get set on each status transition."""
 
 from unittest.mock import MagicMock
 from uuid import uuid4
+from tests.test_training_endpoints import _training_stub
 
 import pytest
 from fastapi import HTTPException
@@ -95,7 +96,7 @@ def test_create_training_service_accepts_online_with_meeting_link(monkeypatch):
 # --- moderation_status / timestamps on status transitions ---
 
 def test_publish_sets_published_at_and_approved_moderation_status(monkeypatch):
-    training = MagicMock(status="draft", is_deleted=False, delivery_mode="self_paced", pass_code=None)
+    training = _training_stub(status="draft", is_deleted=False, delivery_mode="self_paced", pass_code=None)
     monkeypatch.setattr(training_service, "get_training_by_id", lambda db, tid, include_deleted=True: training)
 
     training_service.update_training_status_service(MagicMock(), uuid4(), "published")
@@ -105,7 +106,7 @@ def test_publish_sets_published_at_and_approved_moderation_status(monkeypatch):
 
 
 def test_publish_physical_training_generates_qr(monkeypatch):
-    training = MagicMock(id=uuid4(), status="draft", is_deleted=False, delivery_mode="physical", pass_code=None)
+    training = _training_stub(id=uuid4(), status="draft", is_deleted=False, delivery_mode="physical", pass_code=None)
     monkeypatch.setattr(training_service, "get_training_by_id", lambda db, tid, include_deleted=True: training)
 
     training_service.update_training_status_service(MagicMock(), uuid4(), "published")
@@ -115,7 +116,7 @@ def test_publish_physical_training_generates_qr(monkeypatch):
 
 
 def test_publish_online_training_does_not_generate_qr(monkeypatch):
-    training = MagicMock(id=uuid4(), status="draft", is_deleted=False, delivery_mode="online", pass_code=None, check_in=False)
+    training = _training_stub(id=uuid4(), status="draft", is_deleted=False, delivery_mode="online", pass_code=None, check_in=False)
     monkeypatch.setattr(training_service, "get_training_by_id", lambda db, tid, include_deleted=True: training)
 
     training_service.update_training_status_service(MagicMock(), uuid4(), "published")
@@ -123,7 +124,7 @@ def test_publish_online_training_does_not_generate_qr(monkeypatch):
 
 
 def test_reject_sets_moderation_status_and_reason(monkeypatch):
-    training = MagicMock(status="pending_approval", is_deleted=False)
+    training = _training_stub(status="pending_approval", is_deleted=False)
     monkeypatch.setattr(training_service, "get_training_by_id", lambda db, tid, include_deleted=True: training)
 
     training_service.update_training_status_service(MagicMock(), uuid4(), "rejected", notes="Missing prerequisites")
@@ -132,7 +133,7 @@ def test_reject_sets_moderation_status_and_reason(monkeypatch):
 
 
 def test_archive_sets_archived_at(monkeypatch):
-    training = MagicMock(status="completed", is_deleted=False)
+    training = _training_stub(status="completed", is_deleted=False)
     monkeypatch.setattr(training_service, "get_training_by_id", lambda db, tid, include_deleted=True: training)
 
     training_service.update_training_status_service(MagicMock(), uuid4(), "archived")

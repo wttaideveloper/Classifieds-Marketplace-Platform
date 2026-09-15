@@ -236,13 +236,21 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
     from app.services.event_form_config_service import normalize_sections
 
     extra = apply_form_configuration_to_event_update(db, event, update_data, current_user or {})
-    if extra is None and any(getattr(update_data, f, None) is not None for f in ("title", "description", "category", "start_date", "end_date")):
+    if event.status != "draft" and extra is None and any(getattr(update_data, f, None) is not None for f in ("title", "description", "category", "start_date", "end_date")):
         version_id = event.form_configuration_version_id
         if version_id:
             version = db.query(EventFormConfigurationVersion).filter(EventFormConfigurationVersion.id == version_id).first()
             if version:
-                validate_form_required_core_fields(update_data, normalize_sections(version.sections or [], assign_ids=False))
+                from types import SimpleNamespace
+                merged = {c.key: getattr(event, c.key) for c in event.__table__.columns}
+                merged.update(update_data.model_dump(exclude_unset=True))
+                validate_form_required_core_fields(SimpleNamespace(model_dump=lambda: merged), normalize_sections(version.sections or [], assign_ids=False))
 
+    target_status = getattr(update_data, "status", None) or event.status
+    if target_status in ("pending_approval", "approved", "published"):
+        from app.services.event_template_mapping import validate_event_submission
+        changes = update_data.to_model_data() if hasattr(update_data, "to_model_data") else update_data.model_dump(exclude_unset=True)
+        validate_event_submission(db, event, {**changes, **(extra or {})})
     updated = update_event(db, event, update_data)
     if extra:
         for key, val in extra.items():
@@ -350,6 +358,10 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Event was previously cancelled and restored. Must go through draft → pending_approval → approved before publishing. Submit for approval first.",
         )
+
+    if new_status in ("pending_approval", "approved", "published"):
+        from app.services.event_template_mapping import validate_event_submission
+        validate_event_submission(db, event)
 
     # Set requires_reapproval when restoring cancelled → draft
     if event.status == "cancelled" and new_status == "draft":
@@ -963,7 +975,10 @@ def create_template_service(db: Session, payload: dict, current_user: dict | Non
             except Exception:
                 pass
 
+    from app.services.event_template_mapping import template_provenance
+    provenance = template_provenance(db, payload)
     tmpl = EventTemplate(
+        **provenance,
         name=payload.get("name", "Template"),
         template_data=payload.get("template_data", payload),
         tenant_id=tenant_id,
@@ -1210,6 +1225,10 @@ def update_template_service(db: Session, template_id: UUID, payload: dict, curre
         user_tid = current_user.get("tenant_id")
         if user_tid and tmpl.tenant_id and str(tmpl.tenant_id) != str(user_tid):
             raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
+    from app.services.event_template_mapping import template_provenance
+    provenance = template_provenance(db, payload, tmpl)
+    for key, value in provenance.items():
+        setattr(tmpl, key, value)
     if "name" in payload:
         tmpl.name = payload["name"]
     if "template_data" in payload:
@@ -1617,7 +1636,14 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
     if current_user and auth_tenant_id and tmpl.tenant_id and str(tmpl.tenant_id) != str(auth_tenant_id):
         raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
 
-    data = dict(tmpl.template_data)
+    from app.services.event_form_config_service import _resolve_active_form_configuration
+    from app.services.event_template_mapping import map_template_values
+    from app.models.event_form_config_model import EventFormConfigurationVersion
+    raw = tmpl.template_data or {}
+    core_values = raw.get("core_values", raw)
+    if not isinstance(core_values, dict):
+        raise HTTPException(400, "core_values must be an object")
+    data = dict(core_values)
 
     # Resolve tenant_id: payload explicit > template > auth context (ownership boundary)
     effective_tenant_id = supplied_tenant_id or tmpl.tenant_id or auth_tenant_id
@@ -1654,6 +1680,26 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
         except Exception:
             pass  # keep null
 
+    # Current form wins; source provenance is used only for compatibility.
+    config, version = _resolve_active_form_configuration(db, effective_tenant_id)
+    source_sections = None
+    source_version_id = tmpl.configuration_version_id or raw.get("form_configuration_version_id")
+    if source_version_id:
+        source_version = db.query(EventFormConfigurationVersion).filter(
+            EventFormConfigurationVersion.id == source_version_id,
+        ).first()
+        if not source_version:
+            raise HTTPException(400, "Source form configuration version not found")
+        source_sections = source_version.sections or []
+    data = map_template_values(raw, version.sections or [], source_sections)
+    data["form_configuration_id"] = config.id
+    data["form_configuration_version_id"] = version.id
+    # Explicit NULL avoids populating newly introduced fields with ORM defaults.
+    from app.services.event_form_registry import REGISTRY_BY_KEY
+    for key in REGISTRY_BY_KEY:
+        if key not in data and key in Ev.__table__.columns:
+            data[key] = sa.null()
+
     # enterprise_id is OPTIONAL — tenant ownership is the boundary
     data["enterprise_id"] = enterprise_id if enterprise_id else None
 
@@ -1663,7 +1709,7 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
     data["status"] = "draft"
 
     # Regenerate session ids
-    if data.get("sessions"):
+    if isinstance(data.get("sessions"), list):
         cloned_sessions = copy.deepcopy(data["sessions"])
         for s in cloned_sessions:
             if isinstance(s, dict):
@@ -1679,7 +1725,7 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
         filtered = {k: v for k, v in data.items() if k in valid_keys}
         # Ensure UUID fields are None or valid UUID string
         for uuid_field in ("tenant_id", "enterprise_id", "location_id"):
-            if uuid_field in filtered and filtered[uuid_field] in ("", "null"):
+            if isinstance(filtered.get(uuid_field), str) and filtered[uuid_field] in ("", "null"):
                 filtered[uuid_field] = None
         event = Ev(**filtered)
         db.add(event)

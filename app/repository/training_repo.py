@@ -64,6 +64,8 @@ def get_training_by_id(db: Session, tid: UUID, include_deleted=False):
 
 def update_training(db: Session, obj, data):
     payload = data.to_model_data() if hasattr(data, "to_model_data") else data.model_dump(exclude_unset=True)
+    from app.services.training_curriculum import normalize_authoring
+    payload = normalize_authoring(payload, obj)
     for k, v in payload.items(): setattr(obj, k, v)
     db.commit(); db.refresh(obj); return obj
 

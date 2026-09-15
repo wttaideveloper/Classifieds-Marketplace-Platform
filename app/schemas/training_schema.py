@@ -12,6 +12,7 @@ TrainingStatus = str  # draft|published|unpublished|archived|cancelled
 class TrainingNoteDocument(BaseModel):
     """An instructor-uploaded notes file — the file itself is uploaded to
     storage by the client; this just records where it lives."""
+    model_config = ConfigDict(extra="allow")
     title: str | None = Field(None, description="Display name, e.g. 'Week 1 Handout'")
     url: str = Field(..., description="URL of the already-uploaded notes file (e.g. PDF)")
 
@@ -127,6 +128,10 @@ class TrainingBatchCheckInResponse(BaseModel):
 
 
 class TrainingCreate(BaseModel):
+    sections: list[dict] | None = Field(None, description="Curriculum sections with items or lessons, inline assessments and assignments")
+    assessments: list[dict] | None = None
+    assignments: list[dict] | None = None
+    notes_pdf_url: str | None = None
     tenant_id: UUID | None = None
     enterprise_id: UUID = Field(..., description="Enterprise ID")
     location_id: UUID | None = None
@@ -209,6 +214,10 @@ class TrainingCreate(BaseModel):
 
     def to_model_data(self) -> dict:
         return {
+            "sections": self.sections,
+            "assessments": self.assessments,
+            "assignments": self.assignments,
+            "notes_pdf_url": self.notes_pdf_url,
             "tenant_id": self.tenant_id,
             "enterprise_id": self.enterprise_id,
             "location_id": self.location_id,
@@ -278,6 +287,11 @@ class TrainingCreate(BaseModel):
 
 
 class TrainingUpdate(BaseModel):
+    sections: list[dict] | None = None
+    assessments: list[dict] | None = None
+    assignments: list[dict] | None = None
+    notes_pdf_url: str | None = None
+    duration: str | None = None
     title: str | None = None
     description: str | None = None
     category: str | None = None
@@ -494,7 +508,7 @@ class SectionCreate(BaseModel):
     type: str = Field("section", description="section|module")
     order: int | None = 0
     instructor_id: UUID | None = Field(None, description="Section instructor allocation")
-    schedule: dict | None = Field(None, description="Schedule/agenda for section")
+    schedule: str | dict | None = Field(None, description="ISO timestamp or schedule/agenda object")
 
 class LessonCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -526,7 +540,7 @@ class AssessmentQuestionCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
     question_text: str = Field(..., description="The question text")
     question_type: str = Field("mcq", description="mcq|multiple_select|true_false|short_answer|essay")
-    options: list[str] | None = Field(None, description="Multiple choice options (for mcq/multiple_select)")
+    options: list[str | dict] | None = Field(None, description="Choice strings or {id, label} objects")
     correct_answer: str | None = Field(None, description="Correct answer (for mcq/true_false) or comma-separated for multiple_select")
     points: int = Field(1, description="Points for correct answer")
     explanation: str | None = Field(None, description="Answer explanation")

@@ -66,7 +66,7 @@ def _training_stub(**overrides):
         instructor_role=None, instructor_photo=None, instructor_credentials=None,
         requirements="none", prerequisites=[], subtitle=None, learning_objectives=["Learn widgets"],
         target_audience=None, level=None, language="English",
-        primary_image=None, gallery_images=[], promotional_video=None, documents=[],
+        primary_image=None, gallery_images=[], promotional_video=None, documents=[], notes_pdf_url=None,
         delivery_mode="self_paced", course_type=None, duration=None, duration_hours=None,
         start_date=datetime(2026, 1, 1), end_date=datetime(2026, 1, 2),
         start_time="09:00", end_time="17:00", venue="Main Hall", address="123 Main St",
@@ -98,7 +98,7 @@ def test_get_training_service_computes_enrolled_count_and_available_slots(monkey
     and available_slots (capacity - enrolled_count)."""
     from app.services import training_service
 
-    training = _training_stub(capacity="10")
+    training = _training_stub(capacity="10", delivery_mode="hybrid")
     monkeypatch.setattr(training_service, "get_training_by_id", lambda db, tid: training)
 
     db = MagicMock()
@@ -131,6 +131,7 @@ def test_get_training_service_exposes_new_fields_and_waitlist_reviews(monkeypatc
         schedule_exceptions=["2026-01-05"],
         instructor_notes="Bring extra slides",
         session_mode="live",
+        delivery_mode="hybrid",
         check_in=True,
         pass_code="123456",
         qr_payload='{"training_id": "x", "pass_code": "123456"}',
@@ -188,7 +189,7 @@ def test_create_training_service_generates_pass_code_and_qr_payload_when_check_i
         lambda db, data, current_user: {},
     )
 
-    data = TrainingCreate(enterprise_id=uuid4(), title="Widgets 101", category="General", check_in=True)
+    data = TrainingCreate(enterprise_id=uuid4(), title="Widgets 101", category="General", check_in=True, delivery_mode="physical", venue="Main Hall")
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = MagicMock(tenant_id=uuid4())
     db.refresh.side_effect = lambda obj: setattr(obj, "id", obj.id or uuid4())
