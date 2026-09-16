@@ -67,6 +67,7 @@ class EventRefundRequest(BaseModel):
 
 
 class EventVenue(BaseModel):
+    name: str | None = Field(None, description="Venue name; required at submission when configured by the Event Form")
     address: str | None = Field(None, description="Street address")
     city: str | None = None
     state: str | None = None
@@ -113,7 +114,7 @@ class EventCreate(BaseModel):
     videos: list | None = Field(None, description="Videos")
     documents: list | None = Field(None, description="Documents")
     delivery_mode: DeliveryMode = Field("in_person", description="in_person|online|hybrid — display as In Person/Online/Hybrid")
-    venue: EventVenue | dict | None = Field(None, description="Venue: address, city, latitude, longitude, instructions, map_url")
+    venue: EventVenue | dict | None = Field(None, description="Venue: name, address, city, latitude, longitude, instructions, map_url")
     meeting_link: str | None = Field(None, description="Manual meeting link (auto-generated if delivery_mode online/hybrid and meeting_provider set)")
     meeting_provider: MeetingProvider | None = Field(None, description="zoom|google_meet|teams|other")
     pricing_type: str = Field("free", description="free|paid")
