@@ -586,6 +586,7 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
     total = sum(int(q.get("points", 1)) for q in questions) or len(questions)
     score = 0
     needs_manual = False
+    pending_points = 0
     for ans in answers:
         qid = str(ans.get("question_id") or ans.get("id") or "")
         given = str(ans.get("answer", "")).strip().lower()
@@ -593,9 +594,15 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
         if not q:
             continue
         qtype = q.get("question_type") or "mcq"
-        if qtype in ["short_answer","essay"]:
-            needs_manual = True
-            continue
+        
+        if qtype in ["short_answer", "essay", "blank_text"]:
+            correct = str(q.get("correct_answer", "")).strip().lower()
+            if qtype in ["short_answer", "blank_text"] and correct:
+                pass # Can be auto-graded, fall through to else block
+            else:
+                needs_manual = True
+                pending_points += int(q.get("points", 1))
+                continue
             
         options = q.get("options") or []
         id_to_label = {}
@@ -636,15 +643,27 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
             
             if given and correct and given_mapped == correct_mapped:
                 score += int(q.get("points", 1))
+                
     import math
     passing = (math.ceil(total * float(target["pass_percent"]) / 100)
                if target.get("pass_percent") is not None else
                int(target.get("passing_score") or target.get("pass_mark") or (total * 0.6 if total else 0)))
+               
+    can_pass = (score + pending_points) >= passing
     passed = score >= passing and not needs_manual
+    
+    if passed:
+        feedback = "Passed"
+    elif can_pass and needs_manual:
+        feedback = "Pending manual evaluation"
+    else:
+        feedback = "Failed"
+        passed = False
+        
     sub = TrainingAssessmentSubmission(training_id=tid, assessment_id=str(aid), participant_email=participant_email, answers=answers, score=str(score), passed=passed)
     db.add(sub); db.commit(); db.refresh(sub)
     publication = target.get("publication") or target.get("result_publication") or "immediate"
-    return {"score": score, "passed": passed, "total_points": total, "feedback": "Passed" if passed else ("Pending manual evaluation" if needs_manual else "Failed"), "assessment_id": str(aid), "submission_id": str(sub.id), "publication": publication, "needs_manual": needs_manual, "attempts_made": cnt + 1, "attempts_allowed": int(attempts_allowed_declared) if attempts_allowed_declared else None}
+    return {"score": score, "passed": passed, "total_points": total, "feedback": feedback, "assessment_id": str(aid), "submission_id": str(sub.id), "publication": publication, "needs_manual": needs_manual, "attempts_made": cnt + 1, "attempts_allowed": int(attempts_allowed_declared) if attempts_allowed_declared else None}
 
 def grade_assessment_manual_service(db: Session, tid: UUID, aid: str, submission_id: str, grade: int, feedback: str | None = None):
     from app.models.training_model import TrainingAssessmentSubmission
