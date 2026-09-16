@@ -287,6 +287,7 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
         raise HTTPException(status_code=400, detail=f"Cannot transition from '{obj.status}' to '{st}'. Allowed: {allowed}")
     from datetime import datetime
 
+    previous_status = obj.status
     obj.status = st
     if st == "draft":
         obj.is_deleted = False
@@ -318,6 +319,7 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
         obj.suspended_at = now
     elif st == "cancelled":
         obj.cancelled_at = now
+    _append_moderation(db, obj, st, notes, current_user, previous_status=previous_status, new_status=st)
     db.commit(); db.refresh(obj); return TrainingResponse.model_validate(map_training_write(obj))
 
 
@@ -499,19 +501,19 @@ def leave_waitlist_service(db: Session, tid: UUID, entry_id: UUID, participant_e
     return result
 
 
-def _append_moderation(db: Session, training, action: str, reason: str | None, actor: dict | None):
+def _append_moderation(db: Session, training, action: str, reason: str | None, actor: dict | None, *, previous_status=None, new_status=None):
     from datetime import datetime
-    from sqlalchemy.orm.attributes import flag_modified
     history = list(getattr(training, "moderation_history", None) or [])
     history.append({
         "action": action,
+        **({"previous_status": previous_status, "new_status": new_status} if new_status is not None else {}),
+        "actor_id": str((actor or {}).get("id")) if (actor or {}).get("id") is not None else None,
         "reason": reason,
         "actor_email": (actor or {}).get("email"),
         "actor_role": (actor or {}).get("role"),
         "at": datetime.utcnow().isoformat(),
     })
     training.moderation_history = history
-    flag_modified(training, "moderation_history")
 
 def add_assessment_question_service(db: Session, tid: UUID, aid: str, data):
     import uuid as _uuid, copy
@@ -1534,7 +1536,7 @@ def export_live_attendance_service(db: Session, tid: UUID, session_id: str):
     output.seek(0)
     return output.getvalue(), data["session_id"]
 
-def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_code: str | None = None, current_user: dict | None = None):
+def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_code: str | None = None, current_user: dict | None = None, *, commit: bool = True):
     from app.models.training_model import TrainingEnrolment
     from datetime import datetime, timedelta
     t = _get_training_or_404(db, tid)
@@ -1581,7 +1583,11 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
         except Exception:
             pass
     e = TrainingEnrolment(training_id=tid, participant_name=participant_name, participant_email=participant_email, group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
-    db.add(e); db.commit(); db.refresh(e)
+    db.add(e)
+    if not commit:
+        db.flush()
+        return e
+    db.commit(); db.refresh(e)
     # group enrolment — create additional members if provided
     if payload.get("group_members"):
         for m in payload.get("group_members") or []:
@@ -1702,35 +1708,31 @@ def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, actio
     return {"id": str(e.id), "status": e.status, "reason": reason}
 
 def create_training_checkout_service(db: Session, tid: UUID, payload):
-    from app.models.training_model import TrainingOrder, TrainingEnrolment
+    from app.models.training_model import TrainingOrder
+    data = payload if isinstance(payload, dict) else payload.model_dump()
     t = _get_training_or_404(db, tid)
-    # coupon check
-    coupon = getattr(payload, "coupon_code", None) or payload.get("coupon_code") if isinstance(payload, dict) else None
-    if coupon and t.coupon_code and coupon != t.coupon_code:
-        raise HTTPException(status_code=400, detail="Invalid coupon code")
-    # price - use promo_price if coupon valid
-    price = t.promo_price if (coupon and t.promo_price) else t.price or "0"
+    coupon = data.get("coupon_code")
     try:
-        total = float(price or "0") * int(getattr(payload, "quantity", 1) or 1)
-        amount = str(total)
+        # Reuse enrolment rules without committing; order and enrolment are atomic.
+        enrol = create_training_enrol_service(db, tid, {
+            "participant_name": data.get("participant_name"),
+            "participant_email": data.get("participant_email"),
+        }, coupon_code=coupon, commit=False)
+        price = t.promo_price if (coupon and t.promo_price) else t.price or "0"
+        quantity = data.get("quantity") or 1
+        from decimal import Decimal
+        amount = str(Decimal(str(price)) * int(quantity))
+        order = TrainingOrder(training_id=tid, participant_name=enrol.participant_name,
+            participant_email=enrol.participant_email, quantity=str(quantity), amount=amount,
+            currency=t.currency or "INR", payment_status="confirmed", status="confirmed", coupon_code=coupon)
+        db.add(order)
+        db.commit()
+        db.refresh(order)
     except Exception:
-        amount = str(price)
-    currency = t.currency or "INR"
-    order = TrainingOrder(training_id=tid, participant_name=payload.participant_name if hasattr(payload, "participant_name") else payload.get("participant_name"), participant_email=payload.participant_email if hasattr(payload, "participant_email") else payload.get("participant_email"), quantity=str(getattr(payload, "quantity", 1)), amount=amount, currency=currency, payment_status="confirmed", status="confirmed", coupon_code=coupon)
-    db.add(order); db.commit(); db.refresh(order)
-    # also create enrolment if not exists
-    try:
-        enrol = TrainingEnrolment(training_id=tid, participant_name=order.participant_name, participant_email=order.participant_email, status="pending_approval" if getattr(t, "requires_approval", False) else "enrolled", coupon_code=coupon)
-        # access expiry
-        if getattr(t, "access_duration_days", None):
-            from datetime import datetime, timedelta
-            try:
-                enrol.access_expires_at = datetime.utcnow() + timedelta(days=int(t.access_duration_days))
-            except: pass
-        db.add(enrol); db.commit()
-    except Exception:
-        pass
+        db.rollback()
+        raise
     return order
+
 
 def get_training_orders_service(db: Session, tid: UUID):
     from app.models.training_model import TrainingOrder
@@ -2628,3 +2630,28 @@ def toggle_training_wishlist_service(db: Session, user_id: UUID, tid: UUID):
     db.commit()
     return {"training_id": str(tid), "wishlisted": item is None,
             "message": "Removed from wishlist" if item else "Added to wishlist"}
+
+
+def export_training_enrolments_service(db: Session, tid: UUID, current_user: dict):
+    import csv
+    import io
+    from app.models.training_model import TrainingEnrolment
+    from app.repository.training_repo import require_training_owner
+
+    require_training_owner(db, tid, current_user)
+    rows = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id == tid).order_by(TrainingEnrolment.created_at, TrainingEnrolment.id).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    columns = ("id", "training_id", "participant_name", "participant_email", "status", "group_enrol", "created_at")
+    writer.writerow(columns)
+    for row in rows:
+        values = []
+        for key in columns:
+            value = getattr(row, key)
+            value = value.isoformat() if hasattr(value, "isoformat") else str(value) if value is not None else ""
+            # Keep user-entered cells from executing as spreadsheet formulas.
+            if value.startswith(("=", "+", "-", "@", "\t", "\r", "\n")):
+                value = "'" + value
+            values.append(value)
+        writer.writerow(values)
+    return output.getvalue()

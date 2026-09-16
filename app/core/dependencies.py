@@ -150,3 +150,10 @@ def require_event_form_builder_admin(current_user=Depends(get_current_user)):
     if not settings.is_production and current_user.get("id") == settings.DEV_DEFAULT_USER_ID:
         return {**current_user, "role": "admin"}
     raise HTTPException(status_code=403, detail="Event form builder access required (admin or provider)")
+
+
+def require_form_configuration_super_admin(current_user=Depends(get_current_super_admin)):
+    """Strict management guard: excludes shared-admin and development fallbacks."""
+    if current_user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super Admin access required")
+    return current_user

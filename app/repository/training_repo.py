@@ -72,3 +72,26 @@ def update_training(db: Session, obj, data):
 
 def delete_training(db: Session, obj):
     obj.is_deleted = True; obj.status = "archived"; db.commit(); db.refresh(obj); return obj
+
+
+def require_training_owner(db: Session, tid: UUID, current_user: dict, *, access_token=None, include_deleted=False):
+    """Management lookup; public/learner lookups intentionally remain unscoped."""
+    from fastapi import HTTPException
+    from app.core.auth_context import resolve_auth_tenant_id_with_db
+    from app.services.super_admin_identity import profile_status_is_active
+
+    training = get_training_by_id(db, tid, include_deleted=include_deleted)
+    if training is None:
+        raise HTTPException(404, "Training not found")
+    if current_user.get("role") == "super_admin" and profile_status_is_active(current_user):
+        return training
+    if current_user.get("role") not in ("admin", "provider"):
+        raise HTTPException(403, "Not authorized")
+    tenant_id = resolve_auth_tenant_id_with_db(db, current_user, access_token=access_token)
+    # Legacy trainings may predate the denormalized Training.tenant_id column.
+    owner = (training.enterprise.tenant_id if training.enterprise else None) or training.tenant_id
+    if not tenant_id or not owner or str(tenant_id) != str(owner):
+        raise HTTPException(403, "Not authorized for this tenant")
+    if training.tenant_id and str(training.tenant_id) != str(tenant_id):
+        raise HTTPException(403, "Not authorized for this tenant")
+    return training

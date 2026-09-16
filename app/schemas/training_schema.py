@@ -11,6 +11,34 @@ from app.schemas.common_schema import PaginatedResponse
 TrainingStatus = str  # draft|published|unpublished|archived|cancelled
 
 
+class TrainingEnrolmentResponse(BaseModel):
+    """Persisted enrolment returned by both enrol/enroll aliases."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    training_id: UUID
+    participant_name: str
+    participant_email: str
+    group_enrol: bool | None = None
+    status: str
+    coupon_code: str | None = None
+    access_expires_at: datetime | None = None
+    qr_code: str | None = None
+    checked_in_at: datetime | None = None
+    checked_out_at: datetime | None = None
+    checked_in_by: UUID | None = None
+    created_at: datetime
+
+
+class TrainingEnrolWaitlistResponse(BaseModel):
+    """Returned when auto_waitlist is requested and the training is full."""
+    waitlisted: Literal[True]
+    position: int
+    id: UUID
+    training_id: UUID
+    message: str
+
+
 class TrainingNoteDocument(BaseModel):
     """An instructor-uploaded notes file — the file itself is uploaded to
     storage by the client; this just records where it lives."""

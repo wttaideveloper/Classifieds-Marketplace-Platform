@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import require_event_form_builder_admin
+from app.core.dependencies import require_event_form_builder_admin, require_form_configuration_super_admin
 from app.db.database import get_db
 from app.schemas.event_form_config_schema import (
     ActivationResponse,
@@ -75,7 +75,7 @@ def list_configurations(db: Session = Depends(get_db), _: dict = _BUILDER_AUTH):
 def create_configuration(
     payload: EventFormConfigurationCreate,
     db: Session = Depends(get_db),
-    current_user: dict = _BUILDER_AUTH,
+    current_user: dict = Depends(require_form_configuration_super_admin),
 ):
     return create_configuration_service(db, payload, current_user)
 
@@ -102,7 +102,7 @@ def update_configuration(
     payload: EventFormConfigurationUpdate,
     config_id: UUID = Path(...),
     db: Session = Depends(get_db),
-    current_user: dict = _BUILDER_AUTH,
+    current_user: dict = Depends(require_form_configuration_super_admin),
 ):
     return update_configuration_service(db, config_id, payload, current_user)
 
@@ -114,7 +114,7 @@ def update_configuration(
 def delete_configuration(
     config_id: UUID = Path(...),
     db: Session = Depends(get_db),
-    current_user: dict = _BUILDER_AUTH,
+    current_user: dict = Depends(require_form_configuration_super_admin),
 ):
     return delete_configuration_service(db, config_id, current_user)
 
@@ -154,7 +154,7 @@ def get_version(
 def publish_configuration(
     config_id: UUID = Path(...),
     db: Session = Depends(get_db),
-    current_user: dict = _BUILDER_AUTH,
+    current_user: dict = Depends(require_form_configuration_super_admin),
 ):
     return publish_configuration_service(db, config_id, current_user)
 
@@ -167,7 +167,7 @@ def publish_configuration(
 def activate_configuration(
     config_id: UUID = Path(...),
     db: Session = Depends(get_db),
-    current_user: dict = _BUILDER_AUTH,
+    current_user: dict = Depends(require_form_configuration_super_admin),
 ):
     return activate_configuration_service(db, config_id, current_user)
 
@@ -180,7 +180,7 @@ def activate_configuration(
 def deactivate_configuration(
     config_id: UUID = Path(...),
     db: Session = Depends(get_db),
-    current_user: dict = _BUILDER_AUTH,
+    current_user: dict = Depends(require_form_configuration_super_admin),
 ):
     return deactivate_configuration_service(db, config_id, current_user)
 
@@ -192,7 +192,7 @@ def deactivate_configuration(
 def retire_configuration(
     config_id: UUID = Path(...),
     db: Session = Depends(get_db),
-    current_user: dict = _BUILDER_AUTH,
+    current_user: dict = Depends(require_form_configuration_super_admin),
 ):
     return retire_configuration_service(db, config_id, current_user)
 
@@ -224,7 +224,7 @@ def put_assignments(
     payload: AssignmentPutRequest,
     config_id: UUID = Path(...),
     db: Session = Depends(get_db),
-    current_user: dict = _BUILDER_AUTH,
+    current_user: dict = Depends(require_form_configuration_super_admin),
 ):
     return put_assignments_service(db, config_id, payload, current_user)
 
