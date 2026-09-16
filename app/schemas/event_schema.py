@@ -347,6 +347,7 @@ class EventResponse(BaseModel):
     venue: dict | None = None
     meeting_link: str | None = None
     meeting_provider: str | None = None
+    pricing_type: str | None = Field(None, description="Stored Event pricing type: free|paid")
     price: str | None = None
     currency: str | None = None
     ticket_types: list | None = None

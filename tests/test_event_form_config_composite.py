@@ -50,6 +50,49 @@ def test_normalize_sections_persists_composite_config():
     assert composite["required_fields"] == ["title"]
 
 
+def test_sessions_composite_preserves_meeting_link():
+    """Reproduces the reported bug exactly: Form Builder saves the sessions
+    composite with meeting_link enabled (a real EventSessionCreate field),
+    but it was silently dropped because meeting_link was never registered
+    as an allowed 'sessions' composite subfield."""
+    sections = [
+        {
+            "stable_key": "section_sessions",
+            "label": "Sessions",
+            "position": 1,
+            "is_enabled": True,
+            "fields": [
+                {
+                    "source": "core",
+                    "core_key": "sessions",
+                    "label": "Sessions",
+                    "renderer": "sessions",
+                    "position": 1,
+                    "is_enabled": True,
+                    "composite_config": {
+                        "enabled_fields": [
+                            "session_date", "title", "speaker",
+                            "start_time", "end_time", "location", "meeting_link",
+                        ],
+                        "required_fields": [],
+                    },
+                }
+            ],
+        }
+    ]
+    normalized = normalize_sections(sections, assign_ids=False)
+    composite = normalized[0]["fields"][0]["composite_config"]
+    assert "meeting_link" in composite["enabled_fields"]
+    assert composite["enabled_fields"] == [
+        "session_date", "title", "speaker", "start_time", "end_time", "location", "meeting_link",
+    ]
+
+
+def test_sessions_composite_registers_meeting_link_as_a_valid_subfield():
+    sessions_entry = next(entry for entry in get_field_registry() if entry["key"] == "sessions")
+    assert "meeting_link" in {sf["key"] for sf in sessions_entry["composite_subfields"]}
+
+
 def test_normalize_sections_rejects_unknown_subfields():
     sections = [
         {
