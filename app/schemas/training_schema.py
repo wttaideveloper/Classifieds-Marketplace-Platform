@@ -589,15 +589,71 @@ class AssessmentCreate(BaseModel):
 
 
 class AssessmentSubmitCreate(BaseModel):
-    answers: list[dict] = Field(..., description="List of answer selections, each with question_id and answer")
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "started_at": "2026-09-16T09:00:00Z",
+                "answers": [
+                    {"question_id": "q1", "answer": "Mars"},
+                    {"question_id": "q2", "answer": "2,3"},
+                    {"question_id": "q3", "answer": "True"},
+                    {"question_id": "q4", "answer": "Paris"},
+                    {"question_id": "q5", "answer": "Water evaporates, forms clouds, then falls as rain."},
+                ],
+            }
+        }
+    )
+    answers: list[dict] = Field(
+        ...,
+        description=(
+            "One entry per answered question. Every entry has exactly two keys, "
+            "regardless of question_type: `question_id` (the question's `id` from "
+            "GET .../assessments/{aid}) and `answer` (always a plain string). "
+            "Payload shape per question_type:\n"
+            "- **mcq (Radio)**: `answer` = the exact option text, e.g. `\"Mars\"`. Case-insensitive match.\n"
+            "- **multiple_select (Checkbox)**: `answer` = comma-separated option texts, e.g. `\"2,3\"` "
+            "(order doesn't matter — compared as a set).\n"
+            "- **true_false (Boolean)**: `answer` = `\"True\"` or `\"False\"` (case-insensitive).\n"
+            "- **short_answer (Blank Text)**: `answer` = free text. Not auto-scored — held for manual grading.\n"
+            "- **essay (Essay)**: `answer` = free text. Not auto-scored — held for manual grading.\n\n"
+            "Send one array covering all questions in the assessment in a single request."
+        ),
+        examples=[
+            [
+                {"question_id": "q1", "answer": "Mars"},
+                {"question_id": "q2", "answer": "2,3"},
+                {"question_id": "q3", "answer": "True"},
+                {"question_id": "q4", "answer": "Paris"},
+                {"question_id": "q5", "answer": "Water evaporates, forms clouds, then falls as rain."},
+            ]
+        ],
+    )
     started_at: str | None = Field(None, description="ISO timestamp when assessment was started — required when time_limit_minutes is set")
 
 
 class AssessmentSubmitResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "score": 4,
+                "passed": False,
+                "total_points": 10,
+                "feedback": "Pending manual evaluation",
+                "assessment_id": "8f14e45f-ceea-4c19-b0a9-3fb6dbe1e6a1",
+                "submission_id": "3c7c3e2a-9b1a-4c2e-8e2a-1a2b3c4d5e6f",
+                "publication": "immediate",
+                "needs_manual": True,
+            }
+        }
+    )
     score: int
     passed: bool
     total_points: int
     feedback: str | None = None
+    assessment_id: str = Field(..., description="The assessment's id, echoed back")
+    submission_id: str = Field(..., description="Id of the stored submission — pass to the manual-grade/review endpoints")
+    publication: str = Field(..., description="When results become visible: immediate|manual|scheduled")
+    needs_manual: bool = Field(..., description="True if any short_answer/essay questions were answered and still need manual grading")
 
 
 class AssignmentCreate(BaseModel):
