@@ -2096,7 +2096,7 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
         if not section_unlocked:
             unlock_hint = f"Complete {prev_section_title} quiz to unlock" if prev_section_title else "Complete the previous session to unlock"
 
-        gating_lessons = [l for l in visible_lessons if l.get("is_mandatory")] or visible_lessons
+        gating_lessons = [l for l in visible_lessons if l.get("is_mandatory")]
         content_ids_this_section = [str(l.get("id")) for l in gating_lessons if l.get("type") not in ("exam", "quiz")]
         content_done_this_section = all(cid in completed_lesson_ids for cid in content_ids_this_section) if content_ids_this_section else True
         has_exam = any(l.get("type") in ("exam", "quiz") for l in visible_lessons)

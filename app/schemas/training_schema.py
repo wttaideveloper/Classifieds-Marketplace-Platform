@@ -783,6 +783,8 @@ class TrainingUploadPurpose(str, Enum):
     lesson_video = "lesson_video"
     lesson_pdf = "lesson_pdf"
     lesson_document = "lesson_document"
+    audio = "audio"
+    image = "image"
 
 
 class TrainingUploadResponse(BaseModel):

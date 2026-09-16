@@ -19,16 +19,17 @@ TRAINING_UPLOAD_SUBDIR = "training"
 
 # file extension allowlists per purpose
 ALLOWED_EXTENSIONS: dict[str, set[str]] = {
-    "lesson_video": {"mp4", "webm", "mov", "m4v", "mkv"},
+    "lesson_video": {"mp4", "webm", "mov", "m4v", "mkv", "ogg", "ogv", "avi", "3gp", "mpeg", "mpg"},
     "lesson_pdf": {"pdf"},
     "lesson_document": {"pdf", "doc", "docx", "xls", "xlsx", "txt", "ppt", "pptx"},
     "image": {"jpeg", "jpg", "png", "gif", "webp"},
-    "audio": {"mp3", "m4a", "wav", "ogg", "aac"},
+    "audio": {"mp3", "m4a", "wav", "ogg", "oga", "opus", "aac"},
 }
 
 # MIME-type prefix allowlists per purpose
 ALLOWED_MIME_PREFIXES: dict[str, tuple[str, ...]] = {
-    "lesson_video": ("video/",),
+    # .ogg/.ogv is a dual container (video/ogg or audio/ogg) — accept both for video uploads.
+    "lesson_video": ("video/", "audio/ogg", "audio/opus", "audio/vorbis"),
     "lesson_pdf": ("application/pdf",),
     "lesson_document": (
         "application/",
@@ -37,7 +38,7 @@ ALLOWED_MIME_PREFIXES: dict[str, tuple[str, ...]] = {
         "application/vnd.openxmlformats-",
     ),
     "image": ("image/",),
-    "audio": ("audio/",),
+    "audio": ("audio/", "video/ogg"),
 }
 
 # Size caps (bytes) per purpose — matches MAX_*_SIZE_MB config settings
@@ -66,6 +67,33 @@ def _normalize_stored_name(name: str) -> str:
     return _SAFE_NAME_RE.sub("_", name).strip("._ ").lower()
 
 
+_VIDEO_EXTS = {"mp4", "webm", "mov", "m4v", "mkv", "ogg", "ogv", "avi", "3gp", "mpeg", "mpg"}
+
+
+def _infer_purpose(content_type: str | None, filename: str | None) -> str:
+    """Infer upload purpose when the client omits it (endpoint documents this).
+
+    video/* (or a video extension, incl. dual-container .ogg/.ogv) -> lesson_video (100 MB).
+    application/pdf / .pdf -> lesson_pdf. image/* -> image. audio/* -> audio.
+    Everything else falls back to lesson_document (25 MB).
+    """
+    mime = (content_type or "").lower().split(";")[0].strip()
+    ext = ((filename or "").rsplit(".", 1)[-1] if "." in (filename or "") else "").lower()
+    if mime.startswith("video/") or ext in _VIDEO_EXTS:
+        # audio/ogg with a video-ish filename (.ogg/.ogv) is treated as video
+        # so browser-recorded clips upload under the 100 MB lesson_video cap.
+        if mime.startswith("audio/") and ext not in {"ogg", "ogv"}:
+            return "audio"
+        return "lesson_video"
+    if mime == "application/pdf" or ext == "pdf":
+        return "lesson_pdf"
+    if mime.startswith("image/"):
+        return "image"
+    if mime.startswith("audio/"):
+        return "audio"
+    return DEFAULT_PURPOSE
+
+
 def save_training_upload(
     file_bytes: bytes,
     filename: str,
@@ -78,7 +106,7 @@ def save_training_upload(
 
     Returns metadata dict: {url, name, size, type, purpose}.
     """
-    purpose = (purpose or DEFAULT_PURPOSE).lower()
+    purpose = (purpose or _infer_purpose(content_type, filename)).lower()
     if purpose not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

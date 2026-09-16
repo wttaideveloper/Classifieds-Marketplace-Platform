@@ -40,7 +40,7 @@ def upload_training_media(
     file: UploadFile = File(..., description="File to upload."),
     purpose: TrainingUploadPurpose | None = Form(
         None,
-        description="lesson_video | lesson_pdf | lesson_document (inferred from content type when omitted)",
+        description="lesson_video | lesson_pdf | lesson_document | audio | image (inferred from content type when omitted)",
     ),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_roles(["admin", "provider"])),
