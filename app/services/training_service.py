@@ -520,14 +520,19 @@ def add_assessment_question_service(db: Session, tid: UUID, aid: str, data):
     assessments = copy.deepcopy(t.assessments or [])
     for a in assessments:
         if str(a.get("id")) == str(aid):
-            qs = a.get("questions", [])
-            new_q = {"id": str(_uuid.uuid4()), **data.model_dump()}
+            qs = a.get("questions")
+            if qs is None:
+                qs = []
+            if not isinstance(qs, list):
+                raise HTTPException(status_code=400, detail="Assessment questions must be an array or null")
+            new_q = {"id": str(_uuid.uuid4()), **data.model_dump(mode="json")}
             qs.append(new_q)
             a["questions"] = qs
             t.assessments = assessments
             flag_modified(t, "assessments")
             db.commit(); db.refresh(t)
-            return new_q
+            return next(q for assessment in t.assessments if str(assessment.get("id")) == str(aid)
+                        for q in assessment["questions"] if q["id"] == new_q["id"])
     raise HTTPException(status_code=404, detail="Assessment not found")
 
 def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, participant_email: str = "user@example.com"):

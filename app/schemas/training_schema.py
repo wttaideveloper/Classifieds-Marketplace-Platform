@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.schemas.common_schema import PaginatedResponse
 
@@ -660,6 +660,51 @@ class TrainingProgressResponse(BaseModel):
     expired: bool = False
     status: str = Field("active", description="active|expired")
     access_expires_at: str | None = None
+
+
+class TrainingCompleteLessonRequest(BaseModel):
+    lesson_id: str = Field(
+        ...,
+        validation_alias=AliasChoices("lesson_id", "id"),
+        description="ID of the lesson to mark complete. section_id is not required — the backend "
+        "locates the lesson by searching every section. 'id' is accepted as a legacy alias for this same field.",
+    )
+    participant_email: str | None = Field(
+        None,
+        description="Defaults to the authenticated caller's email if omitted.",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"lesson_id": "c4af5aaa-bf67-425e-8393-fb0c3e5bf547"}}
+    )
+
+
+class TrainingCompleteLessonResponse(BaseModel):
+    lesson_id: str
+    overall_percent: float = Field(..., description="Overall training completion percent, 0-100")
+    lessons_done: int
+    total_lessons: int
+    mandatory_done: int
+    mandatory_total: int
+    completed_at: str | None = Field(None, description="ISO timestamp — set once the training is fully/mandatorily complete")
+    certificate_url: str | None = Field(None, description="Set once completed_at is set")
+    resume_lesson: str = Field(..., description="Echoes lesson_id — the lesson to resume from")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "lesson_id": "c4af5aaa-bf67-425e-8393-fb0c3e5bf547",
+                "overall_percent": 65.0,
+                "lessons_done": 13,
+                "total_lessons": 20,
+                "mandatory_done": 10,
+                "mandatory_total": 12,
+                "completed_at": None,
+                "certificate_url": None,
+                "resume_lesson": "c4af5aaa-bf67-425e-8393-fb0c3e5bf547",
+            }
+        }
+    )
 
 
 class TrainingLiveSessionCreate(BaseModel):

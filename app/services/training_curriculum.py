@@ -186,10 +186,18 @@ def normalize_authoring(payload, existing=None):
 
 def save_builder_curriculum(db, training, section_id, item_id=None):
     """Persist inline builder assessments/tasks with the same full-write contract."""
+    from sqlalchemy.orm.attributes import flag_modified
+
     data = normalize_authoring({"sections": training.sections}, training)
     for key, value in data.items():
         setattr(training, key, value)
+        # Callers edit nested dictionaries in place. MutableList only tracks
+        # list operations; assigning an equal normalized copy may still look
+        # unchanged to SQLAlchemy. Explicitly mark the JSON columns as dirty.
+        if key in ("sections", "assessments", "assignments"):
+            flag_modified(training, key)
     db.commit()
+    db.refresh(training)
     section = next(s for s in normalize_curriculum(training.sections, training.assessments, training.assignments)["sections"] if s["id"] == section_id)
     return next(i for i in section["lessons"] if i["id"] == item_id) if item_id else section
 
