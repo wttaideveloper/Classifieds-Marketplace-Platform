@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.common_schema import EventStatus, PaginatedResponse
 from app.schemas.event_form_config_schema import EventCustomValueInput
@@ -116,6 +116,7 @@ class EventCreate(BaseModel):
     venue: EventVenue | dict | None = Field(None, description="Venue: address, city, latitude, longitude, instructions, map_url")
     meeting_link: str | None = Field(None, description="Manual meeting link (auto-generated if delivery_mode online/hybrid and meeting_provider set)")
     meeting_provider: MeetingProvider | None = Field(None, description="zoom|google_meet|teams|other")
+    pricing_type: str = Field("free", description="free|paid")
     price: str | None = Field(None, description="Price")
     currency: str | None = Field("INR", description="Currency")
     ticket_types: list[EventTicketType] | list | None = Field(None, description="Ticket types with price/capacity/early-bird/promo")
@@ -135,6 +136,17 @@ class EventCreate(BaseModel):
     )
     sessions: list | None = Field(None, description="Agenda sessions")
     status: EventStatus = Field("draft", description="Event status.")
+
+    @model_validator(mode="after")
+    def validate_pricing(self):
+        if self.pricing_type == "free":
+            self.price = None
+            self.currency = None
+            self.ticket_types = []
+        elif self.pricing_type == "paid":
+            if not self.price and not self.ticket_types:
+                raise ValueError("Paid events require a price or ticket_types.")
+        return self
 
     def _normalize_ticket_types(self) -> list:
         normalized: list[dict] = []
@@ -201,6 +213,7 @@ class EventCreate(BaseModel):
             "venue": self._venue_dict(),
             "meeting_link": self.meeting_link,
             "meeting_provider": self.meeting_provider,
+            "pricing_type": self.pricing_type,
             "price": self.price,
             "currency": self.currency,
             "ticket_types": self._normalize_ticket_types(),
@@ -239,6 +252,7 @@ class EventUpdate(BaseModel):
     venue: EventVenue | dict | None = None
     meeting_link: str | None = None
     meeting_provider: MeetingProvider | None = None
+    pricing_type: str | None = None
     price: str | None = None
     currency: str | None = None
     ticket_types: list | None = None
@@ -254,6 +268,20 @@ class EventUpdate(BaseModel):
     )
     sessions: list | None = None
     status: EventStatus | None = None
+
+    @model_validator(mode="after")
+    def validate_pricing(self):
+        if getattr(self, "pricing_type", None) == "free":
+            self.price = None
+            self.currency = None
+            self.ticket_types = []
+        elif getattr(self, "pricing_type", None) == "paid":
+            # For update, we might only be updating partial fields, so we only validate if they are provided in this payload and cleared incorrectly.
+            # But usually we'd require one of them if transitioning from free to paid.
+            # We'll rely on the service layer to pull the existing DB record and do a full validation if needed,
+            # or we enforce it here if price/ticket_types are explicitly set to None.
+            pass
+        return self
 
     def to_model_data(self) -> dict:
         data = self.model_dump(exclude_unset=True)

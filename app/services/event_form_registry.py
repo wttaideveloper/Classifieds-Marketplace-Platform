@@ -58,7 +58,7 @@ CUSTOM_RENDERERS = {
 }
 
 # Domain-required core keys — publish validation must keep these enabled & present
-DOMAIN_REQUIRED_CORE_KEYS = frozenset({"title", "description", "category", "start_date", "end_date"})
+DOMAIN_REQUIRED_CORE_KEYS = frozenset({"title", "description", "category", "start_date", "end_date", "pricing_type"})
 
 # Non-repeatable core keys
 NON_REPEATABLE_CORE_KEYS = frozenset(
@@ -94,6 +94,7 @@ NON_REPEATABLE_CORE_KEYS = frozenset(
         "tags",
         "organiser_name",
         "organiser_contact",
+        "pricing_type",
     }
 )
 
@@ -310,6 +311,14 @@ EVENT_FIELD_REGISTRY: list[dict] = [
     _entry("meeting_provider", "Meeting Provider", "string", ["select"], default_renderer="select"),
     _entry("meeting_link", "Meeting Link", "string", ["url"], default_renderer="url"),
     # Pricing
+    _entry(
+        "pricing_type", "Pricing Type", "string", ["select"], required_by_domain=True, default_renderer="select",
+        value_source="static",
+        options=[
+            {"value": "free", "label": "Free", "position": 1},
+            {"value": "paid", "label": "Paid", "position": 2},
+        ],
+    ),
     _entry("price", "Price", "string", ["text", "number"], default_renderer="text"),
     _entry(
         "currency", "Currency", "string", ["text", "select"], default_renderer="select",

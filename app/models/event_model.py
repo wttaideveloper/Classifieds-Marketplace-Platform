@@ -76,6 +76,7 @@ class Event(Base):
     meeting_provider = Column(String(50))
 
     # Pricing
+    pricing_type = Column(String(20), default="free", nullable=False, index=True)
     price = Column(String(50))
     currency = Column(String(3), default="INR")
     ticket_types = Column(JSONB, default=list)
