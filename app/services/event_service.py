@@ -1195,6 +1195,7 @@ def _ticket_effective_price(ticket: dict, event) -> str:
 def create_event_checkout_service(db: Session, event_id: UUID, payload):
     import uuid
     from app.models.event_aux_models import EventOrder, EventRegistration
+    from app.models.event_model import Event
     import sqlalchemy as sa
     from sqlalchemy.exc import IntegrityError
     
