@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 
 from app.core.config import settings
-from app.core.dependencies import get_current_user, get_current_web_session_user, get_web_session_cookie_token
+from app.core.dependencies import get_current_user, get_web_session_cookie_token
 from app.core.security import create_access_token, create_chat_access_token
 from app.core.token_auth import resolve_user_from_token
 from app.schemas.auth_schema import (
@@ -64,12 +64,13 @@ def _issue_dev_token(data: DevTokenRequest | None = None) -> TokenResponse:
     response_model=ChatTokenResponse,
     summary="Issue Web Session Chat Token",
     description=(
-        "Uses the HttpOnly Web session cookie to issue a chat-scoped token. "
-        "The token is valid for a short period and may be renewed while the Web session remains active."
+        "Issues a chat-scoped token for the caller — accepts either an `Authorization: Bearer` "
+        "login token or the HttpOnly Web session cookie. The token is valid for a short period "
+        "and may be renewed (re-minted) while the underlying session/token remains active."
     ),
 )
 def issue_chat_token(
-    current_user: dict = Depends(get_current_web_session_user),
+    current_user: dict = Depends(get_current_user),
 ) -> ChatTokenResponse:
     return ChatTokenResponse(
         access_token=create_chat_access_token(current_user),
