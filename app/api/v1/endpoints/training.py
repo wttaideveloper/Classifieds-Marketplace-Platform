@@ -338,6 +338,34 @@ def delete_lesson(training_id: UUID, section_id: str, lesson_id: str, db: Sessio
             s["lessons"]=[l for l in s.get("lessons",[]) if l.get("id")!=lesson_id]; flag_modified(obj, "sections"); db.commit(); return {"message":"Deleted"}
     from fastapi import HTTPException; raise HTTPException(404, "Section not found")
 
+@router.delete(
+    "/{training_id}/sections/{section_id}/lessons/{lesson_id}/media",
+    summary="Remove one attachment from a lesson media list",
+    description=(
+        "Removes a single attachment URL from a lesson's documents, videos, or notes list. "
+        "Use this when emptying a list client-side is not possible — the lesson PUT merges, "
+        "so omitted lists are preserved. Returns the updated lesson."
+    ),
+)
+def delete_lesson_media(training_id: UUID, section_id: str, lesson_id: str, kind: str = Query("documents", description="documents | videos | notes"), url: str = Query(..., description="Attachment URL to remove (for documents: the item's url)"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from app.repository.training_repo import get_training_by_id
+    if kind not in ("documents", "videos", "notes"):
+        from fastapi import HTTPException; raise HTTPException(422, f"kind must be one of documents|videos|notes, got '{kind}'")
+    obj = get_training_by_id(db, training_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404, "Training not found")
+    for s in obj.sections or []:
+        if s.get("id")==section_id:
+            for ls in s.get("lessons", []):
+                if ls.get("id")==lesson_id:
+                    items = ls.get(kind) or []
+                    kept = [i for i in items if (i.get("url") if isinstance(i, dict) else i) != url]
+                    if len(kept) == len(items):
+                        from fastapi import HTTPException; raise HTTPException(404, f"Attachment not found in lesson {kind}")
+                    ls[kind] = kept
+                    return save_builder_curriculum(db, obj, section_id, lesson_id)
+            from fastapi import HTTPException; raise HTTPException(404, "Lesson not found")
+    from fastapi import HTTPException; raise HTTPException(404, "Section not found")
+
 # Enrol, waitlist, assessments, assignments, progress, live-sessions, announcements
 @router.get("/my/enrolments", summary="Participant dashboard — enrolled/active/completed/cancelled")
 def my_enrolments(status: str | None = Query(None, description="enrolled|pending_approval|cancelled|waitlisted"), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
