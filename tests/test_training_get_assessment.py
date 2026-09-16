@@ -94,6 +94,8 @@ def test_assessment_submit_response_schema_accepts_every_key_the_service_returns
         "submission_id": "3c7c3e2a-9b1a-4c2e-8e2a-1a2b3c4d5e6f",
         "publication": "immediate",
         "needs_manual": True,
+        "attempts_made": 1,
+        "attempts_allowed": 3,
     }
     validated = AssessmentSubmitResponse.model_validate(service_return)
     dumped = validated.model_dump(mode="json")

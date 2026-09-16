@@ -643,6 +643,8 @@ class AssessmentSubmitResponse(BaseModel):
                 "submission_id": "3c7c3e2a-9b1a-4c2e-8e2a-1a2b3c4d5e6f",
                 "publication": "immediate",
                 "needs_manual": True,
+                "attempts_made": 1,
+                "attempts_allowed": 3,
             }
         }
     )
@@ -654,6 +656,55 @@ class AssessmentSubmitResponse(BaseModel):
     submission_id: str = Field(..., description="Id of the stored submission — pass to the manual-grade/review endpoints")
     publication: str = Field(..., description="When results become visible: immediate|manual|scheduled")
     needs_manual: bool = Field(..., description="True if any short_answer/essay questions were answered and still need manual grading")
+    attempts_made: int = Field(..., description="Total number of times this participant has submitted this assessment, including this submission")
+    attempts_allowed: int | None = Field(None, description="Max attempts permitted (from the assessment's attempt_limit/attempts_allowed). null = unlimited")
+
+
+class AssessmentReviewAnswer(BaseModel):
+    question_id: str
+    question_text: str | None = None
+    given: str | None = Field(None, description="The participant's submitted answer for this question")
+    correct: str | None = Field(None, description="The correct answer — null for short_answer/essay (manually graded)")
+    explanation: str | None = None
+    points: int = 1
+
+
+class AssessmentReviewResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "submission_id": "3c7c3e2a-9b1a-4c2e-8e2a-1a2b3c4d5e6f",
+                "assessment_id": "8f14e45f-ceea-4c19-b0a9-3fb6dbe1e6a1",
+                "score": "4",
+                "passed": False,
+                "review": [
+                    {
+                        "question_id": "q1",
+                        "question_text": "Which planet is known as the Red Planet?",
+                        "given": "Mars",
+                        "correct": "Mars",
+                        "explanation": "Mars appears red due to iron oxide on its surface.",
+                        "points": 1,
+                    },
+                    {
+                        "question_id": "q4",
+                        "question_text": "What is the capital of France?",
+                        "given": "Paris",
+                        "correct": None,
+                        "explanation": "Manually graded — free text answer.",
+                        "points": 1,
+                    },
+                ],
+                "level": "module",
+            }
+        }
+    )
+    submission_id: str
+    assessment_id: str
+    score: str = Field(..., description="Auto-scored points earned, as a string (short_answer/essay points are not included until manually graded)")
+    passed: bool
+    review: list[AssessmentReviewAnswer] = Field(..., description="One entry per answered question, with the participant's answer alongside the correct answer/explanation")
+    level: str | None = Field(None, description="pre_course|module|final|feedback — where the assessment sits in the course")
 
 
 class AssignmentCreate(BaseModel):
@@ -671,6 +722,32 @@ class AssignmentCreate(BaseModel):
     )
 
 
+class TrainingAssignmentResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "example": {
+                "id": "a1b2c3d4-0000-0000-0000-000000000001",
+                "title": "Week 1 Practical",
+                "type": "assignment",
+                "instructions": "Submit a short video of the exercise.",
+                "due_date": "2026-10-01T00:00:00Z",
+                "max_score": 10,
+                "accepted_file_types": [".mp4", ".pdf"],
+                "allow_late_submissions": False,
+            }
+        },
+    )
+    id: str = Field(..., description="Assignment id")
+    title: str
+    type: str = Field("assignment", description="assignment|task|practical")
+    instructions: str | None = None
+    due_date: datetime | None = None
+    max_score: int | None = None
+    accepted_file_types: list[str] | None = None
+    allow_late_submissions: bool = False
+
+
 class AssignmentSubmitFile(BaseModel):
     url: str = Field(..., description="URL to the submitted file/asset")
     name: str = Field("", description="Display name of the submitted file")
@@ -684,11 +761,26 @@ class AssignmentSubmitCreate(BaseModel):
 
 
 class AssignmentSubmitResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "3c7c3e2a-9b1a-4c2e-8e2a-1a2b3c4d5e6f",
+                "submitted_at": "2026-09-16T09:00:00",
+                "grade": None,
+                "feedback": None,
+                "assignment_id": "a1b2c3d4-0000-0000-0000-000000000001",
+                "files": [],
+                "attempts_made": 1,
+            }
+        }
+    )
     id: str
     submitted_at: str
     grade: int | None = None
     feedback: str | None = None
+    assignment_id: str = Field(..., description="The assignment's id, echoed back")
     files: list[dict] = Field(default_factory=list)
+    attempts_made: int = Field(..., description="Total number of times this participant has submitted this assignment, including this submission. Assignments have no attempt cap — resubmission is always allowed.")
 
 
 class TrainingProgressSection(BaseModel):
