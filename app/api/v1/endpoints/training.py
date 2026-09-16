@@ -5,7 +5,7 @@ from app.core.dependencies import get_current_user, get_web_session_cookie_token
 from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
+from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 from app.services.training_service import (
     add_training_wishlist_service,
@@ -560,6 +560,81 @@ def list_assessments(training_id: UUID, module_id: str | None = Query(None, desc
             a["questions"]=qs
     return out
 
+@router.get(
+    "/{training_id}/assessments/{aid}",
+    summary="Get assessment details by ID — full question set for taking/reviewing an assessment",
+    responses={
+        200: {
+            "description": "Assessment with its questions. `correct_answer`/`explanation` are included for admin/provider only — learners get the same question set with those two fields stripped.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "8f14e45f-ceea-4c19-b0a9-3fb6dbe1e6a1",
+                        "title": "Module 1 Quiz",
+                        "module_id": "module-1",
+                        "lesson_id": None,
+                        "pass_percentage": 70,
+                        "max_attempts": 3,
+                        "time_limit_minutes": 20,
+                        "publication": "immediate",
+                        "questions": [
+                            {
+                                "id": "q1",
+                                "question_text": "Which planet is known as the Red Planet?",
+                                "question_type": "mcq",
+                                "options": ["Earth", "Mars", "Jupiter", "Venus"],
+                                "correct_answer": "Mars",
+                                "points": 1,
+                                "explanation": "Mars appears red due to iron oxide on its surface.",
+                            },
+                            {
+                                "id": "q2",
+                                "question_text": "Select all prime numbers.",
+                                "question_type": "multiple_select",
+                                "options": ["2", "3", "4", "9"],
+                                "correct_answer": "2,3",
+                                "points": 2,
+                                "explanation": None,
+                            },
+                            {
+                                "id": "q3",
+                                "question_text": "The sky is blue due to Rayleigh scattering.",
+                                "question_type": "true_false",
+                                "options": ["True", "False"],
+                                "correct_answer": "True",
+                                "points": 1,
+                                "explanation": None,
+                            },
+                            {
+                                "id": "q4",
+                                "question_text": "What is the capital of France?",
+                                "question_type": "short_answer",
+                                "options": None,
+                                "correct_answer": None,
+                                "points": 1,
+                                "explanation": "Manually graded — free text answer.",
+                            },
+                            {
+                                "id": "q5",
+                                "question_text": "Explain the water cycle in your own words.",
+                                "question_type": "essay",
+                                "options": None,
+                                "correct_answer": None,
+                                "points": 5,
+                                "explanation": "Manually graded — free text answer.",
+                            },
+                        ],
+                    }
+                }
+            },
+        },
+        404: {"description": "Training or assessment not found"},
+    },
+)
+def get_assessment(training_id: UUID, aid: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.training_service import get_assessment_service
+    return get_assessment_service(db, training_id, aid, current_user)
+
 @router.put("/{training_id}/assessments/{aid}", summary="Update assessment metadata")
 def update_assessment(training_id: UUID, aid: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return update_assessment_service(db, training_id, aid, payload)
@@ -581,7 +656,7 @@ def add_question(training_id: UUID, aid: str, payload: AssessmentQuestionCreate,
 def delete_question(training_id: UUID, aid: str, qid: str, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return delete_assessment_question_service(db, training_id, aid, qid)
 
-@router.post("/{training_id}/assessments/{aid}/submit", status_code=201, summary="Submit — automatic scoring, pass/attempt/time enforced")
+@router.post("/{training_id}/assessments/{aid}/submit", status_code=201, response_model=AssessmentSubmitResponse, summary="Submit — automatic scoring, pass/attempt/time enforced")
 def submit_assessment(training_id: UUID, aid: str, payload: AssessmentSubmitCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = current_user.get("email") if current_user else "user@example.com"
     return submit_assessment_service(db, training_id, aid, payload, participant_email=email)

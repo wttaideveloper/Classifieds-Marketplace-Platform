@@ -1819,6 +1819,20 @@ def delete_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_
     return {"message": "Topic deleted"}
 
 
+def get_assessment_service(db: Session, tid: UUID, aid: str, current_user: dict | None = None):
+    import copy
+    training = _get_training_or_404(db, tid)
+    for assessment in copy.deepcopy(training.assessments or []):
+        if str(assessment.get("id")) == str(aid):
+            role = current_user.get("role") if current_user else None
+            if role not in ["admin", "provider"]:
+                for q in assessment.get("questions", []):
+                    q.pop("correct_answer", None)
+                    q.pop("explanation", None)
+            return assessment
+    raise HTTPException(status_code=404, detail="Assessment not found")
+
+
 def update_assessment_service(db: Session, tid: UUID, aid: str, payload: dict):
     import copy
     from sqlalchemy.orm.attributes import flag_modified
