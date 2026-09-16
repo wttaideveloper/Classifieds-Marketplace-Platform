@@ -5,7 +5,7 @@ from app.core.dependencies import get_current_user, get_web_session_cookie_token
 from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, LessonCreate, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
+from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonCreate, TrainingAssignmentResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 from app.services.training_service import (
     add_training_wishlist_service,
@@ -573,8 +573,9 @@ def list_assessments(training_id: UUID, module_id: str | None = Query(None, desc
                         "title": "Module 1 Quiz",
                         "module_id": "module-1",
                         "lesson_id": None,
-                        "pass_percentage": 70,
-                        "max_attempts": 3,
+                        "pass_percent": 70,
+                        "attempts_allowed": 3,
+                        "attempts_made": 1,
                         "time_limit_minutes": 20,
                         "publication": "immediate",
                         "questions": [
@@ -666,16 +667,20 @@ def grade_assessment(training_id: UUID, aid: str, sid: UUID, payload: dict, db: 
     from app.services.training_service import grade_assessment_manual_service
     return grade_assessment_manual_service(db, training_id, aid, str(sid), int(payload.get("score") or payload.get("grade") or 0), payload.get("feedback"))
 
-@router.get("/{training_id}/assessments/{aid}/submissions/{sid}/review", summary="Answer explanations & result review")
+@router.get("/{training_id}/assessments/{aid}/submissions/{sid}/review", response_model=AssessmentReviewResponse, summary="Answer explanations & result review")
 def review_assessment(training_id: UUID, aid: str, sid: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import get_assessment_result_service
     return get_assessment_result_service(db, training_id, aid, str(sid), current_user)
 
-@router.get("/{training_id}/assignments", summary="List training assignments")
-def list_assignments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+@router.get(
+    "/{training_id}/assignments",
+    response_model=list[TrainingAssignmentResponse],
+    summary="List training assignments — visible to any enrolled/authenticated user, not just admin/provider",
+)
+def list_assignments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return list_training_assignments_service(db, training_id)
 
-@router.post("/{training_id}/assignments", status_code=201)
+@router.post("/{training_id}/assignments", status_code=201, response_model=TrainingAssignmentResponse)
 def create_assignment(training_id: UUID, payload: AssignmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_assignment_service(db, training_id, payload)
 
@@ -683,7 +688,7 @@ def create_assignment(training_id: UUID, payload: AssignmentCreate, db: Session 
 def delete_assignment(training_id: UUID, aid: str, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return delete_training_assignment_service(db, training_id, aid)
 
-@router.post("/{training_id}/assignments/{aid}/submit", status_code=201, summary="Submit text/links/images/videos/documents — resubmission allowed")
+@router.post("/{training_id}/assignments/{aid}/submit", status_code=201, response_model=AssignmentSubmitResponse, summary="Submit text/links/images/videos/documents — resubmission allowed")
 def submit_assignment(training_id: UUID, aid: str, payload: AssignmentSubmitCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = current_user.get("email") if current_user else "user@example.com"
     return submit_assignment_service(db, training_id, aid, payload, participant_email=email)

@@ -546,7 +546,8 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
     if not target:
         raise HTTPException(status_code=404, detail="Assessment not found")
     # attempt limit + time limit
-    attempt_limit = int(target.get("attempt_limit") or target.get("attempts_allowed") or 999)
+    attempts_allowed_declared = target.get("attempt_limit") or target.get("attempts_allowed")
+    attempt_limit = int(attempts_allowed_declared or 999)
     cnt = db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.training_id==tid, TrainingAssessmentSubmission.assessment_id==str(aid), TrainingAssessmentSubmission.participant_email==participant_email).count()
     if cnt >= attempt_limit:
         raise HTTPException(400, f"Attempt limit reached ({attempt_limit})")
@@ -613,7 +614,7 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
     sub = TrainingAssessmentSubmission(training_id=tid, assessment_id=str(aid), participant_email=participant_email, answers=answers, score=str(score), passed=passed)
     db.add(sub); db.commit(); db.refresh(sub)
     publication = target.get("publication") or target.get("result_publication") or "immediate"
-    return {"score": score, "passed": passed, "total_points": total, "feedback": "Passed" if passed else ("Pending manual evaluation" if needs_manual else "Failed"), "assessment_id": str(aid), "submission_id": str(sub.id), "publication": publication, "needs_manual": needs_manual}
+    return {"score": score, "passed": passed, "total_points": total, "feedback": "Passed" if passed else ("Pending manual evaluation" if needs_manual else "Failed"), "assessment_id": str(aid), "submission_id": str(sub.id), "publication": publication, "needs_manual": needs_manual, "attempts_made": cnt + 1, "attempts_allowed": int(attempts_allowed_declared) if attempts_allowed_declared else None}
 
 def grade_assessment_manual_service(db: Session, tid: UUID, aid: str, submission_id: str, grade: int, feedback: str | None = None):
     from app.models.training_model import TrainingAssessmentSubmission
@@ -742,7 +743,8 @@ def submit_assignment_service(db: Session, tid: UUID, aid: str, payload, partici
     text = payload.submission_text if is_model else payload.get("submission_text") if isinstance(payload, dict) else None
     sub = TrainingAssignmentSubmission(training_id=tid, assignment_id=str(aid), participant_email=participant_email, file_url=file_url, files=files, submission_text=text)
     db.add(sub); db.commit(); db.refresh(sub)
-    return {"id": str(sub.id), "submitted_at": sub.submitted_at.isoformat(), "grade": None, "feedback": None, "assignment_id": str(aid), "files": [dict(f) for f in (sub.files or [])]}
+    attempts_made = db.query(TrainingAssignmentSubmission).filter(TrainingAssignmentSubmission.training_id==tid, TrainingAssignmentSubmission.assignment_id==str(aid), TrainingAssignmentSubmission.participant_email==participant_email).count()
+    return {"id": str(sub.id), "submitted_at": sub.submitted_at.isoformat(), "grade": None, "feedback": None, "assignment_id": str(aid), "files": [dict(f) for f in (sub.files or [])], "attempts_made": attempts_made}
 
 def _check_access_expiry(db: Session, tid: UUID, participant_email: str | None):
     if not participant_email:
@@ -1821,6 +1823,7 @@ def delete_lesson_topic_service(db: Session, tid: UUID, section_id: str, lesson_
 
 def get_assessment_service(db: Session, tid: UUID, aid: str, current_user: dict | None = None):
     import copy
+    from app.models.training_model import TrainingAssessmentSubmission
     training = _get_training_or_404(db, tid)
     for assessment in copy.deepcopy(training.assessments or []):
         if str(assessment.get("id")) == str(aid):
@@ -1829,6 +1832,15 @@ def get_assessment_service(db: Session, tid: UUID, aid: str, current_user: dict 
                 for q in assessment.get("questions", []):
                     q.pop("correct_answer", None)
                     q.pop("explanation", None)
+            declared_limit = assessment.get("attempt_limit") or assessment.get("attempts_allowed")
+            assessment["attempts_allowed"] = int(declared_limit) if declared_limit else None
+            email = current_user.get("email") if current_user else None
+            assessment["attempts_made"] = (
+                db.query(TrainingAssessmentSubmission)
+                .filter(TrainingAssessmentSubmission.training_id == tid, TrainingAssessmentSubmission.assessment_id == str(aid), TrainingAssessmentSubmission.participant_email == email)
+                .count()
+                if email else 0
+            )
             return assessment
     raise HTTPException(status_code=404, detail="Assessment not found")
 
