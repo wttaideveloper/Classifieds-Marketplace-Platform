@@ -445,15 +445,8 @@ def _event_is_full(event) -> bool | None:
 
 def _event_registration_open(event) -> bool | None:
     try:
-        from datetime import datetime
-        now = datetime.utcnow()
-        if event.registration_open_at and now < event.registration_open_at:
-            return False
-        if event.registration_close_at and now > event.registration_close_at:
-            return False
-        if event.registration_cutoff and now > event.registration_cutoff:
-            return False
-        return True
+        from app.utils.event_utils import is_registration_open
+        return is_registration_open(event)
     except Exception:
         return None
 

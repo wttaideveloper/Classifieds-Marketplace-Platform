@@ -412,14 +412,9 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     if event.status not in ["published"]:
         raise HTTPException(status_code=400, detail=f"Event not open for registration (status: {event.status})")
 
-    now = datetime.utcnow()
     # Registration window enforcement
-    if event.registration_open_at and now < event.registration_open_at:
-        raise HTTPException(status_code=400, detail=f"Registration not yet open (opens {event.registration_open_at})")
-    if event.registration_close_at and now > event.registration_close_at:
-        raise HTTPException(status_code=400, detail=f"Registration closed (closed {event.registration_close_at})")
-    if event.registration_cutoff and now > event.registration_cutoff:
-        raise HTTPException(status_code=400, detail=f"Registration cutoff passed ({event.registration_cutoff})")
+    from app.utils.event_utils import validate_registration_window
+    validate_registration_window(event)
 
     # Group size handling
     group_size = getattr(payload, "group_size", None) or 1
@@ -577,22 +572,8 @@ def create_waitlist_entry_service(db: Session, event_id: UUID, payload):
         )
 
     # --- Registration window ---
-    now = datetime.utcnow()
-    if event.registration_open_at and now < event.registration_open_at:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Registration not yet open (opens {event.registration_open_at})",
-        )
-    if event.registration_close_at and now > event.registration_close_at:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Registration closed (closed {event.registration_close_at})",
-        )
-    if event.registration_cutoff and now > event.registration_cutoff:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Registration cutoff passed ({event.registration_cutoff})",
-        )
+    from app.utils.event_utils import validate_registration_window
+    validate_registration_window(event)
 
     # --- Capacity gate: waitlist is the overflow mechanism ---
     # Only allow joining when the event is full. If there are still open seats
@@ -1209,14 +1190,8 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
         raise HTTPException(status_code=400, detail=f"Event not open for checkout (status: {event.status})")
     
     # Registration window enforcement (same as free registration)
-    from datetime import datetime
-    now = datetime.utcnow()
-    if event.registration_open_at and now < event.registration_open_at:
-        raise HTTPException(status_code=400, detail=f"Registration not yet open (opens {event.registration_open_at})")
-    if event.registration_close_at and now > event.registration_close_at:
-        raise HTTPException(status_code=400, detail=f"Registration closed (closed {event.registration_close_at})")
-    if event.registration_cutoff and now > event.registration_cutoff:
-        raise HTTPException(status_code=400, detail=f"Registration cutoff passed ({event.registration_cutoff})")
+    from app.utils.event_utils import validate_registration_window
+    validate_registration_window(event)
     
     ticket = _resolve_ticket(event, payload.ticket_type_id)
     if payload.ticket_type_id and not ticket:
