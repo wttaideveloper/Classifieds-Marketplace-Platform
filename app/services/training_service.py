@@ -272,7 +272,7 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
     VALID = {
         "pending_approval": ["approved", "cancelled", "rejected", "needs_revision"],
         "approved": ["draft", "published", "unpublished", "cancelled", "archived"],
-        "draft": ["published", "pending_approval", "cancelled", "archived"],
+        "draft": ["pending_approval", "cancelled", "archived"],
         "published": ["completed", "cancelled", "suspended", "unpublished", "archived"],
         "unpublished": ["published", "draft", "cancelled", "archived"],
         "suspended": ["published", "unpublished", "cancelled", "archived"],

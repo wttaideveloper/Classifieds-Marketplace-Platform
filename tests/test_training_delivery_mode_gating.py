@@ -96,7 +96,9 @@ def test_create_training_service_accepts_online_with_meeting_link(monkeypatch):
 # --- moderation_status / timestamps on status transitions ---
 
 def test_publish_sets_published_at_and_approved_moderation_status(monkeypatch):
-    training = _training_stub(status="draft", is_deleted=False, delivery_mode="self_paced", pass_code=None)
+    # Legitimate path only: publish is reachable from "approved" (post Super
+    # Admin review), never directly from "draft" — see test_training_moderation_transitions.py.
+    training = _training_stub(status="approved", is_deleted=False, delivery_mode="self_paced", pass_code=None)
     monkeypatch.setattr(training_service, "get_training_by_id", lambda db, tid, include_deleted=True: training)
 
     training_service.update_training_status_service(MagicMock(), uuid4(), "published")
@@ -106,7 +108,7 @@ def test_publish_sets_published_at_and_approved_moderation_status(monkeypatch):
 
 
 def test_publish_physical_training_generates_qr(monkeypatch):
-    training = _training_stub(id=uuid4(), status="draft", is_deleted=False, delivery_mode="physical", pass_code=None)
+    training = _training_stub(id=uuid4(), status="approved", is_deleted=False, delivery_mode="physical", pass_code=None)
     monkeypatch.setattr(training_service, "get_training_by_id", lambda db, tid, include_deleted=True: training)
 
     training_service.update_training_status_service(MagicMock(), uuid4(), "published")
@@ -116,7 +118,7 @@ def test_publish_physical_training_generates_qr(monkeypatch):
 
 
 def test_publish_online_training_does_not_generate_qr(monkeypatch):
-    training = _training_stub(id=uuid4(), status="draft", is_deleted=False, delivery_mode="online", pass_code=None, check_in=False)
+    training = _training_stub(id=uuid4(), status="approved", is_deleted=False, delivery_mode="online", pass_code=None, check_in=False)
     monkeypatch.setattr(training_service, "get_training_by_id", lambda db, tid, include_deleted=True: training)
 
     training_service.update_training_status_service(MagicMock(), uuid4(), "published")
