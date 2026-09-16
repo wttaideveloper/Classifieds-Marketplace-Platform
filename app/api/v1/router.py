@@ -77,6 +77,7 @@ _safe_include(
 )
 _safe_include("app.api.v1.endpoints.message", prefix="/messages", tags=["Messages"])
 _safe_include("app.api.v1.endpoints.attachment", prefix="/attachments", tags=["Attachments"])
+_safe_include("app.api.v1.endpoints.uploads", prefix="/uploads", tags=["Uploads"])
 _safe_include(
     "app.api.v1.endpoints.chat_notification",
     prefix="/notifications",
