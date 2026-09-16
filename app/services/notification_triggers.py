@@ -45,13 +45,16 @@ def _resolve_user_id_from_email(db: Session, participant_email: str) -> UUID | N
         return None
     try:
         from sqlalchemy import text
-        # Try chat_user table (most likely to have email)
-        result = db.execute(
-            text("SELECT id FROM chat_users WHERE email = :email LIMIT 1"),
-            {"email": participant_email},
-        ).fetchone()
-        if result:
-            return UUID(str(result[0]))
+        # Wrap the raw SQL in a savepoint (nested transaction) so if it fails 
+        # (e.g. table does not exist), it rolls back cleanly without poisoning the session.
+        with db.begin_nested():
+            # Try chat_users table (legacy/external table)
+            result = db.execute(
+                text("SELECT id FROM chat_users WHERE email = :email LIMIT 1"),
+                {"email": participant_email},
+            ).fetchone()
+            if result:
+                return UUID(str(result[0]))
     except Exception as e:
         logger.debug("User lookup by email %s failed: %s", participant_email, e)
     return None
@@ -83,14 +86,7 @@ def _safe_notify(
     participant_email: str | None = None,
     channels: list[str] | None = None,
 ):
-    """Best-effort notification.
-
-    - If participant_email is available, send email directly via SMTP
-      (best-effort, does not depend on user-ID resolution).
-    - If a user_id can be resolved from the email, also emit in-app via the realtime emitter.
-    - Falls back to an audit row only if nothing else succeeds.
-    Channels default to ["in_app"] for MVP, but callers can pass ["in_app","push","email","sms"].
-    """
+    """Best-effort notification using an isolated database session for side effects."""
     channels = channels or ["in_app"]
     email_sent = False
     user_ids: list[UUID] = []
@@ -99,46 +95,50 @@ def _safe_notify(
     if participant_email and "email" in channels:
         email_sent = _send_email_via_smtp(participant_email, title, message)
 
-    # 2) Try to resolve a user_id for in-app/push pipeline
-    if participant_email:
-        resolved_id = _resolve_user_id_from_email(db, participant_email)
-        if resolved_id:
-            user_ids.append(resolved_id)
-            _emit_inapp_notification(db, resolved_id, title, message, metadata)
+    # Use a completely separate session for all notification side-effects
+    # to guarantee we never poison the checkout/caller's transaction.
+    from app.db.database import SessionLocal
+    with SessionLocal() as notif_db:
+        # 2) Try to resolve a user_id for in-app/push pipeline
+        if participant_email:
+            resolved_id = _resolve_user_id_from_email(notif_db, participant_email)
+            if resolved_id:
+                user_ids.append(resolved_id)
+                _emit_inapp_notification(notif_db, resolved_id, title, message, metadata)
 
-    # 3) If we have user_ids, dispatch via the normal automatic notification pipeline (in-app/push)
-    if user_ids:
+        # 3) If we have user_ids, dispatch via the normal automatic notification pipeline (in-app/push)
+        if user_ids:
+            try:
+                from app.services.notification_service import create_automatic_notification
+                create_automatic_notification(
+                    notif_db, title=title, message=message, category=category,
+                    user_ids=user_ids, tenant_id=tenant_id, metadata=metadata, channels=channels,
+                )
+            except Exception as e:
+                logger.debug("automatic notification dispatch failed: %s", e)
+
+        # 4) Always record an audit row so we have a trace
         try:
-            from app.services.notification_service import create_automatic_notification
-            create_automatic_notification(
-                db, title=title, message=message, category=category,
-                user_ids=user_ids, tenant_id=tenant_id, metadata=metadata, channels=channels,
+            from app.repository import notification_repo
+            tid = None
+            try:
+                tid = UUID(str(tenant_id)) if tenant_id else None
+            except Exception:
+                tid = None
+            status = "sent" if email_sent else "audit"
+            notification_repo.create_notification(
+                notif_db, tenant_id=tid, created_by=None, title=title, message=message,
+                notification_type="automatic", category=category, delivery_type="immediate",
+                status=status,
+                metadata={
+                    **metadata,
+                    "participant_email": participant_email,
+                    "email_sent": email_sent,
+                    "user_ids_resolved": [str(uid) for uid in user_ids],
+                } if participant_email else metadata,
             )
         except Exception as e:
-            logger.debug("automatic notification dispatch failed: %s", e)
-
-    # 4) Always record an audit row so we have a trace
-    try:
-        from app.repository import notification_repo
-        tid = None
-        try:
-            tid = UUID(str(tenant_id)) if tenant_id else None
-        except Exception:
-            tid = None
-        status = "sent" if email_sent else "audit"
-        notification_repo.create_notification(
-            db, tenant_id=tid, created_by=None, title=title, message=message,
-            notification_type="automatic", category=category, delivery_type="immediate",
-            status=status,
-            metadata={
-                **metadata,
-                "participant_email": participant_email,
-                "email_sent": email_sent,
-                "user_ids_resolved": [str(uid) for uid in user_ids],
-            } if participant_email else metadata,
-        )
-    except Exception as e:
-        logger.debug("audit row create failed: %s", e)
+            logger.debug("audit row create failed: %s", e)
 
     logger.info(
         "notification trigger: %s title=%s email=%s email_sent=%s user_ids=%s",
