@@ -678,7 +678,7 @@ def review_assessment(training_id: UUID, aid: str, sid: UUID, db: Session=Depend
     summary="List training assignments — visible to any enrolled/authenticated user, not just admin/provider",
 )
 def list_assignments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return list_training_assignments_service(db, training_id)
+    return list_training_assignments_service(db, training_id, current_user)
 
 @router.post("/{training_id}/assignments", status_code=201, response_model=TrainingAssignmentResponse)
 def create_assignment(training_id: UUID, payload: AssignmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):

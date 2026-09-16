@@ -596,15 +596,45 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
         if qtype in ["short_answer","essay"]:
             needs_manual = True
             continue
+            
+        options = q.get("options") or []
+        id_to_label = {}
+        for opt in options:
+            if isinstance(opt, dict):
+                opt_id = str(opt.get("id", "")).strip().lower()
+                opt_label = str(opt.get("label", opt.get("value", ""))).strip().lower()
+                if opt_id: id_to_label[opt_id] = opt_label
+            else:
+                opt_str = str(opt).strip().lower()
+                id_to_label[opt_str] = opt_str
+
         if qtype == "multiple_select":
             correct = str(q.get("correct_answer", "")).strip().lower()
-            given_set = set([s.strip() for s in given.split(",") if s.strip()])
-            correct_set = set([s.strip() for s in correct.split(",") if s.strip()])
-            if given_set == correct_set and given_set:
+            given_parts = [s.strip() for s in given.split(",") if s.strip()]
+            correct_parts = [s.strip() for s in correct.split(",") if s.strip()]
+            
+            given_mapped = set([id_to_label.get(p, p) for p in given_parts])
+            correct_mapped = set([id_to_label.get(p, p) for p in correct_parts])
+            
+            if given_mapped == correct_mapped and given_mapped:
+                score += int(q.get("points", 1))
+        elif qtype == "true_false":
+            correct = str(q.get("correct_answer", "")).strip().lower()
+            if correct in ["yes", "y", "1"]: correct = "true"
+            elif correct in ["no", "n", "0"]: correct = "false"
+            
+            given_mapped = str(given).strip().lower()
+            if given_mapped in ["yes", "y", "1"]: given_mapped = "true"
+            elif given_mapped in ["no", "n", "0"]: given_mapped = "false"
+            
+            if given_mapped and correct and given_mapped == correct:
                 score += int(q.get("points", 1))
         else:
             correct = str(q.get("correct_answer", "")).strip().lower()
-            if given and correct and given == correct:
+            given_mapped = id_to_label.get(given, given)
+            correct_mapped = id_to_label.get(correct, correct)
+            
+            if given and correct and given_mapped == correct_mapped:
                 score += int(q.get("points", 1))
     import math
     passing = (math.ceil(total * float(target["pass_percent"]) / 100)
@@ -670,9 +700,42 @@ def create_assignment_service(db: Session, tid: UUID, data):
     return new
 
 
-def list_training_assignments_service(db: Session, tid: UUID) -> list[dict]:
+def list_training_assignments_service(db: Session, tid: UUID, current_user: dict | None = None) -> list[dict]:
     t = _get_training_or_404(db, tid)
-    return list(t.assignments or [])
+    items = []
+    email = current_user.get("email") if current_user else None
+    
+    from app.models.training_model import TrainingAssignmentSubmission, TrainingAssessmentSubmission
+    
+    assignments = list(t.assignments or [])
+    for a in assignments:
+        item = dict(a)
+        item["type"] = "assignment"
+        if email:
+            item["attempts_made"] = db.query(TrainingAssignmentSubmission).filter(
+                TrainingAssignmentSubmission.training_id == tid,
+                TrainingAssignmentSubmission.assignment_id == str(item.get("id")),
+                TrainingAssignmentSubmission.participant_email == email
+            ).count()
+        else:
+            item["attempts_made"] = 0
+        items.append(item)
+        
+    assessments = list(t.assessments or [])
+    for a in assessments:
+        item = dict(a)
+        item["type"] = "assessment"
+        if email:
+            item["attempts_made"] = db.query(TrainingAssessmentSubmission).filter(
+                TrainingAssessmentSubmission.training_id == tid,
+                TrainingAssessmentSubmission.assessment_id == str(item.get("id")),
+                TrainingAssessmentSubmission.participant_email == email
+            ).count()
+        else:
+            item["attempts_made"] = 0
+        items.append(item)
+        
+    return items
 
 
 def delete_training_assignment_service(db: Session, tid: UUID, aid: str) -> dict:
