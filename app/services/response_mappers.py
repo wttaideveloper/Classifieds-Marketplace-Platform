@@ -318,6 +318,8 @@ def _product_base_fields(product: Product) -> dict:
         "tenant_id": product.tenant_id,
         "enterprise_id": product.enterprise_id,
         "location_id": product.location_id,
+        "provider_user_id": getattr(product, "provider_user_id", None),
+        "provider_name": getattr(product, "provider_name", None),
         "product_name": product.product_name,
         "description": product.product_description,
         "category": product.product_category,

@@ -537,11 +537,6 @@ def batch_check_in_enrolments(training_id: UUID, payload: TrainingBatchCheckInRe
     from app.services.training_service import batch_check_in_training_enrolments_service
     return batch_check_in_training_enrolments_service(db, training_id, payload.participants, current_user)
 
-@router.post("/{training_id}/live-sessions/{session_id}/attendance", summary="Record attendance for a live session")
-def record_live_session_attendance(training_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.services.training_service import record_live_session_attendance_service
-    return record_live_session_attendance_service(db, training_id, session_id, current_user)
-
 @router.post("/{training_id}/checkout", status_code=201, summary="Checkout — Training")
 def checkout_training(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import create_training_checkout_service
@@ -755,17 +750,16 @@ def export_live_attendance(training_id: UUID, session_id: str, db: Session = Dep
     return StreamingResponse(iter([csv_content]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=training_{training_id}_session_{sid}_attendance.csv"})
 
 @router.post("/{training_id}/live-sessions/{session_id}/attendance", summary="Record live session attendance")
-def live_attendance(training_id: UUID, session_id: str, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    email = payload.get("participant_email")
-    if not email and current_user.get("role") in ("admin", "provider", "super_admin"):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="participant_email required when marking attendance for a participant")
+def live_attendance(request: Request, training_id: UUID, session_id: str, payload: dict | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from fastapi import HTTPException
+    email = (payload or {}).get("participant_email") or current_user.get("email")
     if not email:
-        email = current_user.get("email")
-    if not email:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="participant_email required")
-    return record_live_attendance_service(db, training_id, session_id, email)
+        raise HTTPException(400, "participant_email required")
+    if email != current_user.get("email"):
+        require_training_manager(request, training_id, db, current_user)
+    result = record_live_attendance_service(db, training_id, session_id, email)
+    return {**result, "status": "success", "message": "Attendance recorded",
+            "attendance": {"joined_at": result["recorded_at"], "participant_email": email}}
 
 @router.get("/{training_id}/certificate", summary="Digital completion certificate")
 def get_certificate(training_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):

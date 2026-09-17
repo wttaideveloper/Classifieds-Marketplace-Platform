@@ -159,12 +159,20 @@ def normalize_authoring(payload, existing=None):
             data.get(k, getattr(existing, k, None) if existing is not None else None)
             for k in ("sections", "assessments", "assignments")
         ], strict=True)
+        # Attendance is server-owned and must survive author edits.
+        attendance_by_id = {str(item.get("id")): deepcopy(item["attendance"])
+                            for section in (getattr(existing, "sections", None) or [])
+                            for item in (section.get("items", section.get("lessons", [])) or [])
+                            if "attendance" in item}
         # Store one authoritative list. Read responses expose both aliases.
         for section in curriculum["sections"]:
             section.pop("items", None)
             for item in section["lessons"]:
                 item.pop("assessment", None)
                 item.pop("assignment", None)
+                item.pop("attendance", None)
+                if str(item.get("id")) in attendance_by_id:
+                    item["attendance"] = attendance_by_id[str(item["id"])]
         data.update(curriculum)
     mode = data.get("delivery_mode", getattr(existing, "delivery_mode", None))
     if mode in ("physical", "hybrid"):
@@ -212,6 +220,7 @@ def curriculum_preview(sections):
             section[key] = None
         items = section.get("lessons", [])
         for item in items:
+            item.pop("attendance", None)
             preview = item.get("is_preview") and not item.get("is_draft")
             for key in ("meeting_link", "join_url", "join_meta", "pass_code", "qr_code"):
                 item[key] = None
@@ -237,6 +246,7 @@ def apply_mode_to_response(result):
         if mode in ("recorded", "self_paced"):
             section["schedule"] = None
         for item in section.get("lessons") or []:
+            item.pop("attendance", None)
             if not online_mode or item["type"] != "live":
                 item.update(meeting_link=None, join_url=None, join_meta=None)
             if not venue_mode or item["type"] != "venue":

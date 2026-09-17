@@ -14,6 +14,8 @@ class ProductCreate(BaseModel):
                 "enterprise_id": "550e8400-e29b-41d4-a716-446655440001",
                 "location_id": "550e8400-e29b-41d4-a716-446655440002",
                 "product_name": "Yoga Mat Pro",
+                "provider_user_id": "550e8400-e29b-41d4-a716-446655440020",
+                "provider_name": "Assigned Provider",
                 "description": "Non-slip premium yoga mat",
                 "category": "Fitness",
                 "price": 49.99,
@@ -27,6 +29,8 @@ class ProductCreate(BaseModel):
     tenant_id: UUID | None = Field(None, description="Tenant identifier.")
     enterprise_id: UUID = Field(..., description="Enterprise ID")
     location_id: UUID | None = Field(None, description="Enterprise location ID")
+    provider_user_id: UUID | None = Field(None, description="Tenant internal user assigned as provider; use this user UUID for Chat provider_id and participant user_id.")
+    provider_name: str | None = Field(None, max_length=255, description="Assigned provider display name.")
     product_name: str = Field(..., description="Product name")
     description: str | None = Field(None, description="Product description")
     category: str = Field(..., description="Product category")
@@ -103,6 +107,8 @@ class ProductCreate(BaseModel):
             "tenant_id": self.tenant_id,
             "enterprise_id": self.enterprise_id,
             "location_id": self.location_id,
+            "provider_user_id": self.provider_user_id,
+            "provider_name": self.provider_name,
             "product_name": self.product_name,
             "product_description": self.description or self.product_description,
             "product_category": self.category or self.product_category,
@@ -132,6 +138,9 @@ class ProductCreate(BaseModel):
 
 
 class ProductUpdate(BaseModel):
+    provider_user_id: UUID | None = Field(None, description="Tenant internal user assigned as provider; use this user UUID for Chat provider_id and participant user_id.")
+    provider_name: str | None = Field(None, max_length=255, description="Assigned provider display name.")
+
     tenant_id: UUID | None = None
     location_id: UUID | None = None
     product_name: str | None = None
@@ -206,6 +215,9 @@ class ProductUpdate(BaseModel):
 class ProductResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    provider_user_id: UUID | None = Field(None, description="Tenant internal user assigned as provider; use this user UUID for Chat provider_id and participant user_id.")
+    provider_name: str | None = Field(None, max_length=255, description="Assigned provider display name.")
+
     id: UUID
     tenant_id: UUID | None = None
     enterprise_id: UUID
@@ -265,6 +277,8 @@ class ProductDetailResponse(ProductResponse):
                 "enterprise_id": "550e8400-e29b-41d4-a716-446655440000",
                 "enterprise_name": "Spin Health",
                 "product_name": "Yoga Mat Pro",
+                "provider_user_id": "550e8400-e29b-41d4-a716-446655440020",
+                "provider_name": "Assigned Provider",
                 "length": 72.0,
                 "width": 24.0,
                 "thick": 0.2,

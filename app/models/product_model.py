@@ -43,6 +43,9 @@ class Product(Base):
         index=True,
     )
 
+    provider_user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    provider_name = Column(String(255), nullable=True)
+
     product_name = Column(String(255), nullable=False, index=True)
 
     product_description = Column(Text)

@@ -965,40 +965,72 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
     # last completed for resume
     return {"lesson_id": lesson_id, "overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url, "resume_lesson": lesson_id}
 
-def record_live_attendance_service(db: Session, tid: UUID, session_id: str, participant_email: str):
-    from app.models.training_model import TrainingLiveSession, TrainingProgress
-    from datetime import datetime
-    from uuid import UUID as PyUUID
-    from sqlalchemy.orm.attributes import flag_modified
-
+def _resolve_live_attendance_target(db: Session, tid: UUID, session_id: str):
+    """Resolve standalone sessions and the curriculum IDs returned by /content."""
+    from app.models.training_model import TrainingLiveSession
+    from app.services.training_curriculum import normalize_curriculum
     try:
-        session_uuid = PyUUID(str(session_id))
+        session_uuid = UUID(str(session_id))
     except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Invalid session_id") from exc
-
+        raise HTTPException(400, "Invalid session_id") from exc
     session = db.query(TrainingLiveSession).filter(
-        TrainingLiveSession.training_id == tid,
-        TrainingLiveSession.id == session_uuid,
+        TrainingLiveSession.training_id == tid, TrainingLiveSession.id == session_uuid,
     ).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Live session not found")
+    if session:
+        return session, {"id": str(session.id), "title": session.title, "attendance": session.attendance}, False
+    training = _get_training_or_404(db, tid)
+    curriculum = normalize_curriculum(training.sections, training.assessments, training.assignments)
+    for section in curriculum["sections"]:
+        for item in section["lessons"]:
+            if str(item["id"]) == str(session_uuid) and item["type"] == "live":
+                return training, item, True
+    raise HTTPException(404, "Live session not found")
 
+
+def _live_attendance_rows(value):
+    # The former duplicate POST handler stored an email-keyed object.
+    if isinstance(value, dict):
+        return [{"participant_email": email, "recorded_at": entry.get("recorded_at") or entry.get("joined_at")}
+                for email, entry in value.items() if isinstance(entry, dict)]
+    return list(value or [])
+
+
+def _save_live_attendance(owner, session_id, attendance, embedded):
+    from copy import deepcopy
+    from sqlalchemy.orm.attributes import flag_modified
+    if not embedded:
+        owner.attendance = attendance
+        flag_modified(owner, "attendance")
+        return
+    sections = deepcopy(owner.sections)
+    for section in sections:
+        # Preserve both aliases when an authoring payload stores both.
+        for key in ("lessons", "items"):
+            for item in section.get(key) or []:
+                if str(item.get("id")) == str(session_id):
+                    item["attendance"] = attendance
+    owner.sections = sections
+    flag_modified(owner, "sections")
+
+
+def record_live_attendance_service(db: Session, tid: UUID, session_id: str, participant_email: str):
+    from app.models.training_model import TrainingProgress
+    from datetime import datetime
+
+    owner, session, embedded = _resolve_live_attendance_target(db, tid, session_id)
     enrol = _get_enrolment(db, tid, participant_email)
     if not _is_active_enrolment(enrol):
         raise HTTPException(status_code=403, detail="Active enrolment required for attendance")
 
-    attendance = list(session.attendance or [])
-    recorded_at = datetime.utcnow().isoformat()
-    if not any(a.get("participant_email") == participant_email for a in attendance):
-        attendance.append({
-            "participant_email": participant_email,
-            "recorded_at": recorded_at,
-        })
-        session.attendance = attendance
-        flag_modified(session, "attendance")
-        db.commit()
+    attendance = _live_attendance_rows(session.get("attendance"))
+    existing = next((a for a in attendance if a.get("participant_email") == participant_email), None)
+    recorded_at = existing.get("recorded_at") if existing else datetime.utcnow().isoformat()
+    if not existing:
+        attendance.append({"participant_email": participant_email, "recorded_at": recorded_at})
+        _save_live_attendance(owner, session["id"], attendance, embedded)
 
-    live_lesson_id = f"live:{session_id}"
+    # Curriculum progress uses the same lesson ID as /content.
+    live_lesson_id = str(session["id"]) if embedded else f"live:{session['id']}"
     prog = db.query(TrainingProgress).filter(
         TrainingProgress.training_id == tid,
         TrainingProgress.participant_email == participant_email,
@@ -1504,24 +1536,9 @@ def list_training_announcements_service(db: Session, tid: UUID):
 
 
 def get_live_attendance_service(db: Session, tid: UUID, session_id: str):
-    from app.models.training_model import TrainingLiveSession
-    from uuid import UUID as PyUUID
-    try:
-        session_uuid = PyUUID(str(session_id))
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Invalid session_id") from exc
-    session = db.query(TrainingLiveSession).filter(
-        TrainingLiveSession.training_id == tid,
-        TrainingLiveSession.id == session_uuid,
-    ).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Live session not found")
-    return {
-        "session_id": str(session.id),
-        "title": session.title,
-        "attendance": session.attendance or [],
-        "count": len(session.attendance or []),
-    }
+    _, session, _ = _resolve_live_attendance_target(db, tid, session_id)
+    rows = _live_attendance_rows(session.get("attendance"))
+    return {"session_id": str(session["id"]), "title": session.get("title"), "attendance": rows, "count": len(rows)}
 
 
 def export_live_attendance_service(db: Session, tid: UUID, session_id: str):
@@ -1879,7 +1896,7 @@ def get_lesson_service(db: Session, tid: UUID, section_id: str, lesson_id: str, 
     role = (current_user or {}).get("role")
     if lesson.get("is_draft") and role not in ("admin", "provider") and not lesson.get("is_preview"):
         raise HTTPException(status_code=403, detail="Draft lesson — not available to learners")
-    return {"section_id": section_id, "section_title": (section or {}).get("title"), **lesson}
+    return {"section_id": section_id, "section_title": (section or {}).get("title"), **{k: v for k, v in lesson.items() if k != "attendance"}}
 
 
 def list_lesson_topics_service(db: Session, tid: UUID, section_id: str, lesson_id: str):
@@ -2688,35 +2705,3 @@ def export_training_enrolments_service(db: Session, tid: UUID, current_user: dic
             values.append(value)
         writer.writerow(values)
     return output.getvalue()
-
-
-def record_live_session_attendance_service(db: Session, training_id: UUID, session_id: str, current_user: dict):
-    from app.models.training_model import TrainingLiveSession
-    from fastapi import HTTPException
-    from datetime import datetime
-    from sqlalchemy.orm.attributes import flag_modified
-    
-    session = db.query(TrainingLiveSession).filter(
-        TrainingLiveSession.id == str(session_id),
-        TrainingLiveSession.training_id == training_id
-    ).first()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Live session not found")
-        
-    email = current_user.get("email")
-    if not email:
-        raise HTTPException(status_code=401, detail="User email required")
-        
-    attendance = session.attendance or {}
-    if email not in attendance:
-        attendance[email] = {
-            "joined_at": datetime.utcnow().isoformat(),
-            "name": current_user.get("full_name") or current_user.get("name", "Unknown")
-        }
-        
-        session.attendance = attendance
-        flag_modified(session, "attendance")
-        db.commit()
-        
-    return {"status": "success", "message": "Attendance recorded", "attendance": session.attendance.get(email)}
