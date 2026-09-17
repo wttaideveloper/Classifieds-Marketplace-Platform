@@ -118,3 +118,65 @@ def test_legacy_email_keyed_attendance(setup):
     with sessions() as db:
         assert get_live_attendance_service(db,TID,SID)['count']==1
         assert user['email'] in export_live_attendance_service(db,TID,SID)[0]
+
+
+def test_is_attended_in_content_api(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return  # Standalone sessions are not returned in the curriculum content API directly
+
+    # TEST 1: Before attendance
+    content_before = client.get(f'/api/v1/trainings/{TID}/content')
+    assert content_before.status_code == 200
+    lesson = content_before.json()['sections'][0]['lessons'][0]
+    assert lesson['is_attended'] is False
+    assert lesson['attended_at'] is None
+    assert lesson['is_completed'] is False
+
+    # POST attendance
+    url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
+    post_resp = client.post(url)
+    assert post_resp.status_code == 200
+    recorded_at = post_resp.json()['recorded_at']
+
+    # TEST 2: After attendance
+    content_after = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson_after = content_after.json()['sections'][0]['lessons'][0]
+    assert lesson_after['is_attended'] is True
+    assert lesson_after['attended_at'] == recorded_at
+    # Note: is_completed becomes True due to progress side-effect in record_live_attendance_service
+    assert lesson_after['is_completed'] is True
+    assert 'attendance' not in lesson_after
+
+    # TEST 3: User isolation
+    # Authenticate as another user
+    from app.core.dependencies import get_current_user
+    user_b = {'id': str(uuid4()), 'role': 'customer', 'email': 'user_b@example.com'}
+    client.app.dependency_overrides[get_current_user] = lambda: user_b
+
+    # Enrol User B
+    from app.models.training_model import TrainingEnrolment
+    with sessions() as db:
+        db.add(TrainingEnrolment(training_id=TID, participant_name='User B', participant_email=user_b['email'], status='enrolled'))
+        db.commit()
+
+    content_b = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson_b = content_b.json()['sections'][0]['lessons'][0]
+    assert lesson_b['is_attended'] is False
+    assert lesson_b['attended_at'] is None
+    # Restore override
+    client.app.dependency_overrides[get_current_user] = lambda: user
+
+def test_non_live_lesson_attendance(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    with sessions() as db:
+        training = db.get(Training, TID)
+        training.sections = [{'id': 'section', 'lessons': [{'id': str(uuid4()), 'type': 'video', 'title': 'Video'}]}]
+        db.commit()
+
+    content = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson = content.json()['sections'][0]['lessons'][0]
+    assert lesson.get('is_attended') is None
+    assert lesson.get('attended_at') is None

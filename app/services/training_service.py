@@ -2087,9 +2087,9 @@ def _default_lesson_detail(ltype: str, is_locked: bool, is_completed: bool) -> s
     return _DEFAULT_LESSON_DETAIL_BY_TYPE.get(ltype)
 
 
-def _base_lesson_payload(lesson: dict, is_locked: bool, is_completed: bool, completed_at: str | None) -> dict:
+def _base_lesson_payload(lesson: dict, is_locked: bool, is_completed: bool, completed_at: str | None, *, attended_at: str | None = None) -> dict:
     ltype = lesson.get("type") or "text"
-    return {
+    payload = {
         "id": lesson.get("id"),
         "type": ltype,
         "title": lesson.get("title"),
@@ -2124,6 +2124,10 @@ def _base_lesson_payload(lesson: dict, is_locked: bool, is_completed: bool, comp
         "documents": lesson.get("documents") if not is_locked else None,
         "notes": lesson.get("notes") if not is_locked else None,
     }
+    if ltype == "live":
+        payload["is_attended"] = attended_at is not None
+        payload["attended_at"] = attended_at
+    return payload
 
 
 def _build_exam_questions_for_learner(questions: list | None, *, include_answer: bool = False) -> list:
@@ -2228,6 +2232,15 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
         if prog:
             completed_lesson_ids = set(prog.lessons_completed or [])
 
+    attended_at_by_lesson_id: dict[str, str | None] = {}
+    if email:
+        for _sec in (training.sections or []):
+            for _item in (_sec.get("lessons") or _sec.get("items") or []):
+                if _item.get("type") == "live":
+                    for _rec in _live_attendance_rows(_item.get("attendance")):
+                        if _rec.get("participant_email") == email:
+                            attended_at_by_lesson_id[str(_item.get("id"))] = _rec.get("recorded_at")
+
     submissions_by_assessment_id: dict = {}
     if email:
         subs = (
@@ -2296,7 +2309,8 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
                 if is_staff:
                     locked = False
                 is_completed = str(lesson.get("id")) in completed_lesson_ids
-                lesson_payload = _base_lesson_payload(lesson, locked, is_completed, None)
+                attended_at = attended_at_by_lesson_id.get(str(lesson.get("id"))) if ltype == "live" else None
+                lesson_payload = _base_lesson_payload(lesson, locked, is_completed, None, attended_at=attended_at)
             lessons_out.append(lesson_payload)
 
         section_exam_passed = all(
