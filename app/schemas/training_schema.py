@@ -583,7 +583,7 @@ class TopicCreate(BaseModel):
 
 class LessonCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
-    type: str = Field("text", description="text|video|audio|webpage|pdf|live|presentation|worksheet|document|venue|exam")
+    type: str = Field("text", description="text|video|youtube|audio|webpage|pdf|live|presentation|worksheet|document|venue|exam")
     title: str
     content_url: str | None = None
     topics: list[TopicCreate] | None = Field(None, description="Topics within lesson: [{title, content_url, videos, documents, notes}]")

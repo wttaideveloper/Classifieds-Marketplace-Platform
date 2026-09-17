@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
-ITEM_TYPES = {"topic", "video", "live", "venue", "pdf", "notes", "quiz", "assignment"}
+ITEM_TYPES = {"topic", "video", "youtube", "live", "venue", "pdf", "notes", "quiz", "assignment"}
 LEGACY_TYPES = {"text", "exam", "audio", "webpage", "presentation", "worksheet", "document"}
 STATE_FIELDS = {"is_locked", "is_completed", "completed_at", "is_submitted", "score", "score_percent", "passed", "feedback"}
 
@@ -112,7 +112,7 @@ def normalize_curriculum(sections, assessments=None, assignments=None, *, strict
             if strict and url and not real_content_url(url):
                 raise HTTPException(400, "Use a video/content URL, not a YouTube search URL")
             item["content_url"] = real_content_url(url)
-            if kind == "video":
+            if kind in ("video", "youtube"):
                 item["video_url"] = item["content_url"]
             for flag in ("is_preview", "is_mandatory", "is_downloadable"):
                 item[flag] = bool(item.get(flag, False))

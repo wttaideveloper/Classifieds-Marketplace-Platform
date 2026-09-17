@@ -2073,6 +2073,7 @@ def _extract_schedule(value):
 
 _DEFAULT_LESSON_DETAIL_BY_TYPE = {
     "video": "Watch inside this session",
+    "youtube": "Watch inside this session",
     "live": "Online live · tap to join",
     "venue": "Show QR at venue",
 }
