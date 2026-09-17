@@ -371,6 +371,22 @@ class EventResponse(BaseModel):
     is_full: bool | None = Field(None, description="Whether event is at capacity")
     registration_open: bool | None = Field(None, description="Whether registration window is open")
 
+    @model_validator(mode="after")
+    def mask_meeting_links(self):
+        if self.meeting_link:
+            self.meeting_link = "protected"
+        
+        if self.sessions:
+            masked_sessions = []
+            for s in self.sessions:
+                s_dict = dict(s) if isinstance(s, dict) else s.model_dump() if hasattr(s, "model_dump") else s
+                if s_dict.get("meeting_link"):
+                    s_dict["meeting_link"] = "protected"
+                masked_sessions.append(s_dict)
+            self.sessions = masked_sessions
+            
+        return self
+
 
 class EventListItemResponse(EventResponse):
     pass
@@ -428,6 +444,19 @@ class EventSessionResponse(BaseModel):
     start_time: str | None = None
     end_time: str | None = None
     location: str | None = None
+    meeting_link: str | None = None
+
+    @model_validator(mode="after")
+    def mask_meeting_link(self):
+        if self.meeting_link:
+            self.meeting_link = "protected"
+        return self
+
+
+class EventSessionMeetingLinkResponse(BaseModel):
+    event_id: str
+    session_id: str
+    meeting_provider: str | None = None
     meeting_link: str | None = None
 
 

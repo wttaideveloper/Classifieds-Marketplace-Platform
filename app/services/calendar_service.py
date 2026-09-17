@@ -34,7 +34,7 @@ def event_to_ics(event, sessions: list | None = None) -> str:
         location = _escape(event.venue.get("address") or event.venue.get("city") or "")
     elif event.venue and isinstance(event.venue, str):
         location = _escape(event.venue)
-    url = _escape(event.meeting_link or "") if getattr(event, "status", "published") == "published" else ""
+    url = "" # Stripped for security, use protected endpoints
     lines += [
         "BEGIN:VEVENT",
         f"UID:{uid_base}@marketplace",
@@ -82,7 +82,7 @@ def event_to_ics(event, sessions: list | None = None) -> str:
         except Exception:
             continue
         loc = _escape(s.get("location") or location)
-        slink = _escape(s.get("meeting_link") or url)
+        slink = "" # Stripped for security, use protected endpoints
         lines += [
             "BEGIN:VEVENT",
             f"UID:{sid}@{uid_base}",

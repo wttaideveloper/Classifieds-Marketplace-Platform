@@ -617,6 +617,12 @@ def get_meeting_link(event_id: UUID, db: Session = Depends(get_db), current_user
     return get_meeting_link_service(db, event_id, current_user)
 
 
+@router.get("/{event_id}/sessions/{session_id}/meeting-link", summary="Get Session Meeting Link (registered only)")
+def get_session_meeting_link(event_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.event_service import get_session_meeting_link_service
+    return get_session_meeting_link_service(db, event_id, session_id, current_user)
+
+
 @router.post("/{event_id}/contact", summary="Contact Organiser")
 def contact_organiser(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return contact_organiser_service(db, event_id, payload, current_user)

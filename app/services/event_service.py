@@ -1985,6 +1985,58 @@ def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict):
     }
 
 
+def get_session_meeting_link_service(db: Session, event_id: UUID, session_id: str, current_user: dict):
+    """Get meeting link for a specific session — admin/provider or registered participant only."""
+    from app.models.event_aux_models import EventRegistration
+    import sqlalchemy as sa
+
+    ev = _get_event_or_404(db, event_id)
+    
+    # Verify session exists
+    session = next((s for s in (ev.sessions or []) if isinstance(s, dict) and s.get("id") == session_id), None)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    role = current_user.get("role")
+    email = current_user.get("email", "")
+    
+    if role not in ("admin", "provider", "super_admin"):
+        # We need to check if the user is registered for the event.
+        # If the event requires session-specific registration, we might need to check that, 
+        # but the prompt says: "Authorization must be equivalent in principle to the protected event meeting-link endpoint."
+        # Wait, the prompt also says: "Authenticated registered for a specific session: GET protected session meeting endpoint -> authorized session URL."
+        # If there's per-session registration, `session_id` on the registration might be set.
+        reg_query = db.query(EventRegistration).filter(
+            EventRegistration.event_id == event_id,
+            sa.func.lower(EventRegistration.participant_email) == email.strip().lower(),
+            EventRegistration.status.in_(["confirmed", "attended"]),
+        )
+        
+        regs = reg_query.all()
+        if not regs:
+            raise HTTPException(status_code=403, detail="Only registered participants can access meeting link")
+            
+        # Check if they are registered for this specific session, if session-specific registration is enforced
+        # Wait, the existing code:
+        # Some registrations might have session_id set. If the event is per-session, then reg.session_id must match.
+        # Let's see if any registration allows it.
+        has_access = False
+        for reg in regs:
+            if not reg.session_id or reg.session_id == session_id:
+                has_access = True
+                break
+                
+        if not has_access:
+            raise HTTPException(status_code=403, detail="Not registered for this specific session")
+            
+    return {
+        "event_id": str(event_id),
+        "session_id": session_id,
+        "meeting_provider": ev.meeting_provider, # sessions don't currently have individual providers in the schema, they use event's provider
+        "meeting_link": session.get("meeting_link"),
+    }
+
+
 # ---- Contact Organiser ----
 def contact_organiser_service(db: Session, event_id: UUID, payload: dict, current_user: dict):
     ev = _get_event_or_404(db, event_id)

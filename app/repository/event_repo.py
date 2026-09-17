@@ -95,6 +95,21 @@ def get_event_by_id(db: Session, event_id: UUID, include_deleted: bool = False):
 
 def update_event(db: Session, event, update_data):
     payload = update_data.to_model_data() if hasattr(update_data, "to_model_data") else update_data.model_dump(exclude_unset=True)
+    
+    # Preserve meeting links if they are masked as "protected"
+    if "meeting_link" in payload and payload["meeting_link"] == "protected":
+        payload.pop("meeting_link")
+        
+    if "sessions" in payload and payload["sessions"] is not None:
+        old_sessions = {str(s.get("id")): s for s in (event.sessions or []) if isinstance(s, dict)}
+        for s in payload["sessions"]:
+            if s.get("meeting_link") == "protected":
+                old_s = old_sessions.get(str(s.get("id")))
+                if old_s and "meeting_link" in old_s:
+                    s["meeting_link"] = old_s["meeting_link"]
+                else:
+                    s.pop("meeting_link", None)
+                    
     for key, value in payload.items():
         setattr(event, key, value)
     db.commit()
