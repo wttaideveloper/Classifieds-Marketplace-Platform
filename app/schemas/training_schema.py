@@ -11,6 +11,14 @@ from app.schemas.common_schema import PaginatedResponse
 TrainingStatus = str  # draft|published|unpublished|archived|cancelled
 
 
+class TrainingNextSessionInfo(BaseModel):
+    """Nearest upcoming live session, when the training has one scheduled."""
+    model_config = ConfigDict(from_attributes=True)
+
+    schedule: datetime = Field(..., description="Scheduled start time of the next live session")
+    meeting_link: str | None = Field(None, description="Join link for the next live session")
+
+
 class TrainingEnrolmentResponse(BaseModel):
     """Persisted enrolment returned by both enrol/enroll aliases."""
     model_config = ConfigDict(from_attributes=True)
@@ -28,6 +36,15 @@ class TrainingEnrolmentResponse(BaseModel):
     checked_out_at: datetime | None = None
     checked_in_by: UUID | None = None
     created_at: datetime
+    training_title: str | None = Field(None, description="Training title, for confirmation screens")
+    primary_image: str | None = Field(None, description="Training's cover image URL")
+    delivery_mode: str | None = Field(None, description="online|physical|hybrid|self_paced")
+    enterprise_name: str | None = Field(None, description="Hosting enterprise's display name")
+    amount_paid: str | None = Field(None, description="Amount paid for this enrolment — from the matching order if one exists, else the training's list price")
+    currency: str | None = None
+    payment_status: str | None = Field(None, description="From the matching order if one exists, else free|pending")
+    message: str = Field("Enrolled successfully", description="Human-readable confirmation message")
+    next_session: TrainingNextSessionInfo | None = Field(None, description="Nearest upcoming live session, if any is scheduled")
 
 
 class TrainingEnrolWaitlistResponse(BaseModel):
@@ -37,6 +54,14 @@ class TrainingEnrolWaitlistResponse(BaseModel):
     id: UUID
     training_id: UUID
     message: str
+    training_title: str | None = None
+    primary_image: str | None = None
+    delivery_mode: str | None = None
+    enterprise_name: str | None = None
+    amount_paid: str | None = None
+    currency: str | None = None
+    payment_status: str | None = None
+    next_session: TrainingNextSessionInfo | None = None
 
 
 class TrainingNoteDocument(BaseModel):

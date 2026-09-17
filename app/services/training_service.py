@@ -1536,6 +1536,45 @@ def export_live_attendance_service(db: Session, tid: UUID, session_id: str):
     output.seek(0)
     return output.getvalue(), data["session_id"]
 
+def _enrolment_response_context(db: Session, t, tid: UUID, participant_email: str, status: str) -> dict:
+    """Extra display/payment/session context the mobile app renders right
+    after enrolling — attached onto the enrolment response, not persisted."""
+    from datetime import datetime
+    from app.models.training_model import TrainingLiveSession, TrainingOrder
+
+    order = (
+        db.query(TrainingOrder)
+        .filter(TrainingOrder.training_id == tid, TrainingOrder.participant_email == participant_email)
+        .order_by(TrainingOrder.created_at.desc())
+        .first()
+    )
+    if order:
+        amount_paid, currency, payment_status = order.amount, order.currency, order.payment_status
+    elif t.price:
+        amount_paid, currency, payment_status = t.price, t.currency, "pending"
+    else:
+        amount_paid, currency, payment_status = "0", t.currency, "free"
+
+    next_session = (
+        db.query(TrainingLiveSession)
+        .filter(TrainingLiveSession.training_id == tid, TrainingLiveSession.scheduled_at >= datetime.utcnow(), TrainingLiveSession.status != "cancelled")
+        .order_by(TrainingLiveSession.scheduled_at.asc())
+        .first()
+    )
+
+    return {
+        "training_title": t.title,
+        "primary_image": t.primary_image,
+        "delivery_mode": t.delivery_mode,
+        "enterprise_name": t.enterprise.business_short_name if t.enterprise else None,
+        "amount_paid": amount_paid,
+        "currency": currency,
+        "payment_status": payment_status,
+        "message": "Enrolment pending approval" if status == "pending_approval" else "Enrolled successfully",
+        "next_session": {"schedule": next_session.scheduled_at, "meeting_link": next_session.meeting_link} if next_session else None,
+    }
+
+
 def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_code: str | None = None, current_user: dict | None = None, *, commit: bool = True):
     from app.models.training_model import TrainingEnrolment
     from datetime import datetime, timedelta
@@ -1568,7 +1607,9 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             if cnt >= cap:
                 if payload.get("auto_waitlist"):
                     wl = join_waitlist_service(db, tid, {"participant_email": participant_email, "participant_name": participant_name}, current_user)
-                    return {"waitlisted": True, "position": wl.get("position"), "id": wl.get("id"), "training_id": str(tid), "message": f"Training at capacity ({cap}) — added to waitlist"}
+                    context = _enrolment_response_context(db, t, tid, participant_email, "waitlisted")
+                    context.pop("message")  # keep the capacity-specific message below
+                    return {"waitlisted": True, "position": wl.get("position"), "id": wl.get("id"), "training_id": str(tid), "message": f"Training at capacity ({cap}) — added to waitlist", **context}
                 raise HTTPException(status_code=400, detail=f"Training at capacity ({cap})")
         except ValueError:
             pass
@@ -1605,6 +1646,8 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
         from app.services.notification_triggers import _safe_notify
         _safe_notify(db, f"training:{tid}", "training_enrolment_confirmation", {"training_id": str(tid), "status": status})
     except: pass
+    for key, value in _enrolment_response_context(db, t, tid, participant_email, status).items():
+        setattr(e, key, value)
     return e
 
 
@@ -1809,21 +1852,11 @@ def unpublish_training_service(db: Session, tid: UUID, current_user: dict | None
 
 
 def suspend_training_service(db: Session, tid: UUID, reason: str | None = None, current_user: dict | None = None):
-    training = _get_training_or_404(db, tid)
-    result = update_training_status_service(db, tid, "suspended")
-    if reason:
-        _append_moderation(db, training, "suspended", reason, current_user)
-        db.commit()
-    return result
+    return update_training_status_service(db, tid, "suspended", current_user, notes=reason)
 
 
 def cancel_training_service(db: Session, tid: UUID, reason: str | None = None, current_user: dict | None = None):
-    training = _get_training_or_404(db, tid)
-    result = update_training_status_service(db, tid, "cancelled")
-    if reason:
-        _append_moderation(db, training, "cancelled", reason, current_user)
-        db.commit()
-    return result
+    return update_training_status_service(db, tid, "cancelled", current_user, notes=reason)
 
 
 def delete_section_service(db: Session, tid: UUID, section_id: str):

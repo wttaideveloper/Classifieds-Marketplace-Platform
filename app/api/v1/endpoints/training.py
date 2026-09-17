@@ -22,13 +22,31 @@ from app.services.training_service import (
 router = APIRouter(tags=["Trainings"])
 
 
+def _auth_token_from_request(request: Request) -> str | None:
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1]
+    return get_web_session_cookie_token(request)
+
+
 def require_training_manager(request: Request, training_id: UUID, db: Session = Depends(get_db),
                              current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"]))):
     from app.repository.training_repo import require_training_owner
-    authorization = request.headers.get("authorization", "")
-    token = authorization.split(" ", 1)[1] if authorization.lower().startswith("bearer ") else get_web_session_cookie_token(request)
+    token = _auth_token_from_request(request)
     training = require_training_owner(db, training_id, current_user, access_token=token, include_deleted=True)
     return {**current_user, "tenant_id": str(training.tenant_id or (training.enterprise.tenant_id if training.enterprise else ""))}
+
+
+def _require_tenant_ownership_if_staff(request: Request, training_id: UUID, db: Session, current_user: dict):
+    """Staff (admin/provider/super_admin) acting on someone else's enrolment/waitlist
+    entry must own the training's tenant — same check require_training_manager applies
+    to the curriculum endpoints. Learners are left untouched; they're scoped to their
+    own participant_email by the caller instead."""
+    if not current_user or current_user.get("role") not in ("admin", "provider", "super_admin"):
+        return
+    from app.repository.training_repo import require_training_owner
+    token = _auth_token_from_request(request)
+    require_training_owner(db, training_id, current_user, access_token=token)
 
 
 from fastapi import File, Form, UploadFile
@@ -161,7 +179,7 @@ def update_status(training_id: UUID, payload: TrainingStatusUpdate, db: Session 
     if payload.status in ("approved", "rejected", "needs_revision") and current_user.get("role") not in ("admin", "super_admin"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Only Super Admin can approve/reject/request-changes")
-    return update_training_status_service(db, training_id, payload.status)
+    return update_training_status_service(db, training_id, payload.status, current_user, notes=payload.reason)
 
 
 @router.post("/{training_id}/publish", response_model=TrainingResponse, status_code=200, summary="Publish training")
@@ -479,11 +497,12 @@ def download_notes_pdf(training_id: UUID, db: Session = Depends(get_db), current
     )
 
 @router.delete("/{training_id}/enrolments/{enrol_id}", summary="Cancel enrolment — access-expiry & waitlist")
-def cancel_enrol(training_id: UUID, enrol_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def cancel_enrol(request: Request, training_id: UUID, enrol_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import cancel_training_enrol_service
     email=current_user.get("email")
-    # allow provider/admin to cancel any, participant only own
-    if current_user.get("role") in ["admin","provider"]:
+    # allow staff to cancel any enrolment — but only within their own tenant's training
+    if current_user.get("role") in ["admin","provider","super_admin"]:
+        _require_tenant_ownership_if_staff(request, training_id, db, current_user)
         return cancel_training_enrol_service(db, training_id, enrol_id)
     return cancel_training_enrol_service(db, training_id, enrol_id, participant_email=email)
 
@@ -537,9 +556,12 @@ def join_waitlist(training_id: UUID, payload: dict, db: Session = Depends(get_db
     return join_waitlist_service(db, training_id, payload, current_user)
 
 @router.delete("/{training_id}/waitlist/{entry_id}")
-def leave_waitlist(training_id: UUID, entry_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def leave_waitlist(request: Request, training_id: UUID, entry_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import leave_waitlist_service
-    email = current_user.get("email") if current_user and current_user.get("role") not in ("admin", "provider") else None
+    is_staff = current_user and current_user.get("role") in ("admin", "provider", "super_admin")
+    if is_staff:
+        _require_tenant_ownership_if_staff(request, training_id, db, current_user)
+    email = current_user.get("email") if current_user and not is_staff else None
     return leave_waitlist_service(db, training_id, entry_id, participant_email=email)
 
 @router.post("/{training_id}/assessments", status_code=201, summary="Create quizzes/tests/assessments/surveys — supports pre-course/module/final/feedback level, pass/attempt/time, publication, randomise")
