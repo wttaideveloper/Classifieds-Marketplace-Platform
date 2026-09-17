@@ -180,3 +180,47 @@ def test_non_live_lesson_attendance(setup):
     lesson = content.json()['sections'][0]['lessons'][0]
     assert lesson.get('is_attended') is None
     assert lesson.get('attended_at') is None
+
+def test_live_section_attendance(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+
+    # Overwrite the curriculum so the section ITSELF is type "live" and matches SID
+    with sessions() as db:
+        training = db.get(Training, TID)
+        training.sections = [{
+            'id': SID,
+            'type': 'live',
+            'title': 'Session 1: Understanding Cortisol',
+            'lessons': [{'id': str(uuid4()), 'type': 'video', 'title': 'Recording'}]
+        }]
+        db.commit()
+
+    # TEST 1: GET /content returns live section with is_attended=false and attended_at=null
+    content_before = client.get(f'/api/v1/trainings/{TID}/content')
+    assert content_before.status_code == 200
+    section = content_before.json()['sections'][0]
+    assert section['id'] == SID
+    assert section['is_attended'] is False
+    assert section['attended_at'] is None
+
+    # TEST 5: Non-live sections do not receive attendance fields
+    assert section['lessons'][0].get('is_attended') is None
+
+    # TEST 2: POST /live-sessions/{section_id}/attendance returns 200
+    url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
+    post_resp = client.post(url)
+    assert post_resp.status_code == 200
+    recorded_at = post_resp.json()['recorded_at']
+
+    # TEST 3: GET /content returns is_attended=true and attended_at populated
+    content_after = client.get(f'/api/v1/trainings/{TID}/content')
+    section_after = content_after.json()['sections'][0]
+    assert section_after['is_attended'] is True
+    assert section_after['attended_at'] == recorded_at
+
+    # TEST 4: Repeat POST remains idempotent
+    post_resp_2 = client.post(url)
+    assert post_resp_2.status_code == 200
+    assert post_resp_2.json()['recorded_at'] == recorded_at

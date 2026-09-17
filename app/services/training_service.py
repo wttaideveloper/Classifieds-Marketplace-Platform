@@ -981,6 +981,8 @@ def _resolve_live_attendance_target(db: Session, tid: UUID, session_id: str):
     training = _get_training_or_404(db, tid)
     curriculum = normalize_curriculum(training.sections, training.assessments, training.assignments)
     for section in curriculum["sections"]:
+        if str(section.get("id")) == str(session_uuid) and section.get("type") == "live":
+            return training, section, True
         for item in section["lessons"]:
             if str(item["id"]) == str(session_uuid) and item["type"] == "live":
                 return training, item, True
@@ -1004,6 +1006,8 @@ def _save_live_attendance(owner, session_id, attendance, embedded):
         return
     sections = deepcopy(owner.sections)
     for section in sections:
+        if str(section.get("id")) == str(session_id):
+            section["attendance"] = attendance
         # Preserve both aliases when an authoring payload stores both.
         for key in ("lessons", "items"):
             for item in section.get(key) or []:
@@ -2235,6 +2239,10 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
     attended_at_by_lesson_id: dict[str, str | None] = {}
     if email:
         for _sec in (training.sections or []):
+            if _sec.get("type") == "live":
+                for _rec in _live_attendance_rows(_sec.get("attendance")):
+                    if _rec.get("participant_email") == email:
+                        attended_at_by_lesson_id[str(_sec.get("id"))] = _rec.get("recorded_at")
             for _item in (_sec.get("lessons") or _sec.get("items") or []):
                 if _item.get("type") == "live":
                     for _rec in _live_attendance_rows(_item.get("attendance")):
@@ -2321,9 +2329,10 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
         prev_section_done = prev_section_done and content_done_this_section and section_exam_passed
         prev_section_title = section.get("title")
 
-        out_sections.append({
+        sec_type = section.get("type", "section")
+        sec_payload = {
             "id": section.get("id"),
-            "type": section.get("type", "section"),
+            "type": sec_type,
             "order": section.get("order", idx + 1),
             "title": section.get("title"),
             "summary": _section_summary(visible_lessons),
@@ -2331,7 +2340,12 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
             "is_unlocked": section_unlocked,
             "unlock_hint": unlock_hint,
             "lessons": lessons_out,
-        })
+        }
+        if sec_type == "live":
+            sec_attended_at = attended_at_by_lesson_id.get(str(section.get("id")))
+            sec_payload["is_attended"] = sec_attended_at is not None
+            sec_payload["attended_at"] = sec_attended_at
+        out_sections.append(sec_payload)
 
     enterprise_name = training.enterprise.business_short_name if getattr(training, "enterprise", None) else None
 
