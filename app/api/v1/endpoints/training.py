@@ -537,6 +537,11 @@ def batch_check_in_enrolments(training_id: UUID, payload: TrainingBatchCheckInRe
     from app.services.training_service import batch_check_in_training_enrolments_service
     return batch_check_in_training_enrolments_service(db, training_id, payload.participants, current_user)
 
+@router.post("/{training_id}/live-sessions/{session_id}/attendance", summary="Record attendance for a live session")
+def record_live_session_attendance(training_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.training_service import record_live_session_attendance_service
+    return record_live_session_attendance_service(db, training_id, session_id, current_user)
+
 @router.post("/{training_id}/checkout", status_code=201, summary="Checkout — Training")
 def checkout_training(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import create_training_checkout_service

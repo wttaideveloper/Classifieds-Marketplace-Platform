@@ -2688,3 +2688,35 @@ def export_training_enrolments_service(db: Session, tid: UUID, current_user: dic
             values.append(value)
         writer.writerow(values)
     return output.getvalue()
+
+
+def record_live_session_attendance_service(db: Session, training_id: UUID, session_id: str, current_user: dict):
+    from app.models.training_model import TrainingLiveSession
+    from fastapi import HTTPException
+    from datetime import datetime
+    from sqlalchemy.orm.attributes import flag_modified
+    
+    session = db.query(TrainingLiveSession).filter(
+        TrainingLiveSession.id == str(session_id),
+        TrainingLiveSession.training_id == training_id
+    ).first()
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Live session not found")
+        
+    email = current_user.get("email")
+    if not email:
+        raise HTTPException(status_code=401, detail="User email required")
+        
+    attendance = session.attendance or {}
+    if email not in attendance:
+        attendance[email] = {
+            "joined_at": datetime.utcnow().isoformat(),
+            "name": current_user.get("full_name") or current_user.get("name", "Unknown")
+        }
+        
+        session.attendance = attendance
+        flag_modified(session, "attendance")
+        db.commit()
+        
+    return {"status": "success", "message": "Attendance recorded", "attendance": session.attendance.get(email)}
