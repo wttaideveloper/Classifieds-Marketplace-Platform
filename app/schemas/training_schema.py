@@ -1039,3 +1039,20 @@ class TrainingUploadResponse(BaseModel):
     size: int
     type: str | None = None
     purpose: str | None = None
+
+
+# ---- Discussions ----
+
+class TrainingDiscussionCreate(BaseModel):
+    question: str | None = Field(None, description="The question or discussion text")
+    text: str | None = Field(None, description="Alternative field for the question text")
+
+class TrainingDiscussionReply(BaseModel):
+    answer: str = Field(..., description="The reply or answer text")
+
+class TrainingDiscussionResponse(BaseModel):
+    id: str
+    author: str
+    question: str
+    answer: str | None = None
+    created_at: str

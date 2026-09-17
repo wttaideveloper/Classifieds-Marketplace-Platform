@@ -862,22 +862,26 @@ def meeting_link(training_id: UUID, db: Session=Depends(get_db), current_user: d
     return {"training_id": str(training_id), "meeting_links": [{"session_id": str(ls.id), "title": ls.title, "meeting_link": ls.meeting_link, "provider": ls.meeting_provider} for ls in lives]}
 
 # Discussion / Q&A
-@router.get("/{training_id}/discussions", summary="Discussion — Q&A list")
+from app.schemas.training_schema import TrainingDiscussionCreate, TrainingDiscussionReply, TrainingDiscussionResponse
+
+@router.get("/{training_id}/discussions", response_model=list[TrainingDiscussionResponse], summary="Discussion — Q&A list")
 def list_discussions(training_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.repository.training_repo import get_training_by_id
     obj=get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404,"Training not found")
     return getattr(obj, "discussions", []) or []
 
-@router.post("/{training_id}/discussions", status_code=201, summary="Post Q&A")
-def post_discussion(training_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+@router.post("/{training_id}/discussions", response_model=TrainingDiscussionResponse, status_code=201, summary="Post Q&A")
+def post_discussion(training_id: UUID, payload: TrainingDiscussionCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.repository.training_repo import get_training_by_id
     from sqlalchemy.orm.attributes import flag_modified
     import uuid as _uuid
     obj=get_training_by_id(db, training_id)
     if not obj: from fastapi import HTTPException; raise HTTPException(404,"Training not found")
     disc=list(getattr(obj, "discussions", []) or [])
-    entry={"id": str(_uuid.uuid4()), "author": current_user.get("email","anonymous"), "question": payload.get("question") or payload.get("text") or "", "answer": None, "created_at": __import__("datetime").datetime.utcnow().isoformat()}
+    
+    question_text = payload.question or payload.text or ""
+    entry={"id": str(_uuid.uuid4()), "author": current_user.get("email","anonymous"), "question": question_text, "answer": None, "created_at": __import__("datetime").datetime.utcnow().isoformat()}
     if not entry["question"].strip():
         from fastapi import HTTPException; raise HTTPException(400, "Question is required")
     disc.append(entry)
@@ -887,9 +891,9 @@ def post_discussion(training_id: UUID, payload: dict, db: Session=Depends(get_db
     db.commit()
     return entry
 
-@router.post("/{training_id}/discussions/{discussion_id}/replies", status_code=201, summary="Reply to Q&A / mark answer")
-def reply_discussion(training_id: UUID, discussion_id: str, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return reply_discussion_service(db, training_id, discussion_id, payload, current_user)
+@router.post("/{training_id}/discussions/{discussion_id}/replies", response_model=TrainingDiscussionResponse, status_code=201, summary="Reply to Q&A / mark answer")
+def reply_discussion(training_id: UUID, discussion_id: str, payload: TrainingDiscussionReply, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return reply_discussion_service(db, training_id, discussion_id, payload.model_dump(), current_user)
 
 @router.post("/{training_id}/announcements", summary="Create persisted announcement")
 def announce(training_id: UUID, payload: AnnouncementCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
