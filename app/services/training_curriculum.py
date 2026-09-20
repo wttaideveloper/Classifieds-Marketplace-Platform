@@ -315,10 +315,12 @@ def learning_response(result, curriculum, training, enrolment, assignment_submis
     required = [i for i in flat if i["is_mandatory"]]
     result["total_required_items"] = len(required)
     result["completed_required_items"] = sum(bool(i["is_completed"]) for i in required)
-    if required:
-        result["progress_percent"] = round(100 * result["completed_required_items"] / len(required), 2)
-    else:
-        result["progress_percent"] = round(100 * result["completed_items"] / len(flat), 2) if flat else 0
+    # progress_percent is set by the caller from completed_lessons/total_lessons
+    # (the same source of truth /my/enrolments and /progress use) and is
+    # intentionally left untouched here. Mandatory-only completion is a separate,
+    # legitimate business rule (see complete_lesson_service's completed_at /
+    # certificate_url logic) and stays exposed via completed_required_items /
+    # total_required_items instead of overwriting the headline percentage.
     result["assessments"] = [i["assessment"] for i in flat if i.get("assessment")]
     result["assignments"] = [i["assignment"] for i in flat if i.get("assignment")]
     return result

@@ -68,7 +68,10 @@ def test_learning_shape_progress_and_no_answer_leak(mode, monkeypatch):
     assert section["items"] == section["lessons"]
     assert result["total_required_items"] == 2
     assert result["completed_required_items"] == 1
-    assert result["progress_percent"] == 50
+    # progress_percent is the raw completed/total lesson ratio (single source of
+    # truth shared with /my/enrolments) — mandatory-only completion is a separate
+    # rule, verified above via total_required_items/completed_required_items.
+    assert result["progress_percent"] == round(result["completed_lessons"] / result["total_lessons"] * 100, 2)
     quiz = next(i for i in section["items"] if i["type"] == "quiz")
     assert quiz["is_locked"] is False  # optional PDF/task does not gate a required quiz
     assert "correct_answer" not in quiz["assessment"]["questions"][0]

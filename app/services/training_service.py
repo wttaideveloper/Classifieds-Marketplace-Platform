@@ -402,6 +402,17 @@ def _lesson_is_accessible(lesson: dict, completed_lessons: set[str], enrolment, 
     return True, None
 
 
+def lesson_progress_percent(completed: int, total: int) -> float:
+    """Single source of truth for the raw learner-facing lesson-completion
+    percentage — used by /my/enrolments, /content, and /progress alike so all
+    three always agree given the same completed/total counts. Deliberately NOT
+    filtered to mandatory-only lessons; that is a separate business rule (see
+    complete_lesson_service's completed_at/certificate_url logic) exposed under
+    its own mandatory_done/mandatory_total (and completed_required_items/
+    total_required_items in /content) fields instead."""
+    return round(completed / total * 100, 2) if total else 0
+
+
 def _promote_waitlist(db: Session, tid: UUID) -> dict | None:
     from app.models.training_model import TrainingEnrolment, TrainingWaitlist
     training = _get_training_or_404(db, tid)
@@ -664,6 +675,11 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
         
     sub = TrainingAssessmentSubmission(training_id=tid, assessment_id=str(aid), participant_email=participant_email, answers=answers, score=str(score), passed=passed)
     db.add(sub); db.commit(); db.refresh(sub)
+    # Mirrors get_secure_training_content_service's per-lesson is_completed rule for
+    # exam/quiz lessons (submission is not None, regardless of pass/fail) — any
+    # submission now also reaches TrainingProgress.lessons_completed, the single
+    # source of truth my/enrolments and /progress read from.
+    _mark_lessons_completed_for_reference(db, tid, participant_email, key="assessment_id", ref_id=aid, t=t)
     publication = target.get("publication") or target.get("result_publication") or "immediate"
     return {"score": score, "passed": passed, "total_points": total, "feedback": feedback, "assessment_id": str(aid), "submission_id": str(sub.id), "publication": publication, "needs_manual": needs_manual, "attempts_made": cnt + 1, "attempts_allowed": int(attempts_allowed_declared) if attempts_allowed_declared else None}
 
@@ -827,6 +843,10 @@ def submit_assignment_service(db: Session, tid: UUID, aid: str, payload, partici
     text = payload.submission_text if is_model else payload.get("submission_text") if isinstance(payload, dict) else None
     sub = TrainingAssignmentSubmission(training_id=tid, assignment_id=str(aid), participant_email=participant_email, file_url=file_url, files=files, submission_text=text)
     db.add(sub); db.commit(); db.refresh(sub)
+    # Mirrors get_secure_training_content_service's existing in-memory
+    # assignment_submissions merge — any submission (graded or not) now also
+    # reaches TrainingProgress.lessons_completed, not just the in-request view.
+    _mark_lessons_completed_for_reference(db, tid, participant_email, key="assignment_id", ref_id=aid, t=t)
     attempts_made = db.query(TrainingAssignmentSubmission).filter(TrainingAssignmentSubmission.training_id==tid, TrainingAssignmentSubmission.assignment_id==str(aid), TrainingAssignmentSubmission.participant_email==participant_email).count()
     return {"id": str(sub.id), "submitted_at": sub.submitted_at.isoformat(), "grade": None, "feedback": None, "assignment_id": str(aid), "files": [dict(f) for f in (sub.files or [])], "attempts_made": attempts_made}
 
@@ -858,7 +878,7 @@ def get_training_progress_service(db: Session, tid: UUID, participant_email: str
             certificate_url = prog.certificate_url
     sections_done = len(completed_sections)
     lessons_done = len(completed_lessons)
-    overall = round((lessons_done / total_lessons * 100) if total_lessons else (sections_done / total_sections * 100 if total_sections else 0), 2)
+    overall = lesson_progress_percent(lessons_done, total_lessons) if total_lessons else round((sections_done / total_sections * 100) if total_sections else 0, 2)
     sections_detail = [{"section_id": s.get("id"), "section_title": s.get("title"), "lessons_done": sum(1 for l in s.get("lessons", []) if l.get("id") in completed_lessons), "total_lessons": len(s.get("lessons", []))} for s in sections]
     lessons_detail = []
     for s in sections:
@@ -890,13 +910,24 @@ def grade_assignment_service(db: Session, tid: UUID, aid: str, submission_id: st
     sub.grade=str(grade); sub.feedback=feedback; db.commit(); db.refresh(sub)
     return {"id": str(sub.id), "grade": sub.grade, "feedback": sub.feedback, "files": [dict(f) for f in (sub.files or [])], "resubmission_allowed": True}
 
-def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_email: str):
-    from app.models.training_model import TrainingProgress
+def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None) -> dict:
+    """Marks lesson_id complete for participant_email and recomputes section
+    completion / overall_percent / mandatory-completion / certificate eligibility.
+
+    Shared by complete_lesson_service (learner clicks "mark complete" on a plain
+    lesson) and by submit_assessment_service / submit_assignment_service (a
+    quiz/exam or assignment lesson that is "completed" by submitting it, not by a
+    separate complete-lesson call). Before this helper existed, quiz/assignment
+    submissions were recorded only in their own submission tables and never
+    reached TrainingProgress.lessons_completed, so a learner who finished every
+    lesson via a mix of plain completions and quiz/assignment submissions was
+    undercounted by every consumer of lessons_completed (my/enrolments, /content,
+    /progress) even though /content's own per-lesson is_completed already
+    recognized the quiz/assignment as done via its submission.
+    """
     from datetime import datetime
-    t = _get_training_or_404(db, tid)
-    enrol = _get_enrolment(db, tid, participant_email)
-    if not _is_active_enrolment(enrol):
-        raise HTTPException(status_code=403, detail="Active enrolment required")
+    from app.models.training_model import TrainingProgress
+    t = t or _get_training_or_404(db, tid)
     prog = db.query(TrainingProgress).filter(
         TrainingProgress.training_id == tid,
         TrainingProgress.participant_email == participant_email,
@@ -914,21 +945,11 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
         db.refresh(prog)
     lessons = set(prog.lessons_completed or [])
     completed_sections = set(prog.sections_completed or [])
-    target_lesson = None
     target_section_id = None
     for section in t.sections or []:
-        for lesson in section.get("lessons", []):
-            if lesson.get("id") == lesson_id:
-                target_lesson = lesson
-                target_section_id = section.get("id")
-                break
-        if target_lesson:
+        if any(l.get("id") == lesson_id for l in section.get("lessons", [])):
+            target_section_id = section.get("id")
             break
-    if not target_lesson:
-        raise HTTPException(status_code=404, detail="Lesson not found")
-    accessible, reason = _lesson_is_accessible(target_lesson, lessons, enrol, t)
-    if not accessible:
-        raise HTTPException(status_code=403, detail=reason or "Lesson not accessible")
     lessons.add(lesson_id)
     prog.lessons_completed = list(lessons)
     if target_section_id:
@@ -962,8 +983,47 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
         prog.completed_at=datetime.utcnow()
         prog.certificate_url=f"/api/v1/trainings/{tid}/certificate.pdf?participant_email={participant_email}"
     db.commit(); db.refresh(prog)
+    return {"overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url}
+
+
+def _mark_lessons_completed_for_reference(db: Session, tid: UUID, participant_email: str, *, key: str, ref_id: str, t=None) -> None:
+    """Finds every lesson referencing ref_id via `key` (assessment_id or
+    assignment_id) and records completion for each — generic across trainings,
+    never keyed by a specific training/lesson id."""
+    t = t or _get_training_or_404(db, tid)
+    for section in t.sections or []:
+        for lesson in section.get("lessons", []):
+            if lesson.get(key) is not None and str(lesson.get(key)) == str(ref_id) and lesson.get("id"):
+                _apply_lesson_completion(db, tid, lesson["id"], participant_email, t=t)
+
+
+def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_email: str):
+    from app.models.training_model import TrainingProgress
+    t = _get_training_or_404(db, tid)
+    enrol = _get_enrolment(db, tid, participant_email)
+    if not _is_active_enrolment(enrol):
+        raise HTTPException(status_code=403, detail="Active enrolment required")
+    prog = db.query(TrainingProgress).filter(
+        TrainingProgress.training_id == tid,
+        TrainingProgress.participant_email == participant_email,
+    ).first()
+    lessons_so_far = set(prog.lessons_completed or []) if prog else set()
+    target_lesson = None
+    for section in t.sections or []:
+        for lesson in section.get("lessons", []):
+            if lesson.get("id") == lesson_id:
+                target_lesson = lesson
+                break
+        if target_lesson:
+            break
+    if not target_lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    accessible, reason = _lesson_is_accessible(target_lesson, lessons_so_far, enrol, t)
+    if not accessible:
+        raise HTTPException(status_code=403, detail=reason or "Lesson not accessible")
+    result = _apply_lesson_completion(db, tid, lesson_id, participant_email, t=t)
     # last completed for resume
-    return {"lesson_id": lesson_id, "overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url, "resume_lesson": lesson_id}
+    return {"lesson_id": lesson_id, **result, "resume_lesson": lesson_id}
 
 def _resolve_live_attendance_target(db: Session, tid: UUID, session_id: str):
     """Resolve standalone sessions and the curriculum IDs returned by /content."""
@@ -1709,7 +1769,7 @@ def list_my_enrolments_service(db: Session, email: str, status_filter: str | Non
         prog = progress_by_id.get(r.training_id)
         total_lessons = sum(len(s.get("lessons", []) or []) for s in (t.sections or [])) if t else 0
         completed_lessons = len(prog.lessons_completed or []) if prog else 0
-        progress_percent = round(completed_lessons / total_lessons * 100, 2) if total_lessons else 0
+        progress_percent = lesson_progress_percent(completed_lessons, total_lessons)
         out.append({
             "training_id": str(r.training_id),
             "status": r.status,
@@ -2267,7 +2327,7 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
 
     total_lessons = sum(len(s.get("lessons") or []) for s in sections_raw)
     completed_lessons_count = len(completed_lesson_ids)
-    progress_percent = round(completed_lessons_count / total_lessons * 100, 2) if total_lessons else 0
+    progress_percent = lesson_progress_percent(completed_lessons_count, total_lessons)
 
     out_sections = []
     prev_section_done = True  # section 0 is always unlocked
