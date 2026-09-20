@@ -291,3 +291,85 @@ def test_live_and_venue_lesson_fields_pass_through(monkeypatch):
     assert venue["pass_code"] == "CODE1"
     assert venue["check_in_window"] == "9-9:20am"
     assert venue["detail"] == "Show QR at venue"
+
+
+# --- QR image on live sections (mobile: "qr_code" with no scannable image) ---
+
+def test_live_section_receives_qr_image_when_venue_capable(monkeypatch):
+    training = _training(sections=[
+        {"id": "live-sec", "type": "live", "order": 1, "title": "Session 1", "lessons": [VIDEO_LESSON]},
+    ])
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    section = result["sections"][0]
+
+    assert section["type"] == "live"
+    assert section["qr_code"] == "96FFF6F6-A9D"
+    assert section["qr_image_base64"].startswith("data:image/png;base64,")
+    # Existing live-section fields (Phase-prior attendance fix) remain intact alongside the new QR fields.
+    assert section["is_attended"] is False
+    assert section["attended_at"] is None
+    assert section["title"] == "Session 1"
+    assert section["id"] == "live-sec"
+
+
+def test_live_section_qr_image_encodes_the_same_qr_code(monkeypatch):
+    training = _training(sections=[
+        {"id": "live-sec", "type": "live", "order": 1, "title": "Session 1", "lessons": [VIDEO_LESSON]},
+    ])
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    section = result["sections"][0]
+
+    # qrcode.make() is deterministic for a given payload — re-encoding the exact same
+    # qr_code value through the same helper must byte-for-byte match what /content returned,
+    # proving the image encodes the SAME identifier the existing admin scan flow expects.
+    assert section["qr_image_base64"] == training_service._qr_image_base64(section["qr_code"])
+
+
+def test_live_section_has_no_qr_when_training_is_online_only(monkeypatch):
+    training = _training(delivery_mode="online", sections=[
+        {"id": "live-sec", "type": "live", "order": 1, "title": "Session 1", "lessons": [VIDEO_LESSON]},
+    ])
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    section = result["sections"][0]
+
+    assert section["qr_code"] is None
+    assert section["qr_image_base64"] is None
+
+
+def test_non_live_section_has_no_qr_fields(monkeypatch):
+    training = _training()  # default fixture sections are type "section", not "live"
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    section = result["sections"][0]
+
+    assert section["type"] == "section"
+    assert "qr_code" not in section
+    assert "qr_image_base64" not in section
+
+
+def test_content_response_backward_compatible_fields_unchanged(monkeypatch):
+    """Adding qr_image_base64 must not remove or rename any existing field."""
+    training = _training()
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=["lv1"])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+
+    for key in ("training_id", "title", "primary_image", "enterprise_name", "instructor_name",
+                "delivery_mode", "progress_percent", "completed_lessons", "total_lessons",
+                "qr_code", "sections"):
+        assert key in result
+    section = result["sections"][0]
+    for key in ("id", "type", "order", "title", "summary", "schedule", "is_unlocked", "unlock_hint", "lessons"):
+        assert key in section

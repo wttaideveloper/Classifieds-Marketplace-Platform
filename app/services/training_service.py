@@ -2345,6 +2345,12 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
             sec_attended_at = attended_at_by_lesson_id.get(str(section.get("id")))
             sec_payload["is_attended"] = sec_attended_at is not None
             sec_payload["attended_at"] = sec_attended_at
+            # Same learner QR + venue-mode gating already used for the top-level/venue-lesson
+            # qr_code (see learning_response in training_curriculum.py) — same identifier, no
+            # new QR is minted here, just an image encoding of the existing enrolment qr_code.
+            section_qr = enrol.qr_code if enrol and training.delivery_mode in ("physical", "hybrid", "blended", "instructor_led") else None
+            sec_payload["qr_code"] = section_qr
+            sec_payload["qr_image_base64"] = _qr_image_base64(section_qr) if section_qr else None
         out_sections.append(sec_payload)
 
     enterprise_name = training.enterprise.business_short_name if getattr(training, "enterprise", None) else None

@@ -181,6 +181,106 @@ def test_non_live_lesson_attendance(setup):
     assert lesson.get('is_attended') is None
     assert lesson.get('attended_at') is None
 
+def test_admin_qr_scan_marks_correct_learner_attended(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    admin = {'id': str(uuid4()), 'role': 'super_admin', 'email': 'admin@example.com'}
+    with sessions() as db:
+        db.query(TrainingEnrolment).one().qr_code = 'QR-LEARNER-A'
+        db.add(TrainingEnrolment(training_id=TID, participant_name='Learner B', participant_email='learner_b@example.com', status='enrolled', qr_code='QR-LEARNER-B'))
+        db.commit()
+
+    content_before = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson_before = content_before.json()['sections'][0]['lessons'][0]
+    assert lesson_before['is_attended'] is False
+    assert lesson_before['attended_at'] is None
+
+    client.app.dependency_overrides[get_current_user] = lambda: admin
+    url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
+    scan = client.post(url, json={'qr_code': 'QR-LEARNER-A'})
+    assert scan.status_code == 200, scan.text
+    recorded_at = scan.json()['recorded_at']
+    assert scan.json()['attendance']['participant_email'] == user['email']
+
+    client.app.dependency_overrides[get_current_user] = lambda: user
+    content_after = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson_after = content_after.json()['sections'][0]['lessons'][0]
+    assert lesson_after['is_attended'] is True
+    assert lesson_after['attended_at'] == recorded_at
+
+    learner_b = {'id': str(uuid4()), 'role': 'customer', 'email': 'learner_b@example.com'}
+    client.app.dependency_overrides[get_current_user] = lambda: learner_b
+    content_b = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson_b = content_b.json()['sections'][0]['lessons'][0]
+    assert lesson_b['is_attended'] is False
+    assert lesson_b['attended_at'] is None
+    client.app.dependency_overrides[get_current_user] = lambda: user
+
+
+def test_admin_qr_scan_duplicate_is_idempotent(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    admin = {'id': str(uuid4()), 'role': 'super_admin', 'email': 'admin@example.com'}
+    with sessions() as db:
+        db.query(TrainingEnrolment).one().qr_code = 'QR-LEARNER-A'
+        db.commit()
+
+    client.app.dependency_overrides[get_current_user] = lambda: admin
+    url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
+    first = client.post(url, json={'qr_code': 'QR-LEARNER-A'})
+    second = client.post(url, json={'qr_code': 'QR-LEARNER-A'})
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()['recorded_at'] == second.json()['recorded_at']
+    client.app.dependency_overrides[get_current_user] = lambda: user
+
+
+def test_admin_qr_scan_rejects_invalid_qr_code(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    admin = {'id': str(uuid4()), 'role': 'super_admin', 'email': 'admin@example.com'}
+    client.app.dependency_overrides[get_current_user] = lambda: admin
+    url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
+    response = client.post(url, json={'qr_code': 'DOES-NOT-EXIST'})
+    assert response.status_code == 404
+    client.app.dependency_overrides[get_current_user] = lambda: user
+
+
+def test_admin_qr_scan_rejects_qr_from_other_training(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    other_tid = uuid4()
+    admin = {'id': str(uuid4()), 'role': 'super_admin', 'email': 'admin@example.com'}
+    with sessions() as db:
+        db.add(Training(id=other_tid, enterprise_id=uuid4(), tenant_id=uuid4(), title='Other', category='General', status='published', delivery_mode='online', sections=[], assessments=[], assignments=[]))
+        db.add(TrainingEnrolment(training_id=other_tid, participant_name='Other Learner', participant_email='other@example.com', status='enrolled', qr_code='QR-OTHER-TRAINING'))
+        db.commit()
+
+    client.app.dependency_overrides[get_current_user] = lambda: admin
+    url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
+    response = client.post(url, json={'qr_code': 'QR-OTHER-TRAINING'})
+    assert response.status_code == 404
+    client.app.dependency_overrides[get_current_user] = lambda: user
+
+
+def test_qr_scan_by_non_admin_for_other_learner_is_forbidden(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    with sessions() as db:
+        db.query(TrainingEnrolment).one().qr_code = 'QR-LEARNER-A'
+        db.add(TrainingEnrolment(training_id=TID, participant_name='Learner B', participant_email='learner_b@example.com', status='enrolled', qr_code='QR-LEARNER-B'))
+        db.commit()
+
+    url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
+    response = client.post(url, json={'qr_code': 'QR-LEARNER-B'})
+    assert response.status_code == 403
+
+
 def test_live_section_attendance(setup):
     sessions, client, user, kind = setup
     if kind == 'standalone':

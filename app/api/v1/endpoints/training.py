@@ -752,7 +752,15 @@ def export_live_attendance(training_id: UUID, session_id: str, db: Session = Dep
 @router.post("/{training_id}/live-sessions/{session_id}/attendance", summary="Record live session attendance")
 def live_attendance(request: Request, training_id: UUID, session_id: str, payload: dict | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from fastapi import HTTPException
-    email = (payload or {}).get("participant_email") or current_user.get("email")
+    from app.services.training_service import validate_training_qr_service
+    qr_code = (payload or {}).get("qr_code")
+    email = (payload or {}).get("participant_email")
+    if qr_code and not email:
+        # Admin physical-venue scan path: resolves the learner via the same
+        # training-scoped, cancelled/expired-checked QR lookup validate-qr already
+        # uses, then records attendance through the same call as self-attendance.
+        email = validate_training_qr_service(db, training_id, qr_code)["participant_email"]
+    email = email or current_user.get("email")
     if not email:
         raise HTTPException(400, "participant_email required")
     if email != current_user.get("email"):
