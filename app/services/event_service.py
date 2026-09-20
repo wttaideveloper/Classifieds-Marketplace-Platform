@@ -1175,10 +1175,11 @@ def _ticket_effective_price(ticket: dict, event) -> str:
 
 def create_event_checkout_service(db: Session, event_id: UUID, payload):
     import uuid
-    from app.models.event_aux_models import EventOrder, EventRegistration
+    from app.models.event_aux_models import EventOrder, EventRegistration, EventWaitlist
     from app.models.event_model import Event
     import sqlalchemy as sa
     from sqlalchemy.exc import IntegrityError
+    from datetime import datetime
     
     # Normalize email as established in Phase A
     participant_email = payload.participant_email.strip().lower()
@@ -1221,6 +1222,35 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
             except ValueError:
                 pass
                 
+        # Waitlist offer processing
+        waitlist_entry = None
+        waitlist_id = getattr(payload, "waitlist_id", None)
+        if waitlist_id:
+            waitlist_entry = db.query(EventWaitlist).filter(EventWaitlist.id == waitlist_id).with_for_update().first()
+            if not waitlist_entry:
+                raise HTTPException(status_code=404, detail="Waitlist entry not found")
+            if waitlist_entry.participant_email.strip().lower() != participant_email:
+                raise HTTPException(status_code=403, detail="Waitlist offer belongs to another user")
+            if waitlist_entry.status != "payment_pending":
+                raise HTTPException(status_code=400, detail="Waitlist offer is not valid for payment")
+            if waitlist_entry.payment_offer_expires_at and waitlist_entry.payment_offer_expires_at < datetime.utcnow():
+                raise HTTPException(status_code=400, detail="Waitlist payment offer has expired")
+        else:
+            # Enforce overall event capacity for normal public checkout
+            if event.capacity:
+                try:
+                    max_capacity = int(float(str(event.capacity).strip()))
+                    current_count = db.query(EventRegistration).filter(
+                        EventRegistration.event_id == event_id,
+                        EventRegistration.status.in_(["confirmed", "attended"])
+                    ).count()
+                    if current_count + payload.quantity > max_capacity:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Event is at full capacity ({max_capacity} participants). Please join waitlist."
+                        )
+                except ValueError:
+                    pass
         price = _ticket_effective_price(ticket or {}, event)
         try:
             total = float(price) * payload.quantity
@@ -1253,11 +1283,17 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
             participant_email=participant_email, # Normalized email
             ticket_type_id=payload.ticket_type_id, 
             status="confirmed", 
-            qr_code=str(uuid.uuid4())[:8].upper()
+            qr_code=str(uuid.uuid4())[:12].upper()
         )
         db.add(reg)
+        db.flush()
         
-        # Commit BOTH order and registration atomically
+        # If checked out via waitlist offer, fulfill it
+        if waitlist_entry:
+            waitlist_entry.status = "promoted"
+            waitlist_entry.registration_id = reg.id
+        
+        # Commit BOTH order and registration (and waitlist update) atomically
         db.commit()
         db.refresh(order)
         
@@ -1566,30 +1602,65 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
         db.flush()
         return
 
-    # Auto-promote
-    reg = EventRegistration(
-        event_id=event_id,
-        participant_name=next_in_line.participant_name,
-        participant_email=next_in_line.participant_email,
-        status="confirmed",
-        qr_code=str(uuid.uuid4())[:12].upper(),
-    )
-    db.add(reg)
-    db.flush() # ensure reg.id is available
+    # Determine if event is paid
+    price = event.price
+    if price and str(price).replace('.', '', 1).isdigit() and float(price) > 0:
+        is_paid = True
+    else:
+        is_paid = False
 
-    # Update waitlist entry instead of deleting
-    next_in_line.status = "promoted"
-    next_in_line.registration_id = reg.id
-    db.flush()
+    if is_paid:
+        from datetime import datetime, timedelta
+        # Set payment offer
+        next_in_line.status = "payment_pending"
+        next_in_line.payment_offer_expires_at = datetime.utcnow() + timedelta(minutes=15)
+        db.flush()
 
-    # The caller manages the db.commit() for the transaction.
+        # We must trigger celery task in a way that respects the current transaction.
+        # It's better for the caller to commit, but if we dispatch now it might run before commit.
+        # But 15 minutes is plenty of time for the commit to finish.
+        try:
+            from app.tasks.event_tasks import expire_waitlist_offer_task
+            expire_waitlist_offer_task.apply_async(
+                args=[str(next_in_line.id)], 
+                countdown=15 * 60
+            )
+        except Exception:
+            pass
+        
+        # Notify user of payment offer
+        try:
+            # We assume a suitable notification for payment_offer exists, or use a generic one
+            from app.services.notification_triggers import notify_generic
+            notify_generic(db, user_id=None, email=next_in_line.participant_email, title="Spot Available!", body=f"A spot is now available for {event.title}. Complete payment within 15 minutes to secure your place.")
+        except Exception:
+            pass
+            
+    else:
+        # Auto-promote (Free flow)
+        reg = EventRegistration(
+            event_id=event_id,
+            participant_name=next_in_line.participant_name,
+            participant_email=next_in_line.participant_email,
+            status="confirmed",
+            qr_code=str(uuid.uuid4())[:12].upper(),
+        )
+        db.add(reg)
+        db.flush() # ensure reg.id is available
     
-    # Notify
-    try:
-        from app.services.notification_triggers import notify_registration_confirmation
-        notify_registration_confirmation(db, event, reg)
-    except Exception:
-        pass
+        # Update waitlist entry instead of deleting
+        next_in_line.status = "promoted"
+        next_in_line.registration_id = reg.id
+        db.flush()
+    
+        # The caller manages the db.commit() for the transaction.
+        
+        # Notify
+        try:
+            from app.services.notification_triggers import notify_registration_confirmation
+            notify_registration_confirmation(db, event, reg)
+        except Exception:
+            pass
 
 
 # ---- Event Auto-Complete ----

@@ -30,6 +30,7 @@ class EventCheckoutRequest(BaseModel):
     ticket_type_id: str = Field(..., description="Ticket type ID")
     quantity: int = Field(1, ge=1, description="Quantity")
     payment_provider: str | None = Field("marketplace", description="marketplace|merchant")
+    waitlist_id: UUID | None = Field(None, description="Provide if checking out from waitlist payment offer")
 
 
 class EventOrderResponse(BaseModel):
