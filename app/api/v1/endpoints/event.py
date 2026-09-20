@@ -441,6 +441,7 @@ def cancel_registration(event_id: UUID, reg_id: UUID, db: Session = Depends(get_
             from app.services.event_service import _try_promote_from_waitlist
             try:
                 _try_promote_from_waitlist(db, event_id, ev)
+                db.commit()
             except Exception:
                 pass
     except Exception:
