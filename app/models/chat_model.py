@@ -252,6 +252,11 @@ class UserPresence(Base):
         nullable=False,
     )
 
+    __table_args__ = (
+        # Supports GET /presence/online's WHERE status = 'online' AND updated_at >= cutoff.
+        Index("ix_user_presence_status_updated_at", "status", "updated_at"),
+    )
+
 
 class TypingIndicator(Base):
     __tablename__ = "typing_indicators"

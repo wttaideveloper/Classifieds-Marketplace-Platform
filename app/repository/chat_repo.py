@@ -70,15 +70,95 @@ def get_latest_messages_for_conversations(
     db: Session,
     conversation_ids: list[UUID],
 ) -> dict[UUID, Message]:
+    """Batched — was previously one get_latest_conversation_message() query per
+    conversation (N+1), the dominant cost behind /conversations(/provider) list
+    latency under load. One window-function query finds the latest message id
+    per conversation, one more fetches those rows."""
     if not conversation_ids:
         return {}
 
-    latest_by_conversation: dict[UUID, Message] = {}
-    for conversation_id in conversation_ids:
-        message = get_latest_conversation_message(db, conversation_id)
-        if message:
-            latest_by_conversation[conversation_id] = message
-    return latest_by_conversation
+    ranked = (
+        db.query(
+            Message.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=Message.conversation_id,
+                order_by=(Message.created_at.desc(), Message.id.desc()),
+            )
+            .label("rn"),
+        )
+        .filter(Message.conversation_id.in_(conversation_ids))
+        .subquery()
+    )
+    latest_ids = [row.id for row in db.query(ranked.c.id).filter(ranked.c.rn == 1).all()]
+    if not latest_ids:
+        return {}
+    messages = db.query(Message).filter(Message.id.in_(latest_ids)).all()
+    return {message.conversation_id: message for message in messages}
+
+
+def get_participants_for_conversations(
+    db: Session,
+    conversation_ids: list[UUID],
+    user_id: UUID,
+) -> dict[UUID, ConversationParticipant]:
+    """Batched get_participant() for a list endpoint — one query instead of one
+    per conversation in the page."""
+    if not conversation_ids:
+        return {}
+    rows = (
+        db.query(ConversationParticipant)
+        .filter(
+            ConversationParticipant.conversation_id.in_(conversation_ids),
+            ConversationParticipant.user_id == user_id,
+        )
+        .all()
+    )
+    return {row.conversation_id: row for row in rows}
+
+
+def get_unread_counts_for_conversations(
+    db: Session,
+    conversation_ids: list[UUID],
+    user_id: UUID,
+) -> dict[UUID, int]:
+    """Batched count_unread_messages() for a list endpoint — one grouped query
+    instead of one COUNT(*) per conversation in the page. Same semantics as
+    count_unread_messages: messages not sent by user_id, not deleted, and
+    (no last_read_at recorded for this participant) or newer than it."""
+    if not conversation_ids:
+        return {}
+    participant_last_read = (
+        db.query(
+            ConversationParticipant.conversation_id.label("conversation_id"),
+            ConversationParticipant.last_read_at.label("last_read_at"),
+        )
+        .filter(
+            ConversationParticipant.conversation_id.in_(conversation_ids),
+            ConversationParticipant.user_id == user_id,
+        )
+        .subquery()
+    )
+    rows = (
+        db.query(Message.conversation_id, func.count(Message.id))
+        .outerjoin(
+            participant_last_read,
+            participant_last_read.c.conversation_id == Message.conversation_id,
+        )
+        .filter(
+            Message.conversation_id.in_(conversation_ids),
+            Message.sender_id != user_id,
+            Message.is_deleted.is_(False),
+            or_(
+                participant_last_read.c.last_read_at.is_(None),
+                Message.created_at > participant_last_read.c.last_read_at,
+            ),
+        )
+        .group_by(Message.conversation_id)
+        .all()
+    )
+    counts = dict(rows)
+    return {conversation_id: counts.get(conversation_id, 0) for conversation_id in conversation_ids}
 
 
 def sync_conversation_last_message(db: Session, conversation_id: UUID) -> Conversation | None:
@@ -149,17 +229,32 @@ def get_provider_conversations(
     page: int = 1,
     page_size: int = 20,
 ):
-    query = (
-        db.query(Conversation)
-        .join(ConversationParticipant)
+    """assigned_provider_id is a plain column on Conversation, not backed by a
+    ConversationParticipant row — a conversation can legitimately have it set
+    with no matching participant (e.g. assigned before/without a participant
+    record ever being created). The previous INNER JOIN to
+    ConversationParticipant required a participant match to appear at all,
+    silently dropping such conversations from a provider's own list even
+    though assigned_provider_id matched exactly. It also risked returning
+    duplicate rows for a matched conversation with multiple participants,
+    since every joined participant row satisfied the join independently of
+    which OR-branch actually matched. An EXISTS-based provider-participant
+    check keeps the same "assigned OR is a provider participant" condition
+    without coupling it to (or duplicating on) unrelated participant rows.
+    """
+    provider_participant_exists = (
+        db.query(ConversationParticipant.id)
         .filter(
-            or_(
-                Conversation.assigned_provider_id == provider_id,
-                and_(
-                    ConversationParticipant.user_id == provider_id,
-                    ConversationParticipant.role == "provider",
-                ),
-            )
+            ConversationParticipant.conversation_id == Conversation.id,
+            ConversationParticipant.user_id == provider_id,
+            ConversationParticipant.role == "provider",
+        )
+        .exists()
+    )
+    query = db.query(Conversation).filter(
+        or_(
+            Conversation.assigned_provider_id == provider_id,
+            provider_participant_exists,
         )
     )
     query = apply_soft_delete_filter(query, Conversation, False)

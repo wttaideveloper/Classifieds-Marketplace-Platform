@@ -90,11 +90,20 @@ def _map_conversation_list_item(
     latest_messages: dict | None = None,
     last_message_read_by: dict | None = None,
     other_participant_user_id: UUID | None = None,
+    participants: dict | None = None,
+    unread_counts: dict | None = None,
 ) -> dict:
-    participant = chat_repo.get_participant(db, conversation.id, user_id)
-    unread = chat_repo.count_unread_messages(
-        db, conversation.id, user_id, participant.last_read_at if participant else None
-    )
+    # participants/unread_counts are batched per-page by the caller (see
+    # list_conversations_service etc.) to avoid a get_participant() +
+    # count_unread_messages() query per conversation. Falling back to the
+    # single-item lookups keeps this safe for any caller that doesn't batch.
+    if unread_counts is not None:
+        unread = unread_counts.get(conversation.id, 0)
+    else:
+        participant = (participants or {}).get(conversation.id) if participants is not None else chat_repo.get_participant(db, conversation.id, user_id)
+        unread = chat_repo.count_unread_messages(
+            db, conversation.id, user_id, participant.last_read_at if participant else None
+        )
     latest = (latest_messages or {}).get(conversation.id)
     if latest is None:
         latest = chat_repo.get_latest_conversation_message(db, conversation.id)
@@ -235,12 +244,13 @@ def list_conversations_service(
     items, total = chat_repo.get_user_conversations(
         db, user_id, status=status_filter, search=search, page=page, page_size=page_size
     )
-    latest_messages = chat_repo.get_latest_messages_for_conversations(
-        db, [item.id for item in items]
-    )
+    item_ids = [item.id for item in items]
+    latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
     last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
         db, [message.id for message in latest_messages.values()]
     )
+    participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
+    unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
@@ -250,6 +260,8 @@ def list_conversations_service(
                     user_id,
                     latest_messages=latest_messages,
                     last_message_read_by=last_message_read_by,
+                    participants=participants,
+                    unread_counts=unread_counts,
                 )
             )
             for item in items
@@ -270,15 +282,16 @@ def list_provider_conversations_service(
     items, total = chat_repo.get_provider_conversations(
         db, user_id, status=status_filter, page=page, page_size=page_size
     )
-    latest_messages = chat_repo.get_latest_messages_for_conversations(
-        db, [item.id for item in items]
-    )
+    item_ids = [item.id for item in items]
+    latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
     last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
         db, [message.id for message in latest_messages.values()]
     )
     other_participants = chat_repo.get_other_participant_ids_for_conversations(
-        db, [item.id for item in items], user_id
+        db, item_ids, user_id
     )
+    participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
+    unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
     return ProviderConversationPaginatedResponse(
         items=[
             ProviderConversationListItemResponse.model_validate(
@@ -289,6 +302,8 @@ def list_provider_conversations_service(
                     latest_messages=latest_messages,
                     last_message_read_by=last_message_read_by,
                     other_participant_user_id=other_participants.get(item.id),
+                    participants=participants,
+                    unread_counts=unread_counts,
                 )
             )
             for item in items
@@ -384,12 +399,13 @@ def search_conversations_service(
     items, total = chat_repo.search_conversations(
         db, user_id, search=search, provider_id=provider_id, page=page, page_size=page_size
     )
-    latest_messages = chat_repo.get_latest_messages_for_conversations(
-        db, [item.id for item in items]
-    )
+    item_ids = [item.id for item in items]
+    latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
     last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
         db, [message.id for message in latest_messages.values()]
     )
+    participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
+    unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
@@ -399,6 +415,8 @@ def search_conversations_service(
                     user_id,
                     latest_messages=latest_messages,
                     last_message_read_by=last_message_read_by,
+                    participants=participants,
+                    unread_counts=unread_counts,
                 )
             )
             for item in items
