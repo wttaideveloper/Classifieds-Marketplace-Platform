@@ -10,6 +10,7 @@ from app.services.catalog_enrichment import (
     build_delivery_text,
     enrich_enterprise_detail_fields,
     enrich_enterprise_list_fields,
+    enrich_enterprise_list_fields_batch,
     format_listing_type,
     get_catalog_reviews,
 )
@@ -147,6 +148,7 @@ def map_enterprise_list_item(
     *,
     user_lat: float | None = None,
     user_lng: float | None = None,
+    enrichment: dict | None = None,
 ) -> dict:
     base = _enterprise_base_fields(enterprise)
     base.update(
@@ -159,7 +161,11 @@ def map_enterprise_list_item(
             "joined_date": _joined_date(enterprise.created_at),
         }
     )
-    if db is not None:
+    if enrichment is not None:
+        # Pre-batched by the caller (see get_all_enterprises_service) — avoids
+        # the 2-3 per-item queries enrich_enterprise_list_fields would issue.
+        base.update(enrichment)
+    elif db is not None:
         base.update(
             enrich_enterprise_list_fields(
                 db,

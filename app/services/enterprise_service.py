@@ -18,6 +18,7 @@ from app.schemas.enterprise_schema import (
     EnterprisePaginatedResponse,
     EnterpriseResponse,
 )
+from app.services.catalog_enrichment import enrich_enterprise_list_fields_batch
 from app.services.response_mappers import (
     map_enterprise_detail,
     map_enterprise_list_item,
@@ -57,6 +58,9 @@ def get_all_enterprises_service(
         page=page,
         page_size=page_size,
     )
+    enrichment_by_id = enrich_enterprise_list_fields_batch(
+        db, [enterprise.id for enterprise in items], user_lat=latitude, user_lng=longitude
+    )
     return EnterprisePaginatedResponse(
         items=[
             EnterpriseListItemResponse.model_validate(
@@ -65,6 +69,7 @@ def get_all_enterprises_service(
                     db,
                     user_lat=latitude,
                     user_lng=longitude,
+                    enrichment=enrichment_by_id.get(enterprise.id),
                 )
             )
             for enterprise in items

@@ -79,17 +79,44 @@ def nearest_location_distance_miles(
     return min(distances) if distances else None
 
 
-def aggregate_business_hours(db: Session, enterprise_id: UUID) -> list[dict]:
-    services = (
-        db.query(Service)
+def nearest_location_distance_miles_batch(
+    db: Session,
+    enterprise_ids: list[UUID],
+    user_lat: float | None,
+    user_lng: float | None,
+) -> dict[UUID, float | None]:
+    """Batched nearest_location_distance_miles for a list endpoint — one query
+    instead of one per enterprise on the page."""
+    if not enterprise_ids or user_lat is None or user_lng is None:
+        return {enterprise_id: None for enterprise_id in enterprise_ids}
+
+    locations = (
+        db.query(EnterpriseLocation)
         .filter(
-            Service.enterprise_id == enterprise_id,
-            Service.is_deleted.is_(False),
-            Service.status == "active",
+            EnterpriseLocation.enterprise_id.in_(enterprise_ids),
+            EnterpriseLocation.is_deleted.is_(False),
+            EnterpriseLocation.latitude.isnot(None),
+            EnterpriseLocation.longitude.isnot(None),
         )
         .all()
     )
+    by_enterprise: dict[UUID, list[EnterpriseLocation]] = {}
+    for location in locations:
+        by_enterprise.setdefault(location.enterprise_id, []).append(location)
 
+    result: dict[UUID, float | None] = {}
+    for enterprise_id in enterprise_ids:
+        rows = by_enterprise.get(enterprise_id) or []
+        distances = [
+            haversine_miles(user_lat, user_lng, loc.latitude, loc.longitude)
+            for loc in rows
+            if loc.latitude is not None and loc.longitude is not None
+        ]
+        result[enterprise_id] = min(distances) if distances else None
+    return result
+
+
+def _compute_business_hours(services: list[Service]) -> list[dict]:
     day_windows: dict[str, dict[str, str | None]] = {
         day: {"open": None, "close": None, "is_closed": True}
         for day in _DAY_ORDER
@@ -126,6 +153,42 @@ def aggregate_business_hours(db: Session, enterprise_id: UUID) -> list[dict]:
         }
         for day in _DAY_ORDER
     ]
+
+
+def aggregate_business_hours(db: Session, enterprise_id: UUID) -> list[dict]:
+    services = (
+        db.query(Service)
+        .filter(
+            Service.enterprise_id == enterprise_id,
+            Service.is_deleted.is_(False),
+            Service.status == "active",
+        )
+        .all()
+    )
+    return _compute_business_hours(services)
+
+
+def aggregate_business_hours_batch(db: Session, enterprise_ids: list[UUID]) -> dict[UUID, list[dict]]:
+    """Batched aggregate_business_hours for a list endpoint — one query instead
+    of one per enterprise on the page."""
+    if not enterprise_ids:
+        return {}
+    services = (
+        db.query(Service)
+        .filter(
+            Service.enterprise_id.in_(enterprise_ids),
+            Service.is_deleted.is_(False),
+            Service.status == "active",
+        )
+        .all()
+    )
+    by_enterprise: dict[UUID, list[Service]] = {}
+    for service in services:
+        by_enterprise.setdefault(service.enterprise_id, []).append(service)
+    return {
+        enterprise_id: _compute_business_hours(by_enterprise.get(enterprise_id) or [])
+        for enterprise_id in enterprise_ids
+    }
 
 
 def is_open_now(business_hours: list[dict]) -> bool:
@@ -187,18 +250,7 @@ def _parse_review_payload(raw_value: str) -> list[dict]:
     return []
 
 
-def get_catalog_reviews(db: Session, entity_type: str, entity_id: UUID) -> tuple[list[dict], int]:
-    rows = (
-        db.query(DynamicAttribute)
-        .filter(
-            DynamicAttribute.entity_type == entity_type,
-            DynamicAttribute.entity_id == entity_id,
-            DynamicAttribute.attribute_name.in_(("reviews", "review")),
-            DynamicAttribute.is_deleted.is_(False),
-        )
-        .all()
-    )
-
+def _normalize_review_rows(rows: list, entity_id: UUID) -> tuple[list[dict], int]:
     reviews: list[dict] = []
     for row in rows:
         reviews.extend(_parse_review_payload(row.attribute_value))
@@ -221,6 +273,46 @@ def get_catalog_reviews(db: Session, entity_type: str, entity_id: UUID) -> tuple
     return normalized, len(normalized)
 
 
+def get_catalog_reviews(db: Session, entity_type: str, entity_id: UUID) -> tuple[list[dict], int]:
+    rows = (
+        db.query(DynamicAttribute)
+        .filter(
+            DynamicAttribute.entity_type == entity_type,
+            DynamicAttribute.entity_id == entity_id,
+            DynamicAttribute.attribute_name.in_(("reviews", "review")),
+            DynamicAttribute.is_deleted.is_(False),
+        )
+        .all()
+    )
+    return _normalize_review_rows(rows, entity_id)
+
+
+def get_catalog_reviews_batch(
+    db: Session, entity_type: str, entity_ids: list[UUID]
+) -> dict[UUID, tuple[list[dict], int]]:
+    """Batched get_catalog_reviews for a list endpoint — one query instead of
+    one per entity on the page."""
+    if not entity_ids:
+        return {}
+    rows = (
+        db.query(DynamicAttribute)
+        .filter(
+            DynamicAttribute.entity_type == entity_type,
+            DynamicAttribute.entity_id.in_(entity_ids),
+            DynamicAttribute.attribute_name.in_(("reviews", "review")),
+            DynamicAttribute.is_deleted.is_(False),
+        )
+        .all()
+    )
+    by_entity: dict[UUID, list] = {}
+    for row in rows:
+        by_entity.setdefault(row.entity_id, []).append(row)
+    return {
+        entity_id: _normalize_review_rows(by_entity.get(entity_id) or [], entity_id)
+        for entity_id in entity_ids
+    }
+
+
 def enrich_enterprise_list_fields(
     db: Session,
     enterprise_id: UUID,
@@ -235,6 +327,33 @@ def enrich_enterprise_list_fields(
         "distance_miles": nearest_location_distance_miles(db, enterprise_id, user_lat, user_lng),
         "is_online": is_open_now(business_hours),
     }
+
+
+def enrich_enterprise_list_fields_batch(
+    db: Session,
+    enterprise_ids: list[UUID],
+    *,
+    user_lat: float | None = None,
+    user_lng: float | None = None,
+) -> dict[UUID, dict]:
+    """Batched enrich_enterprise_list_fields for GET /enterprises/ — 3 queries
+    total instead of 2-3 per enterprise on the page (business hours, reviews,
+    distance), which previously made a 20-item page issue 40-60+ queries."""
+    if not enterprise_ids:
+        return {}
+    hours_by_id = aggregate_business_hours_batch(db, enterprise_ids)
+    reviews_by_id = get_catalog_reviews_batch(db, "enterprise", enterprise_ids)
+    distance_by_id = nearest_location_distance_miles_batch(db, enterprise_ids, user_lat, user_lng)
+    result: dict[UUID, dict] = {}
+    for enterprise_id in enterprise_ids:
+        business_hours = hours_by_id.get(enterprise_id) or []
+        _, reviews_count = reviews_by_id.get(enterprise_id, ([], 0))
+        result[enterprise_id] = {
+            "reviews_count": reviews_count,
+            "distance_miles": distance_by_id.get(enterprise_id),
+            "is_online": is_open_now(business_hours),
+        }
+    return result
 
 
 def enrich_enterprise_detail_fields(
