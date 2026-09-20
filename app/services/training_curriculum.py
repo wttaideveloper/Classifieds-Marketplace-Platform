@@ -19,6 +19,64 @@ def real_content_url(value):
     return value
 
 
+def _decode_inline_data_uri(value: str):
+    """Parses a `data:<mime>;base64,<payload>` string into (raw_bytes, mime).
+    Returns None if value isn't a well-formed base64 data URI."""
+    import base64
+    import re
+
+    match = re.match(r"^data:([^;,]*)(;charset=[^;,]+)?(;base64)?,(.*)$", value, re.DOTALL)
+    if not match or not match.group(3):
+        return None
+    mime = (match.group(1) or "application/octet-stream").strip()
+    try:
+        raw = base64.b64decode(match.group(4), validate=False)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    return raw, mime
+
+
+def _persist_inline_media(value):
+    """Authoring-time guard against inline `data:` URIs in file/media fields.
+
+    A client that sends the raw file as a base64 data URI instead of
+    uploading it first (via POST /trainings/upload) and referencing the
+    returned URL would otherwise have those bytes stored verbatim in
+    Training.sections — and every future GET /content call would echo them
+    back as-is (this codebase has no read-time media transformation of any
+    kind; the response mapper is a pure pass-through). Decoded and written to
+    disk through the existing training upload storage exactly once, here, at
+    save time — never in a read path — so /content only ever needs to return
+    the short upload URL, not touch file bytes.
+    """
+    if not value or not isinstance(value, str) or not value.startswith("data:"):
+        return value
+    decoded = _decode_inline_data_uri(value)
+    if decoded is None:
+        raise HTTPException(400, "Invalid inline file data")
+    raw, mime = decoded
+
+    import mimetypes
+    ext = (mimetypes.guess_extension(mime) or "").lstrip(".")
+    if not ext:
+        raise HTTPException(400, f"Cannot determine a file extension for '{mime}'")
+
+    from app.services.training_upload_service import save_training_upload
+    saved = save_training_upload(raw, f"upload.{ext}", mime, None)
+    return saved["url"]
+
+
+def _persist_inline_media_in_documents(documents):
+    if not documents:
+        return documents
+    return [
+        {**doc, "url": _persist_inline_media(doc.get("url"))} if isinstance(doc, dict) and doc.get("url") else doc
+        for doc in documents
+    ]
+
+
 def normalize_assessment(raw, *, strict=False):
     value = deepcopy(raw)
     value.setdefault("id", str(uuid4()))
@@ -109,6 +167,12 @@ def normalize_curriculum(sections, assessments=None, assignments=None, *, strict
             item["meeting_link"] = item.get("meeting_link") or item.get("join_url")
             item["join_url"] = item["meeting_link"]
             url = item.get("content_url") or item.get("video_url")
+            if strict:
+                url = _persist_inline_media(url)
+                if item.get("videos"):
+                    item["videos"] = [_persist_inline_media(v) for v in item["videos"]]
+                if item.get("documents"):
+                    item["documents"] = _persist_inline_media_in_documents(item["documents"])
             if strict and url and not real_content_url(url):
                 raise HTTPException(400, "Use a video/content URL, not a YouTube search URL")
             item["content_url"] = real_content_url(url)
@@ -174,6 +238,8 @@ def normalize_authoring(payload, existing=None):
                 if str(item.get("id")) in attendance_by_id:
                     item["attendance"] = attendance_by_id[str(item["id"])]
         data.update(curriculum)
+    if data.get("documents"):
+        data["documents"] = _persist_inline_media_in_documents(data["documents"])
     mode = data.get("delivery_mode", getattr(existing, "delivery_mode", None))
     if mode in ("physical", "hybrid"):
         data["check_in"] = True
