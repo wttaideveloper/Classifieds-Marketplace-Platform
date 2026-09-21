@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta
 from uuid import UUID
 
@@ -18,6 +19,8 @@ from app.models.chat_model import (
     TypingIndicator,
     UserPresence,
 )
+
+logger = logging.getLogger(__name__)
 from app.repository.query_utils import (
     apply_ilike_search,
     apply_pagination,
@@ -265,7 +268,25 @@ def get_provider_conversations(
         query = query.filter(Conversation.status != "archived")
 
     query = query.order_by(Conversation.updated_at.desc())
-    return paginate_query(query, page, page_size)
+    items, total = paginate_query(query, page, page_size)
+
+    # TEMPORARY DIAGNOSTIC — remove once the /conversations/provider empty-result
+    # investigation is closed. No tokens/PII: just the resolved identity, the
+    # filter values actually applied, a non-credential DB target, and the count.
+    try:
+        from app.core.config import settings
+        bind = db.get_bind()
+        db_target = f"{bind.url.host}/{bind.url.database}" if bind is not None and bind.url else "unknown"
+    except Exception:
+        db_target = "unknown"
+    logger.info(
+        "[DIAG list_provider_conversations] env=%s db_target=%s resolved_provider_id=%s "
+        "status_filter=%s excludes_archived=%s is_deleted=False matched_count=%s",
+        getattr(settings, "ENVIRONMENT", "unknown"), db_target, provider_id,
+        status, status is None, total,
+    )
+
+    return items, total
 
 
 def find_existing_conversation(
