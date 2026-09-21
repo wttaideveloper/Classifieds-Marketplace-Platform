@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 from app.core.catalog_access import scope_catalog_query
 
@@ -9,6 +10,12 @@ from app.repository.query_utils import (
     apply_soft_delete_filter,
     paginate_query,
 )
+
+logger = logging.getLogger(__name__)
+
+# TEMPORARY DIAGNOSTIC — remove once the GET /services empty-result
+# investigation for this one service is closed.
+_DIAG_SERVICE_ID = UUID("71fc4238-2b94-4826-99ad-fa3e79933a77")
 
 
 def create_service(db: Session, service_data):
@@ -65,7 +72,37 @@ def get_services(
         )
 
     query = query.order_by(Service.created_at.desc())
-    return paginate_query(query, page, page_size)
+    items, total = paginate_query(query, page, page_size)
+
+    # TEMPORARY DIAGNOSTIC — remove once the GET /services empty-result
+    # investigation is closed. No tokens/PII: resolved access triple and
+    # per-condition booleans for one known service row, evaluated independently.
+    if access is not None and access.role == "provider":
+        target = (
+            db.query(Service)
+            .options(joinedload(Service.enterprise))
+            .filter(Service.id == _DIAG_SERVICE_ID)
+            .first()
+        )
+        if target is None:
+            logger.info("[DIAG get_services] target_service_id=%s not found in this database", _DIAG_SERVICE_ID)
+        else:
+            ent_tenant_id = target.enterprise.tenant_id if target.enterprise else None
+            cond1 = ent_tenant_id == access.tenant_id
+            cond2 = target.tenant_id is None or target.tenant_id == access.tenant_id
+            cond3 = target.provider_user_id == access.provider_user_id
+            logger.info(
+                "[DIAG get_services] access.role=%s access.tenant_id=%s access.provider_user_id=%s | "
+                "service.enterprise_id=%s service.enterprise.tenant_id=%s service.tenant_id=%s service.provider_user_id=%s | "
+                "cond1_enterprise_tenant_matches=%s cond2_service_tenant_ok=%s cond3_provider_matches=%s all_pass=%s | "
+                "total_matched=%s",
+                access.role, access.tenant_id, access.provider_user_id,
+                target.enterprise_id, ent_tenant_id, target.tenant_id, target.provider_user_id,
+                cond1, cond2, cond3, cond1 and cond2 and cond3,
+                total,
+            )
+
+    return items, total
 
 
 def get_service_by_id(db: Session, service_id: UUID, include_deleted: bool = False, *, access=None):

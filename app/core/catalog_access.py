@@ -1,4 +1,5 @@
 """Shared Product/Service access policy, derived only from authenticated claims."""
+import logging
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -12,6 +13,8 @@ from app.core.dependencies import bearer_scheme, get_current_user, get_web_sessi
 from app.db.database import get_db
 from app.models.enterprise_model import Enterprise
 from app.services.super_admin_identity import profile_status_is_active
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,12 @@ def get_catalog_access(request: Request, db: Session = Depends(get_db), user=Dep
         provider_id = UUID(str(user.get("id"))) if role == "provider" else None
     except (ValueError, TypeError):
         raise HTTPException(403, "Authenticated tenant/user identity required")
+    # TEMPORARY DIAGNOSTIC — remove once the GET /services empty-result
+    # investigation is closed. No tokens: just the resolved access triple.
+    logger.info(
+        "[DIAG get_catalog_access] role=%s tenant_id=%s provider_user_id=%s",
+        role, tenant_id, provider_id,
+    )
     return CatalogAccess(role, tenant_id, provider_id)
 
 
