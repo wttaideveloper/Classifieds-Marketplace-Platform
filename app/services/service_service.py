@@ -1,4 +1,5 @@
 from uuid import UUID
+from app.core.catalog_access import validate_catalog_write
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -58,7 +59,8 @@ def _validate_references(db: Session, enterprise_id: UUID, location_id: UUID | N
             )
 
 
-def create_service_service(db: Session, service_data):
+def create_service_service(db: Session, service_data, *, access=None):
+    validate_catalog_write(db, service_data.enterprise_id, service_data.tenant_id, access)
     _validate_references(db, service_data.enterprise_id, service_data.location_id)
     return ServiceResponse.model_validate(
         map_service_write(create_service(db, service_data))
@@ -76,6 +78,7 @@ def get_services_service(
     status_filter: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    access=None,
 ) -> ServicePaginatedResponse:
     items, total = get_services(
         db,
@@ -87,6 +90,7 @@ def get_services_service(
         status=status_filter,
         page=page,
         page_size=page_size,
+        access=access,
     )
     return ServicePaginatedResponse(
         items=[
@@ -97,8 +101,8 @@ def get_services_service(
     )
 
 
-def get_service_service(db: Session, service_id: UUID) -> ServiceDetailResponse:
-    service = get_service_by_id(db, service_id)
+def get_service_service(db: Session, service_id: UUID, *, access=None) -> ServiceDetailResponse:
+    service = get_service_by_id(db, service_id, access=access)
     if not service:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -108,14 +112,15 @@ def get_service_service(db: Session, service_id: UUID) -> ServiceDetailResponse:
     return ServiceDetailResponse.model_validate(map_service_detail(service, db))
 
 
-def update_service_service(db: Session, service_id: UUID, update_data):
-    service = get_service_by_id(db, service_id, include_deleted=True)
+def update_service_service(db: Session, service_id: UUID, update_data, *, access=None):
+    service = get_service_by_id(db, service_id, include_deleted=True, access=access)
     if not service or service.is_deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Service not found",
         )
 
+    validate_catalog_write(db, service.enterprise_id, update_data.tenant_id, access)
     location_id = update_data.location_id if update_data.location_id is not None else service.location_id
     _validate_references(db, service.enterprise_id, location_id)
 
@@ -124,12 +129,13 @@ def update_service_service(db: Session, service_id: UUID, update_data):
     )
 
 
-def delete_service_service(db: Session, service_id: UUID):
-    service = get_service_by_id(db, service_id)
+def delete_service_service(db: Session, service_id: UUID, *, access=None):
+    service = get_service_by_id(db, service_id, access=access)
     if not service:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Service not found",
         )
 
+    validate_catalog_write(db, service.enterprise_id, None, access)
     return delete_service(db, service)

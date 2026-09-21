@@ -1545,13 +1545,28 @@ def get_training_reports_service(db: Session, tid: UUID, report_type: str = "enr
     return {"training_id": str(tid), "type": report_type, "data": data}
 
 
-def get_training_summary_service(db: Session, enterprise_id: UUID | None = None):
-    from sqlalchemy import func
-    from app.models.training_model import Training, TrainingEnrolment
+def get_training_summary_service(db: Session, current_user: dict | None = None, *, access_token: str | None = None):
+    from datetime import datetime
+    from sqlalchemy import func, or_
+    from app.core.auth_context import resolve_auth_tenant_id_with_db
+    from app.models.training_model import Training, TrainingEnrolment, TrainingReview
 
     q = db.query(Training).filter(Training.is_deleted.is_(False))
-    if enterprise_id:
-        q = q.filter(Training.enterprise_id == enterprise_id)
+    role = (current_user or {}).get("role")
+    if role != "super_admin":
+        tenant_id = resolve_auth_tenant_id_with_db(db, current_user, access_token=access_token)
+        if not tenant_id:
+            raise HTTPException(status_code=403, detail="Not authorized for this tenant")
+        try:
+            tenant_id = UUID(str(tenant_id))
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Not authorized for this tenant")
+        # Legacy trainings may predate the denormalized Training.tenant_id column —
+        # fall back to the owning Enterprise's tenant_id, same as require_training_owner.
+        q = q.outerjoin(Enterprise, Training.enterprise_id == Enterprise.id).filter(
+            or_(Training.tenant_id == tenant_id, Enterprise.tenant_id == tenant_id)
+        )
+
     status_rows = q.with_entities(Training.status, func.count(Training.id)).group_by(Training.status).all()
     by_status = {r[0]: r[1] for r in status_rows}
     cat_rows = q.with_entities(Training.category, func.count(Training.id)).group_by(Training.category).all()
@@ -1559,16 +1574,41 @@ def get_training_summary_service(db: Session, enterprise_id: UUID | None = None)
     del_rows = q.with_entities(Training.delivery_mode, func.count(Training.id)).group_by(Training.delivery_mode).all()
     by_delivery = {r[0]: r[1] for r in del_rows if r[0]}
     total = sum(by_status.values())
-    tids = [t.id for t in q.all()]
-    total_enrol = 0
+
+    now = datetime.utcnow()
+    upcoming = q.filter(Training.start_date.isnot(None), Training.start_date >= now).count()
+    past = q.filter(or_(Training.status == "completed", (Training.end_date.isnot(None)) & (Training.end_date < now))).count()
+
+    tids = [t.id for t in q.with_entities(Training.id).all()]
+    total_registrations = 0
+    total_attended = 0
+    average_rating = None
     if tids:
-        total_enrol = db.query(func.count(TrainingEnrolment.id)).filter(TrainingEnrolment.training_id.in_(tids)).scalar() or 0
+        total_registrations = (
+            db.query(func.count(TrainingEnrolment.id))
+            .filter(TrainingEnrolment.training_id.in_(tids), TrainingEnrolment.status.in_(ENROLMENT_CAPACITY_STATUSES))
+            .scalar() or 0
+        )
+        total_attended = (
+            db.query(func.count(TrainingEnrolment.id))
+            .filter(TrainingEnrolment.training_id.in_(tids), TrainingEnrolment.status == "attended")
+            .scalar() or 0
+        )
+        ratings = [int(r) for (r,) in db.query(TrainingReview.rating).filter(TrainingReview.training_id.in_(tids)).all() if r and str(r).strip().lstrip("-").isdigit()]
+        if ratings:
+            average_rating = round(sum(ratings) / len(ratings), 2)
+
     return {
         "total_trainings": total,
+        "upcoming_trainings": upcoming,
+        "past_trainings": past,
+        "total_registrations": total_registrations,
+        "total_enrolments": total_registrations,
+        "total_attended": total_attended,
+        "average_rating": average_rating,
         "by_status": by_status,
         "by_category": by_category,
         "by_delivery_mode": by_delivery,
-        "total_enrolments": total_enrol,
     }
 
 

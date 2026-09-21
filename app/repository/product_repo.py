@@ -1,4 +1,5 @@
 from uuid import UUID
+from app.core.catalog_access import scope_catalog_query
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -31,11 +32,13 @@ def get_products(
     page: int = 1,
     page_size: int = 20,
     include_deleted: bool = False,
+    access=None,
 ):
     query = (
         db.query(Product)
         .options(joinedload(Product.enterprise))
     )
+    query = scope_catalog_query(query, Product, access)
     query = apply_soft_delete_filter(query, Product, include_deleted)
 
     if tenant_id:
@@ -64,12 +67,13 @@ def get_products(
     return paginate_query(query, page, page_size)
 
 
-def get_product_by_id(db: Session, product_id: UUID, include_deleted: bool = False):
+def get_product_by_id(db: Session, product_id: UUID, include_deleted: bool = False, *, access=None):
     query = (
         db.query(Product)
         .options(joinedload(Product.enterprise))
         .filter(Product.id == product_id)
     )
+    query = scope_catalog_query(query, Product, access)
     if not include_deleted:
         query = apply_soft_delete_filter(query, Product, include_deleted)
     return query.first()

@@ -108,11 +108,26 @@ def test_summary_service_groups_by_status_and_category(monkeypatch):
         q = MagicMock()
         q.filter.return_value.with_entities.return_value.group_by.return_value.all.return_value = [("published", 3)]
         q.filter.return_value.all.return_value = []
+        q.filter.return_value.count.return_value = 0
+        q.filter.return_value.with_entities.return_value.all.return_value = []
         q.filter.return_value.scalar.return_value = 7
         return q
 
     db.query.side_effect = query_side_effect
 
-    result = training_service.get_training_summary_service(db)
+    # Scope is now mandatory — Super Admin is the one role that bypasses tenant
+    # resolution entirely, so it's the simplest way to exercise the aggregation
+    # logic without also mocking resolve_auth_tenant_id_with_db.
+    result = training_service.get_training_summary_service(db, {"role": "super_admin"})
     assert result["total_trainings"] == 3
     assert result["by_status"] == {"published": 3}
+
+
+def test_summary_service_requires_resolvable_tenant_for_non_super_admin(monkeypatch):
+    from fastapi import HTTPException
+    import pytest
+
+    db = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        training_service.get_training_summary_service(db, {"role": "provider"})
+    assert exc.value.status_code == 403

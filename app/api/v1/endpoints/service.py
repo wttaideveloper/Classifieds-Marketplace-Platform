@@ -1,4 +1,5 @@
 from uuid import UUID
+from app.core.catalog_access import get_catalog_access, require_catalog_writer
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
@@ -32,15 +33,17 @@ router = APIRouter(tags=["Services"])
 def create_service(
     service: ServiceCreate,
     db: Session = Depends(get_db),
+    access=Depends(require_catalog_writer),
 ):
-    return create_service_service(db, service)
+    return create_service_service(db, service, access=access)
 
 
 @router.get(
     "/",
     response_model=ServicePaginatedResponse,
     status_code=status.HTTP_200_OK,
-    summary="Get All Services",
+    summary="Get Services (assigned listings for Providers)",
+    description="Authenticated internal users/Providers are automatically restricted to their assigned listings in their tenant. No provider_user_id query parameter is needed.",
 )
 def get_services(
     search: str | None = Query(None, description="Search across service fields."),
@@ -52,6 +55,7 @@ def get_services(
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
+    access=Depends(get_catalog_access),
 ):
     return get_services_service(
         db,
@@ -63,6 +67,7 @@ def get_services(
         status_filter=status_filter,
         page=page,
         page_size=page_size,
+        access=access,
     )
 
 
@@ -75,8 +80,9 @@ def get_services(
 def get_service(
     service_id: UUID = Path(..., description="Unique identifier of the service"),
     db: Session = Depends(get_db),
+    access=Depends(get_catalog_access),
 ):
-    return get_service_service(db, service_id)
+    return get_service_service(db, service_id, access=access)
 
 
 @router.put(
@@ -89,8 +95,9 @@ def update_service(
     service: ServiceUpdate,
     service_id: UUID = Path(..., description="Unique identifier of the service"),
     db: Session = Depends(get_db),
+    access=Depends(require_catalog_writer),
 ):
-    return update_service_service(db, service_id, service)
+    return update_service_service(db, service_id, service, access=access)
 
 
 @router.delete(
@@ -101,6 +108,7 @@ def update_service(
 def delete_service(
     service_id: UUID = Path(..., description="Unique identifier of the service"),
     db: Session = Depends(get_db),
+    access=Depends(require_catalog_writer),
 ):
-    delete_service_service(db, service_id)
+    delete_service_service(db, service_id, access=access)
     return {"message": "Service marked inactive successfully"}

@@ -1,4 +1,5 @@
 from uuid import UUID
+from app.core.catalog_access import get_catalog_access, require_catalog_writer
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
@@ -32,15 +33,17 @@ router = APIRouter(tags=["Products"])
 def create_product(
     product: ProductCreate,
     db: Session = Depends(get_db),
+    access=Depends(require_catalog_writer),
 ):
-    return create_product_service(db, product)
+    return create_product_service(db, product, access=access)
 
 
 @router.get(
     "/",
     response_model=ProductPaginatedResponse,
     status_code=status.HTTP_200_OK,
-    summary="Get All Products",
+    summary="Get Products (assigned listings for Providers)",
+    description="Authenticated internal users/Providers are automatically restricted to their assigned listings in their tenant. No provider_user_id query parameter is needed.",
 )
 def get_products(
     search: str | None = Query(None, description="Search across product fields."),
@@ -52,6 +55,7 @@ def get_products(
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
+    access=Depends(get_catalog_access),
 ):
     return get_products_service(
         db,
@@ -63,6 +67,7 @@ def get_products(
         status_filter=status_filter,
         page=page,
         page_size=page_size,
+        access=access,
     )
 
 
@@ -75,8 +80,9 @@ def get_products(
 def get_product(
     product_id: UUID = Path(..., description="Unique identifier of the product"),
     db: Session = Depends(get_db),
+    access=Depends(get_catalog_access),
 ):
-    return get_product_service(db, product_id)
+    return get_product_service(db, product_id, access=access)
 
 
 @router.put(
@@ -89,8 +95,9 @@ def update_product(
     product: ProductUpdate,
     product_id: UUID = Path(..., description="Unique identifier of the product"),
     db: Session = Depends(get_db),
+    access=Depends(require_catalog_writer),
 ):
-    return update_product_service(db, product_id, product)
+    return update_product_service(db, product_id, product, access=access)
 
 
 @router.delete(
@@ -101,6 +108,7 @@ def update_product(
 def delete_product(
     product_id: UUID = Path(..., description="Unique identifier of the product"),
     db: Session = Depends(get_db),
+    access=Depends(require_catalog_writer),
 ):
-    delete_product_service(db, product_id)
+    delete_product_service(db, product_id, access=access)
     return {"message": "Product marked inactive successfully"}

@@ -1,4 +1,5 @@
 from uuid import UUID
+from app.core.catalog_access import scope_catalog_query
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -31,11 +32,13 @@ def get_services(
     page: int = 1,
     page_size: int = 20,
     include_deleted: bool = False,
+    access=None,
 ):
     query = (
         db.query(Service)
         .options(joinedload(Service.enterprise))
     )
+    query = scope_catalog_query(query, Service, access)
     query = apply_soft_delete_filter(query, Service, include_deleted)
 
     if tenant_id:
@@ -65,12 +68,13 @@ def get_services(
     return paginate_query(query, page, page_size)
 
 
-def get_service_by_id(db: Session, service_id: UUID, include_deleted: bool = False):
+def get_service_by_id(db: Session, service_id: UUID, include_deleted: bool = False, *, access=None):
     query = (
         db.query(Service)
         .options(joinedload(Service.enterprise))
         .filter(Service.id == service_id)
     )
+    query = scope_catalog_query(query, Service, access)
     if not include_deleted:
         query = apply_soft_delete_filter(query, Service, include_deleted)
     return query.first()

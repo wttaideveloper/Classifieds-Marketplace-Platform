@@ -15,7 +15,7 @@ from app.api.v1.endpoints import training as routes
 from app.core.dependencies import get_current_user
 from app.db.database import Base, get_db
 from app.models.enterprise_model import Enterprise
-from app.models.training_model import Training, TrainingEnrolment, TrainingLiveSession, TrainingOrder, TrainingWaitlist
+from app.models.training_model import Training, TrainingEnrolment, TrainingLiveSession, TrainingOrder, TrainingReview, TrainingWaitlist
 from app.repository.training_repo import require_training_owner
 from app.services import training_service as service
 
@@ -24,7 +24,7 @@ from app.services import training_service as service
 def audit(monkeypatch):
     monkeypatch.setattr(SQLiteTypeCompiler, "visit_JSONB", lambda *a, **kw: "JSON", raising=False)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Training.__table__, TrainingEnrolment.__table__, TrainingOrder.__table__, TrainingWaitlist.__table__, TrainingLiveSession.__table__])
+    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Training.__table__, TrainingEnrolment.__table__, TrainingOrder.__table__, TrainingWaitlist.__table__, TrainingLiveSession.__table__, TrainingReview.__table__])
     sessions = sessionmaker(bind=engine)
     tenant, other = uuid4(), uuid4()
     tid, foreign = uuid4(), uuid4()
@@ -466,3 +466,64 @@ def test_enroll_response_includes_next_scheduled_session(audit):
     assert next_session is not None
     assert next_session['meeting_link'] == 'https://zoom.example/abc'
     assert next_session['schedule'] is not None
+
+
+# --- GET /reports/summary: tenant-scoped, new fields ---
+
+def test_reports_summary_scoped_to_caller_tenant_not_client_input(audit):
+    """The reported bug: enterprise_id used to be an arbitrary client query
+    param. It must now be resolved server-side from the caller's own tenant,
+    with no way to see another tenant's portfolio — whether by omission or
+    by explicitly passing a foreign enterprise_id (now not even accepted)."""
+    sessions, client, user, tid, foreign = audit
+    with sessions() as db:
+        db.add(TrainingEnrolment(training_id=tid, participant_name='A', participant_email='a@example.com', status='enrolled'))
+        db.add(TrainingEnrolment(training_id=foreign, participant_name='B', participant_email='b@example.com', status='enrolled'))
+        db.commit()
+
+    response = client.get('/api/v1/trainings/reports/summary')
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['total_trainings'] == 1  # only tid, not foreign
+    assert body['total_registrations'] == 1
+
+    # Explicitly trying to request the foreign tenant's data must not work.
+    spoofed = client.get(f'/api/v1/trainings/reports/summary?enterprise_id={foreign}')
+    assert spoofed.status_code == 200
+    assert spoofed.json()['total_trainings'] == 1  # unchanged — the param is not accepted
+
+
+def test_reports_summary_super_admin_sees_all_tenants(audit):
+    sessions, client, user, tid, foreign = audit
+    user['role'] = 'super_admin'
+    response = client.get('/api/v1/trainings/reports/summary')
+    assert response.status_code == 200, response.text
+    assert response.json()['total_trainings'] == 2
+
+
+def test_reports_summary_learner_forbidden(audit):
+    sessions, client, user, tid, _ = audit
+    user['role'] = 'participant'
+    assert client.get('/api/v1/trainings/reports/summary').status_code == 403
+
+
+def test_reports_summary_new_fields(audit):
+    from datetime import datetime, timedelta
+    sessions, client, user, tid, _ = audit
+    with sessions() as db:
+        row = db.get(Training, tid)
+        row.start_date = datetime.utcnow() + timedelta(days=5)
+        db.add(TrainingEnrolment(training_id=tid, participant_name='A', participant_email='a@example.com', status='attended'))
+        db.add(TrainingEnrolment(training_id=tid, participant_name='B', participant_email='b@example.com', status='cancelled'))
+        db.commit()
+
+    response = client.get('/api/v1/trainings/reports/summary')
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['upcoming_trainings'] == 1
+    assert body['past_trainings'] == 0
+    assert body['total_registrations'] == 1  # attended counts, cancelled does not
+    assert body['total_attended'] == 1
+    assert body['average_rating'] is None  # no reviews yet
+    for key in ('by_status', 'by_category', 'by_delivery_mode'):
+        assert key in body

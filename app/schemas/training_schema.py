@@ -553,6 +553,31 @@ class TrainingPaginatedResponse(PaginatedResponse[TrainingListItemResponse]):
     pass
 
 
+class TrainingSummaryResponse(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {
+        "total_trainings": 17,
+        "upcoming_trainings": 5,
+        "past_trainings": 12,
+        "total_registrations": 20,
+        "total_attended": 3,
+        "average_rating": None,
+        "by_status": {"published": 10, "draft": 7},
+        "by_category": {"wellness": 8, "fitness": 9},
+        "by_delivery_mode": {"self_paced": 7, "hybrid": 4, "physical": 2, "online": 2},
+    }})
+
+    total_trainings: int = Field(..., description="Total non-deleted trainings owned by the caller's tenant")
+    upcoming_trainings: int = Field(..., description="Trainings with start_date >= now")
+    past_trainings: int = Field(..., description="Trainings with status=completed, or end_date < now")
+    total_registrations: int = Field(..., description="Enrolments in enrolled|pending_approval|active|attended status, across these trainings")
+    total_enrolments: int = Field(..., description="Alias of total_registrations, kept for existing consumers")
+    total_attended: int = Field(..., description="Enrolments with status=attended")
+    average_rating: float | None = Field(None, description="Average TrainingReview.rating across these trainings; null when there are no reviews")
+    by_status: dict[str, int]
+    by_category: dict[str, int]
+    by_delivery_mode: dict[str, int]
+
+
 class TrainingAdminActionRequest(BaseModel):
     reason: str = Field(..., min_length=1, description="Admin reason/message for reject or request-changes")
 
