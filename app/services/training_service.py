@@ -861,6 +861,87 @@ def _check_access_expiry(db: Session, tid: UUID, participant_email: str | None):
             return enrol.access_expires_at
     return None
 
+def _resume_lesson_from_progress(prog) -> tuple[str | None, str | None]:
+    """Most recently accessed, not-yet-completed lesson — used to resume
+    video/lesson playback where the participant left off. None/None when
+    nothing has been started yet (fresh enrolment, or everything completed)."""
+    if not prog or not prog.lesson_positions:
+        return None, None
+    completed = set(prog.lessons_completed or [])
+    candidates = [
+        (lesson_id, data) for lesson_id, data in prog.lesson_positions.items()
+        if lesson_id not in completed and data.get("last_accessed_at")
+    ]
+    if not candidates:
+        return None, None
+    lesson_id, data = max(candidates, key=lambda kv: kv[1]["last_accessed_at"])
+    return data.get("section_id"), lesson_id
+
+
+def save_lesson_progress_service(db: Session, tid: UUID, lesson_id: str, payload, participant_email: str) -> dict:
+    from datetime import datetime
+    from app.models.training_model import TrainingProgress
+
+    t = _get_training_or_404(db, tid)
+    enrol = _get_enrolment(db, tid, participant_email)
+    if not _is_active_enrolment(enrol):
+        raise HTTPException(status_code=403, detail="Active enrolment required")
+
+    target_section_id = None
+    found = False
+    for section in t.sections or []:
+        for lesson in section.get("lessons", []):
+            if lesson.get("id") == lesson_id:
+                target_section_id = section.get("id")
+                found = True
+                break
+        if found:
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    section_id = payload.section_id or target_section_id
+    position_seconds = payload.position_seconds
+    duration_seconds = payload.duration_seconds
+    progress_percent = round(position_seconds / duration_seconds * 100, 2) if duration_seconds else 0.0
+
+    prog = db.query(TrainingProgress).filter(
+        TrainingProgress.training_id == tid,
+        TrainingProgress.participant_email == participant_email,
+    ).first()
+    if not prog:
+        prog = TrainingProgress(
+            training_id=tid, participant_email=participant_email,
+            sections_completed=[], lessons_completed=[], overall_percent="0", lesson_positions={},
+        )
+        db.add(prog); db.commit(); db.refresh(prog)
+
+    now = datetime.utcnow()
+    now_iso = now.isoformat()
+    positions = dict(prog.lesson_positions or {})
+    positions[lesson_id] = {
+        "section_id": section_id,
+        "position_seconds": position_seconds,
+        "duration_seconds": duration_seconds,
+        "last_accessed_at": now_iso,
+    }
+    prog.lesson_positions = positions
+    prog.last_accessed_at = now
+    db.commit(); db.refresh(prog)
+
+    is_completed = lesson_id in (prog.lessons_completed or [])
+    return {
+        "training_id": str(tid),
+        "section_id": section_id,
+        "lesson_id": lesson_id,
+        "position_seconds": position_seconds,
+        "duration_seconds": duration_seconds,
+        "progress_percent": progress_percent,
+        "is_completed": is_completed,
+        "last_accessed_at": now_iso,
+    }
+
+
 def get_training_progress_service(db: Session, tid: UUID, participant_email: str | None = None):
     t = _get_training_or_404(db, tid)
     sections = t.sections or []
@@ -869,6 +950,7 @@ def get_training_progress_service(db: Session, tid: UUID, participant_email: str
     completed_sections = []
     completed_lessons = []
     certificate_url = None
+    prog = None
     if participant_email:
         from app.models.training_model import TrainingProgress
         prog = db.query(TrainingProgress).filter(TrainingProgress.training_id == tid, TrainingProgress.participant_email == participant_email).first()
@@ -887,7 +969,38 @@ def get_training_progress_service(db: Session, tid: UUID, participant_email: str
     # access expiry enforcement
     expires_at = _check_access_expiry(db, tid, participant_email)
     expired = expires_at is not None
-    return {"overall_percent": overall, "sections_done": sections_done, "total_sections": total_sections, "lessons_done": lessons_done, "total_lessons": total_lessons, "certificate_url": certificate_url, "sections_detail": sections_detail, "lessons_detail": lessons_detail, "expired": expired, "status": "expired" if expired else "active", "access_expires_at": expires_at.isoformat() if expires_at else None}
+    resume_section_id, resume_lesson_id = _resume_lesson_from_progress(prog)
+    positions = (prog.lesson_positions or {}) if prog else {}
+    lessons_positions = [
+        {
+            "lesson_id": lesson_id,
+            "section_id": data.get("section_id"),
+            "position_seconds": data.get("position_seconds"),
+            "duration_seconds": data.get("duration_seconds"),
+            "is_completed": lesson_id in completed_lessons,
+            "last_accessed_at": data.get("last_accessed_at"),
+        }
+        for lesson_id, data in positions.items()
+    ]
+    return {
+        "training_id": str(tid),
+        "overall_percent": overall,
+        "progress_percent": overall,
+        "sections_done": sections_done,
+        "total_sections": total_sections,
+        "lessons_done": lessons_done,
+        "completed_lessons": lessons_done,
+        "total_lessons": total_lessons,
+        "certificate_url": certificate_url,
+        "sections_detail": sections_detail,
+        "lessons_detail": lessons_detail,
+        "resume_section_id": resume_section_id,
+        "resume_lesson_id": resume_lesson_id,
+        "lessons": lessons_positions,
+        "expired": expired,
+        "status": "expired" if expired else "active",
+        "access_expires_at": expires_at.isoformat() if expires_at else None,
+    }
 
 def create_live_session_service(db: Session, tid: UUID, data):
     from app.models.training_model import TrainingLiveSession
@@ -2328,6 +2441,9 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
 
 
     completed_lesson_ids: set = set()
+    position_by_lesson_id: dict = {}
+    resume_section_id = None
+    resume_lesson_id = None
     if email:
         prog = db.query(TrainingProgress).filter(
             TrainingProgress.training_id == tid,
@@ -2335,6 +2451,8 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
         ).first()
         if prog:
             completed_lesson_ids = set(prog.lessons_completed or [])
+            position_by_lesson_id = prog.lesson_positions or {}
+            resume_section_id, resume_lesson_id = _resume_lesson_from_progress(prog)
 
     attended_at_by_lesson_id: dict[str, str | None] = {}
     if email:
@@ -2419,6 +2537,10 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
                 is_completed = str(lesson.get("id")) in completed_lesson_ids
                 attended_at = attended_at_by_lesson_id.get(str(lesson.get("id"))) if ltype == "live" else None
                 lesson_payload = _base_lesson_payload(lesson, locked, is_completed, None, attended_at=attended_at)
+            position = position_by_lesson_id.get(str(lesson.get("id")))
+            lesson_payload["progress_seconds"] = position.get("position_seconds") if position else None
+            lesson_payload["duration_seconds"] = position.get("duration_seconds") if position else None
+            lesson_payload["last_accessed_at"] = position.get("last_accessed_at") if position else None
             lessons_out.append(lesson_payload)
 
         section_exam_passed = all(
@@ -2465,6 +2587,8 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
         "progress_percent": progress_percent,
         "completed_lessons": completed_lessons_count,
         "total_lessons": total_lessons,
+        "resume_section_id": resume_section_id,
+        "resume_lesson_id": resume_lesson_id,
         "qr_code": enrol.qr_code if enrol else None,
         "sections": out_sections,
     }

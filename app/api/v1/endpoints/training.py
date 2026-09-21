@@ -6,7 +6,7 @@ from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
 from app.schemas.training_schema import TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonCreate, TrainingAssignmentResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingSummaryResponse, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
+from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonCreate, LessonProgressSaveRequest, LessonProgressSaveResponse, TrainingAssignmentResponse, TrainingProgressResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingSummaryResponse, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 from app.services.training_service import (
     add_training_wishlist_service,
@@ -750,6 +750,20 @@ def complete_lesson(training_id: UUID, payload: TrainingCompleteLessonRequest, d
     if not email: from fastapi import HTTPException; raise HTTPException(400, "participant_email required")
     return complete_lesson_service(db, training_id, payload.lesson_id, email)
 
+@router.post(
+    "/{training_id}/lessons/{lesson_id}/progress",
+    response_model=LessonProgressSaveResponse,
+    summary="Save lesson/video playback position — for resume-from-where-you-stopped",
+    description="Not the same as marking a lesson complete (POST .../progress/complete-lesson) — this only records the current scrub position. is_completed in the response reflects existing completion state and is not changed by this call.",
+)
+def save_lesson_progress(training_id: UUID, lesson_id: str, payload: LessonProgressSaveRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.training_service import save_lesson_progress_service
+    email = current_user.get("email") if current_user else None
+    if not email:
+        from fastapi import HTTPException; raise HTTPException(400, "participant_email required")
+    data = save_lesson_progress_service(db, training_id, lesson_id, payload, email)
+    return {"message": "Progress saved", "data": data}
+
 @router.get("/{training_id}/live-sessions/{session_id}/attendance", summary="List live session attendance")
 def get_live_attendance(training_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     return get_live_attendance_service(db, training_id, session_id)
@@ -808,7 +822,7 @@ def download_certificate_pdf(training_id: UUID, participant_email: str | None = 
         headers={"Content-Disposition": f"attachment; filename=training_{training_id}_certificate.pdf"},
     )
 
-@router.get("/{training_id}/progress")
+@router.get("/{training_id}/progress", response_model=TrainingProgressResponse, summary="Training progress — includes resume_section_id/resume_lesson_id and per-lesson playback position")
 def progress(training_id: UUID, participant_email: str | None = Query(None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = participant_email or (current_user.get("email") if current_user else None)
     if participant_email and current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:

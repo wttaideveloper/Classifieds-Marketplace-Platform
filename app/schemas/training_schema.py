@@ -874,18 +874,62 @@ class TrainingProgressLesson(BaseModel):
     is_completed: bool
 
 
+class TrainingProgressLessonPosition(BaseModel):
+    """Playback/resume position for one lesson — present only for lessons the
+    participant has actually started (called POST .../progress at least once)."""
+    lesson_id: str
+    section_id: str | None = None
+    position_seconds: int
+    duration_seconds: int | None = None
+    is_completed: bool
+    last_accessed_at: str | None = None
+
+
 class TrainingProgressResponse(BaseModel):
+    training_id: UUID | None = Field(None, description="Present alongside the legacy fields below for resume-tracking consumers")
     overall_percent: float
+    progress_percent: float | None = Field(None, description="Alias of overall_percent")
     sections_done: int
     total_sections: int
     lessons_done: int
+    completed_lessons: int | None = Field(None, description="Alias of lessons_done")
     total_lessons: int
     certificate_url: str | None = None
     sections_detail: list[TrainingProgressSection]
     lessons_detail: list[TrainingProgressLesson]
+    resume_section_id: str | None = Field(None, description="section_id of the most recently accessed, not-yet-completed lesson")
+    resume_lesson_id: str | None = Field(None, description="lesson_id of the most recently accessed, not-yet-completed lesson — null if nothing has been started yet")
+    lessons: list[TrainingProgressLessonPosition] = Field(default_factory=list, description="Per-lesson playback position — only lessons with at least one saved position appear here")
     expired: bool = False
     status: str = Field("active", description="active|expired")
     access_expires_at: str | None = None
+
+
+class LessonProgressSaveRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {
+        "position_seconds": 1800,
+        "duration_seconds": 3600,
+        "section_id": "86e1ad8d-54b9-4187-8469-315d3f7091d1",
+    }})
+    position_seconds: int = Field(..., ge=0, description="Current playback position, in seconds")
+    duration_seconds: int | None = Field(None, ge=0, description="Total length of the video/lesson, in seconds — used to compute progress_percent")
+    section_id: str | None = Field(None, description="Optional — the backend locates the lesson across every section automatically if omitted")
+
+
+class LessonProgressData(BaseModel):
+    training_id: UUID
+    section_id: str | None = None
+    lesson_id: str
+    position_seconds: int
+    duration_seconds: int | None = None
+    progress_percent: float
+    is_completed: bool
+    last_accessed_at: str
+
+
+class LessonProgressSaveResponse(BaseModel):
+    message: str = "Progress saved"
+    data: LessonProgressData
 
 
 class TrainingCompleteLessonRequest(BaseModel):
