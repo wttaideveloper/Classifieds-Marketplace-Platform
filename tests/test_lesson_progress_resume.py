@@ -117,7 +117,11 @@ def test_resume_prefers_most_recently_accessed_incomplete_lesson(progress_db):
     assert len(result["lessons"]) == 2
 
 
-def test_completed_lesson_is_excluded_from_resume(progress_db):
+def test_completed_lesson_advances_resume_to_next_incomplete_lesson(progress_db):
+    """Reproduces the mobile-reported bug: saving progress that completes a
+    lesson (position_seconds == duration_seconds, is_completed becomes true)
+    must not leave resume null when another lesson is still incomplete — it
+    must advance to that next lesson in curriculum order."""
     sessions, tid, section_id, lesson_id, other_lesson_id, email = progress_db
     with sessions() as db:
         service.save_lesson_progress_service(db, tid, lesson_id, LessonProgressSaveRequest(position_seconds=100, duration_seconds=1000, section_id=section_id), email)
@@ -125,9 +129,32 @@ def test_completed_lesson_is_excluded_from_resume(progress_db):
         service._apply_lesson_completion(db, tid, lesson_id, email)
     with sessions() as db:
         result = service.get_training_progress_service(db, tid, participant_email=email)
-    # the only lesson with a saved position is now complete — no resume target
-    assert result["resume_lesson_id"] is None
+    assert result["resume_lesson_id"] == other_lesson_id
+    assert result["resume_section_id"] == section_id
     assert result["lessons"][0]["is_completed"] is True
+
+
+def test_resume_is_null_once_every_lesson_is_completed(progress_db):
+    sessions, tid, section_id, lesson_id, other_lesson_id, email = progress_db
+    with sessions() as db:
+        service.save_lesson_progress_service(db, tid, lesson_id, LessonProgressSaveRequest(position_seconds=100, duration_seconds=1000, section_id=section_id), email)
+        service._apply_lesson_completion(db, tid, lesson_id, email)
+        service._apply_lesson_completion(db, tid, other_lesson_id, email)
+    with sessions() as db:
+        result = service.get_training_progress_service(db, tid, participant_email=email)
+    assert result["resume_lesson_id"] is None
+    assert result["resume_section_id"] is None
+
+
+def test_content_endpoint_also_advances_resume_past_a_completed_lesson(progress_db):
+    sessions, tid, section_id, lesson_id, other_lesson_id, email = progress_db
+    with sessions() as db:
+        service.save_lesson_progress_service(db, tid, lesson_id, LessonProgressSaveRequest(position_seconds=3, duration_seconds=3, section_id=section_id), email)
+        service._apply_lesson_completion(db, tid, lesson_id, email)
+    with sessions() as db:
+        content = service.get_secure_training_content_service(db, tid, {"email": email, "role": "participant"})
+    assert content["resume_lesson_id"] == other_lesson_id
+    assert content["resume_section_id"] == section_id
 
 
 def test_content_endpoint_includes_resume_fields_and_lesson_position(progress_db):

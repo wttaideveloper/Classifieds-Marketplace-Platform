@@ -861,21 +861,37 @@ def _check_access_expiry(db: Session, tid: UUID, participant_email: str | None):
             return enrol.access_expires_at
     return None
 
-def _resume_lesson_from_progress(prog) -> tuple[str | None, str | None]:
-    """Most recently accessed, not-yet-completed lesson — used to resume
-    video/lesson playback where the participant left off. None/None when
-    nothing has been started yet (fresh enrolment, or everything completed)."""
-    if not prog or not prog.lesson_positions:
-        return None, None
-    completed = set(prog.lessons_completed or [])
-    candidates = [
-        (lesson_id, data) for lesson_id, data in prog.lesson_positions.items()
-        if lesson_id not in completed and data.get("last_accessed_at")
+def _flat_lesson_order(training) -> list[tuple[str, str]]:
+    """[(section_id, lesson_id), ...] in curriculum order."""
+    return [
+        (section.get("id"), lesson.get("id"))
+        for section in training.sections or []
+        for lesson in section.get("lessons", [])
+        if lesson.get("id")
     ]
-    if not candidates:
-        return None, None
-    lesson_id, data = max(candidates, key=lambda kv: kv[1]["last_accessed_at"])
-    return data.get("section_id"), lesson_id
+
+
+def _resume_lesson_from_progress(training, prog) -> tuple[str | None, str | None]:
+    """'Continue where you left off' target:
+    - If the most-recently-accessed lesson isn't complete yet, resume exactly
+      there (mid-video case).
+    - If it IS complete (or nothing has been touched yet), advance to the
+      first incomplete lesson in curriculum order.
+    - None/None once nothing incomplete remains."""
+    completed = set((prog.lessons_completed or [])) if prog else set()
+    positions = (prog.lesson_positions or {}) if prog else {}
+
+    if positions:
+        candidates = [(lesson_id, data) for lesson_id, data in positions.items() if data.get("last_accessed_at")]
+        if candidates:
+            last_touched, data = max(candidates, key=lambda kv: kv[1]["last_accessed_at"])
+            if last_touched not in completed:
+                return data.get("section_id"), last_touched
+
+    for section_id, lesson_id in _flat_lesson_order(training):
+        if lesson_id not in completed:
+            return section_id, lesson_id
+    return None, None
 
 
 def save_lesson_progress_service(db: Session, tid: UUID, lesson_id: str, payload, participant_email: str) -> dict:
@@ -969,7 +985,7 @@ def get_training_progress_service(db: Session, tid: UUID, participant_email: str
     # access expiry enforcement
     expires_at = _check_access_expiry(db, tid, participant_email)
     expired = expires_at is not None
-    resume_section_id, resume_lesson_id = _resume_lesson_from_progress(prog)
+    resume_section_id, resume_lesson_id = _resume_lesson_from_progress(t, prog)
     positions = (prog.lesson_positions or {}) if prog else {}
     lessons_positions = [
         {
@@ -2452,7 +2468,7 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
         if prog:
             completed_lesson_ids = set(prog.lessons_completed or [])
             position_by_lesson_id = prog.lesson_positions or {}
-            resume_section_id, resume_lesson_id = _resume_lesson_from_progress(prog)
+            resume_section_id, resume_lesson_id = _resume_lesson_from_progress(training, prog)
 
     attended_at_by_lesson_id: dict[str, str | None] = {}
     if email:
