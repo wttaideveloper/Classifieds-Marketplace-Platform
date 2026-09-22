@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Path, Query, status
@@ -27,6 +28,7 @@ from app.services.chat_service import (
 )
 
 router = APIRouter(tags=["Conversations"])
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -118,9 +120,30 @@ def list_provider_conversations(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return list_provider_conversations_service(
+    response = list_provider_conversations_service(
         db, current_user, status_filter=status_filter, page=page, page_size=page_size
     )
+    # TEMPORARY DIAGNOSTIC — remove once the GET /conversations/provider
+    # empty-result investigation is closed. No tokens/headers/PII: resolved
+    # identity, requested pagination, and the final returned count only.
+    # Never allowed to break the real response (wrapped defensively since
+    # `response` may be a Pydantic model or, in mocked tests, a plain dict).
+    try:
+        pagination = getattr(response, "pagination", None)
+        if pagination is None and isinstance(response, dict):
+            pagination = response.get("pagination") or {}
+        total = getattr(pagination, "total", None)
+        if total is None and isinstance(pagination, dict):
+            total = pagination.get("total")
+        logger.info(
+            "[DIAG GET /conversations/provider] auth_user_id=%s resolved_provider_id=%s "
+            "page=%s page_size=%s returned_count=%s",
+            current_user.get("id"), current_user.get("id"),
+            page, page_size, total,
+        )
+    except Exception:
+        logger.debug("[DIAG GET /conversations/provider] diagnostic logging failed", exc_info=True)
+    return response
 
 
 @router.get(

@@ -1,5 +1,6 @@
+import logging
 from uuid import UUID
-from app.core.catalog_access import get_catalog_access, require_catalog_writer
+from app.core.catalog_access import get_catalog_access, get_optional_catalog_user, require_catalog_writer
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from app.services.service_service import (
 )
 
 router = APIRouter(tags=["Services"])
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -56,8 +58,9 @@ def get_services(
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
     access=Depends(get_catalog_access),
+    user=Depends(get_optional_catalog_user),
 ):
-    return get_services_service(
+    response = get_services_service(
         db,
         search=search,
         tenant_id=tenant_id,
@@ -69,6 +72,29 @@ def get_services(
         page_size=page_size,
         access=access,
     )
+    # TEMPORARY DIAGNOSTIC — remove once the GET /services empty-result
+    # investigation is closed. No tokens/headers/PII: resolved identity and
+    # access fields, requested pagination, and the final returned count only.
+    # Never allowed to break the real response (wrapped defensively since
+    # `response` may be a Pydantic model or, in mocked tests, a plain dict).
+    try:
+        pagination = getattr(response, "pagination", None)
+        if pagination is None and isinstance(response, dict):
+            pagination = response.get("pagination") or {}
+        total = getattr(pagination, "total", None)
+        if total is None and isinstance(pagination, dict):
+            total = pagination.get("total")
+        logger.info(
+            "[DIAG GET /services] auth_user_id=%s auth_role=%s auth_tenant_role=%s | "
+            "access.role=%s access.tenant_id=%s access.provider_user_id=%s | "
+            "page=%s page_size=%s returned_count=%s",
+            (user or {}).get("id"), (user or {}).get("role"), (user or {}).get("tenant_role"),
+            access.role, access.tenant_id, access.provider_user_id,
+            page, page_size, total,
+        )
+    except Exception:
+        logger.debug("[DIAG GET /services] diagnostic logging failed", exc_info=True)
+    return response
 
 
 @router.get(
