@@ -17,6 +17,19 @@ from app.services.super_admin_identity import profile_status_is_active
 logger = logging.getLogger(__name__)
 
 
+def _safe_db_target(db: Session) -> str:
+    """Host/dbname only — never credentials. Used solely to confirm two
+    requests hit the same database instance during the empty-result
+    investigation."""
+    try:
+        from app.core.config import settings
+        bind = db.get_bind()
+        target = f"{bind.url.host}/{bind.url.database}" if bind is not None and bind.url else "unknown"
+        return f"env={getattr(settings, 'ENVIRONMENT', 'unknown')} db={target}"
+    except Exception:
+        return "unknown"
+
+
 @dataclass(frozen=True)
 class CatalogAccess:
     role: str
@@ -59,10 +72,11 @@ def get_catalog_access(request: Request, db: Session = Depends(get_db), user=Dep
     except (ValueError, TypeError):
         raise HTTPException(403, "Authenticated tenant/user identity required")
     # TEMPORARY DIAGNOSTIC — remove once the GET /services empty-result
-    # investigation is closed. No tokens: just the resolved access triple.
+    # investigation is closed. No tokens/headers/PII: path, resolved ids,
+    # resolved role, and a host/dbname-only db identifier.
     logger.info(
-        "[DIAG get_catalog_access] role=%s tenant_id=%s provider_user_id=%s",
-        role, tenant_id, provider_id,
+        "[DIAG get_catalog_access] path=%s user_id=%s role=%s tenant_id=%s provider_user_id=%s %s",
+        request.url.path, user.get("id"), role, tenant_id, provider_id, _safe_db_target(db),
     )
     return CatalogAccess(role, tenant_id, provider_id)
 

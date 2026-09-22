@@ -285,6 +285,27 @@ def get_provider_conversations(
         getattr(settings, "ENVIRONMENT", "unknown"), db_target, provider_id,
         status, status is None, total,
     )
+    _DIAG_CONVERSATION_ID = UUID("31a1340b-02d6-44f2-9682-67faffa90699")
+    target = db.query(Conversation).filter(Conversation.id == _DIAG_CONVERSATION_ID).first()
+    if target is None:
+        logger.info("[DIAG list_provider_conversations] target_conversation_id=%s not found in this database (db=%s)", _DIAG_CONVERSATION_ID, db_target)
+    else:
+        has_provider_participant = (
+            db.query(ConversationParticipant.id)
+            .filter(
+                ConversationParticipant.conversation_id == target.id,
+                ConversationParticipant.user_id == provider_id,
+                ConversationParticipant.role == "provider",
+            )
+            .first()
+            is not None
+        )
+        logger.info(
+            "[DIAG list_provider_conversations] target_conversation_id=%s status=%s is_deleted=%s "
+            "assigned_provider_id=%s assigned_matches_resolved_id=%s has_provider_participant_row=%s",
+            target.id, target.status, target.is_deleted,
+            target.assigned_provider_id, target.assigned_provider_id == provider_id, has_provider_participant,
+        )
 
     return items, total
 

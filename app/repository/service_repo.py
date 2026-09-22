@@ -91,12 +91,17 @@ def get_services(
             cond1 = ent_tenant_id == access.tenant_id
             cond2 = target.tenant_id is None or target.tenant_id == access.tenant_id
             cond3 = target.provider_user_id == access.provider_user_id
+            try:
+                bind = db.get_bind()
+                db_target = f"{bind.url.host}/{bind.url.database}" if bind is not None and bind.url else "unknown"
+            except Exception:
+                db_target = "unknown"
             logger.info(
-                "[DIAG get_services] access.role=%s access.tenant_id=%s access.provider_user_id=%s | "
+                "[DIAG get_services] db=%s access.role=%s access.tenant_id=%s access.provider_user_id=%s | "
                 "service.enterprise_id=%s service.enterprise.tenant_id=%s service.tenant_id=%s service.provider_user_id=%s | "
                 "cond1_enterprise_tenant_matches=%s cond2_service_tenant_ok=%s cond3_provider_matches=%s all_pass=%s | "
                 "total_matched=%s",
-                access.role, access.tenant_id, access.provider_user_id,
+                db_target, access.role, access.tenant_id, access.provider_user_id,
                 target.enterprise_id, ent_tenant_id, target.tenant_id, target.provider_user_id,
                 cond1, cond2, cond3, cond1 and cond2 and cond3,
                 total,
