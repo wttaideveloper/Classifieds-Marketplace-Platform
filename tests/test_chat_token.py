@@ -32,6 +32,7 @@ def _web_session_token() -> str:
     return jwt.encode(
         {
             "id": "550e8400-e29b-41d4-a716-446655440000",
+            "sub": "550e8400-e29b-41d4-a716-446655440000",
             "role": "provider",
             "tenant_id": "550e8400-e29b-41d4-a716-446655440001",
         },

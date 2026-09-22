@@ -20,6 +20,23 @@ def test_payload_to_user_maps_invigorate_tenant_roles():
     assert user["tenant_role"] == "tenant_admin"
 
 
+def test_payload_to_user_prefers_sub_over_legacy_id_claim():
+    """The `id` claim is the legacy PostgreSQL/Invigorate application user id;
+    `sub` is the canonical Keycloak user id. When a token carries both
+    (rather than `id` being absent), `sub` must win — this is the Auth
+    team's confirmed identity contract."""
+    user = payload_to_user(
+        {
+            "id": "11111111-1111-1111-1111-111111111111",  # PostgreSQL/application user id
+            "sub": "22222222-2222-2222-2222-222222222222",  # Keycloak user id
+            "role": "provider",
+            "email": "provider@example.com",
+        }
+    )
+    assert user["id"] == "22222222-2222-2222-2222-222222222222"
+    assert user["id"] != "11111111-1111-1111-1111-111111111111"
+
+
 def test_payload_to_user_maps_external_user_to_customer():
     user = payload_to_user(
         {

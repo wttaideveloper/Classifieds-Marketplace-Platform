@@ -19,7 +19,7 @@ client = TestClient(app)
 
 def test_http_only_web_session_cookie_authenticates_rest_request():
     token = jwt.encode(
-        {"id": "550e8400-e29b-41d4-a716-446655440000", "role": "provider"},
+        {"id": "550e8400-e29b-41d4-a716-446655440000", "sub": "550e8400-e29b-41d4-a716-446655440000", "role": "provider"},
         settings.SECRET_KEY,
         algorithm=settings.ALGORITHM,
     )
@@ -37,7 +37,7 @@ def test_fallback_session_cookie_authenticates_when_primary_cookie_absent():
     name (configured via WEB_SESSION_COOKIE_FALLBACK_NAMES) must still
     authenticate the request instead of 401ing."""
     token = jwt.encode(
-        {"id": "550e8400-e29b-41d4-a716-446655440001", "role": "admin"},
+        {"id": "550e8400-e29b-41d4-a716-446655440001", "sub": "550e8400-e29b-41d4-a716-446655440001", "role": "admin"},
         settings.SECRET_KEY,
         algorithm=settings.ALGORITHM,
     )

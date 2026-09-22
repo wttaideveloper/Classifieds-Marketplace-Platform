@@ -30,7 +30,7 @@ def test_serialize_uuid_and_datetime():
 
 def test_authenticate_token_valid():
     token = jwt.encode(
-        {"id": "550e8400-e29b-41d4-a716-446655440000", "role": "customer"},
+        {"id": "550e8400-e29b-41d4-a716-446655440000", "sub": "550e8400-e29b-41d4-a716-446655440000", "role": "customer"},
         settings.SECRET_KEY,
         algorithm=settings.ALGORITHM,
     )

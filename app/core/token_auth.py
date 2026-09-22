@@ -224,7 +224,10 @@ def _map_keycloak_role(payload: dict) -> str | None:
 
 
 def payload_to_user(payload: dict) -> dict:
-    user_id = payload.get("id") or payload.get("sub")
+    # Canonical identity is the Keycloak `sub` claim (Auth team contract) —
+    # never fall back to a legacy `id` claim (the PostgreSQL/Invigorate
+    # application user id), even when both are present on the token.
+    user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 

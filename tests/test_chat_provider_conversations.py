@@ -118,13 +118,17 @@ def test_provider_a_cannot_see_provider_b_conversations(db):
 
 # --- 3: JWT identity resolves to the correct provider identity ---
 
-def test_jwt_id_claim_resolves_to_the_provider_identity_used_by_the_query():
-    user_id = "31a64f29-f2a9-42ee-814d-61af33b25e4b"
-    user = payload_to_user({"id": user_id, "role": "provider", "email": "provider@example.com"})
-    assert user["id"] == user_id
+def test_jwt_sub_claim_resolves_to_the_provider_identity_used_by_the_query():
+    """`sub` (Keycloak user id) drives the provider identity used to query
+    conversations — a legacy `id` claim (PostgreSQL/Invigorate application
+    user id), even if present on the same token, must be ignored."""
+    sub_id = "31a64f29-f2a9-42ee-814d-61af33b25e4b"
+    legacy_id = "9a5b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b"
+    user = payload_to_user({"id": legacy_id, "sub": sub_id, "role": "provider", "email": "provider@example.com"})
+    assert user["id"] == sub_id
     assert chat_repo.get_provider_conversations.__module__  # sanity: repo importable
     resolved = UUID(str(user["id"]))
-    assert resolved == UUID(user_id)
+    assert resolved == UUID(sub_id)
 
 
 def test_jwt_sub_claim_used_when_id_claim_absent():
