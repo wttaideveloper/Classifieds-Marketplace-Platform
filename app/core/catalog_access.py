@@ -49,6 +49,15 @@ def get_catalog_access(request: Request, db: Session = Depends(get_db), user=Dep
         return CatalogAccess("public")
     if not profile_status_is_active(user):
         raise HTTPException(403, "Inactive user")
+    # TEMPORARY DIAGNOSTIC — capture the raw values exactly as they arrived
+    # on the `user` dict (i.e. whatever survived token_auth.payload_to_user),
+    # before any remapping below, so we can see whether e.g. a camelCase
+    # tenantRole/userRole claim actually made it into user["tenant_role"] /
+    # user["role"] at all.
+    _diag_raw_user_id = user.get("id")
+    _diag_raw_role = user.get("role")
+    _diag_raw_tenant_role = user.get("tenant_role")
+    _diag_raw_user_role = user.get("user_role")
     role = str(user.get("role") or "").lower()
     tenant_role = str(user.get("tenant_role") or "").lower()
     if role == "super_admin":
@@ -72,11 +81,15 @@ def get_catalog_access(request: Request, db: Session = Depends(get_db), user=Dep
     except (ValueError, TypeError):
         raise HTTPException(403, "Authenticated tenant/user identity required")
     # TEMPORARY DIAGNOSTIC — remove once the GET /services empty-result
-    # investigation is closed. No tokens/headers/PII: path, resolved ids,
-    # resolved role, and a host/dbname-only db identifier.
+    # investigation is closed. No tokens/headers/PII: path, raw claim values
+    # as received on the `user` dict, resolved CatalogAccess fields, and a
+    # host/dbname-only db identifier.
     logger.info(
-        "[DIAG get_catalog_access] path=%s user_id=%s role=%s tenant_id=%s provider_user_id=%s %s",
-        request.url.path, user.get("id"), role, tenant_id, provider_id, _safe_db_target(db),
+        "[DIAG get_catalog_access] path=%s | raw: user_id=%s role=%s tenant_role=%s user_role=%s | "
+        "resolved: CatalogAccess.role=%s CatalogAccess.tenant_id=%s CatalogAccess.provider_user_id=%s | %s",
+        request.url.path,
+        _diag_raw_user_id, _diag_raw_role, _diag_raw_tenant_role, _diag_raw_user_role,
+        role, tenant_id, provider_id, _safe_db_target(db),
     )
     return CatalogAccess(role, tenant_id, provider_id)
 

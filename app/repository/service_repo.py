@@ -2,8 +2,10 @@ import logging
 from uuid import UUID
 from app.core.catalog_access import scope_catalog_query
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.enterprise_model import Enterprise
 from app.models.service_model import Service
 from app.repository.query_utils import (
     apply_ilike_search,
@@ -12,10 +14,6 @@ from app.repository.query_utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-# TEMPORARY DIAGNOSTIC — remove once the GET /services empty-result
-# investigation for this one service is closed.
-_DIAG_SERVICE_ID = UUID("71fc4238-2b94-4826-99ad-fa3e79933a77")
 
 
 def create_service(db: Session, service_data):
@@ -75,37 +73,45 @@ def get_services(
     items, total = paginate_query(query, page, page_size)
 
     # TEMPORARY DIAGNOSTIC — remove once the GET /services empty-result
-    # investigation is closed. No tokens/PII: resolved access triple and
-    # per-condition booleans for one known service row, evaluated independently.
+    # investigation is closed. No tokens/PII/row dumps: aggregate COUNTs run
+    # as SEPARATE read-only queries (the real `query` above is untouched),
+    # incrementally applying the same conditions scope_catalog_query uses, so
+    # we can see exactly which condition zeroes out the result for THIS
+    # request's actual resolved access values. Generic — no hardcoded ids.
     if access is not None and access.role == "provider":
-        target = (
-            db.query(Service)
-            .options(joinedload(Service.enterprise))
-            .filter(Service.id == _DIAG_SERVICE_ID)
-            .first()
-        )
-        if target is None:
-            logger.info("[DIAG get_services] target_service_id=%s not found in this database", _DIAG_SERVICE_ID)
-        else:
-            ent_tenant_id = target.enterprise.tenant_id if target.enterprise else None
-            cond1 = ent_tenant_id == access.tenant_id
-            cond2 = target.tenant_id is None or target.tenant_id == access.tenant_id
-            cond3 = target.provider_user_id == access.provider_user_id
-            try:
-                bind = db.get_bind()
-                db_target = f"{bind.url.host}/{bind.url.database}" if bind is not None and bind.url else "unknown"
-            except Exception:
-                db_target = "unknown"
+        try:
+            enterprise_tenant_match_count = (
+                db.query(func.count(Service.id))
+                .filter(Service.enterprise.has(Enterprise.tenant_id == access.tenant_id))
+                .scalar()
+            )
+            service_tenant_ok_count = (
+                db.query(func.count(Service.id))
+                .filter(
+                    Service.enterprise.has(Enterprise.tenant_id == access.tenant_id),
+                    or_(Service.tenant_id.is_(None), Service.tenant_id == access.tenant_id),
+                )
+                .scalar()
+            )
+            provider_match_count = (
+                db.query(func.count(Service.id))
+                .filter(
+                    Service.enterprise.has(Enterprise.tenant_id == access.tenant_id),
+                    or_(Service.tenant_id.is_(None), Service.tenant_id == access.tenant_id),
+                    Service.provider_user_id == access.provider_user_id,
+                )
+                .scalar()
+            )
             logger.info(
-                "[DIAG get_services] db=%s access.role=%s access.tenant_id=%s access.provider_user_id=%s | "
-                "service.enterprise_id=%s service.enterprise.tenant_id=%s service.tenant_id=%s service.provider_user_id=%s | "
-                "cond1_enterprise_tenant_matches=%s cond2_service_tenant_ok=%s cond3_provider_matches=%s all_pass=%s | "
-                "total_matched=%s",
-                db_target, access.role, access.tenant_id, access.provider_user_id,
-                target.enterprise_id, ent_tenant_id, target.tenant_id, target.provider_user_id,
-                cond1, cond2, cond3, cond1 and cond2 and cond3,
+                "[DIAG get_services SQL-filter] access.role=%s access.tenant_id=%s access.provider_user_id=%s | "
+                "enterprise_tenant_match_count=%s service_tenant_ok_count=%s provider_match_count=%s | "
+                "final_total_matched=%s",
+                access.role, access.tenant_id, access.provider_user_id,
+                enterprise_tenant_match_count, service_tenant_ok_count, provider_match_count,
                 total,
             )
+        except Exception:
+            logger.debug("[DIAG get_services SQL-filter] diagnostic logging failed", exc_info=True)
 
     return items, total
 
