@@ -13,7 +13,14 @@ server {
     # REST API + Socket.IO (polling POST must reach the same worker as GET handshake)
     location /api/ {
         proxy_pass http://marketplace_api;
-        client_max_body_size 105M;
+        # 310M — comfortably above the 300 MB (314,572,800-byte) lesson_video cap
+        # enforced by the backend (MAX_VIDEO_SIZE_MB).
+        client_max_body_size 310M;
+        # nginx's own default (60s) is too short for a large upload on a slow
+        # connection — the backend's own read/write side is already generous
+        # (proxy_read_timeout/proxy_send_timeout below), so give the client
+        # side matching headroom.
+        client_body_timeout 300s;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
