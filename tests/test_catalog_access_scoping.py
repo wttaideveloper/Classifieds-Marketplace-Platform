@@ -31,6 +31,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.catalog_access import get_optional_catalog_user
+from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.db.database import Base, get_db
 from app.main import app
@@ -278,3 +279,84 @@ def test_pagination_total_matches_returned_records(client, db_session):
     assert body["pagination"]["total"] == 5
     assert body["pagination"]["total_pages"] == 3
     assert len(body["items"]) == 2
+
+
+# --- 8 & 9: identity resolution end-to-end — the actual fed037a0.../3c11fffd...
+# production mismatch. Unlike _login_as() above (which injects the resolved
+# user dict directly, bypassing token_auth), these two drive a real Bearer
+# token through the real get_current_user -> token_auth._build_current_user
+# path, with only the Keycloak JWKS/decode and the external /auth/me HTTP
+# call mocked — proving Services/Conversations provider filtering actually
+# scope by the application user id GET /api/v1/auth/me returns, not by the
+# Keycloak `sub` claim on the access token.
+
+def _mock_keycloak_request_identity(monkeypatch, *, keycloak_sub, application_user_id, tenant_role, tenant_id):
+    monkeypatch.setattr(settings, "KEYCLOAK_ISSUER", "https://auth.example.com/realms/demo")
+    monkeypatch.setattr(settings, "KEYCLOAK_AUDIENCE", "invigorate-api")
+    claims = {
+        "sub": keycloak_sub,
+        "azp": "invigorate-api",
+        "tenant_role": tenant_role,
+        "tenant_id": str(tenant_id),
+    }
+    monkeypatch.setattr(
+        "app.core.token_auth.jwt.get_unverified_header",
+        lambda _token: {"alg": "RS256", "kid": "kid-1"},
+    )
+    monkeypatch.setattr(
+        "app.core.token_auth._fetch_jwks",
+        lambda **_kw: {"keys": [{"kid": "kid-1", "kty": "RSA", "n": "abc", "e": "AQAB"}]},
+    )
+    monkeypatch.setattr("app.core.token_auth.jwk.construct", lambda _key: object())
+    monkeypatch.setattr("app.core.token_auth.jwt.decode", lambda *_a, **_kw: claims)
+    monkeypatch.setattr(
+        "app.services.invigorate_auth_client.fetch_application_user_id",
+        lambda _token: application_user_id,
+    )
+
+
+def test_provider_services_filtering_uses_auth_me_application_id(client, db_session, monkeypatch):
+    """F: GET /api/v1/services/ scopes by the application user id resolved
+    from /auth/me, not by the Keycloak sub on the access token — the two
+    are deliberately different UUIDs here, as in the production incident."""
+    _mock_keycloak_request_identity(
+        monkeypatch,
+        keycloak_sub=str(uuid4()),
+        application_user_id=str(PROVIDER_USER_ID),
+        tenant_role="internal_user",
+        tenant_id=TENANT_ID,
+    )
+    _seed_enterprise(db_session)
+    _seed_service(db_session, service_id=SERVICE_ID, provider_user_id=PROVIDER_USER_ID)
+    _seed_service(db_session, provider_user_id=uuid4())  # another provider, must stay hidden
+
+    resp = client.get("/api/v1/services/", headers={"Authorization": "Bearer fake.keycloak.token"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pagination"]["total"] == 1
+    assert body["items"][0]["id"] == str(SERVICE_ID)
+
+
+def test_provider_conversations_filtering_uses_auth_me_application_id(client, db_session, monkeypatch):
+    """G: GET /api/v1/conversations/provider scopes by the application user
+    id resolved from /auth/me, not by the Keycloak sub on the access token."""
+    _mock_keycloak_request_identity(
+        monkeypatch,
+        keycloak_sub=str(uuid4()),
+        application_user_id=str(PROVIDER_USER_ID),
+        tenant_role="internal_user",
+        tenant_id=TENANT_ID,
+    )
+    _seed_conversation(db_session, conversation_id=CONVERSATION_ID, assigned_provider_id=PROVIDER_USER_ID)
+    _seed_conversation(db_session, assigned_provider_id=uuid4())  # another provider, must stay hidden
+
+    resp = client.get(
+        "/api/v1/conversations/provider?page=1&page_size=20",
+        headers={"Authorization": "Bearer fake.keycloak.token"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pagination"]["total"] == 1
+    assert body["items"][0]["id"] == str(CONVERSATION_ID)

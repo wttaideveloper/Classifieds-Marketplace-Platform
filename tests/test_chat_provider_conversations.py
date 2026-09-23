@@ -118,17 +118,22 @@ def test_provider_a_cannot_see_provider_b_conversations(db):
 
 # --- 3: JWT identity resolves to the correct provider identity ---
 
-def test_jwt_sub_claim_resolves_to_the_provider_identity_used_by_the_query():
-    """`sub` (Keycloak user id) drives the provider identity used to query
-    conversations — a legacy `id` claim (PostgreSQL/Invigorate application
-    user id), even if present on the same token, must be ignored."""
-    sub_id = "31a64f29-f2a9-42ee-814d-61af33b25e4b"
-    legacy_id = "9a5b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b"
-    user = payload_to_user({"id": legacy_id, "sub": sub_id, "role": "provider", "email": "provider@example.com"})
-    assert user["id"] == sub_id
+def test_jwt_id_claim_used_directly_for_locally_issued_tokens():
+    """For a locally issued marketplace token (dev/chat — the only kind that
+    ever carries an `id` claim), `id` IS the application user id and must be
+    used directly, unaffected by whatever `sub` also happens to be present.
+    A genuine Keycloak-issued token never carries this `id` claim at all —
+    its application user id is resolved separately via GET /api/v1/auth/me
+    in token_auth._build_current_user, not from any JWT claim; see
+    tests/test_token_auth.py for that resolution."""
+    app_user_id = "9a5b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b"
+    keycloak_sub = "31a64f29-f2a9-42ee-814d-61af33b25e4b"
+    user = payload_to_user({"id": app_user_id, "sub": keycloak_sub, "role": "provider", "email": "provider@example.com"})
+    assert user["id"] == app_user_id
+    assert user["keycloak_id"] == keycloak_sub
     assert chat_repo.get_provider_conversations.__module__  # sanity: repo importable
     resolved = UUID(str(user["id"]))
-    assert resolved == UUID(sub_id)
+    assert resolved == UUID(app_user_id)
 
 
 def test_jwt_sub_claim_used_when_id_claim_absent():

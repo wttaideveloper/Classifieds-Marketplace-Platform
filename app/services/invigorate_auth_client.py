@@ -174,6 +174,38 @@ def fetch_auth_me_profile(access_token: str) -> dict | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _extract_application_user_id(profile: dict | None) -> str | None:
+    """Resolve the canonical application (Postgres) user id from an
+    Invigorate /auth/me response. The response is sometimes returned flat
+    and sometimes nested under data/user/profile (same shape variance
+    fetch_tenant_me_profile / _unwrap_auth_me_profile already handle for
+    other fields) — check both, and both `id` and common alias field names."""
+    if not isinstance(profile, dict):
+        return None
+    candidates = [profile]
+    for key in ("data", "user", "profile"):
+        nested = profile.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+    for candidate in candidates:
+        for field in ("id", "userId", "user_id"):
+            value = candidate.get(field)
+            if value:
+                return str(value)
+    return None
+
+
+def fetch_application_user_id(access_token: str) -> str | None:
+    """Resolve the caller's canonical application user id via Invigorate
+    GET /api/v1/auth/me, forwarding the SAME bearer token from the incoming
+    request. Auth team confirmed contract: JWT `sub` is the Keycloak
+    identity only, never the application/Postgres user id — this call is
+    the sole source of truth for the application user id used by domain
+    queries (Service.provider_user_id, conversation provider ids, etc.)."""
+    profile = fetch_auth_me_profile(access_token)
+    return _extract_application_user_id(profile)
+
+
 def fetch_internal_user_by_id(user_id: str) -> dict | None:
     """Look up an Invigorate internal user record by id / Keycloak sub."""
     if not user_id or not settings.invigorate_internal_api_configured:

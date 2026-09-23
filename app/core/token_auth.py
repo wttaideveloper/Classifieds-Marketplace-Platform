@@ -224,10 +224,16 @@ def _map_keycloak_role(payload: dict) -> str | None:
 
 
 def payload_to_user(payload: dict) -> dict:
-    # Canonical identity is the Keycloak `sub` claim (Auth team contract) —
-    # never fall back to a legacy `id` claim (the PostgreSQL/Invigorate
-    # application user id), even when both are present on the token.
-    user_id = payload.get("sub")
+    # `id` (when present) is a locally-issued marketplace token's own
+    # application user id (dev tokens, chat tokens — see
+    # app.api.v1.endpoints.auth._issue_dev_token / create_chat_access_token,
+    # which always set id == sub to the application id directly). `sub` is
+    # the Keycloak identity and is used here only as a fallback/placeholder:
+    # for genuine Keycloak-issued tokens this value is NOT the application
+    # user id and is always overridden by a GET /api/v1/auth/me lookup in
+    # token_auth._build_current_user before it reaches domain code — see
+    # that function for the Auth team's confirmed identity contract.
+    user_id = payload.get("id") or payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
@@ -244,6 +250,11 @@ def payload_to_user(payload: dict) -> dict:
         "role": role,
         "email": payload.get("email") or payload.get("preferred_username"),
     }
+    if payload.get("sub"):
+        # Kept for diagnostics / internal lookups that key off the Keycloak
+        # subject specifically (e.g. fetch_internal_user_by_id) — never used
+        # as the application user id for domain queries.
+        user["keycloak_id"] = str(payload["sub"])
 
     tenant_role = payload.get("tenant_role")
     if tenant_role is not None:
@@ -300,8 +311,13 @@ def payload_to_user(payload: dict) -> dict:
     return user
 
 
-def decode_access_token(token: str) -> dict:
-    """Decode marketplace (HS256) or Keycloak (RS256) access tokens."""
+def _decode_access_token_with_source(token: str) -> tuple[dict, bool]:
+    """Decode marketplace (HS256) or Keycloak (RS256) access tokens.
+
+    Returns ``(payload, is_keycloak_issued)``. ``is_keycloak_issued`` is True
+    only when the token was actually verified against the external Keycloak
+    JWKS — i.e. a genuine Invigorate/Keycloak access token, never a locally
+    minted marketplace token (dev token, chat token)."""
     header = jwt.get_unverified_header(token)
     algorithm = header.get("alg", settings.ALGORITHM)
 
@@ -309,23 +325,69 @@ def decode_access_token(token: str) -> dict:
     if settings.keycloak_configured:
         if algorithm != "RS256":
             raise JWTError(f"Invalid algorithm '{algorithm}' — expected RS256 when Keycloak is configured")
-        return _decode_keycloak_token(token)
+        return _decode_keycloak_token(token), True
 
     if algorithm == "HS256":
-        return _decode_local_token(token)
+        return _decode_local_token(token), False
 
     if algorithm == "RS256":
-        return _decode_keycloak_token(token)
+        return _decode_keycloak_token(token), True
 
-    return _decode_local_token(token)
+    return _decode_local_token(token), False
+
+
+def decode_access_token(token: str) -> dict:
+    """Decode marketplace (HS256) or Keycloak (RS256) access tokens."""
+    payload, _is_keycloak_issued = _decode_access_token_with_source(token)
+    return payload
+
+
+def _resolve_application_user_id(access_token: str, keycloak_id: str | None) -> str:
+    """Resolve the application (Postgres) user id for a genuine Keycloak
+    token via Invigorate GET /api/v1/auth/me, forwarding the same bearer
+    token from the incoming request. Never falls back to the Keycloak `sub`
+    — a failure here is an authentication failure, not a degraded identity."""
+    from app.services.invigorate_auth_client import fetch_application_user_id
+
+    app_user_id = fetch_application_user_id(access_token)
+    if not app_user_id:
+        logger.warning(
+            "Auth /me did not return an application user id | keycloak_id=%s",
+            keycloak_id,
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="Unable to resolve application user identity",
+        )
+    return app_user_id
+
+
+def _build_current_user(token: str) -> dict:
+    """Resolve the authenticated identity for an incoming request.
+
+    Auth team confirmed flow:
+        validated access token -> GET /api/v1/auth/me -> application user.id
+        -> current_user["id"] -> domain queries (Services/Products/Conversations)
+
+    JWT `sub` is the Keycloak identity, used for authentication/authorization
+    only. For a genuine Keycloak-issued (RS256) token it is NEVER treated as
+    the application user id — that id is always resolved from Invigorate
+    GET /api/v1/auth/me using the same bearer token. Locally issued
+    marketplace tokens (dev tokens, chat tokens) already carry the
+    application id directly in `id`/`sub` and skip the extra call.
+    """
+    payload, is_keycloak_issued = _decode_access_token_with_source(token)
+    user = payload_to_user(payload)
+    if is_keycloak_issued:
+        user["id"] = _resolve_application_user_id(token, user.get("keycloak_id"))
+    return user
 
 
 def resolve_user_from_token(token: str | None) -> dict | None:
     if not token:
         return None
     try:
-        payload = decode_access_token(token)
-        return payload_to_user(payload)
+        return _build_current_user(token)
     except ExpiredSignatureError:
         return None
     except JWTError:
@@ -336,8 +398,9 @@ def resolve_user_from_token(token: str | None) -> dict | None:
 
 def resolve_user_from_token_or_raise(token: str) -> dict:
     try:
-        payload = decode_access_token(token)
-        return payload_to_user(payload)
+        return _build_current_user(token)
+    except HTTPException:
+        raise
     except ExpiredSignatureError as exc:
         logger.warning("Token expired | claims=%s", _unverified_claims_for_log(token))
         raise HTTPException(status_code=401, detail="Token expired") from exc
@@ -359,14 +422,17 @@ def resolve_user_from_token_or_raise(token: str) -> dict:
 def resolve_chat_user_from_token_or_raise(token: str) -> dict:
     """Resolve a regular access token or a correctly scoped chat token."""
     try:
-        payload = decode_access_token(token)
+        payload, is_keycloak_issued = _decode_access_token_with_source(token)
         if payload.get("token_use") == "chat":
             scopes = payload.get("scope") or []
             if isinstance(scopes, str):
                 scopes = scopes.split()
             if "chat" not in scopes:
                 raise HTTPException(status_code=403, detail="Chat token scope is invalid")
-        return payload_to_user(payload)
+        user = payload_to_user(payload)
+        if is_keycloak_issued:
+            user["id"] = _resolve_application_user_id(token, user.get("keycloak_id"))
+        return user
     except HTTPException:
         raise
     except ExpiredSignatureError as exc:
