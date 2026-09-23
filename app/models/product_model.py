@@ -107,3 +107,24 @@ class Product(Base):
         Index("ix_products_tenant_enterprise", "tenant_id", "enterprise_id"),
         Index("ix_products_enterprise_location", "enterprise_id", "location_id"),
     )
+
+
+class ProductReview(Base):
+    __tablename__ = "product_reviews"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    reviewer_name = Column(String(255))
+    rating = Column(String(10), nullable=False)
+    comment = Column(Text)
+    is_verified_purchase = Column(Boolean, default=False, nullable=False)
+    moderation_status = Column(String(20), default="pending", nullable=False, index=True)  # pending|approved|rejected
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    product = relationship("Product", backref="reviews")
+
+    __table_args__ = (
+        Index("ix_product_reviews_product_user", "product_id", "user_id", unique=True),
+    )

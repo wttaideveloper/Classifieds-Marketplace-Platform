@@ -1,5 +1,6 @@
 from uuid import UUID
 from app.core.catalog_access import get_catalog_access, require_catalog_writer
+from app.core.dependencies import get_current_user
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
@@ -11,13 +12,21 @@ from app.schemas.product_schema import (
     ProductDetailResponse,
     ProductPaginatedResponse,
     ProductResponse,
+    ProductReviewCreate,
+    ProductReviewListResponse,
+    ProductReviewModerateRequest,
+    ProductReviewResponse,
     ProductUpdate,
 )
 from app.services.product_service import (
+    create_product_review_service,
     create_product_service,
+    delete_product_review_service,
     delete_product_service,
     get_product_service,
     get_products_service,
+    list_product_reviews_service,
+    moderate_product_review_service,
     update_product_service,
 )
 
@@ -112,3 +121,61 @@ def delete_product(
 ):
     delete_product_service(db, product_id, access=access)
     return {"message": "Product marked inactive successfully"}
+
+
+@router.post(
+    "/{product_id}/reviews",
+    response_model=ProductReviewResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit or update your review",
+    description="One review per user per product — submitting again updates your existing review. is_verified_purchase is set automatically from your order history.",
+)
+def create_product_review(
+    payload: ProductReviewCreate,
+    product_id: UUID = Path(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return create_product_review_service(db, product_id, payload, current_user)
+
+
+@router.get(
+    "/{product_id}/reviews",
+    response_model=ProductReviewListResponse,
+    summary="List reviews with average rating",
+    description="Public — returns only approved reviews.",
+)
+def list_product_reviews(
+    product_id: UUID = Path(...),
+    db: Session = Depends(get_db),
+):
+    return list_product_reviews_service(db, product_id)
+
+
+@router.delete(
+    "/{product_id}/reviews/{review_id}",
+    summary="Delete a review",
+    description="The review's own author, or an admin/provider, may delete it.",
+)
+def delete_product_review(
+    product_id: UUID = Path(...),
+    review_id: UUID = Path(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return delete_product_review_service(db, product_id, review_id, current_user)
+
+
+@router.patch(
+    "/{product_id}/reviews/{review_id}/moderate",
+    response_model=ProductReviewResponse,
+    summary="Approve, reject, or reset a review's moderation status",
+)
+def moderate_product_review(
+    payload: ProductReviewModerateRequest,
+    product_id: UUID = Path(...),
+    review_id: UUID = Path(...),
+    db: Session = Depends(get_db),
+    access=Depends(require_catalog_writer),
+):
+    return moderate_product_review_service(db, review_id, payload.action)
