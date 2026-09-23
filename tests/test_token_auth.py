@@ -103,6 +103,55 @@ def test_payload_to_user_maps_is_super_admin_string_claim():
     assert user["role"] == "super_admin"
 
 
+def test_map_keycloak_role_ignores_generic_infrastructure_roles():
+    """Regression for the Products/Services 403: a token carrying only
+    Keycloak's own default/infrastructure roles (every Keycloak user gets
+    these) and no recognized application role must resolve to no role at
+    all, not to one of those roles picked arbitrarily. Catalog access relies
+    on this — see get_catalog_access's "role not in (admin, provider)" 403,
+    which must be reached deterministically here, not skipped because
+    e.g. 'offline_access' got treated as the application role."""
+    from app.core.token_auth import _map_keycloak_role
+
+    payload = {
+        "sub": "keycloak-user-id",
+        "realm_access": {
+            "roles": ["offline_access", "uma_authorization", "default-roles-example"],
+        },
+    }
+    assert _map_keycloak_role(payload) is None
+
+    user = payload_to_user(payload)
+    assert user["role"] is None
+
+
+def test_map_keycloak_role_ignores_generic_roles_in_resource_access():
+    from app.core.token_auth import _map_keycloak_role
+
+    payload = {
+        "sub": "keycloak-user-id",
+        "resource_access": {
+            "invigorate-api": {"roles": ["offline_access", "uma_authorization"]},
+            "account": {"roles": ["manage-account", "view-profile"]},
+        },
+    }
+    assert _map_keycloak_role(payload) is None
+
+
+def test_map_keycloak_role_still_maps_genuine_role_among_realm_roles():
+    """The fix must not affect resolution when a real application role IS
+    present alongside the generic Keycloak roles."""
+    from app.core.token_auth import _map_keycloak_role
+
+    payload = {
+        "sub": "keycloak-user-id",
+        "realm_access": {
+            "roles": ["offline_access", "uma_authorization", "provider"],
+        },
+    }
+    assert _map_keycloak_role(payload) == "provider"
+
+
 def test_payload_to_user_maps_internal_user_to_provider():
     user = payload_to_user(
         {

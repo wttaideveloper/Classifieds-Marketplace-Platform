@@ -220,7 +220,12 @@ def _map_keycloak_role(payload: dict) -> str | None:
         return "provider"
     if normalized & {"customer", "user", "patient", "external_user"}:
         return "customer"
-    return next(iter(normalized), None)
+    # No recognized application role among the realm/client roles — every
+    # Keycloak user carries infrastructure roles like offline_access,
+    # uma_authorization, default-roles-<realm>. Those must never be treated
+    # as the application role, so no match here means no role (None), not
+    # an arbitrary pick from that set.
+    return None
 
 
 def payload_to_user(payload: dict) -> dict:
