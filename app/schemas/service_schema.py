@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common_schema import (
     AvailabilityScheduleEntry,
@@ -310,3 +310,38 @@ class ServiceDetailResponse(ServiceResponse):
 
 class ServicePaginatedResponse(PaginatedResponse[ServiceListItemResponse]):
     pass
+
+
+class ServiceReviewCreate(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"rating": 5, "comment": "Really helpful session."}})
+    rating: int = Field(..., ge=1, le=5, description="1-5 stars")
+    comment: str | None = Field(None, max_length=2000)
+
+
+class ServiceReviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    service_id: UUID
+    user_id: UUID
+    reviewer_name: str | None = None
+    rating: int
+    comment: str | None = None
+    is_verified_purchase: bool = Field(..., description="Always false today — no booking/purchase record exists yet to verify a Service reviewer against")
+    moderation_status: str = Field(..., description="pending|approved|rejected — only approved reviews are shown in the public list")
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("rating", mode="before")
+    @classmethod
+    def _rating_to_int(cls, value):
+        return int(value)
+
+
+class ServiceReviewListResponse(BaseModel):
+    reviews: list[ServiceReviewResponse]
+    average_rating: float | None = Field(None, description="Average of approved reviews' ratings; null when there are none")
+    total: int = Field(..., description="Count of approved reviews")
+
+
+class ServiceReviewModerateRequest(BaseModel):
+    action: str = Field(..., description="approved|rejected|pending")

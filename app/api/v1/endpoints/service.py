@@ -1,6 +1,7 @@
 import logging
 from uuid import UUID
 from app.core.catalog_access import get_catalog_access, get_optional_catalog_user, require_catalog_writer
+from app.core.dependencies import get_current_user
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
@@ -12,13 +13,21 @@ from app.schemas.service_schema import (
     ServiceDetailResponse,
     ServicePaginatedResponse,
     ServiceResponse,
+    ServiceReviewCreate,
+    ServiceReviewListResponse,
+    ServiceReviewModerateRequest,
+    ServiceReviewResponse,
     ServiceUpdate,
 )
 from app.services.service_service import (
+    create_service_review_service,
     create_service_service,
+    delete_service_review_service,
     delete_service_service,
     get_service_service,
     get_services_service,
+    list_service_reviews_service,
+    moderate_service_review_service,
     update_service_service,
 )
 
@@ -138,3 +147,61 @@ def delete_service(
 ):
     delete_service_service(db, service_id, access=access)
     return {"message": "Service marked inactive successfully"}
+
+
+@router.post(
+    "/{service_id}/reviews",
+    response_model=ServiceReviewResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit or update your review",
+    description="One review per user per service — submitting again updates your existing review. is_verified_purchase is always false today — no Service booking/purchase record exists yet.",
+)
+def create_service_review(
+    payload: ServiceReviewCreate,
+    service_id: UUID = Path(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return create_service_review_service(db, service_id, payload, current_user)
+
+
+@router.get(
+    "/{service_id}/reviews",
+    response_model=ServiceReviewListResponse,
+    summary="List reviews with average rating",
+    description="Public — returns only approved reviews.",
+)
+def list_service_reviews(
+    service_id: UUID = Path(...),
+    db: Session = Depends(get_db),
+):
+    return list_service_reviews_service(db, service_id)
+
+
+@router.delete(
+    "/{service_id}/reviews/{review_id}",
+    summary="Delete a review",
+    description="The review's own author, or an admin/provider, may delete it.",
+)
+def delete_service_review(
+    service_id: UUID = Path(...),
+    review_id: UUID = Path(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return delete_service_review_service(db, service_id, review_id, current_user)
+
+
+@router.patch(
+    "/{service_id}/reviews/{review_id}/moderate",
+    response_model=ServiceReviewResponse,
+    summary="Approve, reject, or reset a review's moderation status",
+)
+def moderate_service_review(
+    payload: ServiceReviewModerateRequest,
+    service_id: UUID = Path(...),
+    review_id: UUID = Path(...),
+    db: Session = Depends(get_db),
+    access=Depends(require_catalog_writer),
+):
+    return moderate_service_review_service(db, review_id, payload.action)

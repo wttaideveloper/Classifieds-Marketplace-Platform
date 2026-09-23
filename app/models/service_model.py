@@ -92,3 +92,24 @@ class Service(Base):
         Index("ix_services_tenant_enterprise", "tenant_id", "enterprise_id"),
         Index("ix_services_enterprise_location", "enterprise_id", "location_id"),
     )
+
+
+class ServiceReview(Base):
+    __tablename__ = "service_reviews"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("services.id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    reviewer_name = Column(String(255))
+    rating = Column(String(10), nullable=False)
+    comment = Column(Text)
+    is_verified_purchase = Column(Boolean, default=False, nullable=False)  # always False today — no Service booking/order system exists to verify against
+    moderation_status = Column(String(20), default="pending", nullable=False, index=True)  # pending|approved|rejected
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    service = relationship("Service", backref="reviews")
+
+    __table_args__ = (
+        Index("ix_service_reviews_service_user", "service_id", "user_id", unique=True),
+    )
