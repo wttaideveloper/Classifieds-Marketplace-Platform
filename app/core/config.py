@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     MAX_IMAGE_SIZE_MB: int = 10
     MAX_DOCUMENT_SIZE_MB: int = 25
     MAX_AUDIO_SIZE_MB: int = 25
-    MAX_VIDEO_SIZE_MB: int = 100
+    MAX_VIDEO_SIZE_MB: int = 300
     # Dev-only: used when no JWT is sent (ENVIRONMENT=development)
     DEV_DEFAULT_USER_ID: str = "550e8400-e29b-41d4-a716-446655440000"
     DEV_DEFAULT_USER_ROLE: str = "admin"

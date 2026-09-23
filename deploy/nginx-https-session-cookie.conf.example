@@ -21,6 +21,13 @@ server {
     # REST APIs and the Socket.IO handshake/upgrade share this public host.
     location /api/ {
         proxy_pass http://marketplace_api;
+        # 310M — comfortably above the 300 MB (314,572,800-byte) lesson_video cap
+        # enforced by the backend (MAX_VIDEO_SIZE_MB). This directive was missing
+        # here before, which silently falls back to nginx's own 1M default.
+        client_max_body_size 310M;
+        # nginx's own default (60s) is too short for a large upload on a slow
+        # connection.
+        client_body_timeout 300s;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

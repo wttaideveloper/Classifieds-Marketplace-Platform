@@ -73,7 +73,7 @@ _VIDEO_EXTS = {"mp4", "webm", "mov", "m4v", "mkv", "ogg", "ogv", "avi", "3gp", "
 def _infer_purpose(content_type: str | None, filename: str | None) -> str:
     """Infer upload purpose when the client omits it (endpoint documents this).
 
-    video/* (or a video extension, incl. dual-container .ogg/.ogv) -> lesson_video (100 MB).
+    video/* (or a video extension, incl. dual-container .ogg/.ogv) -> lesson_video (300 MB).
     application/pdf / .pdf -> lesson_pdf. image/* -> image. audio/* -> audio.
     Everything else falls back to lesson_document (25 MB).
     """
@@ -81,7 +81,7 @@ def _infer_purpose(content_type: str | None, filename: str | None) -> str:
     ext = ((filename or "").rsplit(".", 1)[-1] if "." in (filename or "") else "").lower()
     if mime.startswith("video/") or ext in _VIDEO_EXTS:
         # audio/ogg with a video-ish filename (.ogg/.ogv) is treated as video
-        # so browser-recorded clips upload under the 100 MB lesson_video cap.
+        # so browser-recorded clips upload under the 300 MB lesson_video cap.
         if mime.startswith("audio/") and ext not in {"ogg", "ogv"}:
             return "audio"
         return "lesson_video"
@@ -118,7 +118,10 @@ def save_training_upload(
     if size > cap:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large for {purpose} (max {cap // (1024 * 1024)} MB)",
+            detail=(
+                f"File too large for {purpose}: {size / (1024 * 1024):.1f} MB uploaded, "
+                f"max {cap // (1024 * 1024)} MB allowed"
+            ),
         )
 
     ext = (Path(filename or "").suffix or "").lstrip(".").lower()

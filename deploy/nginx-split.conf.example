@@ -31,6 +31,13 @@ server {
     # REST API — can use multiple Gunicorn workers
     location /api/ {
         proxy_pass http://marketplace_api;
+        # 310M — comfortably above the 300 MB (314,572,800-byte) lesson_video cap
+        # enforced by the backend (MAX_VIDEO_SIZE_MB). This directive was missing
+        # here before, which silently falls back to nginx's own 1M default.
+        client_max_body_size 310M;
+        client_body_timeout 300s;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
