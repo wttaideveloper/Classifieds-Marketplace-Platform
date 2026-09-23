@@ -139,15 +139,18 @@ COMPOSITE_FIELD_DEFINITIONS: dict[str, dict] = {
         "subfields": [
             _subfield("session_date", "Session Date"),
             _subfield("title", "Title"),
+            _subfield("description", "Description"),
             _subfield("speaker", "Speaker"),
+            _subfield("speaker_bio", "Speaker Bio"),
             _subfield("start_time", "Start Time"),
             _subfield("end_time", "End Time"),
             _subfield("location", "Location"),
             _subfield("meeting_link", "Meeting Link"),
         ],
-        # meeting_link is a real EventSessionCreate/Update field but not
-        # enabled by default — admins opt it in explicitly (matches the
-        # reported case: they sent it in enabled_fields to turn it on).
+        # meeting_link/description/speaker_bio are real EventSessionCreate/Update
+        # fields but not enabled by default — admins opt them in explicitly
+        # (matches the reported case: they sent meeting_link in enabled_fields
+        # to turn it on).
         "default": _composite(["session_date", "title", "speaker", "start_time", "end_time", "location"]),
     },
     "venue": {
