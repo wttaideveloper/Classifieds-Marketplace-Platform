@@ -31,6 +31,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.catalog_access import get_optional_catalog_user
+from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.db.database import Base, get_db
 from app.main import app
@@ -278,3 +279,228 @@ def test_pagination_total_matches_returned_records(client, db_session):
     assert body["pagination"]["total"] == 5
     assert body["pagination"]["total_pages"] == 3
     assert len(body["items"]) == 2
+
+
+# --- 8 & 9: identity resolution end-to-end — the actual fed037a0.../3c11fffd...
+# production mismatch. Unlike _login_as() above (which injects the resolved
+# user dict directly, bypassing token_auth), these two drive a real Bearer
+# token through the real get_current_user -> token_auth._build_current_user
+# path, with only the Keycloak JWKS/decode and the external /auth/me HTTP
+# call mocked — proving Services/Conversations provider filtering actually
+# scope by the application user id GET /api/v1/auth/me returns, not by the
+# Keycloak `sub` claim on the access token.
+
+def _mock_keycloak_request_identity(monkeypatch, *, keycloak_sub, application_user_id, tenant_role, tenant_id):
+    monkeypatch.setattr(settings, "KEYCLOAK_ISSUER", "https://auth.example.com/realms/demo")
+    monkeypatch.setattr(settings, "KEYCLOAK_AUDIENCE", "invigorate-api")
+    claims = {
+        "sub": keycloak_sub,
+        "azp": "invigorate-api",
+        "tenant_role": tenant_role,
+        "tenant_id": str(tenant_id),
+    }
+    monkeypatch.setattr(
+        "app.core.token_auth.jwt.get_unverified_header",
+        lambda _token: {"alg": "RS256", "kid": "kid-1"},
+    )
+    monkeypatch.setattr(
+        "app.core.token_auth._fetch_jwks",
+        lambda **_kw: {"keys": [{"kid": "kid-1", "kty": "RSA", "n": "abc", "e": "AQAB"}]},
+    )
+    monkeypatch.setattr("app.core.token_auth.jwk.construct", lambda _key: object())
+    monkeypatch.setattr("app.core.token_auth.jwt.decode", lambda *_a, **_kw: claims)
+    monkeypatch.setattr(
+        "app.services.invigorate_auth_client.fetch_application_user_id",
+        lambda _token: application_user_id,
+    )
+
+
+def test_provider_services_filtering_uses_auth_me_application_id(client, db_session, monkeypatch):
+    """F: GET /api/v1/services/ scopes by the application user id resolved
+    from /auth/me, not by the Keycloak sub on the access token — the two
+    are deliberately different UUIDs here, as in the production incident."""
+    _mock_keycloak_request_identity(
+        monkeypatch,
+        keycloak_sub=str(uuid4()),
+        application_user_id=str(PROVIDER_USER_ID),
+        tenant_role="internal_user",
+        tenant_id=TENANT_ID,
+    )
+    _seed_enterprise(db_session)
+    _seed_service(db_session, service_id=SERVICE_ID, provider_user_id=PROVIDER_USER_ID)
+    _seed_service(db_session, provider_user_id=uuid4())  # another provider, must stay hidden
+
+    resp = client.get("/api/v1/services/", headers={"Authorization": "Bearer fake.keycloak.token"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pagination"]["total"] == 1
+    assert body["items"][0]["id"] == str(SERVICE_ID)
+
+
+def test_provider_conversations_filtering_uses_auth_me_application_id(client, db_session, monkeypatch):
+    """G: GET /api/v1/conversations/provider scopes by the application user
+    id resolved from /auth/me, not by the Keycloak sub on the access token."""
+    _mock_keycloak_request_identity(
+        monkeypatch,
+        keycloak_sub=str(uuid4()),
+        application_user_id=str(PROVIDER_USER_ID),
+        tenant_role="internal_user",
+        tenant_id=TENANT_ID,
+    )
+    _seed_conversation(db_session, conversation_id=CONVERSATION_ID, assigned_provider_id=PROVIDER_USER_ID)
+    _seed_conversation(db_session, assigned_provider_id=uuid4())  # another provider, must stay hidden
+
+    resp = client.get(
+        "/api/v1/conversations/provider?page=1&page_size=20",
+        headers={"Authorization": "Bearer fake.keycloak.token"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pagination"]["total"] == 1
+    assert body["items"][0]["id"] == str(CONVERSATION_ID)
+
+
+# --- 10+: regression coverage for the Products/Services 403 investigation.
+# Root cause: app.core.token_auth._map_keycloak_role fell back to an
+# arbitrary entry from the token's Keycloak realm/client roles
+# (next(iter(normalized), None)) whenever no recognized application role was
+# found. Every Keycloak user carries infrastructure roles like
+# offline_access/uma_authorization/default-roles-<realm>, so a token with no
+# custom tenant_role/user_role claim resolved to one of THOSE as the
+# "application role" — which then never satisfies get_catalog_access's
+# admin/provider/customer/super_admin gate, producing a 403 "Catalog access
+# denied" from Products/Services while GET /api/v1/enterprises/ (which only
+# depends on get_current_user, with no role check at all) succeeded with the
+# very same token. Fixed by returning None instead of picking arbitrarily.
+
+def _customer_claims():
+    return {
+        "id": str(uuid4()),
+        "role": "customer",
+        "email": "customer@example.com",
+    }
+
+
+def _unrecognized_role_claims():
+    """A token whose role/tenant_role resolve to nothing get_catalog_access
+    recognizes — the general shape of the reported production bug, without
+    depending on the specific Keycloak-role-fallback mechanism."""
+    return {
+        "id": str(uuid4()),
+        "role": None,
+        "email": "mystery@example.com",
+    }
+
+
+def _mock_keycloak_request_raw_claims(monkeypatch, *, application_user_id, claims):
+    """Like _mock_keycloak_request_identity, but takes the JWT claims
+    verbatim instead of assuming a tenant_role/tenant_id shape — needed to
+    reproduce a token that carries ONLY generic Keycloak realm/client roles
+    and no custom tenant_role/user_role/tenant_id claim at all."""
+    monkeypatch.setattr(settings, "KEYCLOAK_ISSUER", "https://auth.example.com/realms/demo")
+    monkeypatch.setattr(settings, "KEYCLOAK_AUDIENCE", "invigorate-api")
+    monkeypatch.setattr(
+        "app.core.token_auth.jwt.get_unverified_header",
+        lambda _token: {"alg": "RS256", "kid": "kid-1"},
+    )
+    monkeypatch.setattr(
+        "app.core.token_auth._fetch_jwks",
+        lambda **_kw: {"keys": [{"kid": "kid-1", "kty": "RSA", "n": "abc", "e": "AQAB"}]},
+    )
+    monkeypatch.setattr("app.core.token_auth.jwk.construct", lambda _key: object())
+    monkeypatch.setattr("app.core.token_auth.jwt.decode", lambda *_a, **_kw: claims)
+    monkeypatch.setattr(
+        "app.services.invigorate_auth_client.fetch_application_user_id",
+        lambda _token: application_user_id,
+    )
+
+
+# --- Test case 1 & 4 (task spec): valid application role -> allowed;
+# existing customer/admin/super_admin behavior continues to work.
+
+def test_customer_role_allowed_for_catalog_access(client, db_session):
+    _seed_enterprise(db_session)
+    _seed_service(db_session)
+    _login_as(_customer_claims())
+
+    resp = client.get("/api/v1/services/")
+
+    assert resp.status_code == 200
+    assert resp.json()["pagination"]["total"] == 1
+
+
+# --- Test case 5: an authenticated user whose role cannot be resolved to a
+# recognized application role still gets 403, with the intended reason.
+
+def test_unrecognized_role_denied_catalog_access(client, db_session):
+    _seed_enterprise(db_session)
+    _seed_service(db_session)
+    _login_as(_unrecognized_role_claims())
+
+    resp = client.get("/api/v1/services/")
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Catalog access denied"
+
+
+# --- Test case 2 & 6: a real Keycloak-issued token carrying only generic/
+# default Keycloak roles (no application role) must be denied catalog
+# access, while the SAME token continues to succeed against
+# GET /api/v1/enterprises/ (no role gate there) - this is the exact
+# Enterprises=200/Products&Services=403 split reported in production.
+
+def test_generic_keycloak_roles_denied_catalog_access_but_enterprises_still_allowed(
+    client, db_session, monkeypatch
+):
+    application_user_id = str(uuid4())
+    _mock_keycloak_request_raw_claims(
+        monkeypatch,
+        application_user_id=application_user_id,
+        claims={
+            "sub": str(uuid4()),
+            "azp": "invigorate-api",
+            "realm_access": {
+                "roles": ["offline_access", "uma_authorization", "default-roles-example"],
+            },
+        },
+    )
+    _seed_enterprise(db_session)
+    _seed_service(db_session)
+
+    headers = {"Authorization": "Bearer fake.keycloak.token"}
+    services_resp = client.get("/api/v1/services/", headers=headers)
+    enterprises_resp = client.get(
+        "/api/v1/enterprises/?status=active&page=1&page_size=2", headers=headers
+    )
+
+    assert services_resp.status_code == 403
+    assert services_resp.json()["detail"] == "Catalog access denied"
+    assert enterprises_resp.status_code == 200
+
+
+# --- Test case 3: a genuine application role delivered via Keycloak
+# realm_access.roles (no custom tenant_role claim) is still honored.
+
+def test_genuine_realm_role_grants_catalog_access(client, db_session, monkeypatch):
+    application_user_id = str(PROVIDER_USER_ID)
+    _mock_keycloak_request_raw_claims(
+        monkeypatch,
+        application_user_id=application_user_id,
+        claims={
+            "sub": str(uuid4()),
+            "azp": "invigorate-api",
+            "tenant_id": str(TENANT_ID),
+            "realm_access": {
+                "roles": ["offline_access", "provider"],
+            },
+        },
+    )
+    _seed_enterprise(db_session)
+    _seed_service(db_session, provider_user_id=PROVIDER_USER_ID)
+
+    resp = client.get("/api/v1/services/", headers={"Authorization": "Bearer fake.keycloak.token"})
+
+    assert resp.status_code == 200
+    assert resp.json()["pagination"]["total"] == 1

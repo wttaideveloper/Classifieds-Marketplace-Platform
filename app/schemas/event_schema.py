@@ -150,6 +150,34 @@ class EventCreate(BaseModel):
                 raise ValueError("Paid events require a price or ticket_types.")
         return self
 
+    @model_validator(mode="after")
+    def validate_capacity_bounds(self):
+        # capacity/min_participants/max_participants are stored as free-form strings
+        # (matches Event model columns); runtime enforcement elsewhere (event_service.py
+        # registration/checkout) already parses them with this same best-effort
+        # int(float(str(x))) pattern and silently skips values that don't parse, so we
+        # mirror that leniency here rather than newly rejecting non-numeric input.
+        def _as_int(value):
+            if value is None or str(value).strip() == "":
+                return None
+            try:
+                return int(float(str(value).strip()))
+            except (TypeError, ValueError):
+                return None
+
+        cap = _as_int(self.capacity)
+        min_p = _as_int(self.min_participants)
+        max_p = _as_int(self.max_participants)
+
+        for label, value in (("capacity", cap), ("min_participants", min_p), ("max_participants", max_p)):
+            if value is not None and value < 0:
+                raise ValueError(f"{label} must not be negative.")
+        if min_p is not None and max_p is not None and min_p > max_p:
+            raise ValueError("min_participants must not exceed max_participants.")
+        if max_p is not None and cap is not None and max_p > cap:
+            raise ValueError("max_participants must not exceed capacity.")
+        return self
+
     def _normalize_ticket_types(self) -> list:
         normalized: list[dict] = []
         for raw in self.ticket_types or []:
@@ -420,7 +448,9 @@ class EventRegistrationCreate(BaseModel):
 class EventSessionCreate(BaseModel):
     session_date: date = Field(..., description="Session date (YYYY-MM-DD), must be within Event start_date..end_date", examples=["2026-09-02"])
     title: str
+    description: str | None = Field(None, description="Session description / agenda information")
     speaker: str | None = None
+    speaker_bio: str | None = Field(None, description="Short information about the speaker")
     start_time: str | None = None
     end_time: str | None = None
     location: str | None = None
@@ -430,7 +460,9 @@ class EventSessionCreate(BaseModel):
 class EventSessionUpdate(BaseModel):
     session_date: date | None = Field(None, description="Session date (YYYY-MM-DD)")
     title: str | None = None
+    description: str | None = Field(None, description="Session description / agenda information")
     speaker: str | None = None
+    speaker_bio: str | None = Field(None, description="Short information about the speaker")
     start_time: str | None = None
     end_time: str | None = None
     location: str | None = None
@@ -441,7 +473,9 @@ class EventSessionResponse(BaseModel):
     id: str
     session_date: date | None = None
     title: str
+    description: str | None = None
     speaker: str | None = None
+    speaker_bio: str | None = None
     start_time: str | None = None
     end_time: str | None = None
     location: str | None = None
