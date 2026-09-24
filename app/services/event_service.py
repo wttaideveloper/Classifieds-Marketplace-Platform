@@ -37,6 +37,12 @@ from app.schemas.event_schema import (
     EventResponse,
 )
 from app.services.response_mappers import map_event_detail, map_event_list_item, map_event_write
+from app.utils.event_modules import (
+    EventModuleConfigError,
+    is_paid_event,
+    plan_config_update,
+    validate_module_overrides,
+)
 
 
 def _validate_references(db: Session, enterprise_id: UUID | None, location_id: UUID | None, current_user: dict | None = None):
@@ -180,6 +186,49 @@ def _log_audit(
             except Exception:
                 pass
 
+def _validate_event_config_for_create(event_data) -> None:
+    """422 for contradictory *explicit* module overrides on a new event.
+
+    Only what the client asked for is checked. Values that come from an event-type default are a
+    starting point, not a request, so a default can never make a create fail. Stored configuration is
+    never re-validated this way (validate_event_submission only checks its shape), so a valid stored
+    default can never block publishing.
+    """
+    overrides = event_data.modules.overrides() if getattr(event_data, "modules", None) is not None else {}
+    if not overrides:
+        return
+    is_paid = is_paid_event(event_data.pricing_type, event_data.price, event_data._normalize_ticket_types())
+    try:
+        validate_module_overrides(overrides, delivery_mode=event_data.delivery_mode, is_paid=is_paid)
+    except EventModuleConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _plan_event_config_update(event, update_data) -> dict:
+    """The event_type / modules columns an update changes (empty when it does not touch configuration).
+
+    Partial-update semantics: null/omitted = no change, so an unrelated update — or a client echoing
+    back only what it read — never resets the configuration. See plan_config_update for the rules.
+    """
+    new_type = getattr(update_data, "event_type", None)
+    modules_in = getattr(update_data, "modules", None)
+    overrides = modules_in.overrides() if modules_in is not None else {}
+    if new_type is None and not overrides:
+        return {}
+    fields = update_data.model_fields_set
+    delivery_mode = update_data.delivery_mode if getattr(update_data, "delivery_mode", None) is not None else event.delivery_mode
+    pricing_type = update_data.pricing_type if getattr(update_data, "pricing_type", None) is not None else event.pricing_type
+    price = update_data.price if "price" in fields else event.price
+    ticket_types = update_data.ticket_types if getattr(update_data, "ticket_types", None) is not None else event.ticket_types
+    try:
+        return plan_config_update(
+            event, new_type, overrides,
+            delivery_mode=delivery_mode, is_paid=is_paid_event(pricing_type, price, ticket_types),
+        )
+    except EventModuleConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 def create_event_service(db: Session, event_data, current_user: dict | None = None):
     from app.services.event_form_config_service import apply_form_configuration_to_event_data
 
@@ -201,6 +250,7 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
         event_data.status = "draft"
     _validate_references(db, event_data.enterprise_id, event_data.location_id, current_user)
     _check_category(db, getattr(event_data, "category", None), getattr(event_data, "subcategory", None))
+    _validate_event_config_for_create(event_data)
     # auto-create meeting link if needed
     if not event_data.meeting_link:
         event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
@@ -210,7 +260,7 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
     created = Event(**payload)
     db.add(created)
     db.flush()  # assigns created.id for the audit row
-    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None}, changed_by=_actor_id(current_user), commit=False)
+    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None, "event_type": created.event_type, "modules": created.modules}, changed_by=_actor_id(current_user), commit=False)
     db.commit()
     db.refresh(created)
     return EventResponse.model_validate(map_event_write(created))
@@ -314,6 +364,11 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
             except Exception:
                 pass
 
+    # Configuration (event_type / modules) is planned against the CURRENT event before anything is mutated.
+    # It is deliberately kept out of old_vals below: that dict also drives schedule-change notifications.
+    config_changes = _plan_event_config_update(event, update_data)
+    old_config = {key: getattr(event, key) for key in config_changes}
+
     # capture old values for schedule change detection and audit
     old_vals = {k: getattr(event, k) for k in ["start_date","end_date","venue","meeting_link","time_zone","duration_type","category","subcategory","title","status"] if hasattr(event, k)}
     from app.services.event_form_config_service import apply_form_configuration_to_event_update, validate_form_required_core_fields
@@ -340,7 +395,14 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
     if extra:
         for key, val in extra.items():
             setattr(updated, key, val)
-    _log_audit(db, event.id, "update", old_vals, {k: getattr(updated, k) for k in old_vals.keys()}, changed_by=_actor_id(current_user), commit=False)
+    for key, val in config_changes.items():
+        setattr(updated, key, val)  # a new dict for modules, so the JSONB change is always detected
+    _log_audit(
+        db, event.id, "update",
+        {**old_vals, **old_config},
+        {**{k: getattr(updated, k) for k in old_vals.keys()}, **{k: getattr(updated, k) for k in config_changes}},
+        changed_by=_actor_id(current_user), commit=False,
+    )
     db.commit()
     db.refresh(updated)
     # detect changes

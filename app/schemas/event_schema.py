@@ -4,10 +4,11 @@ from typing import Literal
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from app.schemas.common_schema import EventStatus, PaginatedResponse
+from app.schemas.common_schema import EventStatus, EventType, PaginatedResponse
 from app.schemas.event_form_config_schema import EventCustomValueInput
+from app.utils.event_modules import EVENT_MODULE_KEYS, modules_for_new_event
 
 DeliveryMode = str  # in_person|online|hybrid
 MeetingProvider = str  # zoom|google_meet|teams|other
@@ -82,6 +83,50 @@ class EventVenue(BaseModel):
     map_url: str | None = Field(None, description="Map link")
 
 
+class EventModulesInput(BaseModel):
+    """Module overrides accepted on Event create/update.
+
+    Partial by design: only the modules that are sent are applied; the rest keep their value (defaults
+    from ``event_type`` on create, the current configuration on update). Unknown module names and
+    non-boolean values (including null) are rejected.
+    """
+
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {"meals": False, "online_meeting": True}})
+
+    registration: StrictBool | None = Field(None, description="Participants can register for the event.")
+    tickets: StrictBool | None = Field(None, description="Ticket types / paid tickets. Cannot be disabled for a paid event.")
+    sessions: StrictBool | None = Field(None, description="Agenda sessions. Disabling never deletes existing session data.")
+    check_in: StrictBool | None = Field(None, description="On-site check-in of registered participants.")
+    online_meeting: StrictBool | None = Field(None, description="Online meeting link. Requires delivery_mode 'online' or 'hybrid'.")
+    custom_questions: StrictBool | None = Field(None, description="Custom registration questions.")
+    meals: StrictBool | None = Field(None, description="Meal options (configuration only for now).")
+    accommodation: StrictBool | None = Field(None, description="Accommodation details (configuration only for now).")
+
+    @model_validator(mode="after")
+    def reject_explicit_nulls(self):
+        for name in self.model_fields_set:
+            if getattr(self, name) is None:
+                raise ValueError(f"module '{name}' must be true or false, not null")
+        return self
+
+    def overrides(self) -> dict[str, bool]:
+        """The modules the client actually set."""
+        return {name: getattr(self, name) for name in EVENT_MODULE_KEYS if name in self.model_fields_set}
+
+
+class EventModules(BaseModel):
+    """An Event's effective module configuration — always all eight modules."""
+
+    registration: bool
+    tickets: bool
+    sessions: bool
+    check_in: bool
+    online_meeting: bool
+    custom_questions: bool
+    meals: bool
+    accommodation: bool
+
+
 class EventCreate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
@@ -139,6 +184,16 @@ class EventCreate(BaseModel):
         description="Super Admin custom Event field values (separate from registration custom_fields)",
     )
     sessions: list | None = Field(None, description="Agenda sessions")
+    event_type: EventType | None = Field(
+        None,
+        description="Event type. Supplies the DEFAULT modules when 'modules' is omitted. Omit both to keep the "
+                    "previous (legacy) behaviour.",
+    )
+    modules: EventModulesInput | None = Field(
+        None,
+        description="Module overrides. Applied on top of the event_type defaults (or, with no event_type, on top "
+                    "of the event's behaviour-based modules). Only supported module names with boolean values.",
+    )
     status: EventStatus = Field("draft", description="Event status.")
 
     @model_validator(mode="after")
@@ -256,6 +311,9 @@ class EventCreate(BaseModel):
             "registration_close_at": self.registration_close_at,
             "custom_fields": self.custom_fields or [],
             "sessions": self._normalize_sessions(),
+            "event_type": self.event_type,
+            # None (no type, no overrides) keeps the event "legacy": resolved on read, nothing stored.
+            "modules": modules_for_new_event(self.event_type, self.modules.overrides() if self.modules else None, self),
             "status": self.status,
         }
         # form_configuration_* and custom_values applied by service layer after validation
@@ -299,6 +357,15 @@ class EventUpdate(BaseModel):
         description="Update Super Admin custom Event field values",
     )
     sessions: list | None = None
+    event_type: EventType | None = Field(
+        None,
+        description="Change the event type. Never rewrites an already-configured 'modules'; null/omitted = no change.",
+    )
+    modules: EventModulesInput | None = Field(
+        None,
+        description="Module overrides, merged over the current configuration (unsent modules keep their value). "
+                    "null/omitted = no change.",
+    )
     status: EventStatus | None = None
 
     @model_validator(mode="after")
@@ -321,6 +388,9 @@ class EventUpdate(BaseModel):
         # Ownership is immutable through update: tenant_id is accepted in the body for
         # backward compatibility but is never applied to the Event.
         data.pop("tenant_id", None)
+        # Configuration has partial-update semantics that need the current event; the service plans it.
+        data.pop("event_type", None)
+        data.pop("modules", None)
         if "ticket_types" in data and data["ticket_types"] is not None:
             normalized_tt: list[dict] = []
             for raw in data["ticket_types"] or []:
@@ -395,6 +465,14 @@ class EventResponse(BaseModel):
     form_configuration_id: UUID | None = None
     form_configuration_version_id: UUID | None = None
     sessions: list | None = None
+    event_type: EventType | None = Field(
+        None, description="Event type. Events created before Phase 2.2 (no stored type) resolve to 'other'."
+    )
+    modules: EventModules | None = Field(
+        None,
+        description="Effective module configuration: the stored modules, or — for events created before Phase 2.2 — "
+                    "derived from what the event already does (never written back).",
+    )
     status: str
     lifecycle_state: Literal["upcoming", "ongoing", "finished"] | None = Field(
         None, description="Backend-derived lifecycle state based on the event's start/end date and time zone. This does not modify the workflow status."

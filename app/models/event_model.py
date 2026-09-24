@@ -96,6 +96,11 @@ class Event(Base):
     # Schedule
     sessions = Column(MutableList.as_mutable(JSONB), default=list)
 
+    # Configurable event (Phase 2.2). Both are NULL for legacy events, which are resolved on read from
+    # their actual behaviour (see app/utils/event_modules.py) instead of being backfilled.
+    event_type = Column(String(30), nullable=True)  # conference|workshop|marathon|camp|private_function|webinar|other
+    modules = Column(JSONB, nullable=True)  # {registration, tickets, sessions, check_in, online_meeting, custom_questions, meals, accommodation: bool}
+
     status = Column(String(20), default="draft", nullable=False, index=True)
 
     requires_reapproval = Column(Boolean, default=False, nullable=False)

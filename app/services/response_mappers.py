@@ -15,6 +15,7 @@ from app.services.catalog_enrichment import (
     get_catalog_reviews,
 )
 from app.utils.event_utils import get_event_lifecycle_state
+from app.utils.event_modules import resolve_event_modules, resolve_event_type
 
 _WEEKDAY_INDEX = {
     "monday": 0,
@@ -663,6 +664,10 @@ def _event_base_fields(event) -> dict:
         "form_configuration_id": getattr(event, "form_configuration_id", None),
         "form_configuration_version_id": getattr(event, "form_configuration_version_id", None),
         "sessions": event.sessions,
+        # Configurable event (Phase 2.2): stored values when present, otherwise resolved from the event's
+        # behaviour. Pure read — nothing is written back for legacy events.
+        "event_type": resolve_event_type(event),
+        "modules": resolve_event_modules(event),
         "status": event.status,
         "lifecycle_state": get_event_lifecycle_state(event),
         "is_deleted": event.is_deleted,
