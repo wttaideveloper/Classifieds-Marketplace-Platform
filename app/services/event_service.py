@@ -1309,19 +1309,11 @@ def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
         data = {"total_feedbacks": len(feedbacks), "total_reviews": len(reviews), "average_rating": avg_rating,
                 "feedbacks": [{"id": str(f.id), "rating": f.rating, "comment": f.comment} for f in feedbacks[:20]]}
     elif report_type == "revenue":
-        ticket_prices = {tt.get("id"): float(tt.get("price", 0) or 0) for tt in (event.ticket_types or []) if isinstance(tt, dict)}
-        revenue_by_type: dict = {}
-        total_revenue = 0
-        for r in regs:
-            if r.ticket_type_id and r.status in ("confirmed", "attended"):
-                price = ticket_prices.get(r.ticket_type_id, 0)
-                try:
-                    price = float(price)
-                except Exception:
-                    price = 0
-                revenue_by_type[r.ticket_type_id] = revenue_by_type.get(r.ticket_type_id, 0) + price
-                total_revenue += price
-        data = {"total_revenue": total_revenue, "by_ticket_type": revenue_by_type, "currency": event.currency}
+        # Revenue is what was actually paid (EventOrder), not ticket prices x registrations: that counted
+        # unpaid/free registrations and ignored quantity and refunds. Same shape as before, sourced from orders.
+        from app.services.event_dashboard_service import compute_revenue_report
+
+        data = compute_revenue_report(db, event_id, event.currency)
     elif report_type == "cancellation":
         cancelled = [r for r in regs if r.status == "cancelled"]
         # also orders refund_requested

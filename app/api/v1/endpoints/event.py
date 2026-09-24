@@ -1,3 +1,4 @@
+from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
@@ -25,6 +26,14 @@ from app.repository.event_repo import (
     resolve_caller_tenant_id,
 )
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from app.schemas.event_management_schema import (
+    AttendeePaymentStatus,
+    AttendeeSort,
+    EventAttendeePaginatedResponse,
+    EventAttendeeResponse,
+    EventDashboardResponse,
+    RegistrationStatusFilter,
+)
 from app.schemas.event_schema import (
     EventCreate,
     EventDetailResponse,
@@ -54,6 +63,13 @@ from app.schemas.event_schema import (
     EventUncheckInRequest,
     MyWaitlistResponse,
 )
+from app.services.event_attendee_service import (
+    AttendeeFilters,
+    export_attendees_csv,
+    get_attendee_service,
+    list_attendees_service,
+)
+from app.services.event_dashboard_service import get_event_dashboard_service
 from app.services.event_service import (
     get_template_service,
     add_session_service,
@@ -124,6 +140,25 @@ def _event_manager(*allowed_roles: str):
 require_event_manager = _event_manager("admin", "provider")
 # Tenant-owner-only routes (formerly require_roles(["admin"])), plus ownership.
 require_event_admin = _event_manager("admin")
+# Attendee management + dashboard: the owning admin/provider, or an ACTIVE Platform Super Admin. The role gate
+# lets "super_admin" reach ownership; assert_event_access still rejects an inactive one.
+require_event_staff = _event_manager("admin", "provider", "super_admin")
+
+
+def attendee_filters(
+    q: str | None = Query(None, max_length=200, description="Case-insensitive search over participant name, email and registration reference (or an exact registration id)."),
+    status_filter: RegistrationStatusFilter | None = Query(None, alias="status", description="Registration status."),
+    ticket_type_id: str | None = Query(None, max_length=100, description="Ticket type id."),
+    payment_status: AttendeePaymentStatus | None = Query(None, description="Derived from the paired order; 'free' / 'unpaid' mean no order (free / paid event)."),
+    checked_in: bool | None = Query(None, description="true = checked in (status 'attended'); false = not checked in."),
+    registered_from: date | None = Query(None, description="Registered on or after this date (YYYY-MM-DD, UTC)."),
+    registered_to: date | None = Query(None, description="Registered on or before this date (YYYY-MM-DD, UTC)."),
+    sort: AttendeeSort = Query("newest", description="newest | oldest | name | email (ties broken by id)."),
+) -> AttendeeFilters:
+    return AttendeeFilters(
+        q=q, status=status_filter, ticket_type_id=ticket_type_id, payment_status=payment_status,
+        checked_in=checked_in, registered_from=registered_from, registered_to=registered_to, sort=sort,
+    )
 
 
 @router.post("/", response_model=EventResponse, status_code=status.HTTP_201_CREATED, summary="Create Event")
@@ -502,19 +537,78 @@ def cancel_registration(request: Request, event_id: UUID, reg_id: UUID, db: Sess
     return cancel_registration_service(db, event_id, reg_id, current_user, access_token=extract_access_token(request))
 
 
-@router.get("/{event_id}/registrations/export", summary="Export Registrations CSV")
-def export_registrations(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
+@router.get(
+    "/{event_id}/registrations/export",
+    summary="Export Registrations CSV",
+    description=(
+        "CSV of the event's registrations. Accepts the same filters as `GET /{event_id}/attendees`. The first five "
+        "columns (id, name, email, status, qr_code) are unchanged; ticket type, quantity, payment status, order, "
+        "amount, currency, check-in, registration time and the custom answers follow. Text cells that would be "
+        "read as spreadsheet formulas are prefixed with an apostrophe."
+    ),
+)
+def export_registrations(
+    event_id: UUID,
+    filters: AttendeeFilters = Depends(attendee_filters),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_staff),
+):
     from fastapi.responses import StreamingResponse
-    import csv, io
 
-    regs = get_event_registrations_service(db, event_id)
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["id", "name", "email", "status", "qr_code"])
-    for r in regs:
-        writer.writerow([r.id, r.participant_name, r.participant_email, r.status, r.qr_code])
-    output.seek(0)
-    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=event_{event_id}_registrations.csv"})
+    csv_text = export_attendees_csv(db, event_id, filters)
+    return StreamingResponse(iter([csv_text]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=event_{event_id}_registrations.csv"})
+
+
+@router.get(
+    "/{event_id}/registrations/{reg_id}",
+    response_model=EventAttendeeResponse,
+    summary="Get Attendee (Registration Detail)",
+    description="One registration of this event with its derived payment status and custom answers. A registration that belongs to a different event is a 404.",
+    responses={404: {"description": "Event or registration not found"}, 403: {"description": "Not the event's owner"}},
+)
+def get_attendee(
+    event_id: UUID,
+    reg_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_staff),
+):
+    return get_attendee_service(db, event_id, reg_id)
+
+
+@router.get(
+    "/{event_id}/attendees",
+    response_model=EventAttendeePaginatedResponse,
+    summary="List Attendees",
+    description=(
+        "Paginated attendee list for event managers: search (`q`), filters (status, ticket type, payment status, "
+        "checked-in, registration date) and sorting. `payment_status` is derived from the paired order and is never "
+        "stored on the registration. The legacy `GET /{event_id}/registrations` (bare array) is unchanged."
+    ),
+    responses={403: {"description": "Not the event's owner"}, 404: {"description": "Event not found"}},
+)
+def list_attendees(
+    event_id: UUID,
+    filters: AttendeeFilters = Depends(attendee_filters),
+    page: int = Query(DEFAULT_PAGE, ge=1),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_staff),
+):
+    return list_attendees_service(db, event_id, filters, page, page_size)
+
+
+@router.get(
+    "/{event_id}/dashboard",
+    response_model=EventDashboardResponse,
+    summary="Event Dashboard",
+    description=(
+        "Read-only operational snapshot: registrations, capacity, attendance, waitlist, orders and revenue. "
+        "Revenue comes from orders only; capacity uses the same seat accounting as registration and checkout."
+    ),
+    responses={403: {"description": "Not the event's owner"}, 404: {"description": "Event not found"}},
+)
+def event_dashboard(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_staff)):
+    return get_event_dashboard_service(db, event_id)
 
 
 @router.post("/{event_id}/checkout", response_model=EventOrderResponse, status_code=status.HTTP_201_CREATED, summary="Checkout — Paid Registration")

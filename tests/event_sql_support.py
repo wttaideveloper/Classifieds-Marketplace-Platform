@@ -6,7 +6,7 @@ SQL the endpoints emit instead of asserting against canned ``MagicMock`` query c
 
 The session mirrors production: ``autocommit=False, autoflush=False``.
 
-Helpers are not tests (no ``test_`` prefix) and are imported by the Phase 2.1 test modules.
+Helpers are not tests (no ``test_`` prefix) and are imported by the Phase 2.1+ test modules.
 """
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ from app.models.event_aux_models import (
     EventTemplate,
     EventWaitlist,
 )
+from app.models.event_form_config_model import EventFormConfiguration, EventFormConfigurationVersion
 from app.models.event_model import Event
 
 
@@ -55,6 +56,8 @@ _TABLES = [
     EventFeedback.__table__,
     EventAudit.__table__,
     EventCategory.__table__,
+    EventFormConfiguration.__table__,
+    EventFormConfigurationVersion.__table__,
 ]
 
 

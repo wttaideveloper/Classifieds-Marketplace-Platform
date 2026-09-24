@@ -118,6 +118,9 @@ STAFF_ROUTES = [
     ("GET", "/{e}/form-configuration", None),
     ("GET", "/{e}/registrations", None),
     ("GET", "/{e}/registrations/export", None),
+    ("GET", "/{e}/registrations/{r}", None),  # Phase 2.3
+    ("GET", "/{e}/attendees", None),  # Phase 2.3
+    ("GET", "/{e}/dashboard", None),  # Phase 2.3
     ("GET", "/{e}/orders", None),
     ("POST", "/{e}/orders/{o}/refund", {}),
     ("PATCH", "/{e}/orders/{o}/status", {"status": "cancelled"}),
