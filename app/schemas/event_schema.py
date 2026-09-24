@@ -1,5 +1,6 @@
 import enum
 import uuid
+from typing import Literal
 from datetime import date, datetime
 from uuid import UUID
 
@@ -391,6 +392,9 @@ class EventResponse(BaseModel):
     form_configuration_version_id: UUID | None = None
     sessions: list | None = None
     status: str
+    lifecycle_state: Literal["upcoming", "ongoing", "finished"] | None = Field(
+        None, description="Backend-derived lifecycle state based on the event's start/end date and time zone. This does not modify the workflow status."
+    )
     is_deleted: bool | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

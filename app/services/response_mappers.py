@@ -14,6 +14,7 @@ from app.services.catalog_enrichment import (
     format_listing_type,
     get_catalog_reviews,
 )
+from app.utils.event_utils import get_event_lifecycle_state
 
 _WEEKDAY_INDEX = {
     "monday": 0,
@@ -663,6 +664,7 @@ def _event_base_fields(event) -> dict:
         "form_configuration_version_id": getattr(event, "form_configuration_version_id", None),
         "sessions": event.sessions,
         "status": event.status,
+        "lifecycle_state": get_event_lifecycle_state(event),
         "is_deleted": event.is_deleted,
         "created_at": event.created_at,
         "updated_at": event.updated_at,
