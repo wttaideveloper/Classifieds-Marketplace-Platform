@@ -8,7 +8,7 @@ from app.repository.query_utils import build_pagination_meta
 from app.schemas.training_schema import TrainingDetailResponse, TrainingListItemResponse, TrainingPaginatedResponse, TrainingResponse
 from app.services.response_mappers import _qr_image_base64, map_training_detail, map_training_list_item, map_training_write
 
-ACTIVE_ENROLMENT_STATUSES = frozenset({"enrolled", "active", "completed", "approved"})
+ACTIVE_ENROLMENT_STATUSES = frozenset({"enrolled", "active", "completed", "approved", "attended"})
 CHECKIN_ELIGIBLE_STATUSES = frozenset({"enrolled", "active", "approved"})
 # Statuses that occupy a capacity slot — used both when enrolling and when
 # promoting from the waitlist so the two stay in agreement.

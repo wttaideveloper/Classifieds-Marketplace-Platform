@@ -406,3 +406,25 @@ def test_venue_lesson_attendance(setup):
     lesson_after = content_after.json()['sections'][0]['lessons'][0]
     assert lesson_after['is_attended'] is True
     assert lesson_after['attended_at'] == recorded_at
+
+
+def test_attended_enrolment_content_access(setup):
+    """
+    Regression test for the bug where 'attended' enrolments were blocked
+    from accessing the Content API due to not being in ACTIVE_ENROLMENT_STATUSES.
+    """
+    sessions, client, user, kind = setup
+    
+    # Change the enrolment status to "attended" in the database
+    with sessions() as db:
+        from app.models.training_model import TrainingEnrolment
+        enrol = db.query(TrainingEnrolment).filter(TrainingEnrolment.participant_email == user['email']).first()
+        if not enrol:
+            pytest.skip("Test skipped because there is no enrolment in this fixture variation")
+        enrol.status = "attended"
+        db.commit()
+
+    # The content API should STILL allow access and not return 403 "Enrolled participants only"
+    content_resp = client.get(f'/api/v1/trainings/{TID}/content')
+    assert content_resp.status_code == 200, f"Expected 200 OK, got {content_resp.status_code}: {content_resp.text}"
+    assert "sections" in content_resp.json()
