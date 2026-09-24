@@ -260,26 +260,54 @@ class TestWaitlistDeleteIDOR:
         assert resp.status_code == 404, resp.text
 
     def test_admin_can_delete_any_entry(self):
+        """Staff may remove any entry of an event THEIR tenant owns (Phase 2.1: ownership is now required)."""
+        from types import SimpleNamespace
+
         event_id = uuid4()
+        tenant_id = uuid4()
         entry = _make_waitlist_entry(event_id, CUSTOMER_USER["email"])
         db = MagicMock()
         db.query.return_value.filter.return_value.first.return_value = entry
-        tc, _ = _client_for(ADMIN_USER, db)
+        tc, _ = _client_for({**ADMIN_USER, "tenant_id": str(tenant_id)}, db)
+        owned_event = SimpleNamespace(id=event_id, tenant_id=tenant_id, enterprise=None)
 
-        resp = tc.delete(f"/api/v1/events/{event_id}/waitlist/{entry.id}")
+        with patch("app.repository.event_repo.get_event_by_id", return_value=owned_event):
+            resp = tc.delete(f"/api/v1/events/{event_id}/waitlist/{entry.id}")
 
         assert resp.status_code == 200, resp.text
 
     def test_provider_can_delete_any_entry(self):
+        """Staff may remove any entry of an event THEIR tenant owns (Phase 2.1: ownership is now required)."""
+        from types import SimpleNamespace
+
+        event_id = uuid4()
+        tenant_id = uuid4()
+        entry = _make_waitlist_entry(event_id, CUSTOMER_USER["email"])
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = entry
+        tc, _ = _client_for({**PROVIDER_USER, "tenant_id": str(tenant_id)}, db)
+        owned_event = SimpleNamespace(id=event_id, tenant_id=tenant_id, enterprise=None)
+
+        with patch("app.repository.event_repo.get_event_by_id", return_value=owned_event):
+            resp = tc.delete(f"/api/v1/events/{event_id}/waitlist/{entry.id}")
+
+        assert resp.status_code == 200, resp.text
+
+    def test_provider_of_another_tenant_cannot_delete_entry(self):
+        from types import SimpleNamespace
+
         event_id = uuid4()
         entry = _make_waitlist_entry(event_id, CUSTOMER_USER["email"])
         db = MagicMock()
         db.query.return_value.filter.return_value.first.return_value = entry
-        tc, _ = _client_for(PROVIDER_USER, db)
+        tc, _ = _client_for({**PROVIDER_USER, "tenant_id": str(uuid4())}, db)
+        someone_elses_event = SimpleNamespace(id=event_id, tenant_id=uuid4(), enterprise=None)
 
-        resp = tc.delete(f"/api/v1/events/{event_id}/waitlist/{entry.id}")
+        with patch("app.repository.event_repo.get_event_by_id", return_value=someone_elses_event):
+            resp = tc.delete(f"/api/v1/events/{event_id}/waitlist/{entry.id}")
 
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 403, resp.text
+        assert entry.status != "left"
 
     def test_nonexistent_entry_returns_404(self):
         event_id = uuid4()

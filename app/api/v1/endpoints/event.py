@@ -4,15 +4,26 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, sta
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import (
+    extract_access_token,
     get_current_admin,
     get_current_super_admin,
     get_current_user,
+    get_optional_current_user,
     get_web_session_cookie_token,
     require_event_form_builder_admin,
     require_roles,
 )
 from app.core.config import settings
 from app.db.database import get_db
+from app.repository.event_repo import (
+    STAFF_ROLES,
+    assert_event_access,
+    build_event_viewer,
+    can_view_event,
+    is_platform_super_admin,
+    require_event_owner,
+    resolve_caller_tenant_id,
+)
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.event_schema import (
     EventCreate,
@@ -86,13 +97,53 @@ from app.services.event_service import (
 router = APIRouter(tags=["Events"])
 
 
+def _event_manager(*allowed_roles: str):
+    """Build the single reusable authorization dependency for event-scoped staff routes.
+
+    Order matters and is deliberate: authenticate (401) -> role gate (403) -> load the
+    Event (404) -> verify tenant ownership (403). All of it runs before the handler body,
+    so nothing is read or mutated for a caller who does not own the Event. ``event_id``
+    binds to the route's path parameter of the same name.
+    """
+
+    def dependency(
+        request: Request,
+        event_id: UUID = Path(..., description="Event ID"),
+        db: Session = Depends(get_db),
+        current_user: dict = Depends(get_current_user),
+    ) -> dict:
+        if current_user.get("role") not in allowed_roles:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+        require_event_owner(db, event_id, current_user, access_token=extract_access_token(request))
+        return current_user
+
+    return dependency
+
+
+# Same role gate the routes had before (require_roles(["admin","provider"])), plus ownership.
+require_event_manager = _event_manager("admin", "provider")
+# Tenant-owner-only routes (formerly require_roles(["admin"])), plus ownership.
+require_event_admin = _event_manager("admin")
+
+
 @router.post("/", response_model=EventResponse, status_code=status.HTTP_201_CREATED, summary="Create Event")
 def create_event(event: EventCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     return create_event_service(db, event, current_user)
 
 
-@router.get("/", response_model=EventPaginatedResponse, status_code=status.HTTP_200_OK, summary="List Events")
+@router.get(
+    "/",
+    response_model=EventPaginatedResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List Events",
+    description=(
+        "Public browsing returns **published** events only. Staff (admin/provider) additionally see every "
+        "event of their own tenant in any status; an active Platform Super Admin sees all. Authentication is "
+        "optional — an absent or invalid token is treated as an anonymous public reader."
+    ),
+)
 def list_events(
+    request: Request,
     search: str | None = Query(None, description="Search across title/description/category."),
     category: str | None = Query(None, description="Filter by category."),
     tenant_id: UUID | None = Query(
@@ -110,9 +161,20 @@ def list_events(
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
+    current_user: dict | None = Depends(get_optional_current_user),
 ):
+    token = extract_access_token(request)
+    viewer = build_event_viewer(
+        db,
+        current_user,
+        access_token=token,
+        # Only ask the identity service about Platform Super Admin when the request
+        # targets non-public statuses; customer/mobile traffic (status=published) never does.
+        remote_platform_check=bool(status_filter) and status_filter != "published",
+    )
     return get_events_service(
         db,
+        viewer=viewer,
         search=search,
         category=category,
         tenant_id=tenant_id,
@@ -164,13 +226,13 @@ def my_waitlist(
         403: {"description": "Supplied tenant_id does not belong to authenticated user", "content": {"application/json": {"example": {"detail": "Supplied tenant_id does not belong to authenticated user"}}}},
     },
 )
-def create_template(payload: EventTemplateCreateRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return create_template_service(db, payload.model_dump(exclude_unset=True), current_user)
+def create_template(request: Request, payload: EventTemplateCreateRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_template_service(db, payload.model_dump(exclude_unset=True), current_user, access_token=extract_access_token(request))
 
 
 @router.get("/templates", response_model=list[EventTemplateResponse], summary="List Templates", description="List templates owned by authenticated tenant (tenant isolation).")
-def list_templates(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return list_templates_service(db, current_user)
+def list_templates(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return list_templates_service(db, current_user, access_token=extract_access_token(request))
 
 
 @router.get(
@@ -182,8 +244,8 @@ def list_templates(db: Session = Depends(get_db), current_user: dict = Depends(g
         403: {"description": "Tenant mismatch", "content": {"application/json": {"example": {"detail": "Template does not belong to your tenant"}}}},
     },
 )
-def get_template(template_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return get_template_service(db, template_id, current_user)
+def get_template(request: Request, template_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return get_template_service(db, template_id, current_user, access_token=extract_access_token(request))
 
 
 @router.post(
@@ -198,8 +260,8 @@ def get_template(template_id: UUID, db: Session = Depends(get_db), current_user:
         400: {"description": "Invalid template data", "content": {"application/json": {"example": {"detail": "Failed to create Event from template: ..."}}}},
     },
 )
-def apply_template(template_id: UUID, payload: EventTemplateApplyRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return apply_template_service(db, template_id, payload.model_dump(exclude_unset=True), current_user)
+def apply_template(request: Request, template_id: UUID, payload: EventTemplateApplyRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return apply_template_service(db, template_id, payload.model_dump(exclude_unset=True), current_user, access_token=extract_access_token(request))
 
 
 @router.get(
@@ -286,31 +348,49 @@ def get_event_registration_form(
 def get_event_form_configuration(
     event_id: UUID = Path(..., description="Event ID"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["admin", "provider"])),
+    current_user: dict = Depends(require_event_manager),
 ):
     from app.schemas.event_form_config_schema import ActiveFormConfigurationResponse
     from app.services.event_form_config_service import get_event_form_configuration_service
     return ActiveFormConfigurationResponse.model_validate(get_event_form_configuration_service(db, event_id, current_user))
 
 
-@router.get("/{event_id}", response_model=EventDetailResponse, status_code=status.HTTP_200_OK, summary="Get Event by ID")
-def get_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db)):
-    return get_event_service(db, event_id)
+@router.get(
+    "/{event_id}",
+    response_model=EventDetailResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get Event by ID",
+    description=(
+        "Published events are public. A non-published event is returned only to staff of its owning tenant, an "
+        "active Platform Super Admin, or a participant who registered for / joined the waitlist of it (so My Events "
+        "still opens cancelled or completed events). Everyone else gets 404. Internal workflow fields "
+        "(last_admin_notes, requires_reapproval) and organiser_contact are returned to owners only."
+    ),
+)
+def get_event(
+    request: Request,
+    event_id: UUID = Path(..., description="Event ID"),
+    db: Session = Depends(get_db),
+    current_user: dict | None = Depends(get_optional_current_user),
+):
+    token = extract_access_token(request)
+    viewer = build_event_viewer(db, current_user, access_token=token)
+    return get_event_service(db, event_id, viewer=viewer, access_token=token)
 
 
 @router.put("/{event_id}", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event")
-def update_event(event: EventUpdate, event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def update_event(event: EventUpdate, event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return update_event_service(db, event_id, event, current_user)
 
 
 @router.delete("/{event_id}", status_code=status.HTTP_200_OK, summary="Delete Event")
-def delete_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def delete_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     delete_event_service(db, event_id, current_user)
     return {"message": "Event deleted successfully"}
 
 
 @router.post("/{event_id}/duplicate", response_model=EventResponse, status_code=status.HTTP_201_CREATED, summary="Duplicate Event")
-def duplicate_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def duplicate_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return duplicate_event_service(db, event_id, current_user)
 
 
@@ -347,11 +427,14 @@ def update_status(
         else:
             raise HTTPException(status_code=403, detail="Not authorized")
 
+    # Tenant ownership (an active Platform Super Admin passes across tenants). Runs before any
+    # transition, so a cross-tenant caller can neither change nor probe another tenant's event.
+    require_event_owner(db, event_id, current_user, access_token=token, include_deleted=True)
     return update_event_status_service(db, event_id, payload.status, current_user)
 
 
 @router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Unpublish Event")
-def unpublish_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def unpublish_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     if current_user.get("role") not in ("admin", "super_admin"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Only Enterprise Admin can unpublish events (acting as Super Admin for testing).")
@@ -359,12 +442,12 @@ def unpublish_event(event_id: UUID, db: Session = Depends(get_db), current_user:
 
 
 @router.post("/{event_id}/archive", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Archive Event")
-def archive_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def archive_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return update_event_status_service(db, event_id, "archived", current_user)
 
 
 @router.get("/{event_id}/admin-notes", summary="View Enterprise Admin Notes on Event")
-def get_admin_notes(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def get_admin_notes(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     """Enterprise Admin / Provider can see the Enterprise Admin's latest reject/request-changes message (testing as Super Admin)."""
     from app.repository.event_repo import get_event_by_id
     from fastapi import HTTPException
@@ -380,7 +463,7 @@ def get_admin_notes(event_id: UUID, db: Session = Depends(get_db), current_user:
 
 
 @router.post("/{event_id}/resubmit", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Resubmit Event After Revision")
-def resubmit_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def resubmit_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     """Resubmit event for approval after Enterprise Admin requested changes (needs_revision -> pending_approval) — testing as Super Admin."""
     from app.repository.event_repo import get_event_by_id
     from fastapi import HTTPException
@@ -396,7 +479,7 @@ def resubmit_event(event_id: UUID, db: Session = Depends(get_db), current_user: 
 
 
 @router.get("/{event_id}/registrations", summary="List Registrations")
-def list_registrations(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def list_registrations(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return get_event_registrations_service(db, event_id)
 
 
@@ -413,44 +496,14 @@ def register(event_id: UUID, payload: EventRegistrationCreate, db: Session = Dep
 
 
 @router.delete("/{event_id}/registrations/{reg_id}", summary="Cancel Registration")
-def cancel_registration(event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.models.event_aux_models import EventRegistration
-    from fastapi import HTTPException
+def cancel_registration(request: Request, event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.event_service import cancel_registration_service
 
-    reg = db.query(EventRegistration).filter(EventRegistration.id == reg_id, EventRegistration.event_id == event_id).first()
-    if not reg:
-        raise HTTPException(status_code=404, detail="Registration not found")
-    # IDOR check: participant can only cancel own, provider/admin any
-    role = current_user.get("role")
-    email = current_user.get("email")
-    if role not in ["admin", "provider"] and reg.participant_email != email:
-        raise HTTPException(status_code=403, detail="Not authorized to cancel this registration")
-    if reg.status == "attended":
-        raise HTTPException(status_code=400, detail="Cannot cancel: already attended (use refund flow)")
-    if reg.status == "cancelled":
-        return {"message": "Registration already cancelled"}
-    reg.status = "cancelled"
-    db.commit()
-    try:
-        from app.models.event_model import Event
-        ev = db.query(Event).filter(Event.id == event_id).first()
-        if ev:
-            from app.services.notification_triggers import notify_single_cancellation
-            notify_single_cancellation(db, ev, reg)
-            # Auto-promote from waitlist if capacity has opened
-            from app.services.event_service import _try_promote_from_waitlist
-            try:
-                _try_promote_from_waitlist(db, event_id, ev)
-                db.commit()
-            except Exception:
-                pass
-    except Exception:
-        pass
-    return {"message": "Registration cancelled"}
+    return cancel_registration_service(db, event_id, reg_id, current_user, access_token=extract_access_token(request))
 
 
 @router.get("/{event_id}/registrations/export", summary="Export Registrations CSV")
-def export_registrations(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def export_registrations(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     from fastapi.responses import StreamingResponse
     import csv, io
 
@@ -470,22 +523,22 @@ def checkout(event_id: UUID, payload: EventCheckoutRequest, db: Session = Depend
 
 
 @router.get("/{event_id}/orders", summary="List Orders")
-def list_orders(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def list_orders(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return get_event_orders_service(db, event_id)
 
 
 @router.post("/{event_id}/registrations/{reg_id}/refund", summary="Request Refund")
-def refund_registration(event_id: UUID, reg_id: UUID, payload: EventRefundRequest | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return create_event_refund_service(db, event_id, reg_id, payload)
+def refund_registration(request: Request, event_id: UUID, reg_id: UUID, payload: EventRefundRequest | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_event_refund_service(db, event_id, reg_id, payload, current_user=current_user, access_token=extract_access_token(request))
 
 
 @router.post("/{event_id}/orders/{order_id}/refund", summary="Refund Order")
-def refund_order(event_id: UUID, order_id: UUID, payload: EventRefundRequest | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return create_event_refund_service(db, event_id, order_id, payload)
+def refund_order(event_id: UUID, order_id: UUID, payload: EventRefundRequest | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
+    return create_event_refund_service(db, event_id, order_id, payload, current_user=current_user, staff_verified=True)
 
 
 @router.get("/{event_id}/waitlist", summary="List Waitlist")
-def list_waitlist(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def list_waitlist(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return get_event_waitlist_service(db, event_id)
 
 
@@ -502,55 +555,55 @@ def join_waitlist(event_id: UUID, payload: EventRegistrationCreate, db: Session 
 
 
 @router.delete("/{event_id}/waitlist/{entry_id}", summary="Leave Waitlist")
-def leave_waitlist(event_id: UUID, entry_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return delete_waitlist_entry_service(db, event_id, entry_id, current_user)
+def leave_waitlist(request: Request, event_id: UUID, entry_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return delete_waitlist_entry_service(db, event_id, entry_id, current_user, access_token=extract_access_token(request))
 
 
 # ---- Sessions & Attendance (E11-E12) ----
 
 
 @router.get("/{event_id}/sessions", summary="List Sessions")
-def list_sessions(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return get_sessions_service(db, event_id)
+def list_sessions(request: Request, event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return get_sessions_service(db, event_id, current_user=current_user, access_token=extract_access_token(request))
 
 
 @router.post("/{event_id}/sessions", status_code=status.HTTP_201_CREATED, summary="Add Session")
-def add_session(event_id: UUID, payload: EventSessionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def add_session(event_id: UUID, payload: EventSessionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return add_session_service(db, event_id, payload)
 
 
 @router.put("/{event_id}/sessions/{session_id}", summary="Update Session")
-def update_session(event_id: UUID, session_id: str, payload: EventSessionUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def update_session(event_id: UUID, session_id: str, payload: EventSessionUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return update_session_service(db, event_id, session_id, payload)
 
 
 @router.delete("/{event_id}/sessions/{session_id}", summary="Delete Session")
-def delete_session(event_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def delete_session(event_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return delete_session_service(db, event_id, session_id)
 
 
 @router.post("/{event_id}/check-in", summary="Check-in Participant")
-def check_in(event_id: UUID, payload: EventCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def check_in(event_id: UUID, payload: EventCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return check_in_service(db, event_id, payload, current_user)
 
 
 @router.post("/{event_id}/uncheck-in", summary="Undo Check-in")
-def uncheck_in(event_id: UUID, payload: EventUncheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return uncheck_in_service(db, event_id, payload)
+def uncheck_in(event_id: UUID, payload: EventUncheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
+    return uncheck_in_service(db, event_id, payload, current_user)
 
 
 @router.post("/{event_id}/check-out", summary="Check-out Participant")
-def check_out(event_id: UUID, payload: EventCheckOutRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return check_out_service(db, event_id, payload)
+def check_out(event_id: UUID, payload: EventCheckOutRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
+    return check_out_service(db, event_id, payload, current_user)
 
 
 @router.post("/{event_id}/validate-qr", summary="Validate QR Code")
-def validate_qr(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def validate_qr(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return validate_qr_service(db, event_id, payload.get("qr_code"))
 
 
 @router.get("/{event_id}/registrations/{reg_id}/qr", summary="Get QR Code Image")
-def get_qr_image(event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_qr_image(request: Request, event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.models.event_aux_models import EventRegistration
     from fastapi import HTTPException
     from fastapi.responses import StreamingResponse
@@ -563,12 +616,17 @@ def get_qr_image(event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), cu
     if not reg:
         raise HTTPException(status_code=404, detail="Registration not found")
         
-    # IDOR: only owner or admin/provider can view QR. Case-insensitive email check.
-    role = current_user.get("role")
-    email = current_user.get("email", "")
-    if role not in ["admin", "provider", "super_admin"]:
-        if not reg.participant_email or reg.participant_email.strip().lower() != email.strip().lower():
+    # IDOR: the participant themself (case-insensitive email), or staff who own the Event's tenant.
+    email = (current_user.get("email") or "").strip().lower()
+    is_owner = bool(reg.participant_email and email and reg.participant_email.strip().lower() == email)
+    if not is_owner:
+        if current_user.get("role") not in (*STAFF_ROLES, "super_admin"):
             raise HTTPException(status_code=403, detail="Not authorized to view this QR code")
+        from app.repository.event_repo import get_event_by_id
+        ev = get_event_by_id(db, event_id)
+        if ev is None:
+            raise HTTPException(status_code=404, detail="Event not found")
+        assert_event_access(db, ev, current_user, access_token=extract_access_token(request))
 
     try:
         import qrcode
@@ -585,26 +643,28 @@ def get_qr_image(event_id: UUID, reg_id: UUID, db: Session = Depends(get_db), cu
 
 
 @router.get("/{event_id}/calendar.ics", summary="Add to calendar — Event + Sessions (ICS)")
-def event_calendar(event_id: UUID, db: Session = Depends(get_db)):
+def event_calendar(request: Request, event_id: UUID, db: Session = Depends(get_db), current_user: dict | None = Depends(get_optional_current_user)):
     from fastapi.responses import Response
     from app.services.calendar_service import event_to_ics
     from app.repository.event_repo import get_event_by_id
     from fastapi import HTTPException
     ev = get_event_by_id(db, event_id)
-    if not ev:
+    token = extract_access_token(request)
+    if not ev or not can_view_event(db, ev, build_event_viewer(db, current_user, access_token=token), access_token=token):
         raise HTTPException(status_code=404, detail="Event not found")
     ics = event_to_ics(ev)
     return Response(content=ics, media_type="text/calendar", headers={"Content-Disposition": f"attachment; filename=event_{event_id}.ics"})
 
 
 @router.get("/{event_id}/sessions/{session_id}/calendar.ics", summary="Add to calendar — Single Session (ICS)")
-def session_calendar(event_id: UUID, session_id: str, db: Session = Depends(get_db)):
+def session_calendar(request: Request, event_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict | None = Depends(get_optional_current_user)):
     from fastapi.responses import Response
     from app.services.calendar_service import event_to_ics
     from app.repository.event_repo import get_event_by_id
     from fastapi import HTTPException
     ev = get_event_by_id(db, event_id)
-    if not ev:
+    token = extract_access_token(request)
+    if not ev or not can_view_event(db, ev, build_event_viewer(db, current_user, access_token=token), access_token=token):
         raise HTTPException(status_code=404, detail="Event not found")
     sess = next((s for s in (ev.sessions or []) if isinstance(s, dict) and s.get("id")==session_id), None)
     if not sess:
@@ -614,14 +674,14 @@ def session_calendar(event_id: UUID, session_id: str, db: Session = Depends(get_
 
 
 @router.get("/{event_id}/meeting-link", summary="Get Meeting Link (registered only)")
-def get_meeting_link(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return get_meeting_link_service(db, event_id, current_user)
+def get_meeting_link(request: Request, event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return get_meeting_link_service(db, event_id, current_user, access_token=extract_access_token(request))
 
 
 @router.get("/{event_id}/sessions/{session_id}/meeting-link", summary="Get Session Meeting Link (registered only)")
-def get_session_meeting_link(event_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_session_meeting_link(request: Request, event_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.event_service import get_session_meeting_link_service
-    return get_session_meeting_link_service(db, event_id, session_id, current_user)
+    return get_session_meeting_link_service(db, event_id, session_id, current_user, access_token=extract_access_token(request))
 
 
 @router.post("/{event_id}/contact", summary="Contact Organiser")
@@ -630,7 +690,7 @@ def contact_organiser(event_id: UUID, payload: dict, db: Session = Depends(get_d
 
 
 @router.get("/{event_id}/attendance", summary="Attendance Report")
-def attendance(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def attendance(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return get_event_attendance_service(db, event_id)
 
 
@@ -638,12 +698,12 @@ def attendance(event_id: UUID, db: Session = Depends(get_db), current_user: dict
 
 
 @router.post("/{event_id}/announcements", status_code=status.HTTP_201_CREATED, summary="Send Announcement")
-def announce(event_id: UUID, payload: EventAnnouncementCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def announce(event_id: UUID, payload: EventAnnouncementCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return send_announcement_service(db, event_id, payload, current_user)
 
 
 @router.post("/{event_id}/remind", status_code=status.HTTP_201_CREATED, summary="Send Event Reminder")
-def remind(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def remind(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     from app.repository.event_repo import get_event_by_id
     from fastapi import HTTPException
     ev = get_event_by_id(db, event_id)
@@ -660,7 +720,7 @@ def submit_feedback(event_id: UUID, payload: dict, db: Session = Depends(get_db)
 
 
 @router.get("/{event_id}/feedback", summary="List Feedback")
-def list_feedback(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def list_feedback(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return get_event_feedbacks_service(db, event_id, is_review=False)
 
 
@@ -670,18 +730,22 @@ def submit_review(event_id: UUID, payload: dict, db: Session = Depends(get_db), 
 
 
 @router.patch("/{event_id}/reviews/{review_id}/moderate", summary="Moderate Review")
-def moderate_review(event_id: UUID, review_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin"]))):
-    return moderate_review_service(db, review_id, payload.get("action", "approved"))
+def moderate_review(event_id: UUID, review_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_event_admin)):
+    return moderate_review_service(db, review_id, payload.get("action", "approved"), event_id=event_id)
 
 
 @router.get("/{event_id}/reports", summary="Event Reports")
-def reports(event_id: UUID, type: str = Query("registration"), format: str = Query("json"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def reports(event_id: UUID, type: str = Query("registration"), format: str = Query("json"), db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return get_event_reports_service(db, event_id, type)
 
 
 @router.get("/reports/summary", summary="Performance Dashboard")
-def reports_summary(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return get_event_summary_service(db, enterprise_id)
+def reports_summary(request: Request, enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    # Scope always comes from the authenticated caller, never from a query parameter.
+    tenant_id = resolve_caller_tenant_id(db, current_user, access_token=extract_access_token(request))
+    if not tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant could not be resolved for this caller")
+    return get_event_summary_service(db, enterprise_id, tenant_id=tenant_id)
 
 
 @router.put(
@@ -695,9 +759,9 @@ def reports_summary(enterprise_id: UUID | None = None, db: Session = Depends(get
         403: {"description": "Tenant mismatch", "content": {"application/json": {"example": {"detail": "Template does not belong to your tenant"}}}},
     },
 )
-def update_template(template_id: UUID, payload: EventTemplateUpdateRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def update_template(request: Request, template_id: UUID, payload: EventTemplateUpdateRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.event_service import update_template_service
-    return update_template_service(db, template_id, payload.model_dump(exclude_unset=True), current_user)
+    return update_template_service(db, template_id, payload.model_dump(exclude_unset=True), current_user, access_token=extract_access_token(request))
 
 
 @router.delete(
@@ -711,9 +775,9 @@ def update_template(template_id: UUID, payload: EventTemplateUpdateRequest, db: 
         403: {"description": "Tenant mismatch", "content": {"application/json": {"example": {"detail": "Template does not belong to your tenant"}}}},
     },
 )
-def delete_template(template_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def delete_template(request: Request, template_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
     from app.services.event_service import delete_template_service
-    return delete_template_service(db, template_id, current_user)
+    return delete_template_service(db, template_id, current_user, access_token=extract_access_token(request))
 
 
 @router.get(
@@ -722,7 +786,7 @@ def delete_template(template_id: UUID, db: Session = Depends(get_db), current_us
     summary="Batch Check-in — List registrations for scanning",
     description="Returns registrations for the event with eligibility computed server-side. Frontend renders table: pick multi + POST /batch-check-in + refresh attendance.",
 )
-def batch_check_in_preview(event_id: UUID, status_filter: str | None = Query(None, alias="status", description="Filter: confirmed|attended|cancelled"), db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def batch_check_in_preview(event_id: UUID, status_filter: str | None = Query(None, alias="status", description="Filter: confirmed|attended|cancelled"), db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     from app.models.event_aux_models import EventRegistration
     from app.services.event_service import _get_event_or_404
     _get_event_or_404(db, event_id)
@@ -768,15 +832,21 @@ def batch_check_in_preview(event_id: UUID, status_filter: str | None = Query(Non
     summary="Batch Check-in — Check in multiple participants",
     description="Batch check-in: body { participants: [{registration_id|qr_code, session_id?}] }. Returns {total, succeeded, failed, results:[{registration_id, participant_name, status, checked_in_at, message}]} — refresh GET /batch-check-in or GET /{id}/attendance after.",
 )
-def batch_check_in(event_id: UUID, payload: EventBatchCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+def batch_check_in(event_id: UUID, payload: EventBatchCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     from app.services.event_service import batch_checkin_service
-    return batch_checkin_service(db, event_id, payload.participants)
+    return batch_checkin_service(db, event_id, payload.participants, current_user)
 
 
 @router.post("/auto-complete", summary="Auto-complete past published events", status_code=status.HTTP_200_OK)
-def auto_complete_events(enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin)):
+def auto_complete_events(request: Request, enterprise_id: UUID | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin)):
     from app.services.event_service import auto_complete_past_events_service
-    return auto_complete_past_events_service(db, enterprise_id)
+    tenant_id = None
+    if not is_platform_super_admin(current_user):
+        # A tenant-scoped admin may only complete its own tenant's events.
+        tenant_id = resolve_caller_tenant_id(db, current_user, access_token=extract_access_token(request))
+        if not tenant_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant could not be resolved for this caller")
+    return auto_complete_past_events_service(db, enterprise_id, tenant_id=tenant_id, current_user=current_user)
 
 
 
@@ -797,9 +867,9 @@ def update_event_order_status(
     order_id: UUID,
     payload: EventOrderStatusUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["admin", "provider"])),
+    current_user: dict = Depends(require_event_manager),
 ):
-    return update_event_order_status_service(db, event_id, order_id, payload)
+    return update_event_order_status_service(db, event_id, order_id, payload, current_user=current_user)
 
 
 @router.post(
@@ -811,6 +881,6 @@ def approve_event_refund(
     order_id: UUID,
     payload: EventRefundApproveRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["admin", "provider"])),
+    current_user: dict = Depends(require_event_manager),
 ):
-    return approve_event_refund_service(db, event_id, order_id, payload)
+    return approve_event_refund_service(db, event_id, order_id, payload, current_user=current_user)

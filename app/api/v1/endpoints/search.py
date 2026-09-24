@@ -1,9 +1,11 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
+from app.core.dependencies import extract_access_token, get_optional_current_user
 from app.db.database import get_db
+from app.repository.event_repo import build_event_viewer
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.enterprise_schema import EnterprisePaginatedResponse
 from app.schemas.event_schema import EventPaginatedResponse
@@ -120,6 +122,7 @@ def search_services(
     summary="Search Events",
 )
 def search_events(
+    request: Request,
     query: str | None = Query(None, description="Search query."),
     tenant_id: UUID | None = Query(None),
     enterprise_id: UUID | None = Query(None),
@@ -130,9 +133,17 @@ def search_events(
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
+    current_user: dict | None = Depends(get_optional_current_user),
 ):
+    # Same visibility rule as GET /events: published for the public, plus the caller's own tenant for staff.
+    viewer = build_event_viewer(
+        db,
+        current_user,
+        access_token=extract_access_token(request),
+        remote_platform_check=bool(status_filter) and status_filter != "published",
+    )
     return search_events_service(
-        db, query=query, tenant_id=tenant_id, enterprise_id=enterprise_id, category=category, city=city, status_filter=status_filter, delivery_mode=delivery_mode, page=page, page_size=page_size,
+        db, query=query, tenant_id=tenant_id, enterprise_id=enterprise_id, category=category, city=city, status_filter=status_filter, delivery_mode=delivery_mode, page=page, page_size=page_size, viewer=viewer,
     )
 
 

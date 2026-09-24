@@ -206,9 +206,17 @@ def search_events_service(
     delivery_mode: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    viewer=None,
 ) -> EventPaginatedResponse:
+    from app.repository.event_repo import EventViewer, event_visibility_filter
+    from app.services.event_service import _redact_event_data
+
+    viewer = viewer or EventViewer()  # no viewer == anonymous public reader (published only)
     db_query = db.query(Event).options(joinedload(Event.enterprise))
     db_query = apply_soft_delete_filter(db_query, Event, False)
+    visibility = event_visibility_filter(viewer)
+    if visibility is not None:
+        db_query = db_query.filter(visibility)
 
     if tenant_id:
         db_query = db_query.filter(Event.tenant_id == tenant_id)
@@ -235,7 +243,7 @@ def search_events_service(
     db_query = db_query.order_by(Event.created_at.desc())
     items, total = paginate_query(db_query, page, page_size)
     return EventPaginatedResponse(
-        items=[EventListItemResponse.model_validate(map_event_list_item(item)) for item in items],
+        items=[EventListItemResponse.model_validate(_redact_event_data(map_event_list_item(item), item, viewer)) for item in items],
         pagination=build_pagination_meta(total, page, page_size),
     )
 

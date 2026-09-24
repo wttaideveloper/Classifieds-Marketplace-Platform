@@ -60,6 +60,7 @@ class MyWaitlistResponse(BaseModel):
     participant_email: str
     status: str
     registration_id: UUID | None = None
+    payment_offer_expires_at: datetime | None = None
     created_at: datetime
 
 
@@ -317,6 +318,9 @@ class EventUpdate(BaseModel):
     def to_model_data(self) -> dict:
         data = self.model_dump(exclude_unset=True)
         data.pop("custom_values", None)  # handled by form configuration service
+        # Ownership is immutable through update: tenant_id is accepted in the body for
+        # backward compatibility but is never applied to the Event.
+        data.pop("tenant_id", None)
         if "ticket_types" in data and data["ticket_types"] is not None:
             normalized_tt: list[dict] = []
             for raw in data["ticket_types"] or []:

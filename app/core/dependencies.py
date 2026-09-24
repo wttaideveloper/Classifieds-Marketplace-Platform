@@ -70,6 +70,42 @@ def get_current_user(
     return resolve_user_from_token_or_raise(token)
 
 
+def extract_access_token(request: Request) -> str | None:
+    """Bearer token from the Authorization header, else the WebAuth session cookie.
+
+    Needed by tenant resolution (``resolve_auth_tenant_id_with_db``), which can fall
+    back to a live tenant lookup with the caller's own token.
+    """
+    authorization = request.headers.get("authorization") or request.headers.get("Authorization") or ""
+    if authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        if token:
+            return token
+    return get_web_session_cookie_token(request)
+
+
+def get_optional_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict | None:
+    """Authenticate when a token is present, otherwise (or on any auth failure) return None.
+
+    For endpoints that are legitimately public but must widen what an authenticated
+    caller may see (e.g. staff seeing their own draft events). An expired or invalid
+    token is treated as anonymous rather than raising, so a public endpoint that never
+    required a token keeps working for clients that still send a stale one.
+    """
+    token = credentials.credentials if credentials and credentials.credentials else None
+    if not token:
+        token = get_web_session_cookie_token(request)
+    if not token:
+        return None
+    try:
+        return get_current_user(request, credentials)
+    except HTTPException:
+        return None
+
+
 def get_current_web_session_user(request: Request) -> dict:
     """Authenticate only from the HttpOnly cookie set by Web complete-login."""
     token = get_web_session_cookie_token(request)
