@@ -1170,10 +1170,10 @@ def _resolve_live_attendance_target(db: Session, tid: UUID, session_id: str):
     training = _get_training_or_404(db, tid)
     curriculum = normalize_curriculum(training.sections, training.assessments, training.assignments)
     for section in curriculum["sections"]:
-        if str(section.get("id")) == str(session_uuid) and section.get("type") == "live":
+        if str(section.get("id")) == str(session_uuid) and section.get("type") in ("live", "venue"):
             return training, section, True
         for item in section["lessons"]:
-            if str(item["id"]) == str(session_uuid) and item["type"] == "live":
+            if str(item["id"]) == str(session_uuid) and item["type"] in ("live", "venue"):
                 return training, item, True
     raise HTTPException(404, "Live session not found")
 
@@ -2121,6 +2121,75 @@ def delete_section_service(db: Session, tid: UUID, section_id: str):
     return {"message": "Section deleted"}
 
 
+def reorder_sections_service(db: Session, tid: UUID, payload):
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    sections = training.sections or []
+    mapping = {str(s.get("id")): s for s in sections if s.get("id")}
+
+    order_by_id: dict[str, int] = {}
+    for entry in payload.section_orders:
+        sid = str(entry.id)
+        if sid not in mapping:
+            raise HTTPException(status_code=422, detail=f"Section '{sid}' does not belong to this training")
+        if sid in order_by_id:
+            raise HTTPException(status_code=422, detail=f"Duplicate section id '{sid}' in section_orders")
+        order_by_id[sid] = entry.order
+
+    ordered_ids = sorted(order_by_id, key=lambda sid: order_by_id[sid])
+    remaining_ids = [str(s.get("id")) for s in sections if str(s.get("id")) not in order_by_id]
+    training.sections = [mapping[i] for i in ordered_ids] + [mapping[i] for i in remaining_ids]
+    flag_modified(training, "sections")
+    db.commit()
+    db.refresh(training)
+    return training.sections
+
+
+def reorder_lessons_service(db: Session, tid: UUID, section_id: str, payload):
+    from sqlalchemy.orm.attributes import flag_modified
+    training = _get_training_or_404(db, tid)
+    section = next((s for s in (training.sections or []) if str(s.get("id")) == str(section_id)), None)
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    lessons = section.get("lessons") or section.get("items") or []
+    mapping = {str(l.get("id")): l for l in lessons if l.get("id")}
+
+    if payload.lesson_orders:
+        order_by_id: dict[str, int] = {}
+        for entry in payload.lesson_orders:
+            lid = str(entry.id)
+            if lid not in mapping:
+                raise HTTPException(status_code=422, detail=f"Lesson '{lid}' does not belong to this section")
+            if lid in order_by_id:
+                raise HTTPException(status_code=422, detail=f"Duplicate lesson id '{lid}' in lesson_orders")
+            order_by_id[lid] = entry.order
+        ordered_ids = sorted(order_by_id, key=lambda lid: order_by_id[lid])
+        seen = set(order_by_id)
+    else:
+        seen = set()
+        ordered_ids = []
+        for lid in payload.order or []:
+            lid = str(lid)
+            if lid not in mapping:
+                raise HTTPException(status_code=422, detail=f"Lesson '{lid}' does not belong to this section")
+            if lid in seen:
+                raise HTTPException(status_code=422, detail=f"Duplicate lesson id '{lid}' in order")
+            seen.add(lid)
+            ordered_ids.append(lid)
+
+    remaining_ids = [str(l.get("id")) for l in lessons if str(l.get("id")) not in seen]
+    reordered = [mapping[i] for i in ordered_ids] + [mapping[i] for i in remaining_ids]
+    section["lessons"] = reordered
+    if "items" in section:
+        from copy import deepcopy
+        section["items"] = deepcopy(reordered)
+    flag_modified(training, "sections")
+    db.commit()
+    db.refresh(training)
+    return section["lessons"]
+
+
 def get_lesson_service(db: Session, tid: UUID, section_id: str, lesson_id: str, current_user: dict | None = None):
     training = _get_training_or_404(db, tid)
     section, lesson = _find_lesson(training, section_id, lesson_id)
@@ -2357,7 +2426,7 @@ def _base_lesson_payload(lesson: dict, is_locked: bool, is_completed: bool, comp
         "documents": lesson.get("documents") if not is_locked else None,
         "notes": lesson.get("notes") if not is_locked else None,
     }
-    if ltype == "live":
+    if ltype in ("live", "venue"):
         payload["is_attended"] = attended_at is not None
         payload["attended_at"] = attended_at
     return payload
@@ -2473,12 +2542,12 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
     attended_at_by_lesson_id: dict[str, str | None] = {}
     if email:
         for _sec in (training.sections or []):
-            if _sec.get("type") == "live":
+            if _sec.get("type") in ("live", "venue"):
                 for _rec in _live_attendance_rows(_sec.get("attendance")):
                     if _rec.get("participant_email") == email:
                         attended_at_by_lesson_id[str(_sec.get("id"))] = _rec.get("recorded_at")
             for _item in (_sec.get("lessons") or _sec.get("items") or []):
-                if _item.get("type") == "live":
+                if _item.get("type") in ("live", "venue"):
                     for _rec in _live_attendance_rows(_item.get("attendance")):
                         if _rec.get("participant_email") == email:
                             attended_at_by_lesson_id[str(_item.get("id"))] = _rec.get("recorded_at")
@@ -2551,7 +2620,7 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
                 if is_staff:
                     locked = False
                 is_completed = str(lesson.get("id")) in completed_lesson_ids
-                attended_at = attended_at_by_lesson_id.get(str(lesson.get("id"))) if ltype == "live" else None
+                attended_at = attended_at_by_lesson_id.get(str(lesson.get("id"))) if ltype in ("live", "venue") else None
                 lesson_payload = _base_lesson_payload(lesson, locked, is_completed, None, attended_at=attended_at)
             position = position_by_lesson_id.get(str(lesson.get("id")))
             lesson_payload["progress_seconds"] = position.get("position_seconds") if position else None
@@ -2579,7 +2648,7 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
             "unlock_hint": unlock_hint,
             "lessons": lessons_out,
         }
-        if sec_type == "live":
+        if sec_type in ("live", "venue"):
             sec_attended_at = attended_at_by_lesson_id.get(str(section.get("id")))
             sec_payload["is_attended"] = sec_attended_at is not None
             sec_payload["attended_at"] = sec_attended_at

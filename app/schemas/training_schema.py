@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.common_schema import PaginatedResponse
 
@@ -634,6 +634,37 @@ class LessonCreate(BaseModel):
     videos: list[str] | None = Field(None, description="Lesson media video URLs, e.g. uploaded via /trainings/upload")
     documents: list[dict] | None = Field(None, description="Lesson attachments: [{url, name, visibility, downloadable}]")
     notes: list[str] | None = Field(None, description="Lesson notes URLs (e.g. generated notes PDFs / uploads)")
+
+
+class SectionOrderItem(BaseModel):
+    id: str = Field(..., description="Section id — must belong to this training")
+    order: int = Field(..., description="Zero- or one-based position; lower sorts first")
+
+
+class SectionReorderRequest(BaseModel):
+    """POST /{training_id}/sections/reorder body. Every id must match an existing
+    section on this training; sections omitted from the list keep their relative
+    order and are placed after the ones listed here."""
+    section_orders: list[SectionOrderItem] = Field(..., min_length=1)
+
+
+class LessonOrderItem(BaseModel):
+    id: str = Field(..., description="Lesson id — must belong to this section")
+    order: int = Field(..., description="Zero- or one-based position; lower sorts first")
+
+
+class LessonReorderRequest(BaseModel):
+    """POST /{training_id}/sections/{section_id}/lessons/reorder body. Accepts
+    either lesson_orders ([{id, order}], matching section_orders) or order
+    (a plain list of lesson ids in the desired sequence) — exactly one is required."""
+    lesson_orders: list[LessonOrderItem] | None = None
+    order: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _require_one_format(self):
+        if not self.lesson_orders and not self.order:
+            raise ValueError("Provide either 'lesson_orders' or 'order'")
+        return self
 
 
 class AssessmentQuestionCreate(BaseModel):

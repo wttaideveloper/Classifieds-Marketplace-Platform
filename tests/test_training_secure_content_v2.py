@@ -373,3 +373,105 @@ def test_content_response_backward_compatible_fields_unchanged(monkeypatch):
     section = result["sections"][0]
     for key in ("id", "type", "order", "title", "summary", "schedule", "is_unlocked", "unlock_hint", "lessons"):
         assert key in section
+
+
+# --- venue attendance parity with live (section- and lesson-level) ---
+
+def test_venue_section_receives_attendance_and_qr_fields_like_live(monkeypatch):
+    training = _training(sections=[
+        {"id": "venue-sec", "type": "venue", "order": 1, "title": "Session 1", "lessons": [VIDEO_LESSON]},
+    ])
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    section = result["sections"][0]
+
+    assert section["type"] == "venue"
+    assert section["is_attended"] is False
+    assert section["attended_at"] is None
+    assert section["qr_code"] == "96FFF6F6-A9D"
+    assert section["qr_image_base64"].startswith("data:image/png;base64,")
+
+
+def test_venue_section_attendance_reflects_recorded_check_in(monkeypatch):
+    training = _training(sections=[
+        {
+            "id": "venue-sec", "type": "venue", "order": 1, "title": "Session 1", "lessons": [VIDEO_LESSON],
+            "attendance": [{"participant_email": "x@example.com", "recorded_at": "2026-10-15T10:05:12"}],
+        },
+    ])
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    section = result["sections"][0]
+
+    assert section["is_attended"] is True
+    assert section["attended_at"] == "2026-10-15T10:05:12"
+
+
+def test_venue_lesson_receives_attendance_and_qr_fields_like_live_lesson(monkeypatch):
+    training = _training()  # default fixture: section 1 has VENUE_LESSON (lv3)
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    venue_lesson = next(l for l in result["sections"][0]["lessons"] if l["id"] == "lv3")
+
+    assert venue_lesson["type"] == "venue"
+    assert venue_lesson["is_attended"] is False
+    assert venue_lesson["attended_at"] is None
+    assert venue_lesson["qr_code"] == "96FFF6F6-A9D"
+    assert venue_lesson["qr_image_base64"].startswith("data:image/png;base64,")
+
+
+def test_venue_lesson_attendance_reflects_recorded_check_in(monkeypatch):
+    venue_lesson_attended = {
+        **VENUE_LESSON,
+        "attendance": [{"participant_email": "x@example.com", "recorded_at": "2026-10-15T10:05:12"}],
+    }
+    training = _training(sections=[
+        {
+            "id": "sec-1", "type": "section", "order": 1, "title": "Session 1",
+            "lessons": [VIDEO_LESSON, LIVE_LESSON, venue_lesson_attended, EXAM_LESSON],
+        },
+    ])
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    venue_lesson = next(l for l in result["sections"][0]["lessons"] if l["id"] == "lv3")
+
+    assert venue_lesson["is_attended"] is True
+    assert venue_lesson["attended_at"] == "2026-10-15T10:05:12"
+
+
+def test_live_lesson_receives_qr_image_field(monkeypatch):
+    training = _training()
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    live_lesson = next(l for l in result["sections"][0]["lessons"] if l["id"] == "lv2")
+
+    assert live_lesson["type"] == "live"
+    assert live_lesson["qr_code"] == "96FFF6F6-A9D"
+    assert live_lesson["qr_image_base64"].startswith("data:image/png;base64,")
+
+
+def test_non_attendable_lessons_have_no_qr_or_attendance_fields(monkeypatch):
+    training = _training()  # default section has VIDEO_LESSON, LIVE_LESSON, VENUE_LESSON, EXAM_LESSON
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
+    db = _mock_db(progress_lessons=[])
+
+    result = training_service.get_secure_training_content_service(db, training.id, {"email": "x@example.com", "role": "learner"})
+    lessons = result["sections"][0]["lessons"]
+    video_lesson = next(l for l in lessons if l["id"] == "lv1")
+    exam_lesson = next(l for l in lessons if l["id"] == "lv4")
+
+    for lesson in (video_lesson, exam_lesson):
+        assert lesson.get("qr_code") is None
+        assert lesson.get("qr_image_base64") is None
+        assert "is_attended" not in lesson
+        assert "attended_at" not in lesson

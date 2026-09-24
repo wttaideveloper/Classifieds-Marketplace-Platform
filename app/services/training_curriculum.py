@@ -322,6 +322,7 @@ def apply_mode_to_response(result):
 
 
 def learning_response(result, curriculum, training, enrolment, assignment_submissions):
+    from app.services.response_mappers import _qr_image_base64
     mode = training.delivery_mode
     venue_mode = mode in ("physical", "hybrid", "blended", "instructor_led")
     online_mode = mode in ("online", "hybrid", "blended", "instructor_led")
@@ -340,7 +341,12 @@ def learning_response(result, curriculum, training, enrolment, assignment_submis
         for item in section["lessons"]:
             raw = source_items[item["id"]]
             kind, locked = item["type"], item["is_locked"]
-            item["qr_code"] = qr if kind == "venue" and not locked else None
+            # QR-based attendance applies to both venue (in-person) and live
+            # (which may still be scanned in for a hybrid/on-site session) —
+            # same enrolment QR identifier as the section- and training-level
+            # QR, just re-encoded as an image here for the lesson item.
+            item["qr_code"] = qr if kind in ("live", "venue") and not locked else None
+            item["qr_image_base64"] = _qr_image_base64(item["qr_code"]) if item["qr_code"] else None
             item["schedule"] = None if recorded else raw.get("schedule") or section["schedule"]
             if kind == "venue" and venue_mode:
                 item["venue"] = raw.get("venue") or source.get("venue") or getattr(training, "venue", None)
@@ -348,7 +354,10 @@ def learning_response(result, curriculum, training, enrolment, assignment_submis
                 section["venue"] = section["venue"] or item["venue"]
                 section["address"] = section["address"] or item["address"]
             if kind != "venue" or not venue_mode:
-                item.update(venue=None, address=None, pass_code=None, qr_code=None, check_in_window=None)
+                item.update(venue=None, address=None, pass_code=None, check_in_window=None)
+            if kind not in ("live", "venue") or not venue_mode:
+                item["qr_code"] = None
+                item["qr_image_base64"] = None
             if kind != "live" or not online_mode or locked:
                 item.update(meeting_link=None, join_url=None, join_meta=None)
             elif not item.get("meeting_link"):

@@ -324,3 +324,85 @@ def test_live_section_attendance(setup):
     post_resp_2 = client.post(url)
     assert post_resp_2.status_code == 200
     assert post_resp_2.json()['recorded_at'] == recorded_at
+
+
+def test_venue_section_attendance(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+
+    # Overwrite the curriculum so the section ITSELF is type "venue" and matches SID —
+    # regression test for the fix that extended attendance handling from "live"-only
+    # to also cover "venue" (was a 404 before, since venue was never matched).
+    with sessions() as db:
+        training = db.get(Training, TID)
+        training.sections = [{
+            'id': SID,
+            'type': 'venue',
+            'title': 'Session 1: Workplace Ergonomics',
+            'venue': 'Studio B',
+            'address': '214 Oak St',
+            'lessons': [{'id': str(uuid4()), 'type': 'video', 'title': 'Recording'}]
+        }]
+        db.commit()
+
+    # Before attendance: is_attended=false, attended_at=null, QR fields present (venue is a QR event too)
+    content_before = client.get(f'/api/v1/trainings/{TID}/content')
+    assert content_before.status_code == 200
+    section = content_before.json()['sections'][0]
+    assert section['id'] == SID
+    assert section['type'] == 'venue'
+    assert section['is_attended'] is False
+    assert section['attended_at'] is None
+
+    # Non-venue lessons inside the venue section do not receive attendance fields
+    assert section['lessons'][0].get('is_attended') is None
+
+    # POST /live-sessions/{section_id}/attendance — used to 404 for venue before the fix
+    url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
+    post_resp = client.post(url)
+    assert post_resp.status_code == 200, post_resp.text
+    recorded_at = post_resp.json()['recorded_at']
+
+    # After attendance: is_attended=true, attended_at populated
+    content_after = client.get(f'/api/v1/trainings/{TID}/content')
+    section_after = content_after.json()['sections'][0]
+    assert section_after['is_attended'] is True
+    assert section_after['attended_at'] == recorded_at
+
+    # Repeat POST remains idempotent
+    post_resp_2 = client.post(url)
+    assert post_resp_2.status_code == 200
+    assert post_resp_2.json()['recorded_at'] == recorded_at
+
+
+def test_venue_lesson_attendance(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+
+    # A "venue" LESSON nested inside a plain section (day-wise check-in inside a session).
+    with sessions() as db:
+        training = db.get(Training, TID)
+        training.sections = [{
+            'id': 'section',
+            'lessons': [{'id': SID, 'type': 'venue', 'title': 'Day 1 check-in', 'venue': 'Studio B', 'address': '214 Oak St'}]
+        }]
+        db.commit()
+
+    content_before = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson = content_before.json()['sections'][0]['lessons'][0]
+    assert lesson['id'] == SID
+    assert lesson['type'] == 'venue'
+    assert lesson['is_attended'] is False
+    assert lesson['attended_at'] is None
+
+    url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
+    post_resp = client.post(url)
+    assert post_resp.status_code == 200, post_resp.text
+    recorded_at = post_resp.json()['recorded_at']
+
+    content_after = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson_after = content_after.json()['sections'][0]['lessons'][0]
+    assert lesson_after['is_attended'] is True
+    assert lesson_after['attended_at'] == recorded_at
