@@ -1,0 +1,25 @@
+# Optional file-based Firebase credentials for docker-compose.prod.yml.
+# Provision the service account file on the host first; never bake it into the image.
+services:
+  api:
+    environment:
+      FIREBASE_CREDENTIALS_PATH: /run/secrets/firebase-adminsdk.json
+      FIREBASE_CREDENTIALS_JSON: ""
+    volumes:
+      - type: bind
+        source: ${FIREBASE_CREDENTIALS_HOST_PATH:?Set FIREBASE_CREDENTIALS_HOST_PATH to the existing host JSON file}
+        target: /run/secrets/firebase-adminsdk.json
+        read_only: true
+        bind:
+          create_host_path: false
+  socket:
+    environment:
+      FIREBASE_CREDENTIALS_PATH: /run/secrets/firebase-adminsdk.json
+      FIREBASE_CREDENTIALS_JSON: ""
+    volumes:
+      - type: bind
+        source: ${FIREBASE_CREDENTIALS_HOST_PATH:?Set FIREBASE_CREDENTIALS_HOST_PATH to the existing host JSON file}
+        target: /run/secrets/firebase-adminsdk.json
+        read_only: true
+        bind:
+          create_host_path: false

@@ -53,6 +53,35 @@ def test_hint_for_unregistered():
     assert "POST /devices/register" in hint
 
 
+def test_missing_credentials_file_reports_mount_hint(monkeypatch):
+    from app.services import firebase_push_service as service
+    error = "FIREBASE_CREDENTIALS_PATH file not found: /opt/app/secrets/ih-pro-firebase-adminsdk.json"
+    monkeypatch.setattr(service, "_ensure_firebase", lambda: (False, None, error))
+    result = service.send_push_to_tokens(["test-device"], title="New message", body="Test")
+    assert result.sent_count == 0
+    assert result.firebase_project_id is None
+    failure = result.failures[0]
+    assert failure["error_code"] == "CredentialsFileError"
+    assert "Mount" in failure["hint"]
+    assert "Regenerate" not in failure["hint"]
+    assert "JSON loaded" not in failure["hint"]
+
+
+def test_unreadable_credentials_file_is_reported(monkeypatch, tmp_path):
+    from app.services import firebase_push_service as service
+    path = tmp_path / "credentials.json"
+    path.write_text("{}")
+    monkeypatch.setattr(service.settings, "FIREBASE_CREDENTIALS_JSON", "")
+    monkeypatch.setattr(service.settings, "FIREBASE_CREDENTIALS_PATH", str(path))
+    def denied(*args, **kwargs):
+        raise PermissionError("denied")
+    monkeypatch.setattr(service.Path, "read_text", denied)
+    payload, error = service._load_firebase_credentials_payload()
+    assert payload is None
+    assert "not readable (PermissionError)" in error
+    assert "application user can read" in service._hint_for_fcm_error("FirebaseInitError", error)
+
+
 @pytest.mark.parametrize(
     ("error_code", "message"),
     [

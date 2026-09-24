@@ -68,7 +68,8 @@ async def connect(sid, environ, auth):
     token = extract_token_from_environ(environ, auth)
     user = authenticate_token(token)
     if not user:
-        if settings.is_production:
+        # Invalid/expired sessions must not silently become the dev identity.
+        if token or settings.is_production or not settings.ENABLE_DEV_TOKEN:
             return False
         user = get_dev_user()
 

@@ -23,12 +23,25 @@ def authenticate_token(token: str | None) -> dict | None:
 
 
 def extract_token_from_environ(environ: dict, auth: dict | None) -> str | None:
+    # A Web Auth BFF can resolve its HttpOnly session and inject the same
+    # server-side Bearer header used for REST. Never require browser JS to
+    # read the primary token. ASGI headers also cover native ASGI adapters.
+    headers = {
+        key.decode("latin-1").lower(): value.decode("latin-1")
+        for key, value in (environ.get("asgi.scope", {}).get("headers") or [])
+    }
+    authorization = environ.get("HTTP_AUTHORIZATION") or headers.get("authorization", "")
+    if authorization:
+        scheme, _, credential = authorization.partition(" ")
+        if scheme.lower() == "bearer" and credential.strip():
+            return credential.strip()
+
     if auth and isinstance(auth, dict):
         token = auth.get("token")
         if token:
             return token
 
-    cookie_header = environ.get("HTTP_COOKIE", "")
+    cookie_header = environ.get("HTTP_COOKIE") or headers.get("cookie", "")
     if cookie_header:
         cookies = SimpleCookie()
         try:

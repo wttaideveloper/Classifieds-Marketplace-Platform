@@ -42,6 +42,8 @@ def _load_firebase_credentials_payload() -> tuple[dict | None, str | None]:
             return json.loads(cred_path.read_text(encoding="utf-8")), None
         except json.JSONDecodeError as exc:
             return None, f"FIREBASE_CREDENTIALS_PATH file is not valid JSON: {exc}"
+        except OSError as exc:
+            return None, f"FIREBASE_CREDENTIALS_PATH file is not readable ({type(exc).__name__}): {settings.FIREBASE_CREDENTIALS_PATH}"
 
     return None, "Firebase credentials are not configured."
 
@@ -61,6 +63,16 @@ def _hint_for_fcm_error(error_code: str, message: str) -> str:
     normalized = error_code.lower()
     message_lower = message.lower()
 
+    if error_code == "CredentialsFileError" or (
+        "firebase_credentials_path" in message_lower
+        and ("not found" in message_lower or "not readable" in message_lower)
+    ):
+        return (
+            "Firebase credentials could not be read. Mount the existing service account JSON "
+            "into the running API/Socket.IO container read-only, set FIREBASE_CREDENTIALS_PATH "
+            "to that container path, and verify the application user can read it. "
+            "Recreate affected containers after changing mounts or environment settings."
+        )
     if error_code == "CredentialsParseError":
         return (
             "Use FIREBASE_CREDENTIALS_PATH pointing to the downloaded service account file, "
@@ -195,12 +207,18 @@ def send_push_to_tokens(
         return result
 
     if not ready:
+        if init_error and "FIREBASE_CREDENTIALS_PATH" in init_error and (
+            "not found" in init_error or "not readable" in init_error
+        ):
+            error_code = "CredentialsFileError"
+        else:
+            error_code = "CredentialsParseError" if init_error and "JSON" in init_error else "FirebaseInitError"
         result.failures.append(
             {
-                "error_code": "CredentialsParseError" if init_error and "JSON" in init_error else "FirebaseInitError",
+                "error_code": error_code,
                 "message": init_error or "Firebase Admin SDK is not initialized.",
                 "hint": _hint_for_fcm_error(
-                    "CredentialsParseError" if init_error and "JSON" in init_error else "FirebaseInitError",
+                    error_code,
                     init_error or "",
                 ),
             }
