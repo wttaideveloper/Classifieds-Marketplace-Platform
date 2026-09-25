@@ -36,6 +36,7 @@ Query parameters (all optional):
 | `ticket_type_id` | exact ticket type id |
 | `payment_status` | `free`, `unpaid`, `pending`, `paid`, `refund_requested`, `refunded`, `cancelled`, `failed` |
 | `checked_in` | `true` = status `attended`; `false` = everything else |
+| `source` | `walk_in` = registered by an organizer at the venue (Phase 2.5); `online` = everything else, including every row that predates the column (NULL) |
 | `registered_from`, `registered_to` | inclusive whole days (UTC, `YYYY-MM-DD`); from > to is `422` |
 | `sort` | `newest` (default), `oldest`, `name`, `email`. Every order ends in the registration id, so pages never repeat or skip rows |
 | `page`, `page_size` | project convention: `page >= 1`, `page_size` 1..100 (default 20). Response carries `pagination {total, page, page_size, total_pages}` |
@@ -43,7 +44,7 @@ Query parameters (all optional):
 Each item: `registration_id`, `event_id`, `participant_name`, `participant_email`, `registration_status`,
 `registration_reference` (the QR value), `ticket_type_id`, `ticket_type_name`, `quantity`, `payment_status`,
 `order_id`, `order_status`, `amount`, `currency`, `is_checked_in`, `checked_in_at`, `checked_out_at`,
-`registered_at`, `custom_answers[{field_id, label, value}]`, `session_attendance[{session_id, title, checked_in,
+`registered_at`, `registration_source` (`online` / `walk_in`, Phase 2.5), `custom_answers[{field_id, label, value}]`, `session_attendance[{session_id, title, checked_in,
 checked_in_at, checked_in_by, checked_out_at}]` (Phase 2.4, one entry per session of the event, separate from
 `is_checked_in`; empty without sessions and in the CSV export).
 
@@ -93,7 +94,8 @@ bookkeeping, not answers, and are omitted.
 
 ```
 event         id, title, status, lifecycle_state, event_type, modules, pricing_type, currency, dates, time_zone
-registrations total, active, confirmed, attended, cancelled, no_show, other
+registrations total, active, confirmed, attended, cancelled, no_show, other,
+              online, walk_in   (Phase 2.5: by source, all statuses, summing to total)
 capacity      capacity, unlimited, seats_taken, seats_reserved, available_seats, is_full, fill_percentage
 attendance    checked_in, not_checked_in, attendance_percentage
 waitlist      total, waiting, payment_pending, promoted, expired, left, other
@@ -154,7 +156,7 @@ The dashboard never writes, promotes, offers seats or expires anything.
 
 `GET /{event_id}/registrations/export` keeps `text/csv` and the filename. The first five columns (`id`, `name`,
 `email`, `status`, `qr_code`) are unchanged and first; appended: `ticket_type`, `quantity`, `payment_status`,
-`order_id`, `amount`, `currency`, `checked_in`, `checked_in_at`, `registered_at`, `answers`. It accepts the same
+`order_id`, `amount`, `currency`, `checked_in`, `checked_in_at`, `registered_at`, `answers`, `source` (last, Phase 2.5). It accepts the same
 filters as the list (not pagination) and the same access rule. Its role gate now also admits an active
 super admin, like the new routes. Text cells starting with `=`, `+`, `-`, `@`, tab or CR are prefixed with an
 apostrophe (spreadsheet formula injection).

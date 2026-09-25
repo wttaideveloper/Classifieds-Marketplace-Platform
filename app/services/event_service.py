@@ -2224,8 +2224,12 @@ def _find_registration(db: Session, event_id: UUID, registration_id: UUID | None
     return reg
 
 
-def check_in_service(db: Session, event_id: UUID, payload, current_user: dict | None = None):
-    """Check-in a participant by registration_id or qr_code."""
+def check_in_service(db: Session, event_id: UUID, payload, current_user: dict | None = None, *, commit: bool = True):
+    """Check-in a participant by registration_id or qr_code.
+
+    ``commit=False`` only stages the check-in (and its audit row) in the caller's transaction, so a caller that
+    also created the registration (walk-in) can commit everything atomically. The default is unchanged.
+    """
     from app.models.event_aux_models import EventRegistration
     from app.models.event_model import Event as Ev
     from app.schemas.event_schema import EventCheckInResponse
@@ -2263,8 +2267,11 @@ def check_in_service(db: Session, event_id: UUID, payload, current_user: dict | 
         {"registration_id": str(reg.id), "participant_email": reg.participant_email, "status": "attended", "session_id": payload.session_id, "method": getattr(payload, "method", None)},
         changed_by=_actor_id(current_user), commit=False,
     )
-    db.commit()
-    db.refresh(reg)
+    if commit:
+        db.commit()
+        db.refresh(reg)
+    else:
+        db.flush()
 
     return EventCheckInResponse(
         message="Checked in successfully",

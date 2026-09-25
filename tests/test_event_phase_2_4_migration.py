@@ -85,9 +85,16 @@ class TestGraph:
 
     def test_it_advances_that_head_and_creates_no_new_one(self, script_dir):
         heads = set(script_dir.get_heads())
-        assert REVISION in heads and PARENT not in heads
-        assert heads == {REVISION} | OTHER_HEADS  # still four heads, the three others exactly as they were
+        assert PARENT not in heads
         assert [r.revision for r in script_dir.walk_revisions() if r.down_revision == PARENT] == [REVISION]
+        # Later phases may extend the chain (Phase 2.5 chains onto this revision) but it must stay linear and end in
+        # a head; the other three heads are exactly as they were and there are still four heads.
+        node = REVISION
+        while node not in heads:
+            descendants = [r.revision for r in script_dir.walk_revisions() if r.down_revision == node]
+            assert len(descendants) == 1, f"{node} became a branch point: {descendants}"
+            node = descendants[0]
+        assert heads == {node} | OTHER_HEADS
 
     def test_nothing_was_merged_and_history_is_untouched(self, script_dir):
         merges = [r.revision for r in script_dir.walk_revisions() if isinstance(r.down_revision, tuple) and REVISION in r.down_revision]

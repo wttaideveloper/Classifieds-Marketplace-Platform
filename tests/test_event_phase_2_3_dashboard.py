@@ -91,7 +91,8 @@ class TestShape:
     def test_empty_event_dashboard(self, env):
         body = dash(env)
         assert set(body) == TOP_LEVEL_KEYS
-        assert body["registrations"] == {"total": 0, "active": 0, "confirmed": 0, "attended": 0, "cancelled": 0, "no_show": 0, "other": 0}
+        assert body["registrations"] == {"total": 0, "active": 0, "confirmed": 0, "attended": 0, "cancelled": 0, "no_show": 0, "other": 0,
+                                           "online": 0, "walk_in": 0}
         assert body["attendance"] == {"checked_in": 0, "not_checked_in": 0, "attendance_percentage": None}
         assert body["waitlist"] == {"total": 0, "waiting": 0, "payment_pending": 0, "promoted": 0, "expired": 0, "left": 0, "other": 0}
         assert body["orders"] == {"total": 0, "successful": 0, "pending": 0, "refund_requested": 0, "refunded": 0, "cancelled": 0, "failed": 0}
@@ -152,7 +153,8 @@ class TestRegistrationsAndAttendance:
         reg(env, "x@example.com", status="cancelled")
         reg(env, "n@example.com", status="no_show")
         reg(env, "w@example.com", status="waiting_room")  # not a status the backend writes, still counted
-        assert dash(env)["registrations"] == {"total": 8, "active": 5, "confirmed": 3, "attended": 2, "cancelled": 1, "no_show": 1, "other": 1}
+        assert dash(env)["registrations"] == {"total": 8, "active": 5, "confirmed": 3, "attended": 2, "cancelled": 1, "no_show": 1, "other": 1,
+                                                  "online": 8, "walk_in": 0}
 
     def test_attendance_percentage(self, env):
         reg(env, "a@example.com", status="attended")

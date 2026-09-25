@@ -125,6 +125,7 @@ STAFF_ROUTES = [
     ("POST", "/{e}/sessions/sess-1/uncheck-in", {"registration_id": "{r}"}),  # Phase 2.4
     ("POST", "/{e}/sessions/sess-1/check-out", {"registration_id": "{r}"}),  # Phase 2.4
     ("POST", "/{e}/sessions/sess-1/batch-check-in", {"participants": [{"registration_id": "{r}"}]}),  # Phase 2.4
+    ("POST", "/{e}/walk-in", {"participant_name": "Intruder", "participant_email": "intruder@example.com"}),  # Phase 2.5
     ("GET", "/{e}/orders", None),
     ("POST", "/{e}/orders/{o}/refund", {}),
     ("PATCH", "/{e}/orders/{o}/status", {"status": "cancelled"}),

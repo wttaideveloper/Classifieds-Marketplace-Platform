@@ -61,6 +61,7 @@ class AttendeeFilters:
     ticket_type_id: str | None = None
     payment_status: str | None = None
     checked_in: bool | None = None
+    source: str | None = None
     registered_from: date | None = None
     registered_to: date | None = None
     sort: str = "newest"
@@ -158,6 +159,10 @@ def _conditions(event_id: UUID, filters: AttendeeFilters, event_paid: bool) -> l
         conditions.append(EventRegistration.status == "attended")
     elif filters.checked_in is False:
         conditions.append(sa.or_(EventRegistration.status.is_(None), EventRegistration.status != "attended"))
+    if filters.source == "walk_in":
+        conditions.append(EventRegistration.registration_source == "walk_in")
+    elif filters.source == "online":  # NULL (every row that predates walk-ins) is online
+        conditions.append(sa.or_(EventRegistration.registration_source.is_(None), EventRegistration.registration_source != "walk_in"))
     if filters.registered_from:
         conditions.append(EventRegistration.created_at >= datetime.combine(filters.registered_from, time.min))
     if filters.registered_to:
@@ -257,6 +262,7 @@ def _attendee(reg, order, ctx: _EventContext, session_rows: dict | None = None) 
         checked_in_at=reg.checked_in_at,
         checked_out_at=reg.checked_out_at,
         registered_at=reg.created_at,
+        registration_source="walk_in" if reg.registration_source == "walk_in" else "online",
         custom_answers=_answers(reg.custom_fields, ctx.answer_labels),
         session_attendance=session_states(ctx.sessions, session_rows) if session_rows is not None else [],
     )
@@ -352,7 +358,7 @@ def export_attendees_csv(db: Session, event_id: UUID, filters: AttendeeFilters) 
     writer.writerow([
         "id", "name", "email", "status", "qr_code",
         "ticket_type", "quantity", "payment_status", "order_id", "amount", "currency",
-        "checked_in", "checked_in_at", "registered_at", "answers",
+        "checked_in", "checked_in_at", "registered_at", "answers", "source",
     ])
     for reg, order in _iter_rows(db, event_id, filters, ctx):
         attendee = _attendee(reg, order, ctx)
@@ -372,5 +378,6 @@ def export_attendees_csv(db: Session, event_id: UUID, filters: AttendeeFilters) 
             attendee.checked_in_at.isoformat() if attendee.checked_in_at else "",
             attendee.registered_at.isoformat() if attendee.registered_at else "",
             _csv_text("; ".join(f"{a.label}: {_answer_text(a.value)}" for a in attendee.custom_answers)),
+            attendee.registration_source,
         ])
     return output.getvalue()

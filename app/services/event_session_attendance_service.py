@@ -167,7 +167,10 @@ def _commit(db: Session) -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-def check_in_session_service(db: Session, event_id: UUID, session_id: str, payload, current_user: dict | None = None) -> EventSessionAttendanceResponse:
+def check_in_session_service(
+    db: Session, event_id: UUID, session_id: str, payload, current_user: dict | None = None, *, commit: bool = True
+) -> EventSessionAttendanceResponse:
+    """``commit=False`` stages the attendance and its audit row in the caller's transaction (walk-in); default unchanged."""
     event, session, reg = _resolve(db, event_id, session_id, payload.registration_id, payload.qr_code)
     _assert_event_accepts_check_in(event)
     _assert_registration_can_check_in(db, reg)
@@ -195,7 +198,10 @@ def check_in_session_service(db: Session, event_id: UUID, session_id: str, paylo
         _audit_state(reg, session, row, method=getattr(payload, "method", None)),
         changed_by=_actor_id(current_user), commit=False,
     )
-    _commit(db)
+    if commit:
+        _commit(db)
+    else:
+        db.flush()
     return _response(event, session, reg, row, message="Checked in to session", outcome="checked_in")
 
 

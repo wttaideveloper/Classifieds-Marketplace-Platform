@@ -303,7 +303,8 @@ class TestDashboard:
     def test_the_phase_2_3_numbers_are_still_right(self, env):
         event, _ = self.paid_world(env)
         body = dashboard(env, event)
-        assert body["registrations"] == {"total": 4, "active": 4, "confirmed": 3, "attended": 1, "cancelled": 0, "no_show": 0, "other": 0}
+        assert body["registrations"] == {"total": 4, "active": 4, "confirmed": 3, "attended": 1, "cancelled": 0, "no_show": 0, "other": 0,
+                                          "online": 4, "walk_in": 0}
         assert body["capacity"]["seats_taken"] == 6 and body["capacity"]["seats_reserved"] == 1 and body["capacity"]["available_seats"] == 3
         assert body["orders"]["successful"] == 3 and body["revenue"]["total_revenue"] == 2500.0
         assert body["waitlist"]["waiting"] == 1 and body["waitlist"]["payment_pending"] == 1
@@ -445,4 +446,4 @@ class TestAttendeeIntegration:
         resp = client(env).get(f"{API}/{env.event.id}/registrations/export")
         header = next(csv.reader(io.StringIO(resp.text)))
         assert header == ["id", "name", "email", "status", "qr_code", "ticket_type", "quantity", "payment_status", "order_id",
-                          "amount", "currency", "checked_in", "checked_in_at", "registered_at", "answers"]
+                          "amount", "currency", "checked_in", "checked_in_at", "registered_at", "answers", "source"]

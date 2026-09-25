@@ -19,6 +19,8 @@ AttendeePaymentStatus = Literal[
 # EventRegistration.status values the backend writes today.
 RegistrationStatusFilter = Literal["confirmed", "attended", "cancelled", "no_show"]
 AttendeeSort = Literal["newest", "oldest", "name", "email"]
+# How a registration was made. NULL in the database (every pre-existing row and every online registration) reads as "online".
+RegistrationSource = Literal["online", "walk_in"]
 
 
 # --------------------------------------------------------------------------- attendees
@@ -55,6 +57,9 @@ class EventAttendeeResponse(BaseModel):
     checked_in_at: datetime | None = None
     checked_out_at: datetime | None = None
     registered_at: datetime = Field(..., description="When the registration was created (UTC).")
+    registration_source: RegistrationSource = Field(
+        "online", description="walk_in = registered by an organizer at the venue (Phase 2.5); online = everything else."
+    )
     custom_answers: list[EventAttendeeAnswer] = Field(default_factory=list)
     session_attendance: list[EventSessionAttendanceState] = Field(
         default_factory=list,
@@ -94,6 +99,8 @@ class DashboardRegistrations(BaseModel):
     cancelled: int
     no_show: int
     other: int = Field(..., description="Registrations with any status not listed above.")
+    online: int = Field(0, description="Registrations that were not walk-ins (any status). online + walk_in = total.")
+    walk_in: int = Field(0, description="Registrations made by an organizer at the venue (any status).")
 
 
 class DashboardCapacity(BaseModel):

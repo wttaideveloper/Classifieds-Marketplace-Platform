@@ -45,6 +45,7 @@ ATTENDEE_KEYS = {
     "registration_reference", "ticket_type_id", "ticket_type_name", "quantity", "payment_status", "order_id",
     "order_status", "amount", "currency", "is_checked_in", "checked_in_at", "checked_out_at", "registered_at",
     "custom_answers", "session_attendance",  # session_attendance: Phase 2.4, additive
+    "registration_source",  # Phase 2.5, additive
 }
 # Fields that exist on the ORM rows but must never reach an attendee response.
 HIDDEN_KEYS = {
@@ -564,7 +565,8 @@ class TestExport:
         assert rows["'=cmd@example.com"][1].startswith("'=HYPERLINK")
         assert rows["plus@example.com"][1] == "'+1+1"
         assert rows["dash@example.com"][1] == "'-2+3"
-        assert rows["plus@example.com"][-1] == "q: @SUM(A1)"  # the label leads the cell, so it is not a formula
+        header = parse_csv(owner_client(env).get(f"{API}/{env.event.id}/registrations/export"))[0]
+        assert rows["plus@example.com"][header.index("answers")] == "q: @SUM(A1)"  # the label leads the cell, so it is not a formula
 
     def test_answers_column_uses_labels(self, env):
         version = add_form_version(env, [{"id": "s", "fields": [{"id": "f1", "label": "Diet", "source": "custom"}]}])
@@ -572,7 +574,7 @@ class TestExport:
         env.db.commit()
         add_reg(env, "a@example.com", custom_fields={"f1": ["vegan", "halal"]})
         rows = parse_csv(owner_client(env).get(f"{API}/{env.event.id}/registrations/export"))
-        assert rows[1][-1] == "Diet: vegan; halal"
+        assert rows[1][rows[0].index("answers")] == "Diet: vegan; halal"
 
     def test_commas_quotes_and_newlines_stay_in_their_cell(self, env):
         add_reg(env, "a@example.com", name='Smith, "Jr"\nLine2')

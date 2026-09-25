@@ -32,8 +32,10 @@ from app.schemas.event_management_schema import (
     EventAttendeePaginatedResponse,
     EventAttendeeResponse,
     EventDashboardResponse,
+    RegistrationSource,
     RegistrationStatusFilter,
 )
+from app.schemas.event_walk_in_schema import EventWalkInRequest, EventWalkInResponse
 from app.schemas.event_session_attendance_schema import (
     EventSessionAttendanceResponse,
     EventSessionBatchCheckInRequest,
@@ -78,6 +80,7 @@ from app.services.event_attendee_service import (
     list_attendees_service,
 )
 from app.services.event_dashboard_service import get_event_dashboard_service
+from app.services.event_walk_in_service import create_walk_in_service
 from app.services.event_session_attendance_service import (
     batch_check_in_session_service,
     check_in_session_service,
@@ -165,13 +168,14 @@ def attendee_filters(
     ticket_type_id: str | None = Query(None, max_length=100, description="Ticket type id."),
     payment_status: AttendeePaymentStatus | None = Query(None, description="Derived from the paired order; 'free' / 'unpaid' mean no order (free / paid event)."),
     checked_in: bool | None = Query(None, description="true = checked in (status 'attended'); false = not checked in."),
+    source: RegistrationSource | None = Query(None, description="walk_in = registered by an organizer at the venue; online = everything else."),
     registered_from: date | None = Query(None, description="Registered on or after this date (YYYY-MM-DD, UTC)."),
     registered_to: date | None = Query(None, description="Registered on or before this date (YYYY-MM-DD, UTC)."),
     sort: AttendeeSort = Query("newest", description="newest | oldest | name | email (ties broken by id)."),
 ) -> AttendeeFilters:
     return AttendeeFilters(
         q=q, status=status_filter, ticket_type_id=ticket_type_id, payment_status=payment_status,
-        checked_in=checked_in, registered_from=registered_from, registered_to=registered_to, sort=sort,
+        checked_in=checked_in, source=source, registered_from=registered_from, registered_to=registered_to, sort=sort,
     )
 
 
@@ -623,6 +627,42 @@ def list_attendees(
 )
 def event_dashboard(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_staff)):
     return get_event_dashboard_service(db, event_id)
+
+
+@router.post(
+    "/{event_id}/walk-in",
+    response_model=EventWalkInResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Walk-in Registration (organizer)",
+    description=(
+        "An organizer registers, and by default checks in, an attendee at the venue. Organizer only: the owning "
+        "admin/provider or an active platform super admin; customers cannot call it. The result is a normal "
+        "registration (same QR, same attendee list and dashboard) with `registration_source: walk_in`. "
+        "The public registration window is NOT applied; the event must be published and not finished, cancelled or suspended. "
+        "Capacity is enforced with the Phase 2.1 seat accounting plus live waitlist offers: a full event is a 400, and a walk-in "
+        "never joins, promotes or consumes the waitlist. One active registration per event and email (409, as online). "
+        "Free event: registered and checked in. Priced ticket: registered with a **pending** payment and NOT checked in "
+        "(`check_in.reason: payment_pending`); the backend has no offline/manual payment mode, so no payment is ever faked. "
+        "`session_id` additionally checks the attendee in to that one session; no other session is touched. "
+        "Registration, order, check-in(s) and audit rows are committed together or not at all."
+    ),
+    responses={
+        400: {"description": "Event closed/not published/finished, event or ticket type full, invalid session, invalid ticket price, or an invalid/missing registration-form answer"},
+        403: {"description": "Not the event's owner"},
+        404: {"description": "Event or ticket type not found"},
+        409: {"description": "The participant already has an active registration for this event"},
+    },
+)
+def walk_in_registration(
+    request: Request,
+    event_id: UUID,
+    payload: EventWalkInRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_staff),
+):
+    result = create_walk_in_service(db, event_id, payload, current_user)
+    result.ticket.qr_image_path = request.app.url_path_for("get_qr_image", event_id=event_id, reg_id=result.registration.registration_id)
+    return result
 
 
 @router.post("/{event_id}/checkout", response_model=EventOrderResponse, status_code=status.HTTP_201_CREATED, summary="Checkout — Paid Registration")

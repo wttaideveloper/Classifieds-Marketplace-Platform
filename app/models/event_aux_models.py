@@ -23,6 +23,9 @@ class EventRegistration(Base):
     checked_in_by = Column(UUID(as_uuid=True), nullable=True)
     checked_out_at = Column(DateTime, nullable=True)
     session_id = Column(String(100), nullable=True)  # For per-session attendance tracking
+    # How the registration was made: "walk_in" (organizer at the venue, Phase 2.5). NULL = online — every row
+    # that existed before this column, and every self-registration/checkout, which leave it unset.
+    registration_source = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     event = relationship("Event", backref="registrations")

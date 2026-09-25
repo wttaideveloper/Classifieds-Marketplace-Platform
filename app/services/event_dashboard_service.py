@@ -191,13 +191,16 @@ def compute_revenue_report(db: Session, event_id: UUID, event_currency: str | No
 
 
 def _registrations_block(db: Session, event_id: UUID) -> tuple[DashboardRegistrations, DashboardAttendance]:
-    by_status: dict[str | None, int] = dict(
-        db.execute(
-            sa.select(EventRegistration.status, sa.func.count(EventRegistration.id))
-            .where(EventRegistration.event_id == event_id)
-            .group_by(EventRegistration.status)
-        ).all()
-    )
+    by_status: dict[str | None, int] = defaultdict(int)
+    walk_in = 0
+    for registration_status, source, count in db.execute(
+        sa.select(EventRegistration.status, EventRegistration.registration_source, sa.func.count(EventRegistration.id))
+        .where(EventRegistration.event_id == event_id)
+        .group_by(EventRegistration.status, EventRegistration.registration_source)
+    ).all():
+        by_status[registration_status] += count
+        if source == "walk_in":
+            walk_in += count
     confirmed = by_status.get("confirmed", 0)
     attended = by_status.get("attended", 0)
     cancelled = by_status.get("cancelled", 0)
@@ -211,6 +214,8 @@ def _registrations_block(db: Session, event_id: UUID) -> tuple[DashboardRegistra
         cancelled=cancelled,
         no_show=no_show,
         other=total - confirmed - attended - cancelled - no_show,
+        online=total - walk_in,
+        walk_in=walk_in,
     )
     attendance = DashboardAttendance(
         checked_in=attended,
