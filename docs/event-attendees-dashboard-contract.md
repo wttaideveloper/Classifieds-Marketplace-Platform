@@ -43,7 +43,9 @@ Query parameters (all optional):
 Each item: `registration_id`, `event_id`, `participant_name`, `participant_email`, `registration_status`,
 `registration_reference` (the QR value), `ticket_type_id`, `ticket_type_name`, `quantity`, `payment_status`,
 `order_id`, `order_status`, `amount`, `currency`, `is_checked_in`, `checked_in_at`, `checked_out_at`,
-`registered_at`, `custom_answers[{field_id, label, value}]`.
+`registered_at`, `custom_answers[{field_id, label, value}]`, `session_attendance[{session_id, title, checked_in,
+checked_in_at, checked_in_by, checked_out_at}]` (Phase 2.4, one entry per session of the event, separate from
+`is_checked_in`; empty without sessions and in the CSV export).
 
 Never returned: payment provider / refund reason, `checked_in_by`, session id, tenant or enterprise ids,
 meeting links, the raw `custom_fields` dict.
@@ -98,6 +100,8 @@ waitlist      total, waiting, payment_pending, promoted, expired, left, other
 orders        total, successful, pending, refund_requested, refunded, cancelled, failed
 revenue       currency, total_revenue, refunded_amount, pending_refund_amount, paid_orders,
               mixed_currency, by_currency[], unparseable_orders
+sessions      [{session_id, title, session_date, start_time, registered_count, checked_in_count,
+              attendance_percentage}]   (Phase 2.4; see event-session-attendance-contract.md)
 generated_at
 ```
 

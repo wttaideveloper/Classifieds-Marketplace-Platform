@@ -1146,19 +1146,16 @@ def get_event_attendance_service(db: Session, event_id: UUID):
     from app.models.event_aux_models import EventRegistration
     from app.schemas.event_schema import EventAttendanceItem, EventAttendanceResponse
 
+    event = _get_event_or_404(db, event_id)
     regs = db.query(EventRegistration).filter(EventRegistration.event_id == event_id).all()
     attended = [r for r in regs if r.status == "attended"]
     no_show = [r for r in regs if r.status == "no_show"]
 
-    # Build per-session attendance breakdown
-    by_session: dict[str, dict] = {}
-    for r in regs:
-        if r.session_id:
-            if r.session_id not in by_session:
-                by_session[r.session_id] = {"total": 0, "attended": 0}
-            by_session[r.session_id]["total"] += 1
-            if r.status == "attended":
-                by_session[r.session_id]["attended"] += 1
+    # Per-session breakdown from the dedicated session attendance records (one entry per session of the
+    # event; None when the event has no sessions). EventRegistration.session_id is no longer the source.
+    from app.services.event_session_attendance_service import attendance_by_session_view, summarize_session_attendance
+
+    by_session = attendance_by_session_view(summarize_session_attendance(db, event))
 
     participants = [
         EventAttendanceItem(
@@ -1180,7 +1177,7 @@ def get_event_attendance_service(db: Session, event_id: UUID):
         total_registered=len(regs),
         total_attended=len(attended),
         total_no_show=len(no_show),
-        attendance_by_session=by_session if by_session else None,
+        attendance_by_session=by_session,
         participants=participants
     )
 
@@ -1293,13 +1290,9 @@ def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
         attended = sum(1 for r in regs if r.status == "attended")
         no_show = sum(1 for r in regs if r.status == "no_show")
         cancelled = sum(1 for r in regs if r.status == "cancelled")
-        by_session: dict = {}
-        for r in regs:
-            if r.session_id:
-                by_session.setdefault(r.session_id, {"total": 0, "attended": 0})
-                by_session[r.session_id]["total"] += 1
-                if r.status == "attended":
-                    by_session[r.session_id]["attended"] += 1
+        from app.services.event_session_attendance_service import attendance_by_session_view, summarize_session_attendance
+
+        by_session = attendance_by_session_view(summarize_session_attendance(db, event)) or {}
         data = {"total": len(regs), "attended": attended, "no_show": no_show, "cancelled": cancelled, "by_session": by_session}
     elif report_type == "feedback":
         feedbacks = db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review.is_(False)).all()

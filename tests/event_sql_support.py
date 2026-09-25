@@ -34,6 +34,7 @@ from app.models.event_aux_models import (
     EventFeedback,
     EventOrder,
     EventRegistration,
+    EventSessionAttendance,
     EventTemplate,
     EventWaitlist,
 )
@@ -50,6 +51,7 @@ _TABLES = [
     Enterprise.__table__,
     Event.__table__,
     EventRegistration.__table__,
+    EventSessionAttendance.__table__,
     EventOrder.__table__,
     EventWaitlist.__table__,
     EventTemplate.__table__,

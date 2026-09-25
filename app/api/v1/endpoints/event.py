@@ -34,6 +34,14 @@ from app.schemas.event_management_schema import (
     EventDashboardResponse,
     RegistrationStatusFilter,
 )
+from app.schemas.event_session_attendance_schema import (
+    EventSessionAttendanceResponse,
+    EventSessionBatchCheckInRequest,
+    EventSessionBatchCheckInResponse,
+    EventSessionCheckInRequest,
+    EventSessionCheckOutRequest,
+    EventSessionUncheckInRequest,
+)
 from app.schemas.event_schema import (
     EventCreate,
     EventDetailResponse,
@@ -70,6 +78,12 @@ from app.services.event_attendee_service import (
     list_attendees_service,
 )
 from app.services.event_dashboard_service import get_event_dashboard_service
+from app.services.event_session_attendance_service import (
+    batch_check_in_session_service,
+    check_in_session_service,
+    check_out_session_service,
+    uncheck_in_session_service,
+)
 from app.services.event_service import (
     get_template_service,
     add_session_service,
@@ -674,6 +688,94 @@ def update_session(event_id: UUID, session_id: str, payload: EventSessionUpdate,
 @router.delete("/{event_id}/sessions/{session_id}", summary="Delete Session")
 def delete_session(event_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     return delete_session_service(db, event_id, session_id)
+
+
+# Session-level attendance (Phase 2.4). Additive: event-level check-in below is unchanged, and none of these
+# routes changes the registration status, capacity, payment or waitlist. Same staff dependency as the
+# attendee/dashboard routes: the owning admin/provider or an active platform super admin.
+
+_SESSION_ATTENDANCE_ERRORS = {
+    400: {"description": "Not eligible: event cancelled/completed/archived/suspended, registration cancelled or refunded, or not checked in"},
+    403: {"description": "Not the event's owner"},
+    404: {"description": "Event, session (must be one of this event's sessions) or registration (must belong to this event) not found"},
+}
+
+
+@router.post(
+    "/{event_id}/sessions/{session_id}/check-in",
+    response_model=EventSessionAttendanceResponse,
+    summary="Session Check-in",
+    description=(
+        "Check an attendee in to one session, by registration id or by their existing registration QR value. "
+        "Independent per session and of event-level check-in, which it does not change. A repeat check-in is a "
+        "200 with `outcome: already_checked_in` and changes nothing."
+    ),
+    responses=_SESSION_ATTENDANCE_ERRORS,
+)
+def session_check_in(
+    event_id: UUID,
+    payload: EventSessionCheckInRequest,
+    session_id: str = Path(..., max_length=100, description="Session id inside the event's sessions"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_staff),
+):
+    return check_in_session_service(db, event_id, session_id, payload, current_user)
+
+
+@router.post(
+    "/{event_id}/sessions/{session_id}/uncheck-in",
+    response_model=EventSessionAttendanceResponse,
+    summary="Undo Session Check-in",
+    description="Removes the attendee's attendance for this session only (history stays in the audit trail). Event-level check-in is untouched.",
+    responses=_SESSION_ATTENDANCE_ERRORS,
+)
+def session_uncheck_in(
+    event_id: UUID,
+    payload: EventSessionUncheckInRequest,
+    session_id: str = Path(..., max_length=100, description="Session id inside the event's sessions"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_staff),
+):
+    return uncheck_in_session_service(db, event_id, session_id, payload, current_user)
+
+
+@router.post(
+    "/{event_id}/sessions/{session_id}/check-out",
+    response_model=EventSessionAttendanceResponse,
+    summary="Session Check-out",
+    description="Records that the attendee left this session. Needs a prior session check-in; a repeat is `already_checked_out`.",
+    responses=_SESSION_ATTENDANCE_ERRORS,
+)
+def session_check_out(
+    event_id: UUID,
+    payload: EventSessionCheckOutRequest,
+    session_id: str = Path(..., max_length=100, description="Session id inside the event's sessions"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_staff),
+):
+    return check_out_session_service(db, event_id, session_id, payload, current_user)
+
+
+@router.post(
+    "/{event_id}/sessions/{session_id}/batch-check-in",
+    response_model=EventSessionBatchCheckInResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Session Batch Check-in",
+    description=(
+        "Check several attendees in to one session. Each entry (registration id or QR value) is validated on its "
+        "own: one that is unknown, from another event, cancelled or refunded fails alone and never blocks the "
+        "others. The existing `POST /{event_id}/batch-check-in` (event-level) is unchanged."
+    ),
+    responses=_SESSION_ATTENDANCE_ERRORS,
+)
+def session_batch_check_in(
+    event_id: UUID,
+    payload: EventSessionBatchCheckInRequest,
+    session_id: str = Path(..., max_length=100, description="Session id inside the event's sessions"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_staff),
+):
+    return batch_check_in_session_service(db, event_id, session_id, payload.participants, current_user)
 
 
 @router.post("/{event_id}/check-in", summary="Check-in Participant")

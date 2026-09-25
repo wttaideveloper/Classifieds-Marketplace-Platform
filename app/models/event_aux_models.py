@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -26,6 +26,40 @@ class EventRegistration(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     event = relationship("Event", backref="registrations")
+
+
+class EventSessionAttendance(Base):
+    """One attendee's attendance at one session of an Event (Phase 2.4).
+
+    Sessions live inside ``Event.sessions`` (JSONB), not in a table, so ``session_id`` is an id inside that
+    list and deliberately has no foreign key: the service validates it against the Event's own sessions.
+    An attendee can attend any number of sessions; ``UNIQUE(event_id, registration_id, session_id)`` keeps it
+    to one row per session. Event-level check-in (``EventRegistration.status`` / ``checked_in_at``) is a
+    separate, unchanged concept.
+
+    State is carried by the timestamps: a row exists = checked in; ``checked_out_at`` set = checked out.
+    Undoing a check-in deletes the row (the audit trail keeps the history).
+    """
+
+    __tablename__ = "event_session_attendance"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    registration_id = Column(UUID(as_uuid=True), ForeignKey("event_registrations.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(100), nullable=False)  # id inside Event.sessions
+    checked_in_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    checked_in_by = Column(UUID(as_uuid=True), nullable=True)  # operator; like EventRegistration.checked_in_by, not an FK
+    checked_out_at = Column(DateTime, nullable=True)
+    checked_out_by = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        # Also serves (event_id, registration_id) lookups through its leading columns.
+        UniqueConstraint("event_id", "registration_id", "session_id", name="uq_event_session_attendance"),
+        Index("ix_event_session_attendance_event_session", "event_id", "session_id"),
+        Index("ix_event_session_attendance_registration", "registration_id"),
+    )
 
 
 class EventWaitlist(Base):

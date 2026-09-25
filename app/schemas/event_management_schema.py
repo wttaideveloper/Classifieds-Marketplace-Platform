@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.common_schema import EventType, PaginatedResponse
 from app.schemas.event_schema import EventModules
+from app.schemas.event_session_attendance_schema import EventSessionAttendanceState, EventSessionAttendanceSummary
 
 # What an attendee's payment looks like. Derived from the paired EventOrder (see app/utils/event_payments.py);
 # never stored on the registration.
@@ -55,6 +56,11 @@ class EventAttendeeResponse(BaseModel):
     checked_out_at: datetime | None = None
     registered_at: datetime = Field(..., description="When the registration was created (UTC).")
     custom_answers: list[EventAttendeeAnswer] = Field(default_factory=list)
+    session_attendance: list[EventSessionAttendanceState] = Field(
+        default_factory=list,
+        description="One entry per session of the event: checked in or not. Separate from (and never changes) is_checked_in. "
+                    "Empty for an event with no sessions, and in the CSV export.",
+    )
 
 
 class EventAttendeePaginatedResponse(PaginatedResponse[EventAttendeeResponse]):
@@ -160,4 +166,7 @@ class EventDashboardResponse(BaseModel):
     waitlist: DashboardWaitlist
     orders: DashboardOrders
     revenue: DashboardRevenue
+    sessions: list[EventSessionAttendanceSummary] = Field(
+        default_factory=list, description="Per-session attendance for the event's sessions (empty when it has none)."
+    )
     generated_at: datetime

@@ -35,6 +35,7 @@ from app.schemas.event_management_schema import (
 )
 from app.services.event_form_registry import LEGACY_VERSION_ID
 from app.services.event_service import _event_is_paid, _to_int
+from app.services.event_session_attendance_service import event_sessions_with_ids, load_attendance_rows, session_states
 from app.utils.event_payments import (
     PAYMENT_FREE,
     PAYMENT_UNPAID,
@@ -71,6 +72,7 @@ class _EventContext:
     paid: bool
     ticket_names: dict[str, str]
     answer_labels: dict[str, str]
+    sessions: list[dict]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -214,6 +216,7 @@ def _context(db: Session, event) -> _EventContext:
         paid=_event_is_paid(event),
         ticket_names={str(t.get("id")): t.get("name") for t in (event.ticket_types or []) if isinstance(t, dict) and t.get("id") is not None},
         answer_labels=load_answer_labels(db, event),
+        sessions=event_sessions_with_ids(event),
     )
 
 
@@ -226,7 +229,8 @@ def _answers(raw: Any, labels: dict[str, str]) -> list[EventAttendeeAnswer]:
     return [EventAttendeeAnswer(field_id=key, label=labels.get(key) or key, value=value) for key, value in items]
 
 
-def _attendee(reg, order, ctx: _EventContext) -> EventAttendeeResponse:
+def _attendee(reg, order, ctx: _EventContext, session_rows: dict | None = None) -> EventAttendeeResponse:
+    """``session_rows`` (session id -> attendance row) is passed by the list/detail; the export leaves it out."""
     if order is not None:
         payment = derive_payment_status(order.status, order.payment_status)
         amount = parse_money(order.amount)
@@ -254,6 +258,7 @@ def _attendee(reg, order, ctx: _EventContext) -> EventAttendeeResponse:
         checked_out_at=reg.checked_out_at,
         registered_at=reg.created_at,
         custom_answers=_answers(reg.custom_fields, ctx.answer_labels),
+        session_attendance=session_states(ctx.sessions, session_rows) if session_rows is not None else [],
     )
 
 
@@ -280,8 +285,9 @@ def list_attendees_service(db: Session, event_id: UUID, filters: AttendeeFilters
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
+    attendance = load_attendance_rows(db, event_id, [reg.id for reg, _ in rows]) if ctx.sessions else {}
     return EventAttendeePaginatedResponse(
-        items=[_attendee(reg, order, ctx) for reg, order in rows],
+        items=[_attendee(reg, order, ctx, attendance.get(reg.id, {})) for reg, order in rows],
         pagination=build_pagination_meta(total, page, page_size),
     )
 
@@ -295,7 +301,9 @@ def get_attendee_service(db: Session, event_id: UUID, registration_id: UUID) -> 
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found")
     reg, order = row
-    return _attendee(reg, order, _context(db, event))
+    ctx = _context(db, event)
+    attendance = load_attendance_rows(db, event_id, [reg.id]) if ctx.sessions else {}
+    return _attendee(reg, order, ctx, attendance.get(reg.id, {}))
 
 
 # ---------------------------------------------------------------------------------------------

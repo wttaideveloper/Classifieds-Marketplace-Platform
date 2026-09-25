@@ -44,7 +44,7 @@ ATTENDEE_KEYS = {
     "registration_id", "event_id", "participant_name", "participant_email", "registration_status",
     "registration_reference", "ticket_type_id", "ticket_type_name", "quantity", "payment_status", "order_id",
     "order_status", "amount", "currency", "is_checked_in", "checked_in_at", "checked_out_at", "registered_at",
-    "custom_answers",
+    "custom_answers", "session_attendance",  # session_attendance: Phase 2.4, additive
 }
 # Fields that exist on the ORM rows but must never reach an attendee response.
 HIDDEN_KEYS = {

@@ -64,8 +64,14 @@ class TestGraph:
 
     def test_it_advances_the_event_head_instead_of_creating_or_merging_one(self, script_dir):
         heads = set(script_dir.get_heads())
-        assert REVISION in heads
         assert EVENT_HEAD_PARENT not in heads  # replaced, not branched from
+        # Later phases may extend the chain (Phase 2.4 chains onto this revision), but it must stay linear and
+        # still end in a head: every revision from here on has exactly one child, until the head.
+        node = REVISION
+        while node not in heads:
+            descendants = [r.revision for r in script_dir.walk_revisions() if r.down_revision == node]
+            assert len(descendants) == 1, f"{node} became a branch point: {descendants}"
+            node = descendants[0]
         # No new branch point on the event chain: its former head has exactly one child.
         children = [r.revision for r in script_dir.walk_revisions() if r.down_revision == EVENT_HEAD_PARENT]
         assert children == [REVISION]

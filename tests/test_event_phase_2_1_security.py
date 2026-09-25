@@ -121,6 +121,10 @@ STAFF_ROUTES = [
     ("GET", "/{e}/registrations/{r}", None),  # Phase 2.3
     ("GET", "/{e}/attendees", None),  # Phase 2.3
     ("GET", "/{e}/dashboard", None),  # Phase 2.3
+    ("POST", "/{e}/sessions/sess-1/check-in", {"registration_id": "{r}"}),  # Phase 2.4
+    ("POST", "/{e}/sessions/sess-1/uncheck-in", {"registration_id": "{r}"}),  # Phase 2.4
+    ("POST", "/{e}/sessions/sess-1/check-out", {"registration_id": "{r}"}),  # Phase 2.4
+    ("POST", "/{e}/sessions/sess-1/batch-check-in", {"participants": [{"registration_id": "{r}"}]}),  # Phase 2.4
     ("GET", "/{e}/orders", None),
     ("POST", "/{e}/orders/{o}/refund", {}),
     ("PATCH", "/{e}/orders/{o}/status", {"status": "cancelled"}),
