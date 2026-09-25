@@ -100,6 +100,10 @@ class Event(Base):
     # their actual behaviour (see app/utils/event_modules.py) instead of being backfilled.
     event_type = Column(String(30), nullable=True)  # conference|workshop|marathon|camp|private_function|webinar|other
     modules = Column(JSONB, nullable=True)  # {registration, tickets, sessions, check_in, online_meeting, custom_questions, meals, accommodation: bool}
+    # Meal options (Phase 2.6): {"options": [{id, name, description?, date?, active}]}. NULL for every event that has
+    # none (all legacy events). Whether meals are ON is modules.meals, never stored here; options an update stops listing
+    # stay with active=false so registrations that selected them keep resolving.
+    meals = Column(JSONB, nullable=True)
 
     status = Column(String(20), default="draft", nullable=False, index=True)
 

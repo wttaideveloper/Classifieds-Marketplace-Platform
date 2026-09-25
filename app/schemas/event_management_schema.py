@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.common_schema import EventType, PaginatedResponse
 from app.schemas.event_schema import EventModules
+from app.schemas.event_meal_schema import AttendeeMealSelection, DashboardMeal
 from app.schemas.event_session_attendance_schema import EventSessionAttendanceState, EventSessionAttendanceSummary
 
 # What an attendee's payment looks like. Derived from the paired EventOrder (see app/utils/event_payments.py);
@@ -59,6 +60,11 @@ class EventAttendeeResponse(BaseModel):
     registered_at: datetime = Field(..., description="When the registration was created (UTC).")
     registration_source: RegistrationSource = Field(
         "online", description="walk_in = registered by an organizer at the venue (Phase 2.5); online = everything else."
+    )
+    meal_selections: list[AttendeeMealSelection] = Field(
+        default_factory=list,
+        description="The meals the attendee selected (Phase 2.6), in the event's option order, with their names. Retired options "
+                    "stay listed (active=false). Empty when none.",
     )
     custom_answers: list[EventAttendeeAnswer] = Field(default_factory=list)
     session_attendance: list[EventSessionAttendanceState] = Field(
@@ -175,5 +181,9 @@ class EventDashboardResponse(BaseModel):
     revenue: DashboardRevenue
     sessions: list[EventSessionAttendanceSummary] = Field(
         default_factory=list, description="Per-session attendance for the event's sessions (empty when it has none)."
+    )
+    meals: list[DashboardMeal] = Field(
+        default_factory=list,
+        description="How many active registrations selected each meal option (Phase 2.6). Empty when meals are off or there are no options.",
     )
     generated_at: datetime

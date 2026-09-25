@@ -4,10 +4,11 @@ from typing import Literal
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from app.schemas.common_schema import EventStatus, EventType, PaginatedResponse
 from app.schemas.event_form_config_schema import EventCustomValueInput
+from app.schemas.event_meal_schema import EventMeals, EventMealsInput, MAX_SELECTIONS, MealId, reject_duplicate_selections
 from app.utils.event_modules import EVENT_MODULE_KEYS, modules_for_new_event
 
 DeliveryMode = str  # in_person|online|hybrid
@@ -194,6 +195,11 @@ class EventCreate(BaseModel):
         description="Module overrides. Applied on top of the event_type defaults (or, with no event_type, on top "
                     "of the event's behaviour-based modules). Only supported module names with boolean values.",
     )
+    meals: EventMealsInput | None = Field(
+        None,
+        description="Meal options (Phase 2.6). Only allowed when modules.meals is on (from the event_type default or an "
+                    "explicit override); otherwise the request is rejected rather than silently enabling meals.",
+    )
     status: EventStatus = Field("draft", description="Event status.")
 
     @model_validator(mode="after")
@@ -366,6 +372,12 @@ class EventUpdate(BaseModel):
         description="Module overrides, merged over the current configuration (unsent modules keep their value). "
                     "null/omitted = no change.",
     )
+    meals: EventMealsInput | None = Field(
+        None,
+        description="Meal options. 'options' is the desired set of ACTIVE options: ids of retained options are kept, options "
+                    "no longer listed are retired (active=false, never deleted). null/omitted = no change; unrelated updates "
+                    "and modules updates never touch it.",
+    )
     status: EventStatus | None = None
 
     @model_validator(mode="after")
@@ -391,6 +403,7 @@ class EventUpdate(BaseModel):
         # Configuration has partial-update semantics that need the current event; the service plans it.
         data.pop("event_type", None)
         data.pop("modules", None)
+        data.pop("meals", None)  # needs the current event and modules: planned by the service
         if "ticket_types" in data and data["ticket_types"] is not None:
             normalized_tt: list[dict] = []
             for raw in data["ticket_types"] or []:
@@ -473,6 +486,11 @@ class EventResponse(BaseModel):
         description="Effective module configuration: the stored modules, or — for events created before Phase 2.2 — "
                     "derived from what the event already does (never written back).",
     )
+    meals: EventMeals | None = Field(
+        None,
+        description="Meal configuration (Phase 2.6). enabled mirrors modules.meals; options carry stable ids and an active flag "
+                    "(retired options stay for history). Events with no meals resolve to enabled=false, options=[].",
+    )
     status: str
     lifecycle_state: Literal["upcoming", "ongoing", "finished"] | None = Field(
         None, description="Backend-derived lifecycle state based on the event's start/end date and time zone. This does not modify the workflow status."
@@ -529,6 +547,16 @@ class EventRegistrationCreate(BaseModel):
     ticket_type_id: str | None = None
     group_size: int | None = Field(None, ge=1, description="Group size for group registration (1=individual)")
     group_members: list[dict] | None = Field(None, description="List of {name, email} for group members")
+    meal_selections: list[MealId] | None = Field(
+        None, max_length=MAX_SELECTIONS,
+        description="Meal option ids from the event's meals configuration (Phase 2.6). Optional; only allowed when the event "
+                    "has meals enabled. Applies to the registrant (not to group members).",
+    )
+
+    @field_validator("meal_selections")
+    @classmethod
+    def _no_duplicate_meals(cls, values):
+        return reject_duplicate_selections(values)
 
 
 class EventSessionCreate(BaseModel):

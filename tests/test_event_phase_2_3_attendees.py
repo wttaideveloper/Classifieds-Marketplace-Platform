@@ -46,6 +46,7 @@ ATTENDEE_KEYS = {
     "order_status", "amount", "currency", "is_checked_in", "checked_in_at", "checked_out_at", "registered_at",
     "custom_answers", "session_attendance",  # session_attendance: Phase 2.4, additive
     "registration_source",  # Phase 2.5, additive
+    "meal_selections",  # Phase 2.6, additive
 }
 # Fields that exist on the ORM rows but must never reach an attendee response.
 HIDDEN_KEYS = {

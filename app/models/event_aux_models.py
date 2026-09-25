@@ -26,6 +26,9 @@ class EventRegistration(Base):
     # How the registration was made: "walk_in" (organizer at the venue, Phase 2.5). NULL = online — every row
     # that existed before this column, and every self-registration/checkout, which leave it unset.
     registration_source = Column(String(20), nullable=True)
+    # Meal option ids (Event.meals) the attendee selected (Phase 2.6): a JSON list of strings in the event's option order.
+    # NULL = none selected, which is every row that predates the column.
+    meal_selections = Column(JSONB, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     event = relationship("Event", backref="registrations")

@@ -37,10 +37,13 @@ from app.schemas.event_schema import (
     EventResponse,
 )
 from app.services.response_mappers import map_event_detail, map_event_list_item, map_event_write
+from app.utils.event_meals import MealConfigError, meals_for_new_event, plan_meals_update
 from app.utils.event_modules import (
     EventModuleConfigError,
     is_paid_event,
+    legacy_modules,
     plan_config_update,
+    resolve_event_modules,
     validate_module_overrides,
 )
 
@@ -229,6 +232,48 @@ def _plan_event_config_update(event, update_data) -> dict:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
+def _meals_enabled_flag_matches(meals_in, enabled: bool) -> None:
+    """``meals.enabled`` is a mirror of modules.meals, never a second switch: when sent it must agree."""
+    if meals_in.enabled is not None and meals_in.enabled != enabled:
+        raise HTTPException(
+            status_code=422,
+            detail=f"meals.enabled ({str(meals_in.enabled).lower()}) conflicts with modules.meals ({str(enabled).lower()}). "
+                   "Meals are switched on or off with modules.meals only.",
+        )
+
+
+def _meals_for_new_event(event_data, modules) -> dict | None:
+    """The ``meals`` value for a new event (None = nothing configured); 422 when meals are off or the options are invalid."""
+    meals_in = getattr(event_data, "meals", None)
+    if meals_in is None:
+        return None
+    enabled = bool((modules if isinstance(modules, dict) else legacy_modules(event_data)).get("meals"))
+    _meals_enabled_flag_matches(meals_in, enabled)
+    try:
+        return meals_for_new_event(meals_in.option_dicts(), enabled=enabled)
+    except MealConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _plan_event_meals_update(event, update_data, config_changes: dict) -> dict:
+    """The ``meals`` column an update changes (empty when it does not touch meals).
+
+    null/omitted = no change, so an unrelated update — or one that only changes modules — keeps the meal options and
+    their ids. Meals are judged against the modules AS THEY WILL BE after this same update.
+    """
+    meals_in = getattr(update_data, "meals", None)
+    if meals_in is None:
+        return {}
+    modules_after = config_changes["modules"] if isinstance(config_changes.get("modules"), dict) else resolve_event_modules(event)
+    enabled_after = bool(modules_after.get("meals"))
+    _meals_enabled_flag_matches(meals_in, enabled_after)
+    try:
+        stored = plan_meals_update(event, meals_in.option_dicts(), enabled_after=enabled_after)
+    except MealConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {} if stored is None else {"meals": stored}
+
+
 def create_event_service(db: Session, event_data, current_user: dict | None = None):
     from app.services.event_form_config_service import apply_form_configuration_to_event_data
 
@@ -255,12 +300,13 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
     if not event_data.meeting_link:
         event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
     payload = event_data.to_model_data()
+    payload["meals"] = _meals_for_new_event(event_data, payload.get("modules"))
     payload.update(form_meta)
     from app.models.event_model import Event
     created = Event(**payload)
     db.add(created)
     db.flush()  # assigns created.id for the audit row
-    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None, "event_type": created.event_type, "modules": created.modules}, changed_by=_actor_id(current_user), commit=False)
+    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None, "event_type": created.event_type, "modules": created.modules, "meals": created.meals}, changed_by=_actor_id(current_user), commit=False)
     db.commit()
     db.refresh(created)
     return EventResponse.model_validate(map_event_write(created))
@@ -367,6 +413,7 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
     # Configuration (event_type / modules) is planned against the CURRENT event before anything is mutated.
     # It is deliberately kept out of old_vals below: that dict also drives schedule-change notifications.
     config_changes = _plan_event_config_update(event, update_data)
+    config_changes.update(_plan_event_meals_update(event, update_data, config_changes))
     old_config = {key: getattr(event, key) for key in config_changes}
 
     # capture old values for schedule change detection and audit
@@ -724,6 +771,13 @@ def create_registration_service(db: Session, event_id: UUID, payload):
             detail="This event requires payment. Complete registration through checkout (POST /events/{event_id}/checkout).",
         )
 
+    # Meal selections (Phase 2.6): optional; validated against the event's meals configuration by the one shared validator.
+    from app.services.event_meal_service import validated_selections
+
+    requested_meals = getattr(payload, "meal_selections", None)
+    # Only a real list is a selection: a payload object without the field (older callers, mocks) means "none".
+    meal_selections = validated_selections(event, requested_meals if isinstance(requested_meals, list) else None)
+
     # Group size handling
     group_size = getattr(payload, "group_size", None) or 1
     if group_size < 1:
@@ -807,6 +861,7 @@ def create_registration_service(db: Session, event_id: UUID, payload):
         ticket_type_id=payload.ticket_type_id,
         status="confirmed",
         qr_code=str(uuid.uuid4())[:12].upper(),
+        meal_selections=meal_selections,
     )
     db.add(reg)
     db.flush()

@@ -1118,8 +1118,9 @@ class TestAttendeeAndDashboardIntegration:
     def test_the_csv_export_has_a_source_column_and_honours_the_filter(self, env, mixed):
         resp = owner_client(env).get(f"{API}/{env.event.id}/registrations/export")
         rows = list(csv.reader(io.StringIO(resp.text)))
-        assert rows[0][:5] == ["id", "name", "email", "status", "qr_code"] and rows[0][-1] == "source"  # everything before it is unchanged
-        assert {r[2]: r[-1] for r in rows[1:]} == {"online@example.com": "online", "legacy@example.com": "online", "walked@example.com": "walk_in"}
+        source = rows[0].index("source")
+        assert rows[0][:5] == ["id", "name", "email", "status", "qr_code"] and rows[0][source - 1] == "answers"  # everything before it is unchanged
+        assert {r[2]: r[source] for r in rows[1:]} == {"online@example.com": "online", "legacy@example.com": "online", "walked@example.com": "walk_in"}
         filtered = list(csv.reader(io.StringIO(owner_client(env).get(f"{API}/{env.event.id}/registrations/export", params={"source": "walk_in"}).text)))
         assert [r[2] for r in filtered[1:]] == ["walked@example.com"]
 

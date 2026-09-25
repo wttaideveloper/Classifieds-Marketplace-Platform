@@ -35,6 +35,7 @@ from app.schemas.event_management_schema import (
     RegistrationSource,
     RegistrationStatusFilter,
 )
+from app.schemas.event_meal_schema import EventMealSelectionResponse, EventMealSelectionUpdate
 from app.schemas.event_walk_in_schema import EventWalkInRequest, EventWalkInResponse
 from app.schemas.event_session_attendance_schema import (
     EventSessionAttendanceResponse,
@@ -80,6 +81,7 @@ from app.services.event_attendee_service import (
     list_attendees_service,
 )
 from app.services.event_dashboard_service import get_event_dashboard_service
+from app.services.event_meal_service import update_registration_meals_service
 from app.services.event_walk_in_service import create_walk_in_service
 from app.services.event_session_attendance_service import (
     batch_check_in_session_service,
@@ -591,6 +593,36 @@ def get_attendee(
     current_user: dict = Depends(require_event_staff),
 ):
     return get_attendee_service(db, event_id, reg_id)
+
+
+@router.patch(
+    "/{event_id}/registrations/{reg_id}/meals",
+    response_model=EventMealSelectionResponse,
+    summary="Update a Registration's Meal Selections",
+    description=(
+        "Replaces the meals selected on ONE registration of this event (an empty list clears them). Allowed for the participant "
+        "themself (their email matches the registration's, case-insensitively) and for the event's owner (admin/provider of the "
+        "owning tenant, or an active platform super admin); a registration id alone grants nothing. Every id must be an ACTIVE "
+        "option of the event's meals configuration (an option the attendee already holds may be kept after it is retired), and "
+        "meals must be enabled (modules.meals). Only an active registration of an open event can change its meals. "
+        "Payment, capacity and the waitlist are not touched."
+    ),
+    responses={
+        400: {"description": "Registration cancelled/inactive or event closed"},
+        403: {"description": "Neither the participant nor the event's owner"},
+        404: {"description": "Event or registration (of this event) not found"},
+        422: {"description": "Meals disabled, unknown or retired meal option, duplicate or malformed selection"},
+    },
+)
+def update_registration_meals(
+    request: Request,
+    event_id: UUID,
+    reg_id: UUID,
+    payload: EventMealSelectionUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return update_registration_meals_service(db, event_id, reg_id, payload, current_user, access_token=extract_access_token(request))
 
 
 @router.get(

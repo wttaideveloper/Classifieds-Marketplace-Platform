@@ -34,8 +34,10 @@ from app.schemas.event_management_schema import (
     EventAttendeeResponse,
 )
 from app.services.event_form_registry import LEGACY_VERSION_ID
+from app.services.event_meal_service import attendee_meal_selections
 from app.services.event_service import _event_is_paid, _to_int
 from app.services.event_session_attendance_service import event_sessions_with_ids, load_attendance_rows, session_states
+from app.utils.event_meals import stored_options
 from app.utils.event_payments import (
     PAYMENT_FREE,
     PAYMENT_UNPAID,
@@ -74,6 +76,7 @@ class _EventContext:
     ticket_names: dict[str, str]
     answer_labels: dict[str, str]
     sessions: list[dict]
+    meal_options: list[dict]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -222,6 +225,7 @@ def _context(db: Session, event) -> _EventContext:
         ticket_names={str(t.get("id")): t.get("name") for t in (event.ticket_types or []) if isinstance(t, dict) and t.get("id") is not None},
         answer_labels=load_answer_labels(db, event),
         sessions=event_sessions_with_ids(event),
+        meal_options=stored_options(event),
     )
 
 
@@ -263,6 +267,7 @@ def _attendee(reg, order, ctx: _EventContext, session_rows: dict | None = None) 
         checked_out_at=reg.checked_out_at,
         registered_at=reg.created_at,
         registration_source="walk_in" if reg.registration_source == "walk_in" else "online",
+        meal_selections=attendee_meal_selections(ctx.meal_options, reg.meal_selections),
         custom_answers=_answers(reg.custom_fields, ctx.answer_labels),
         session_attendance=session_states(ctx.sessions, session_rows) if session_rows is not None else [],
     )
@@ -358,7 +363,7 @@ def export_attendees_csv(db: Session, event_id: UUID, filters: AttendeeFilters) 
     writer.writerow([
         "id", "name", "email", "status", "qr_code",
         "ticket_type", "quantity", "payment_status", "order_id", "amount", "currency",
-        "checked_in", "checked_in_at", "registered_at", "answers", "source",
+        "checked_in", "checked_in_at", "registered_at", "answers", "source", "meals",
     ])
     for reg, order in _iter_rows(db, event_id, filters, ctx):
         attendee = _attendee(reg, order, ctx)
@@ -379,5 +384,6 @@ def export_attendees_csv(db: Session, event_id: UUID, filters: AttendeeFilters) 
             attendee.registered_at.isoformat() if attendee.registered_at else "",
             _csv_text("; ".join(f"{a.label}: {_answer_text(a.value)}" for a in attendee.custom_answers)),
             attendee.registration_source,
+            _csv_text("; ".join(selection.name or selection.meal_id for selection in attendee.meal_selections)),
         ])
     return output.getvalue()

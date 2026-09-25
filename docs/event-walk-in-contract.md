@@ -31,6 +31,7 @@ event always comes from the path; the request cannot name a tenant.
 | `participant_email` | required, must look like an email; stored trimmed and **lower-cased**; the key of the duplicate rule |
 | `ticket_type_id` | one of THIS event's ticket types. Required when a **paid** event has ticket types; optional otherwise, validated when sent |
 | `custom_fields` | answers to the event's registration form, keyed by form field id (see below) |
+| `meal_selections` | optional list of meal option ids (Phase 2.6); validated by the same validator as online registration (`422` if meals are off, unknown, retired or duplicated) |
 | `check_in` | default **true**: register and admit in one step (the usual venue flow) |
 | `session_id` | optional: also check the attendee in to this **one** session (Phase 2.4) |
 

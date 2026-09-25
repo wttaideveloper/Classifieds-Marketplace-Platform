@@ -15,6 +15,7 @@ from app.services.catalog_enrichment import (
     get_catalog_reviews,
 )
 from app.utils.event_utils import get_event_lifecycle_state
+from app.utils.event_meals import resolve_event_meals
 from app.utils.event_modules import resolve_event_modules, resolve_event_type
 
 _WEEKDAY_INDEX = {
@@ -668,6 +669,8 @@ def _event_base_fields(event) -> dict:
         # behaviour. Pure read — nothing is written back for legacy events.
         "event_type": resolve_event_type(event),
         "modules": resolve_event_modules(event),
+        # Meals (Phase 2.6): enabled mirrors modules.meals; legacy events resolve to off with no options. Pure read.
+        "meals": resolve_event_meals(event),
         "status": event.status,
         "lifecycle_state": get_event_lifecycle_state(event),
         "is_deleted": event.is_deleted,

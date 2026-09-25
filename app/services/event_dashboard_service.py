@@ -37,6 +37,7 @@ from app.schemas.event_management_schema import (
     RevenueLine,
 )
 from app.schemas.event_schema import EventModules
+from app.services.event_meal_service import summarize_meals
 from app.services.event_service import _seats_taken
 from app.services.event_session_attendance_service import summarize_session_attendance
 from app.utils.event_modules import resolve_event_modules, resolve_event_type
@@ -315,5 +316,6 @@ def get_event_dashboard_service(db: Session, event_id: UUID) -> EventDashboardRe
         orders=orders,
         revenue=_revenue(summary, event.currency),
         sessions=summarize_session_attendance(db, event),
+        meals=summarize_meals(db, event),
         generated_at=datetime.utcnow(),
     )
