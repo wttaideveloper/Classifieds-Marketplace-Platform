@@ -446,4 +446,4 @@ class TestAttendeeIntegration:
         resp = client(env).get(f"{API}/{env.event.id}/registrations/export")
         header = next(csv.reader(io.StringIO(resp.text)))
         assert header == ["id", "name", "email", "status", "qr_code", "ticket_type", "quantity", "payment_status", "order_id",
-                          "amount", "currency", "checked_in", "checked_in_at", "registered_at", "answers", "source", "meals"]
+                          "amount", "currency", "checked_in", "checked_in_at", "registered_at", "answers", "source", "meals", "accommodation"]

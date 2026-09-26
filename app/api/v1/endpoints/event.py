@@ -35,6 +35,7 @@ from app.schemas.event_management_schema import (
     RegistrationSource,
     RegistrationStatusFilter,
 )
+from app.schemas.event_accommodation_schema import EventAccommodationSelectionResponse, EventAccommodationSelectionUpdate
 from app.schemas.event_meal_schema import EventMealSelectionResponse, EventMealSelectionUpdate
 from app.schemas.event_walk_in_schema import EventWalkInRequest, EventWalkInResponse
 from app.schemas.event_session_attendance_schema import (
@@ -81,6 +82,7 @@ from app.services.event_attendee_service import (
     list_attendees_service,
 )
 from app.services.event_dashboard_service import get_event_dashboard_service
+from app.services.event_accommodation_service import update_registration_accommodation_service
 from app.services.event_meal_service import update_registration_meals_service
 from app.services.event_walk_in_service import create_walk_in_service
 from app.services.event_session_attendance_service import (
@@ -623,6 +625,38 @@ def update_registration_meals(
     current_user: dict = Depends(get_current_user),
 ):
     return update_registration_meals_service(db, event_id, reg_id, payload, current_user, access_token=extract_access_token(request))
+
+
+@router.patch(
+    "/{event_id}/registrations/{reg_id}/accommodation",
+    response_model=EventAccommodationSelectionResponse,
+    summary="Update a Registration's Accommodation Selections",
+    description=(
+        "Replaces the accommodation selected on ONE registration of this event (an empty list clears it). Allowed for the "
+        "participant themself (their email matches the registration's, case-insensitively) and for the event's owner "
+        "(admin/provider of the owning tenant, or an active platform super admin); a registration id alone grants nothing. "
+        "Every id must be an ACTIVE option of the event's accommodation configuration (an option the attendee already holds "
+        "may be kept after it is retired), and accommodation must be enabled (modules.accommodation). Only an active "
+        "registration of an open event can change its accommodation. Payment, capacity and the waitlist are not touched."
+    ),
+    responses={
+        400: {"description": "Registration cancelled/inactive or event closed"},
+        403: {"description": "Neither the participant nor the event's owner"},
+        404: {"description": "Event or registration (of this event) not found"},
+        422: {"description": "Accommodation disabled, unknown or retired option, duplicate or malformed selection"},
+    },
+)
+def update_registration_accommodation(
+    request: Request,
+    event_id: UUID,
+    reg_id: UUID,
+    payload: EventAccommodationSelectionUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return update_registration_accommodation_service(
+        db, event_id, reg_id, payload, current_user, access_token=extract_access_token(request)
+    )
 
 
 @router.get(

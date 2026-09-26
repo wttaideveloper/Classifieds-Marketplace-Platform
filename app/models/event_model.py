@@ -104,6 +104,10 @@ class Event(Base):
     # none (all legacy events). Whether meals are ON is modules.meals, never stored here; options an update stops listing
     # stay with active=false so registrations that selected them keep resolving.
     meals = Column(JSONB, nullable=True)
+    # Accommodation options (Phase 2.7): {"options": [{id, name, description?, active}]}. Same shape and rules as meals: NULL
+    # for every event that has none (all legacy events); whether accommodation is ON is modules.accommodation, never stored
+    # here; options an update stops listing stay with active=false so registrations that selected them keep resolving.
+    accommodation = Column(JSONB, nullable=True)
 
     status = Column(String(20), default="draft", nullable=False, index=True)
 

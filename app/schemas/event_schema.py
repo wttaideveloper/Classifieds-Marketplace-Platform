@@ -8,6 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 
 from app.schemas.common_schema import EventStatus, EventType, PaginatedResponse
 from app.schemas.event_form_config_schema import EventCustomValueInput
+from app.schemas.event_accommodation_schema import (
+    AccommodationId,
+    EventAccommodation,
+    EventAccommodationInput,
+    reject_duplicate_accommodation_selections,
+)
 from app.schemas.event_meal_schema import EventMeals, EventMealsInput, MAX_SELECTIONS, MealId, reject_duplicate_selections
 from app.utils.event_modules import EVENT_MODULE_KEYS, modules_for_new_event
 
@@ -200,6 +206,11 @@ class EventCreate(BaseModel):
         description="Meal options (Phase 2.6). Only allowed when modules.meals is on (from the event_type default or an "
                     "explicit override); otherwise the request is rejected rather than silently enabling meals.",
     )
+    accommodation: EventAccommodationInput | None = Field(
+        None,
+        description="Accommodation options (Phase 2.7). Only allowed when modules.accommodation is on (from the event_type "
+                    "default or an explicit override); otherwise the request is rejected rather than silently enabling accommodation.",
+    )
     status: EventStatus = Field("draft", description="Event status.")
 
     @model_validator(mode="after")
@@ -378,6 +389,12 @@ class EventUpdate(BaseModel):
                     "no longer listed are retired (active=false, never deleted). null/omitted = no change; unrelated updates "
                     "and modules updates never touch it.",
     )
+    accommodation: EventAccommodationInput | None = Field(
+        None,
+        description="Accommodation options (Phase 2.7). 'options' is the desired set of ACTIVE options: ids of retained options "
+                    "are kept, options no longer listed are retired (active=false, never deleted). null/omitted = no change; "
+                    "unrelated updates and modules updates never touch it.",
+    )
     status: EventStatus | None = None
 
     @model_validator(mode="after")
@@ -404,6 +421,7 @@ class EventUpdate(BaseModel):
         data.pop("event_type", None)
         data.pop("modules", None)
         data.pop("meals", None)  # needs the current event and modules: planned by the service
+        data.pop("accommodation", None)  # likewise
         if "ticket_types" in data and data["ticket_types"] is not None:
             normalized_tt: list[dict] = []
             for raw in data["ticket_types"] or []:
@@ -491,6 +509,11 @@ class EventResponse(BaseModel):
         description="Meal configuration (Phase 2.6). enabled mirrors modules.meals; options carry stable ids and an active flag "
                     "(retired options stay for history). Events with no meals resolve to enabled=false, options=[].",
     )
+    accommodation: EventAccommodation | None = Field(
+        None,
+        description="Accommodation configuration (Phase 2.7). enabled mirrors modules.accommodation; options carry stable ids and "
+                    "an active flag (retired options stay for history). Events with no accommodation resolve to enabled=false, options=[].",
+    )
     status: str
     lifecycle_state: Literal["upcoming", "ongoing", "finished"] | None = Field(
         None, description="Backend-derived lifecycle state based on the event's start/end date and time zone. This does not modify the workflow status."
@@ -553,10 +576,21 @@ class EventRegistrationCreate(BaseModel):
                     "has meals enabled. Applies to the registrant (not to group members).",
     )
 
+    accommodation_selections: list[AccommodationId] | None = Field(
+        None, max_length=MAX_SELECTIONS,
+        description="Accommodation option ids from the event's accommodation configuration (Phase 2.7). Optional; only allowed "
+                    "when the event has accommodation enabled. Applies to the registrant (not to group members).",
+    )
+
     @field_validator("meal_selections")
     @classmethod
     def _no_duplicate_meals(cls, values):
         return reject_duplicate_selections(values)
+
+    @field_validator("accommodation_selections")
+    @classmethod
+    def _no_duplicate_accommodation(cls, values):
+        return reject_duplicate_accommodation_selections(values)
 
 
 class EventSessionCreate(BaseModel):

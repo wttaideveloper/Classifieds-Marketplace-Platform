@@ -37,6 +37,11 @@ from app.schemas.event_schema import (
     EventResponse,
 )
 from app.services.response_mappers import map_event_detail, map_event_list_item, map_event_write
+from app.utils.event_accommodation import (
+    AccommodationConfigError,
+    accommodation_for_new_event,
+    plan_accommodation_update,
+)
 from app.utils.event_meals import MealConfigError, meals_for_new_event, plan_meals_update
 from app.utils.event_modules import (
     EventModuleConfigError,
@@ -274,6 +279,49 @@ def _plan_event_meals_update(event, update_data, config_changes: dict) -> dict:
     return {} if stored is None else {"meals": stored}
 
 
+def _accommodation_enabled_flag_matches(accommodation_in, enabled: bool) -> None:
+    """``accommodation.enabled`` is a mirror of modules.accommodation, never a second switch: when sent it must agree."""
+    if accommodation_in.enabled is not None and accommodation_in.enabled != enabled:
+        raise HTTPException(
+            status_code=422,
+            detail=f"accommodation.enabled ({str(accommodation_in.enabled).lower()}) conflicts with modules.accommodation "
+                   f"({str(enabled).lower()}). Accommodation is switched on or off with modules.accommodation only.",
+        )
+
+
+def _accommodation_for_new_event(event_data, modules) -> dict | None:
+    """The ``accommodation`` value for a new event (None = nothing configured); 422 when accommodation is off or the
+    options are invalid."""
+    accommodation_in = getattr(event_data, "accommodation", None)
+    if accommodation_in is None:
+        return None
+    enabled = bool((modules if isinstance(modules, dict) else legacy_modules(event_data)).get("accommodation"))
+    _accommodation_enabled_flag_matches(accommodation_in, enabled)
+    try:
+        return accommodation_for_new_event(accommodation_in.option_dicts(), enabled=enabled)
+    except AccommodationConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _plan_event_accommodation_update(event, update_data, config_changes: dict) -> dict:
+    """The ``accommodation`` column an update changes (empty when it does not touch accommodation).
+
+    null/omitted = no change, so an unrelated update — or one that only changes modules — keeps the options and their
+    ids. Accommodation is judged against the modules AS THEY WILL BE after this same update.
+    """
+    accommodation_in = getattr(update_data, "accommodation", None)
+    if accommodation_in is None:
+        return {}
+    modules_after = config_changes["modules"] if isinstance(config_changes.get("modules"), dict) else resolve_event_modules(event)
+    enabled_after = bool(modules_after.get("accommodation"))
+    _accommodation_enabled_flag_matches(accommodation_in, enabled_after)
+    try:
+        stored = plan_accommodation_update(event, accommodation_in.option_dicts(), enabled_after=enabled_after)
+    except AccommodationConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {} if stored is None else {"accommodation": stored}
+
+
 def create_event_service(db: Session, event_data, current_user: dict | None = None):
     from app.services.event_form_config_service import apply_form_configuration_to_event_data
 
@@ -301,12 +349,13 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
         event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
     payload = event_data.to_model_data()
     payload["meals"] = _meals_for_new_event(event_data, payload.get("modules"))
+    payload["accommodation"] = _accommodation_for_new_event(event_data, payload.get("modules"))
     payload.update(form_meta)
     from app.models.event_model import Event
     created = Event(**payload)
     db.add(created)
     db.flush()  # assigns created.id for the audit row
-    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None, "event_type": created.event_type, "modules": created.modules, "meals": created.meals}, changed_by=_actor_id(current_user), commit=False)
+    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None, "event_type": created.event_type, "modules": created.modules, "meals": created.meals, "accommodation": created.accommodation}, changed_by=_actor_id(current_user), commit=False)
     db.commit()
     db.refresh(created)
     return EventResponse.model_validate(map_event_write(created))
@@ -414,6 +463,7 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
     # It is deliberately kept out of old_vals below: that dict also drives schedule-change notifications.
     config_changes = _plan_event_config_update(event, update_data)
     config_changes.update(_plan_event_meals_update(event, update_data, config_changes))
+    config_changes.update(_plan_event_accommodation_update(event, update_data, config_changes))
     old_config = {key: getattr(event, key) for key in config_changes}
 
     # capture old values for schedule change detection and audit
@@ -778,6 +828,14 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     # Only a real list is a selection: a payload object without the field (older callers, mocks) means "none".
     meal_selections = validated_selections(event, requested_meals if isinstance(requested_meals, list) else None)
 
+    # Accommodation selections (Phase 2.7): the same shape, validated by their own single shared validator.
+    from app.services.event_accommodation_service import validated_accommodation_selections
+
+    requested_accommodation = getattr(payload, "accommodation_selections", None)
+    accommodation_selections = validated_accommodation_selections(
+        event, requested_accommodation if isinstance(requested_accommodation, list) else None
+    )
+
     # Group size handling
     group_size = getattr(payload, "group_size", None) or 1
     if group_size < 1:
@@ -862,6 +920,7 @@ def create_registration_service(db: Session, event_id: UUID, payload):
         status="confirmed",
         qr_code=str(uuid.uuid4())[:12].upper(),
         meal_selections=meal_selections,
+        accommodation_selections=accommodation_selections,
     )
     db.add(reg)
     db.flush()

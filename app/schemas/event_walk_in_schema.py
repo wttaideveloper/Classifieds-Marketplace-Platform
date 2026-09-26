@@ -15,6 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.event_management_schema import AttendeePaymentStatus, EventAttendeeResponse
+from app.schemas.event_accommodation_schema import AccommodationId, reject_duplicate_accommodation_selections
 from app.schemas.event_meal_schema import MAX_SELECTIONS, MealId, reject_duplicate_selections
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -54,6 +55,11 @@ class EventWalkInRequest(BaseModel):
         description="Meal option ids from the event's meals configuration (Phase 2.6); validated by the same rules as online "
                     "registration. Optional; only allowed when the event has meals enabled.",
     )
+    accommodation_selections: list[AccommodationId] | None = Field(
+        None, max_length=MAX_SELECTIONS,
+        description="Accommodation option ids from the event's accommodation configuration (Phase 2.7); validated by the same "
+                    "rules as online registration. Optional; only allowed when the event has accommodation enabled.",
+    )
     check_in: bool = Field(
         True,
         description="Check the attendee in (event level) as part of the same transaction. Default true: the usual venue flow is "
@@ -69,6 +75,11 @@ class EventWalkInRequest(BaseModel):
     @classmethod
     def _no_duplicate_meals(cls, values):
         return reject_duplicate_selections(values)
+
+    @field_validator("accommodation_selections")
+    @classmethod
+    def _no_duplicate_accommodation(cls, values):
+        return reject_duplicate_accommodation_selections(values)
 
     @field_validator("participant_name")
     @classmethod

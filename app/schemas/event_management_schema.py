@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.common_schema import EventType, PaginatedResponse
 from app.schemas.event_schema import EventModules
+from app.schemas.event_accommodation_schema import AttendeeAccommodationSelection, DashboardAccommodation
 from app.schemas.event_meal_schema import AttendeeMealSelection, DashboardMeal
 from app.schemas.event_session_attendance_schema import EventSessionAttendanceState, EventSessionAttendanceSummary
 
@@ -65,6 +66,11 @@ class EventAttendeeResponse(BaseModel):
         default_factory=list,
         description="The meals the attendee selected (Phase 2.6), in the event's option order, with their names. Retired options "
                     "stay listed (active=false). Empty when none.",
+    )
+    accommodation_selections: list[AttendeeAccommodationSelection] = Field(
+        default_factory=list,
+        description="The accommodation options the attendee selected (Phase 2.7), in the event's option order, with their names. "
+                    "Retired options stay listed (active=false). Empty when none.",
     )
     custom_answers: list[EventAttendeeAnswer] = Field(default_factory=list)
     session_attendance: list[EventSessionAttendanceState] = Field(
@@ -185,5 +191,10 @@ class EventDashboardResponse(BaseModel):
     meals: list[DashboardMeal] = Field(
         default_factory=list,
         description="How many active registrations selected each meal option (Phase 2.6). Empty when meals are off or there are no options.",
+    )
+    accommodation: list[DashboardAccommodation] = Field(
+        default_factory=list,
+        description="How many active registrations selected each accommodation option (Phase 2.7). Empty when accommodation is off "
+                    "or there are no options.",
     )
     generated_at: datetime

@@ -40,7 +40,7 @@ from event_sql_support import (
 )
 
 TOP_LEVEL_KEYS = {"event", "registrations", "capacity", "attendance", "waitlist", "orders", "revenue", "sessions",
-                  "meals", "generated_at"}  # sessions: Phase 2.4, meals: Phase 2.6, additive
+                  "meals", "accommodation", "generated_at"}  # sessions: Phase 2.4, meals: Phase 2.6, accommodation: Phase 2.7, additive
 LONG_AGO = datetime(2020, 1, 1)  # orders older than the registration they paid for
 
 

@@ -32,6 +32,7 @@ event always comes from the path; the request cannot name a tenant.
 | `ticket_type_id` | one of THIS event's ticket types. Required when a **paid** event has ticket types; optional otherwise, validated when sent |
 | `custom_fields` | answers to the event's registration form, keyed by form field id (see below) |
 | `meal_selections` | optional list of meal option ids (Phase 2.6); validated by the same validator as online registration (`422` if meals are off, unknown, retired or duplicated) |
+| `accommodation_selections` | optional list of accommodation option ids (Phase 2.7); validated by the same validator as online registration (`422` if accommodation is off, unknown, retired or duplicated) |
 | `check_in` | default **true**: register and admit in one step (the usual venue flow) |
 | `session_id` | optional: also check the attendee in to this **one** session (Phase 2.4) |
 
@@ -160,4 +161,4 @@ the API reads as `online`.
 ## Not in this phase
 
 Walk-in without an email, group walk-ins, an offline/manual payment mode or a way to mark a pending walk-in
-paid, refunds of pending orders, a walk-in for a waitlisted person, meals, accommodation.
+paid, refunds of pending orders, a walk-in for a waitlisted person.

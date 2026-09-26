@@ -852,13 +852,15 @@ class TestAttendees:
     def test_the_export_has_a_meals_column_after_the_existing_ones(self, env, world):
         rows = list(csv.reader(io.StringIO(owner_client(env).get(f"{API}/{world.id}/registrations/export").text)))
         header = rows[0]
-        assert header[:5] == ["id", "name", "email", "status", "qr_code"] and header[-2:] == ["source", "meals"]
-        assert {r[2]: r[-1] for r in rows[1:]} == {"a@example.com": "Breakfast; Dinner", "b@example.com": ""}
+        meals_col = header.index("meals")
+        assert header[:5] == ["id", "name", "email", "status", "qr_code"] and header[meals_col - 1] == "source"
+        assert {r[2]: r[meals_col] for r in rows[1:]} == {"a@example.com": "Breakfast; Dinner", "b@example.com": ""}
 
     def test_the_export_lists_names_not_ids_and_keeps_retired_ones(self, env, world):
         update(env, world.id, meals={"options": [{"id": "dinner", "name": "Supper"}]})
         rows = list(csv.reader(io.StringIO(owner_client(env).get(f"{API}/{world.id}/registrations/export").text)))
-        assert {r[2]: r[-1] for r in rows[1:]}["a@example.com"] == "Supper; Breakfast"
+        meals_col = rows[0].index("meals")
+        assert {r[2]: r[meals_col] for r in rows[1:]}["a@example.com"] == "Supper; Breakfast"
 
     def test_the_export_is_formula_injection_safe(self, env):
         options = [option("f1", "=HYPERLINK(\"http://evil\",\"x\")"), option("f2", "+1+1"), option("f3", "-2+3"), option("f4", "@SUM(A1)"), option("ok", "Lunch")]
@@ -867,7 +869,9 @@ class TestAttendees:
         make_registration(env.db, event, "b@example.com", meal_selections=["f2", "f3"])
         make_registration(env.db, event, "c@example.com", meal_selections=["f4"])
         make_registration(env.db, event, "d@example.com", meal_selections=["ok", "f1"])
-        rows = {r[2]: r[-1] for r in csv.reader(io.StringIO(owner_client(env).get(f"{API}/{event.id}/registrations/export").text))}
+        csv_rows = list(csv.reader(io.StringIO(owner_client(env).get(f"{API}/{event.id}/registrations/export").text)))
+        meals_col = csv_rows[0].index("meals")
+        rows = {r[2]: r[meals_col] for r in csv_rows[1:]}
         assert rows["a@example.com"].startswith("'=HYPERLINK")
         assert rows["b@example.com"] == "'+1+1; -2+3" and rows["c@example.com"] == "'@SUM(A1)"
         assert rows["d@example.com"] == "'=HYPERLINK(\"http://evil\",\"x\"); Lunch"  # option order; only the START of the cell is escaped

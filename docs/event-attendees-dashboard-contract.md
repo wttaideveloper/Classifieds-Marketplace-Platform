@@ -45,7 +45,7 @@ Each item: `registration_id`, `event_id`, `participant_name`, `participant_email
 `registration_reference` (the QR value), `ticket_type_id`, `ticket_type_name`, `quantity`, `payment_status`,
 `order_id`, `order_status`, `amount`, `currency`, `is_checked_in`, `checked_in_at`, `checked_out_at`,
 `registered_at`, `registration_source` (`online` / `walk_in`, Phase 2.5), `meal_selections[{meal_id, name, active}]` (Phase 2.6),
-`custom_answers[{field_id, label, value}]`, `session_attendance[{session_id, title, checked_in,
+`accommodation_selections[{accommodation_id, name, active}]` (Phase 2.7), `custom_answers[{field_id, label, value}]`, `session_attendance[{session_id, title, checked_in,
 checked_in_at, checked_in_by, checked_out_at}]` (Phase 2.4, one entry per session of the event, separate from
 `is_checked_in`; empty without sessions and in the CSV export).
 
@@ -106,6 +106,7 @@ revenue       currency, total_revenue, refunded_amount, pending_refund_amount, p
 sessions      [{session_id, title, session_date, start_time, registered_count, checked_in_count,
               attendance_percentage}]   (Phase 2.4; see event-session-attendance-contract.md)
 meals         [{meal_id, name, selected_count, active}]   (Phase 2.6; see event-meals-contract.md)
+accommodation [{accommodation_id, name, selected_count, active}]   (Phase 2.7; see event-accommodation-contract.md)
 generated_at
 ```
 
@@ -158,7 +159,7 @@ The dashboard never writes, promotes, offers seats or expires anything.
 
 `GET /{event_id}/registrations/export` keeps `text/csv` and the filename. The first five columns (`id`, `name`,
 `email`, `status`, `qr_code`) are unchanged and first; appended: `ticket_type`, `quantity`, `payment_status`,
-`order_id`, `amount`, `currency`, `checked_in`, `checked_in_at`, `registered_at`, `answers`, `source` (Phase 2.5), `meals` (last, Phase 2.6: names joined with `; `). It accepts the same
+`order_id`, `amount`, `currency`, `checked_in`, `checked_in_at`, `registered_at`, `answers`, `source` (Phase 2.5), `meals` (Phase 2.6), `accommodation` (last, Phase 2.7: names joined with `; `, like `meals`). It accepts the same
 filters as the list (not pagination) and the same access rule. Its role gate now also admits an active
 super admin, like the new routes. Text cells starting with `=`, `+`, `-`, `@`, tab or CR are prefixed with an
 apostrophe (spreadsheet formula injection).

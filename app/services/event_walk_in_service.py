@@ -50,6 +50,7 @@ from app.schemas.event_walk_in_schema import (
 )
 from app.services.event_attendee_service import get_attendee_service
 from app.services.event_dashboard_service import _parse_capacity
+from app.services.event_accommodation_service import validated_accommodation_selections
 from app.services.event_meal_service import validated_selections
 from app.services.event_form_config_service import (
     _iter_custom_fields,
@@ -233,6 +234,7 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
     ticket = _resolve_walk_in_ticket(event, payload.ticket_type_id, paid)
     answers = _validated_answers(db, event, current_user, payload.custom_fields)
     meal_selections = validated_selections(event, payload.meal_selections)  # the same validator online registration uses
+    accommodation_selections = validated_accommodation_selections(event, payload.accommodation_selections)  # likewise
     amount, currency = _amount_due(event, ticket) if paid else (None, None)
     payment_complete = (not paid) or amount == 0
 
@@ -271,6 +273,7 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
             qr_code=new_qr_code(),
             registration_source=WALK_IN_SOURCE,
             meal_selections=meal_selections,
+            accommodation_selections=accommodation_selections,
         )
         db.add(reg)
         db.flush()
@@ -285,6 +288,7 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
                 "amount": str(order.amount) if order is not None else None,
                 "check_in_requested": payload.check_in, "session_id": payload.session_id,
                 "meal_selections": meal_selections or [],
+                "accommodation_selections": accommodation_selections or [],
             },
             changed_by=_actor_id(current_user), commit=False,
         )
