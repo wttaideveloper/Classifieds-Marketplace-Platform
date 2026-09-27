@@ -15,6 +15,9 @@ CUSTOM_RENDERERS = {
     "select",
     "multi_select",
     "checkbox",
+    "image",
+    "document",
+    "video",
 }
 
 # Seed + publish defaults — title/category required by domain; price optional but present
@@ -64,7 +67,7 @@ def _cfg(**kwargs) -> dict:
         "placeholder": True,
         "help_text": True,
         "validation": True,
-        "composite_config": False,
+        "composite_config": True,
     }
     defaults.update(kwargs)
     return defaults
@@ -92,7 +95,7 @@ def _entry(
         "removable": removable if not required_by_domain else False,
         "hideable": hideable if not required_by_domain else False,
         "configurable": configurable or _cfg(),
-        "supports_composite_config": False,
+        "supports_composite_config": True,
         "composite_subfields": [],
         "default_composite_config": None,
     }

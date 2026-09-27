@@ -13,7 +13,7 @@ class FieldConfigurableFlags(BaseModel):
     placeholder: bool = True
     help_text: bool = True
     validation: bool = True
-    composite_config: bool = False
+    composite_config: bool = True
 
 
 class FieldOption(BaseModel):
@@ -61,7 +61,7 @@ class FormFieldInput(BaseModel):
     help_text: str | None = None
     options: list[FieldOption | dict] = Field(default_factory=list)
     validation: FieldValidation | dict = Field(default_factory=dict)
-    composite_config: dict | None = None
+    composite_config: dict | None = Field(None, description="Open JSON metadata, preserved verbatim. frontend_settings.visibility and frontend_settings.upload are validated and enforced server-side.")
 
 
 class FormSectionInput(BaseModel):
@@ -90,7 +90,7 @@ class FormFieldResponse(BaseModel):
     help_text: str | None = None
     options: list[dict] = Field(default_factory=list)
     validation: dict = Field(default_factory=dict)
-    composite_config: dict | None = None
+    composite_config: dict | None = Field(None, description="Open JSON metadata, preserved verbatim. frontend_settings.visibility and frontend_settings.upload are validated and enforced server-side.")
 
 
 class FormSectionResponse(BaseModel):
@@ -152,6 +152,7 @@ class TrainingFormConfigurationCreateResponse(TrainingFormConfigurationSummary):
 
 
 class PublishConfigurationResponse(BaseModel):
+    sections: list[FormSectionResponse] = Field(default_factory=list)
     configuration_id: UUID
     version_id: UUID
     version: int
