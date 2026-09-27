@@ -6,8 +6,8 @@ from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
 from app.schemas.training_schema import TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonCreate, LessonProgressSaveRequest, LessonProgressSaveResponse, LessonReorderRequest, SectionReorderRequest, TrainingAssignmentResponse, TrainingProgressResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingSummaryResponse, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
-from app.services.training_service import add_assessment_question_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, reorder_sections_service, reorder_lessons_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
+from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonAttendanceBatchRequest, LessonAttendanceRosterResponse, LessonCreate, LessonProgressSaveRequest, LessonProgressSaveResponse, LessonQrCheckInRequest, LessonQrCheckInResponse, LessonReorderRequest, SectionReorderRequest, TrainingAssignmentResponse, TrainingProgressResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingSummaryResponse, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
+from app.services.training_service import add_assessment_question_service, batch_mark_lesson_attendance_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_lesson_attendance_roster_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, qr_check_in_lesson_attendance_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, reorder_sections_service, reorder_lessons_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 from app.services.training_service import (
     add_training_wishlist_service,
     create_training_review_service,
@@ -777,6 +777,69 @@ def live_attendance(request: Request, training_id: UUID, session_id: str, payloa
     result = record_live_attendance_service(db, training_id, session_id, email)
     return {**result, "status": "success", "message": "Attendance recorded",
             "attendance": {"joined_at": result["recorded_at"], "participant_email": email}}
+
+@router.post(
+    "/{training_id}/lessons/{lesson_id}/attendance",
+    summary="Record lesson-wise attendance",
+    description="Lesson-scoped counterpart to /live-sessions/{session_id}/attendance, for a "
+                "live/venue LESSON nested inside a session (day-wise check-in). Body: {} for "
+                "self check-in, or {\"qr_code\": \"...\"} for an admin venue scan. A section id "
+                "is not accepted here — use the session-wise endpoint for that.",
+)
+def lesson_attendance(request: Request, training_id: UUID, lesson_id: str, payload: dict | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from fastapi import HTTPException
+    from app.services.training_service import record_lesson_attendance_service, validate_training_qr_service
+    qr_code = (payload or {}).get("qr_code")
+    email = (payload or {}).get("participant_email")
+    if qr_code and not email:
+        email = validate_training_qr_service(db, training_id, qr_code)["participant_email"]
+    email = email or current_user.get("email")
+    if not email:
+        raise HTTPException(400, "participant_email required")
+    if email != current_user.get("email"):
+        require_training_manager(request, training_id, db, current_user)
+    result = record_lesson_attendance_service(db, training_id, lesson_id, email)
+    return {**result, "status": "success", "message": "Attendance recorded",
+            "attendance": {"joined_at": result["recorded_at"], "participant_email": email}}
+
+@router.get(
+    "/{training_id}/lessons/{lesson_id}/attendance/roster",
+    response_model=LessonAttendanceRosterResponse,
+    summary="Load a lesson's enrolled participants and attendance status (admin)",
+    description="Enterprise admin/provider only. Lists every actively enrolled participant "
+                "with their current attendance status for this lesson — any lesson type "
+                "(video/text/quiz/live/venue/...), separate from the live/venue self-check-in flow.",
+)
+def get_lesson_attendance_roster(training_id: UUID, lesson_id: str, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+    return get_lesson_attendance_roster_service(db, training_id, lesson_id)
+
+@router.post(
+    "/{training_id}/lessons/{lesson_id}/attendance/roster",
+    response_model=LessonAttendanceRosterResponse,
+    summary="Batch mark/update lesson attendance (admin)",
+    description="Enterprise admin/provider only. Identified by enrolment_id, not participant "
+                "email. status is 'attended'|'absent'|'not_marked' — 'not_marked' clears any "
+                "previously recorded status. Every enrolment_id must belong to this training and "
+                "be an active enrolment, or the whole batch is rejected with 422 (no partial "
+                "writes). Returns the refreshed roster, including who marked each status and when.",
+)
+def batch_mark_lesson_attendance(training_id: UUID, lesson_id: str, payload: LessonAttendanceBatchRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+    return batch_mark_lesson_attendance_service(db, training_id, lesson_id, payload.records, current_user)
+
+@router.post(
+    "/{training_id}/lessons/{lesson_id}/attendance/scan",
+    response_model=LessonQrCheckInResponse,
+    summary="QR check-in — mark lesson attendance from a scan (admin)",
+    description="Enterprise admin/provider only. The lesson is identified by the URL path "
+                "(select the lesson in the scanner UI first — the QR code itself only "
+                "identifies the participant, via their enrolment). Verifies the participant "
+                "is enrolled in this training and the lesson belongs to it, then marks them "
+                "Attended in the same attendance roster the manual batch-mark endpoint uses. "
+                "Idempotent: re-scanning an already-attended participant returns "
+                "result='already_attended' and creates no duplicate record.",
+)
+def qr_check_in_lesson_attendance(training_id: UUID, lesson_id: str, payload: LessonQrCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+    return qr_check_in_lesson_attendance_service(db, training_id, lesson_id, payload.qr_code, current_user)
 
 @router.get("/{training_id}/certificate", summary="Digital completion certificate")
 def get_certificate(training_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
