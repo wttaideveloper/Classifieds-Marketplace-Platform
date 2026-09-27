@@ -422,7 +422,7 @@ def test_venue_lesson_receives_attendance_and_qr_fields_like_live_lesson(monkeyp
     assert venue_lesson["type"] == "venue"
     assert venue_lesson["is_attended"] is False
     assert venue_lesson["attended_at"] is None
-    assert venue_lesson["qr_code"] == "96FFF6F6-A9D"
+    assert venue_lesson["qr_code"] == "96FFF6F6-A9D:lv3"
     assert venue_lesson["qr_image_base64"].startswith("data:image/png;base64,")
 
 
@@ -456,7 +456,7 @@ def test_live_lesson_receives_qr_image_field(monkeypatch):
     live_lesson = next(l for l in result["sections"][0]["lessons"] if l["id"] == "lv2")
 
     assert live_lesson["type"] == "live"
-    assert live_lesson["qr_code"] == "96FFF6F6-A9D"
+    assert live_lesson["qr_code"] == "96FFF6F6-A9D:lv2"
     assert live_lesson["qr_image_base64"].startswith("data:image/png;base64,")
 
 

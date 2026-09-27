@@ -80,7 +80,7 @@ def test_learning_shape_progress_and_no_answer_leak(mode, monkeypatch):
     # be scanned in on-site), matching venue's own qr_code — not just "venue" items.
     for item in section["items"]:
         if item["type"] in ("live", "venue") and mode in ("physical", "hybrid"):
-            assert item["qr_code"] == result["qr_code"]
+            assert item["qr_code"] == f"{result['qr_code']}:{item['id']}"
         else:
             assert item["qr_code"] is None
 
