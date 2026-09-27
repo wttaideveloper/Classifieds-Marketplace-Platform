@@ -83,8 +83,15 @@ class TestGraph:
         heads = set(script_dir.get_heads())
         assert PARENT not in heads
         assert [r.revision for r in script_dir.walk_revisions() if r.down_revision == PARENT] == [REVISION]
-        assert REVISION in heads  # Phase 2.7 is the final piece of Phase 2 coding: this revision IS the current head
-        assert heads == {REVISION} | OTHER_HEADS
+        # Later phases may extend the chain (e.g. the Phase 2.2 Event Type evolution, 070237a7c1cf, chains
+        # onto this very revision) but it must stay linear and end in a head; the other three heads are
+        # exactly as they were and there are still four heads.
+        node = REVISION
+        while node not in heads:
+            descendants = [r.revision for r in script_dir.walk_revisions() if r.down_revision == node]
+            assert len(descendants) == 1, f"{node} became a branch point: {descendants}"
+            node = descendants[0]
+        assert heads == {node} | OTHER_HEADS
 
     def test_nothing_was_merged_and_history_is_untouched(self, script_dir):
         assert [r.revision for r in script_dir.walk_revisions() if isinstance(r.down_revision, tuple) and REVISION in r.down_revision] == []
@@ -103,7 +110,10 @@ class TestGraph:
                 continue
             text = path.read_text(encoding="utf-8")
             assert "accommodation_selections" not in text, path.name
-            assert not re.search(r"['\"]accommodation['\"]", text), path.name
+            # A column definition specifically (sa.Column('accommodation', ...)) — not just any mention of
+            # the word, which the Phase 2.2 Event Type seed data (070237a7c1cf) legitimately enumerates as
+            # one of the eight MODULE KEY NAMES (not a column) shared with every other event_type consumer.
+            assert not re.search(r"sa\.Column\(\s*['\"]accommodation['\"]", text), path.name
 
     def test_exactly_one_revision_file_was_added_for_this_change(self):
         assert len(list(VERSIONS.glob(f"{REVISION}_*.py"))) == 1

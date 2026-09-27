@@ -107,7 +107,10 @@ class TestGraph:
                 continue
             text = path.read_text(encoding="utf-8")
             assert "meal_selections" not in text, path.name
-            assert not re.search(r"['\"]meals['\"]", text), path.name
+            # A column definition specifically (sa.Column('meals', ...)) — not just any mention of the
+            # word, which the Phase 2.2 Event Type seed data (070237a7c1cf) legitimately enumerates as one
+            # of the eight MODULE KEY NAMES (not a column) shared with every other event_type consumer.
+            assert not re.search(r"sa\.Column\(\s*['\"]meals['\"]", text), path.name
 
     def test_exactly_one_revision_file_was_added_for_this_change(self):
         assert len(list(VERSIONS.glob(f"{REVISION}_*.py"))) == 1

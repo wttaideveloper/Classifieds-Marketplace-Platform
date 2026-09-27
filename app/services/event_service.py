@@ -47,6 +47,7 @@ from app.utils.event_modules import (
     EventModuleConfigError,
     is_paid_event,
     legacy_modules,
+    modules_for_new_event,
     plan_config_update,
     resolve_event_modules,
     validate_module_overrides,
@@ -200,7 +201,8 @@ def _validate_event_config_for_create(event_data) -> None:
     Only what the client asked for is checked. Values that come from an event-type default are a
     starting point, not a request, so a default can never make a create fail. Stored configuration is
     never re-validated this way (validate_event_submission only checks its shape), so a valid stored
-    default can never block publishing.
+    default can never block publishing. Event-Type-specific allowed/required checks happen later, once
+    the Event Type has been resolved from the database (see _resolve_event_type_or_422).
     """
     overrides = event_data.modules.overrides() if getattr(event_data, "modules", None) is not None else {}
     if not overrides:
@@ -212,7 +214,34 @@ def _validate_event_config_for_create(event_data) -> None:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-def _plan_event_config_update(event, update_data) -> dict:
+def _event_type_record(row) -> dict:
+    """An EventTypeConfig row as the plain dict app.utils.event_modules expects."""
+    return {
+        "key": row.key,
+        "default_modules": dict(row.default_modules),
+        "allowed_modules": dict(row.allowed_modules),
+        "required_modules": dict(row.required_modules),
+    }
+
+
+def _resolve_event_type_or_422(db: Session, key: str | None) -> dict | None:
+    """The resolved Event Type record for ``key`` (None = no type: the event stays legacy).
+
+    422 when the key does not name an existing, ACTIVE Event Type — a client can never silently create
+    or move an event onto an unknown or deactivated type. This is the only place event_type is checked
+    against the database; app.utils.event_modules stays pure and never queries it.
+    """
+    if key is None:
+        return None
+    from app.models.event_type_model import EventTypeConfig
+
+    row = db.query(EventTypeConfig).filter(EventTypeConfig.key == key).first()
+    if row is None or not row.active:
+        raise HTTPException(status_code=422, detail=f"Unknown or inactive event type: {key}")
+    return _event_type_record(row)
+
+
+def _plan_event_config_update(db: Session, event, update_data) -> dict:
     """The event_type / modules columns an update changes (empty when it does not touch configuration).
 
     Partial-update semantics: null/omitted = no change, so an unrelated update — or a client echoing
@@ -228,10 +257,14 @@ def _plan_event_config_update(event, update_data) -> dict:
     pricing_type = update_data.pricing_type if getattr(update_data, "pricing_type", None) is not None else event.pricing_type
     price = update_data.price if "price" in fields else event.price
     ticket_types = update_data.ticket_types if getattr(update_data, "ticket_types", None) is not None else event.ticket_types
+    new_type_record = None
+    if new_type is not None and new_type != getattr(event, "event_type", None):
+        new_type_record = _resolve_event_type_or_422(db, new_type)
     try:
         return plan_config_update(
             event, new_type, overrides,
             delivery_mode=delivery_mode, is_paid=is_paid_event(pricing_type, price, ticket_types),
+            new_event_type_record=new_type_record,
         )
     except EventModuleConfigError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -348,6 +381,14 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
     if not event_data.meeting_link:
         event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
     payload = event_data.to_model_data()
+    event_type_record = _resolve_event_type_or_422(db, payload.get("event_type"))
+    is_paid = is_paid_event(event_data.pricing_type, event_data.price, event_data._normalize_ticket_types())
+    try:
+        payload["modules"] = modules_for_new_event(
+            event_data.modules.overrides() if event_data.modules else None, event_data, event_type_record, is_paid=is_paid
+        )
+    except EventModuleConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     payload["meals"] = _meals_for_new_event(event_data, payload.get("modules"))
     payload["accommodation"] = _accommodation_for_new_event(event_data, payload.get("modules"))
     payload.update(form_meta)
@@ -461,7 +502,7 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
 
     # Configuration (event_type / modules) is planned against the CURRENT event before anything is mutated.
     # It is deliberately kept out of old_vals below: that dict also drives schedule-change notifications.
-    config_changes = _plan_event_config_update(event, update_data)
+    config_changes = _plan_event_config_update(db, event, update_data)
     config_changes.update(_plan_event_meals_update(event, update_data, config_changes))
     config_changes.update(_plan_event_accommodation_update(event, update_data, config_changes))
     old_config = {key: getattr(event, key) for key in config_changes}

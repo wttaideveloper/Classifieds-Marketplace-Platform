@@ -116,11 +116,28 @@ class TestEventTypeValidation:
         assert resp.json()["event_type"] == event_type
         assert row(cfg.db, resp.json()["id"]).event_type == event_type
 
-    @pytest.mark.parametrize("bad", ["party", "Conference", "CONFERENCE", "", " conference", "private-function", 7, ["camp"]])
-    def test_invalid_types_are_rejected_and_nothing_is_created(self, cfg, bad):
+    @pytest.mark.parametrize("bad", ["Conference", "CONFERENCE", "", " conference", "private-function", 7, ["camp"]])
+    def test_malformed_types_are_rejected_by_the_schema_and_nothing_is_created(self, cfg, bad):
+        """Format is checked with no database access at all — see test_event_type_integration.py for the
+        separate, service-level 422 a well-formed but unknown key (like "party") gets instead."""
         resp = create(cfg, event_type=bad)
         assert resp.status_code == 422
         assert "event_type" in resp.text
+        assert cfg.db.query(Event).count() == 0
+
+    def test_a_well_formed_but_unknown_type_is_rejected_by_the_service_and_nothing_is_created(self, cfg):
+        resp = create(cfg, event_type="party")
+        assert resp.status_code == 422
+        assert "Unknown or inactive event type: party" in resp.json()["detail"]
+        assert cfg.db.query(Event).count() == 0
+
+    def test_an_inactive_type_is_rejected_on_create(self, cfg):
+        from event_sql_support import EventTypeConfig
+
+        cfg.db.query(EventTypeConfig).filter(EventTypeConfig.key == "camp").update({"active": False})
+        cfg.db.commit()
+        resp = create(cfg, event_type="camp")
+        assert resp.status_code == 422 and "Unknown or inactive event type: camp" in resp.json()["detail"]
         assert cfg.db.query(Event).count() == 0
 
     def test_invalid_type_on_update_is_rejected_and_the_event_is_unchanged(self, cfg):
@@ -162,12 +179,17 @@ class TestDefaultModules:
         listed = {i["id"]: i for i in cfg.staff.get(f"{API}/?page_size=100").json()["items"]}
         assert listed[event_id]["modules"] == SPEC_DEFAULTS[event_type] and listed[event_id]["event_type"] == event_type
 
-    def test_defaults_are_a_snapshot_not_a_live_link_to_the_type(self, cfg, monkeypatch):
-        """Editing the defaults table later must not change events that already exist (no recalculation)."""
-        event_id = create(cfg, event_type="conference").json()["id"]
-        from app.utils import event_modules
+    def test_defaults_are_a_snapshot_not_a_live_link_to_the_type(self, cfg):
+        """Editing an Event Type's default_modules later — through the real Super Admin endpoint — must
+        not change events that already exist under it (no recalculation on read)."""
+        from event_sql_support import EventTypeConfig, super_admin_user
 
-        monkeypatch.setitem(event_modules.EVENT_TYPE_DEFAULT_MODULES, "conference", {**SPEC_DEFAULTS["conference"], "meals": False})
+        event_id = create(cfg, event_type="conference").json()["id"]
+        conference = cfg.db.query(EventTypeConfig).filter(EventTypeConfig.key == "conference").one()
+        admin = client_for(cfg.db, super_admin_user())
+        resp = admin.patch(f"/api/v1/event-types/{conference.id}", json={
+            "default_modules": {**SPEC_DEFAULTS["conference"], "meals": False}})
+        assert resp.status_code == 200, resp.text
         assert cfg.staff.get(f"{API}/{event_id}").json()["modules"] == SPEC_DEFAULTS["conference"]
 
     def test_a_paid_event_keeps_ticketing_even_when_its_type_defaults_it_off(self, cfg):
@@ -406,11 +428,16 @@ class TestLegacyEvents:
         assert staff.post(f"{API}/{legacy.id}/sessions", json={"session_date": session_date, "title": "S"}).status_code == 201
         assert client_for(cfg.db, None).get(f"{API}/{legacy.id}/calendar.ics").status_code == 200
 
-    def test_a_corrupt_stored_value_never_breaks_a_read(self, cfg):
+    def test_a_corrupt_stored_modules_value_never_breaks_a_read(self, cfg):
+        """Corrupt/wrong-shaped stored `modules` (never possible through the API, but a read must
+        tolerate it regardless — hand-edited rows, a future schema change, etc.) is completed per key,
+        not rejected. A well-formed-but-unknown `event_type` (e.g. a deleted-when-unused or since-
+        deactivated Event Type) is returned as-is, not "corrupt" — see resolve_event_type's pure tests
+        (test_event_modules_config.py) for the genuinely-malformed (non-string) case."""
         bad = make_event(cfg.db, cfg.tenant, cfg.ent, event_type="party", modules={"meals": "yes", "polls": True})
         body_ = cfg.staff.get(f"{API}/{bad.id}")
         assert body_.status_code == 200
-        assert body_.json()["event_type"] == "other"
+        assert body_.json()["event_type"] == "party"
         assert list(body_.json()["modules"]) == SPEC_KEYS
 
     def test_duplicating_an_event_copies_its_configuration_independently(self, cfg):
@@ -674,10 +701,40 @@ class TestOpenApi:
         for path in ("/api/v1/events/", "/api/v1/events/{event_id}", "/api/v1/search/events"):
             assert path in spec["paths"], path
 
-    @pytest.mark.parametrize("schema", ["EventCreate", "EventUpdate", "EventResponse", "EventListItemResponse", "EventDetailResponse"])
-    def test_event_type_is_a_typed_enum_on_every_event_schema(self, spec, schema):
+    @staticmethod
+    def string_option(prop):
+        for option in prop.get("anyOf", [prop]):
+            if option.get("type") == "string":
+                return option
+        return None
+
+    @pytest.mark.parametrize("schema", ["EventCreate", "EventUpdate"])
+    def test_event_type_is_a_pattern_constrained_string_not_a_closed_enum(self, spec, schema):
+        """Event Types are backend-configurable data (see /api/v1/event-types), not a fixed enum: the
+        OpenAPI schema documents the KEY FORMAT (lowercase snake_case, <=30 chars) but not a closed
+        vocabulary — Web must call GET /event-types rather than hardcode the list."""
         props = spec["components"]["schemas"][schema]["properties"]
-        assert self.enum_of(props["event_type"]) == SPEC_TYPES, schema
+        option = self.string_option(props["event_type"])
+        assert self.enum_of(props["event_type"]) is None, schema
+        assert option["pattern"] == r"^[a-z][a-z0-9_]{0,29}$" and option["maxLength"] == 30
+
+    @pytest.mark.parametrize("schema", ["EventResponse", "EventListItemResponse", "EventDetailResponse"])
+    def test_event_type_is_a_plain_string_on_every_response_schema(self, spec, schema):
+        props = spec["components"]["schemas"][schema]["properties"]
+        assert self.enum_of(props["event_type"]) is None, schema
+        assert self.string_option(props["event_type"]) is not None, schema
+
+    def test_the_event_type_crud_endpoints_are_documented(self, spec):
+        assert spec["paths"]["/api/v1/event-types/"]["get"]
+        assert spec["paths"]["/api/v1/event-types/"]["post"]
+        assert spec["paths"]["/api/v1/event-types/{event_type_id}"]["get"]
+        assert spec["paths"]["/api/v1/event-types/{event_type_id}"]["patch"]
+        assert spec["paths"]["/api/v1/event-types/{event_type_id}"]["delete"]
+        response_schema = spec["components"]["schemas"]["EventTypeResponse"]
+        assert set(response_schema["properties"]) == {
+            "id", "key", "name", "active", "default_modules", "allowed_modules", "required_modules",
+            "created_at", "updated_at",
+        }
 
     @pytest.mark.parametrize("schema,model", [
         ("EventCreate", "EventModulesInput"), ("EventUpdate", "EventModulesInput"),

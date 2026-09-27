@@ -2,29 +2,32 @@
 Event Management Phase 2.2 — pure unit tests for the event type / module configuration layer.
 
 No database, no HTTP: app/utils/event_modules.py is pure by design (no writes, so nothing can be
-"backfilled" from a read path). The default matrix below is written out independently from the product
-spec, so the code cannot drift from it unnoticed.
+"backfilled" from a read path). Event Types themselves are no longer a hardcoded Python table (see
+tests/test_event_type_config.py and tests/test_event_type_migration.py for the database-backed CRUD and
+seed data) — every function here that used to consult that table now takes an already-resolved "event
+type record" (a plain dict: ``{key, default_modules, allowed_modules, required_modules}``), built here
+by the ``type_record`` helper, exactly as app/services/event_service.py builds it from a real
+``EventTypeConfig`` row before calling into this module.
+
+The default matrix below is written out independently from the product spec, so the code cannot drift
+from it unnoticed.
 
 Run:
     pytest tests/test_event_modules_config.py -v
 """
 from types import SimpleNamespace
-from typing import get_args
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.common_schema import EventType
 from app.schemas.event_schema import EventCreate, EventModules, EventModulesInput, EventUpdate
 from app.utils.event_modules import (
-    DEFAULT_EVENT_TYPE,
     EVENT_MODULE_KEYS,
-    EVENT_TYPE_DEFAULT_MODULES,
-    EVENT_TYPES,
+    EVENT_TYPE_KEY_PATTERN,
     EventModuleConfigError,
+    check_type_constraints,
     clean_overrides,
-    default_modules_for,
     is_paid_event,
     legacy_modules,
     modules_for_new_event,
@@ -52,6 +55,20 @@ SPEC_DEFAULTS = {
     "webinar": flags("registration", "sessions", "online_meeting"),
     "other": flags("registration"),
 }
+ALL_ALLOWED = flags(*SPEC_KEYS)
+NONE_REQUIRED = flags()
+
+
+def type_record(key, *, default=None, allowed=None, required=None):
+    """An already-resolved Event Type record, as event_service._event_type_record builds it from a real
+    EventTypeConfig row. Defaults to the seeded (fully-allowed, nothing-required) shape unless overridden,
+    so most tests read exactly as they did against the old hardcoded table."""
+    return {
+        "key": key,
+        "default_modules": dict(default if default is not None else SPEC_DEFAULTS.get(key, NONE_REQUIRED)),
+        "allowed_modules": dict(allowed) if allowed is not None else dict(ALL_ALLOWED),
+        "required_modules": dict(required) if required is not None else dict(NONE_REQUIRED),
+    }
 
 
 def event(**attrs):
@@ -66,38 +83,21 @@ def event(**attrs):
 
 
 # ===========================================================================
-# vocabulary + defaults
+# vocabulary
 # ===========================================================================
 
 
-class TestVocabularyAndDefaults:
-    def test_supported_event_types_are_exactly_the_spec(self):
-        assert list(EVENT_TYPES) == SPEC_TYPES
-        assert list(get_args(EventType)) == SPEC_TYPES  # the schema Literal and the defaults table cannot diverge
-
+class TestVocabulary:
     def test_supported_modules_are_exactly_the_spec(self):
         assert list(EVENT_MODULE_KEYS) == SPEC_KEYS
 
-    @pytest.mark.parametrize("event_type", SPEC_TYPES)
-    def test_default_modules_match_the_spec_for_every_type(self, event_type):
-        assert EVENT_TYPE_DEFAULT_MODULES[event_type] == SPEC_DEFAULTS[event_type]
-        assert default_modules_for(event_type) == SPEC_DEFAULTS[event_type]
+    @pytest.mark.parametrize("bad_key", ["", "A", "Conference", "CONFERENCE", "private-function", "1x", "x" * 31, "_x"])
+    def test_the_key_pattern_rejects_anything_not_lowercase_snake_case(self, bad_key):
+        assert not EVENT_TYPE_KEY_PATTERN.match(bad_key)
 
-    def test_every_default_lists_all_eight_modules_with_boolean_values(self):
-        for event_type, modules in EVENT_TYPE_DEFAULT_MODULES.items():
-            assert list(modules) == SPEC_KEYS, event_type
-            assert all(type(value) is bool for value in modules.values()), event_type
-
-    def test_defaults_are_copies_so_callers_cannot_corrupt_the_table(self):
-        copy = default_modules_for("conference")
-        copy["meals"] = False
-        assert EVENT_TYPE_DEFAULT_MODULES["conference"]["meals"] is True
-        assert default_modules_for("conference")["meals"] is True
-
-    def test_unknown_or_missing_type_falls_back_to_the_safest_default(self):
-        assert DEFAULT_EVENT_TYPE == "other"
-        assert default_modules_for(None) == SPEC_DEFAULTS["other"]
-        assert default_modules_for("party") == SPEC_DEFAULTS["other"]
+    @pytest.mark.parametrize("good_key", SPEC_TYPES + ["prayer_meeting", "a", "x" * 30])
+    def test_the_key_pattern_accepts_lowercase_snake_case_up_to_30_chars(self, good_key):
+        assert EVENT_TYPE_KEY_PATTERN.match(good_key)
 
 
 # ===========================================================================
@@ -110,8 +110,14 @@ class TestLegacyResolution:
         assert resolve_event_type(event()) == "other"
         assert resolve_event_type(event(event_type="")) == "other"
 
-    def test_unexpected_stored_type_never_breaks_a_read(self):
-        assert resolve_event_type(event(event_type="party")) == "other"
+    def test_a_well_formed_stored_type_is_returned_as_is_even_if_no_longer_known(self):
+        """resolve_event_type is pure and DB-free: whatever is stored was validated when it was written,
+        so a well-formed string is trusted, not re-checked against the (possibly since-changed) Event
+        Type table. This is what lets a deactivated or deleted-when-unused Event Type keep resolving
+        correctly for events that already used it."""
+        assert resolve_event_type(event(event_type="party")) == "party"
+
+    def test_malformed_stored_type_never_breaks_a_read(self):
         assert resolve_event_type(event(event_type=7)) == "other"
         assert resolve_event_type(MagicMock()) == "other"
 
@@ -175,51 +181,112 @@ class TestLegacyResolution:
 
 
 # ===========================================================================
+# check_type_constraints — the new allowed/required enforcement
+# ===========================================================================
+
+
+class TestCheckTypeConstraints:
+    def test_a_fully_permissive_type_never_objects(self):
+        check_type_constraints(flags(*SPEC_KEYS), type_record("conference"))
+        check_type_constraints(flags(), type_record("conference"))
+
+    def test_enabling_a_disallowed_module_is_rejected(self):
+        record = type_record("camp", allowed={**ALL_ALLOWED, "meals": False})
+        with pytest.raises(EventModuleConfigError, match="does not allow: meals"):
+            check_type_constraints({"meals": True}, record, changed_keys=["meals"])
+
+    def test_disabling_a_required_module_is_rejected(self):
+        record = type_record("conference", required={**NONE_REQUIRED, "registration": True})
+        with pytest.raises(EventModuleConfigError, match="requires: registration"):
+            check_type_constraints({"registration": False}, record, changed_keys=["registration"])
+
+    def test_only_the_given_changed_keys_are_checked(self):
+        """An explicit-override check must not complain about an untouched key, even if that key's
+        CURRENT value (not passed here) would itself be a violation — that is the caller's job when it
+        revalidates the full configuration (changed_keys=None)."""
+        record = type_record("camp", allowed={**ALL_ALLOWED, "sessions": False})
+        check_type_constraints({"meals": True}, record, changed_keys=["meals"])  # "sessions" never mentioned
+
+    def test_full_revalidation_checks_every_key(self):
+        record = type_record("camp", allowed={**ALL_ALLOWED, "sessions": False})
+        with pytest.raises(EventModuleConfigError, match="does not allow: sessions"):
+            check_type_constraints({**flags(), "sessions": True}, record, changed_keys=None)
+
+    def test_the_error_names_the_type_key(self):
+        record = type_record("medical_camp", allowed={**ALL_ALLOWED, "meals": False})
+        with pytest.raises(EventModuleConfigError, match="'medical_camp'"):
+            check_type_constraints({"meals": True}, record, changed_keys=["meals"])
+
+
+# ===========================================================================
 # create planning
 # ===========================================================================
 
 
 class TestModulesForNewEvent:
     def test_no_type_and_no_overrides_stays_legacy(self):
-        assert modules_for_new_event(None, None, event()) is None
-        assert modules_for_new_event(None, {}, event()) is None
+        assert modules_for_new_event(None, event(), None, is_paid=False) is None
+        assert modules_for_new_event({}, event(), None, is_paid=False) is None
 
     @pytest.mark.parametrize("event_type", SPEC_TYPES)
     def test_type_only_applies_that_types_defaults(self, event_type):
-        assert modules_for_new_event(event_type, None, event()) == SPEC_DEFAULTS[event_type]
+        assert modules_for_new_event(None, event(), type_record(event_type), is_paid=False) == SPEC_DEFAULTS[event_type]
 
     def test_empty_overrides_are_the_same_as_none(self):
-        assert modules_for_new_event("camp", {}, event()) == SPEC_DEFAULTS["camp"]
+        assert modules_for_new_event({}, event(), type_record("camp"), is_paid=False) == SPEC_DEFAULTS["camp"]
 
     def test_explicit_override_wins_over_the_default(self):
-        conference = modules_for_new_event("conference", {"meals": False}, event())
+        conference = modules_for_new_event({"meals": False}, event(), type_record("conference"), is_paid=False)
         assert conference == {**SPEC_DEFAULTS["conference"], "meals": False}
-        webinar = modules_for_new_event("webinar", {"custom_questions": True}, event())
+        webinar = modules_for_new_event({"custom_questions": True}, event(), type_record("webinar"), is_paid=False)
         assert webinar == {**SPEC_DEFAULTS["webinar"], "custom_questions": True}
 
     def test_a_full_explicit_configuration_is_used_as_given(self):
         given = flags("registration", "meals")
-        assert modules_for_new_event("conference", dict(given), event()) == given
+        assert modules_for_new_event(dict(given), event(), type_record("conference"), is_paid=False) == given
 
     def test_overrides_without_a_type_sit_on_top_of_the_behaviour_based_modules(self):
         ev = event(delivery_mode="online", sessions=[{"id": "s"}])
-        assert modules_for_new_event(None, {"meals": True}, ev) == {
+        assert modules_for_new_event({"meals": True}, ev, None, is_paid=False) == {
             **flags("registration", "check_in", "sessions", "online_meeting"), "meals": True}
 
     def test_a_type_default_never_switches_ticketing_off_for_a_paid_event(self):
         paid = event(pricing_type="paid", price="100")
-        assert modules_for_new_event("camp", None, paid)["tickets"] is True
-        assert modules_for_new_event("private_function", None, paid)["tickets"] is True
-        assert modules_for_new_event("camp", None, event())["tickets"] is False  # free stays per the default
+        assert modules_for_new_event(None, paid, type_record("camp"), is_paid=True)["tickets"] is True
+        assert modules_for_new_event(None, paid, type_record("private_function"), is_paid=True)["tickets"] is True
+        assert modules_for_new_event(None, event(), type_record("camp"), is_paid=False)["tickets"] is False  # free stays per the default
 
     def test_other_defaults_are_untouched_by_the_paid_safeguard(self):
         paid = event(ticket_types=[{"price": "5"}])
-        assert modules_for_new_event("camp", None, paid) == {**SPEC_DEFAULTS["camp"], "tickets": True}
+        assert modules_for_new_event(None, paid, type_record("camp"), is_paid=True) == {**SPEC_DEFAULTS["camp"], "tickets": True}
 
     def test_the_result_is_a_fresh_dict(self):
-        result = modules_for_new_event("conference", None, event())
+        record = type_record("conference")
+        result = modules_for_new_event(None, event(), record, is_paid=False)
         result["meals"] = False
-        assert SPEC_DEFAULTS["conference"]["meals"] is True and EVENT_TYPE_DEFAULT_MODULES["conference"]["meals"] is True
+        assert SPEC_DEFAULTS["conference"]["meals"] is True and record["default_modules"]["meals"] is True
+
+    def test_an_override_the_type_does_not_allow_is_rejected_and_nothing_is_returned(self):
+        record = type_record("camp", allowed={**ALL_ALLOWED, "meals": False})
+        with pytest.raises(EventModuleConfigError, match="does not allow: meals"):
+            modules_for_new_event({"meals": True}, event(), record, is_paid=False)
+
+    def test_disabling_a_required_module_is_rejected(self):
+        record = type_record("conference", required={**NONE_REQUIRED, "registration": True})
+        with pytest.raises(EventModuleConfigError, match="requires: registration"):
+            modules_for_new_event({"registration": False}, event(), record, is_paid=False)
+
+    def test_a_paid_event_whose_type_does_not_allow_tickets_is_a_clear_conflict_not_a_silent_override(self):
+        record = type_record("camp", allowed={**ALL_ALLOWED, "tickets": False})
+        with pytest.raises(EventModuleConfigError, match="does not allow tickets, but this event is paid"):
+            modules_for_new_event(None, event(pricing_type="paid", price="10"), record, is_paid=True)
+
+    def test_explicitly_requesting_tickets_off_is_not_the_paid_safeguards_concern(self):
+        """modules_for_new_event does not itself enforce "tickets can't be off for a paid event" when the
+        client explicitly asked for it — that generic (Event-Type-independent) rule is
+        validate_module_overrides's job, called separately and earlier by the service."""
+        record = type_record("conference")
+        assert modules_for_new_event({"tickets": False}, event(pricing_type="paid"), record, is_paid=True)["tickets"] is False
 
 
 # ===========================================================================
@@ -227,8 +294,10 @@ class TestModulesForNewEvent:
 # ===========================================================================
 
 
-def plan(ev, new_type=None, overrides=None, delivery_mode="in_person", is_paid=False):
-    return plan_config_update(ev, new_type, overrides, delivery_mode=delivery_mode, is_paid=is_paid)
+def plan(ev, new_type=None, overrides=None, delivery_mode="in_person", is_paid=False, new_type_record="auto"):
+    if new_type_record == "auto":
+        new_type_record = type_record(new_type) if (new_type is not None and new_type != getattr(ev, "event_type", None)) else None
+    return plan_config_update(ev, new_type, overrides, delivery_mode=delivery_mode, is_paid=is_paid, new_event_type_record=new_type_record)
 
 
 class TestPlanConfigUpdate:
@@ -294,9 +363,59 @@ class TestPlanConfigUpdate:
         with pytest.raises(EventModuleConfigError):
             plan(event(), overrides={"tickets": False}, is_paid=True)
 
+    # ---- Event-Type allowed/required enforcement (new) ----------------------------------------------
+
+    def test_an_override_the_new_type_does_not_allow_is_rejected(self):
+        ev = event(event_type="conference", modules=SPEC_DEFAULTS["conference"])
+        record = type_record("camp", allowed={**ALL_ALLOWED, "meals": False})
+        with pytest.raises(EventModuleConfigError, match="does not allow: meals"):
+            plan(ev, new_type="camp", overrides={"meals": True}, new_type_record=record)
+
+    def test_an_override_disabling_a_required_module_is_rejected(self):
+        ev = event(event_type="conference", modules=SPEC_DEFAULTS["conference"])
+        record = type_record("camp", required={**NONE_REQUIRED, "registration": True})
+        with pytest.raises(EventModuleConfigError, match="requires: registration"):
+            plan(ev, new_type="camp", overrides={"registration": False}, new_type_record=record)
+
+    def test_an_override_on_a_type_that_is_not_changing_is_not_checked_against_any_type_record(self):
+        """new_event_type_record is only ever supplied by the service when the type is actually
+        changing — an ordinary modules-only update never resolves or checks one."""
+        ev = event(event_type="conference", modules=SPEC_DEFAULTS["conference"])
+        assert plan(ev, overrides={"meals": False}) == {"modules": {**SPEC_DEFAULTS["conference"], "meals": False}}
+
+    # ---- decision: changing type must not silently create an invalid configuration ------------------
+
+    def test_changing_type_onto_an_incompatible_persisted_configuration_is_rejected(self):
+        """conference's defaults include tickets=True; an event configured that way switching to a type
+        that does not allow tickets must fail loudly, not silently keep an invalid combination."""
+        ev = event(event_type="conference", modules=SPEC_DEFAULTS["conference"])
+        record = type_record("workshop", allowed={**ALL_ALLOWED, "tickets": False})
+        with pytest.raises(EventModuleConfigError, match="does not allow: tickets"):
+            plan(ev, new_type="workshop", new_type_record=record)
+        assert ev.modules == SPEC_DEFAULTS["conference"]  # nothing was mutated by the failed attempt
+
+    def test_changing_type_onto_a_compatible_persisted_configuration_succeeds_without_touching_modules(self):
+        ev = event(event_type="conference", modules=SPEC_DEFAULTS["conference"])
+        record = type_record("workshop")  # fully permissive: conference's defaults are compatible
+        assert plan(ev, new_type="workshop", new_type_record=record) == {"event_type": "workshop"}
+
+    def test_changing_type_revalidates_even_when_the_request_also_sends_overrides(self):
+        """Overrides only touch the keys they name; every OTHER persisted key must still be compatible
+        with the new type, or the whole update is rejected."""
+        ev = event(event_type="conference", modules=SPEC_DEFAULTS["conference"])  # sessions=True, persisted
+        record = type_record("camp", allowed={**ALL_ALLOWED, "sessions": False})
+        with pytest.raises(EventModuleConfigError, match="does not allow: sessions"):
+            plan(ev, new_type="camp", overrides={"meals": False}, new_type_record=record)
+
+    def test_a_required_module_missing_from_the_persisted_configuration_blocks_the_type_change(self):
+        ev = event(event_type="conference", modules=flags("tickets"))  # registration off
+        record = type_record("camp", required={**NONE_REQUIRED, "registration": True})
+        with pytest.raises(EventModuleConfigError, match="requires: registration"):
+            plan(ev, new_type="camp", new_type_record=record)
+
 
 # ===========================================================================
-# validation rules
+# validation rules (generic, Event-Type-independent)
 # ===========================================================================
 
 
@@ -378,6 +497,13 @@ class TestModulesInputSchema:
             EventModules.model_validate({"registration": True})
         assert EventModules.model_validate(SPEC_DEFAULTS["camp"]).model_dump() == SPEC_DEFAULTS["camp"]
 
+    def test_the_response_model_also_forbids_unknown_keys(self):
+        """Matters where this same model is reused as an INPUT type — Event Type default_modules/
+        allowed_modules/required_modules (app/schemas/event_type_schema.py) — an unknown key there must
+        be a 422, not silently dropped."""
+        with pytest.raises(ValidationError, match="Extra inputs"):
+            EventModules.model_validate({**SPEC_DEFAULTS["camp"], "polls": True})
+
 
 class TestCreateAndUpdateSchemas:
     BASE = {"title": "T", "category": "c", "start_date": "2030-01-01T10:00:00", "end_date": "2030-01-01T12:00:00"}
@@ -386,34 +512,38 @@ class TestCreateAndUpdateSchemas:
         create = EventCreate.model_validate(self.BASE)
         assert create.event_type is None and create.modules is None
         data = create.to_model_data()
-        assert data["event_type"] is None and data["modules"] is None  # stays legacy: nothing stored
+        assert data["event_type"] is None  # stays legacy: nothing stored
+        assert "modules" not in data  # computed by the service, which needs the database — see event_service
         update = EventUpdate.model_validate({"title": "x"})
         assert update.event_type is None and update.modules is None
 
     @pytest.mark.parametrize("event_type", SPEC_TYPES)
-    def test_create_model_data_carries_the_type_and_its_defaults(self, event_type):
+    def test_create_model_data_carries_the_type_key_unvalidated_against_the_database(self, event_type):
+        """to_model_data() only carries the key through: whether it names an existing, active Event Type
+        is checked by the service (event_service._resolve_event_type_or_422), which needs the database."""
         data = EventCreate.model_validate({**self.BASE, "event_type": event_type}).to_model_data()
-        assert data["event_type"] == event_type and data["modules"] == SPEC_DEFAULTS[event_type]
-
-    def test_create_model_data_applies_explicit_overrides(self):
-        data = EventCreate.model_validate({**self.BASE, "event_type": "conference", "modules": {"meals": False}}).to_model_data()
-        assert data["modules"] == {**SPEC_DEFAULTS["conference"], "meals": False}
-
-    def test_a_paid_create_keeps_ticketing_even_for_a_ticketless_type(self):
-        data = EventCreate.model_validate({**self.BASE, "event_type": "camp", "pricing_type": "paid", "price": "50"}).to_model_data()
-        assert data["modules"]["tickets"] is True
-
-    @pytest.mark.parametrize("event_type", ["party", "Conference", "CONFERENCE", "", 3, "private-function"])
-    def test_invalid_event_types_are_rejected_on_create_and_update(self, event_type):
-        with pytest.raises(ValidationError):
-            EventCreate.model_validate({**self.BASE, "event_type": event_type})
-        with pytest.raises(ValidationError):
-            EventUpdate.model_validate({"event_type": event_type})
+        assert data["event_type"] == event_type and "modules" not in data
 
     def test_update_model_data_never_carries_configuration(self):
         """Configuration has partial-update semantics that need the current event, so the service plans it."""
         data = EventUpdate.model_validate({"title": "x", "event_type": "camp", "modules": {"meals": True}}).to_model_data()
         assert data == {"title": "x"}
+
+    @pytest.mark.parametrize("event_type", ["", 3, "Conference", "CONFERENCE", "private-function", "has space", "x" * 31])
+    def test_malformed_event_type_keys_are_rejected_by_the_schema(self, event_type):
+        """Format is checked here (cheap, no DB); whether a well-formed key names a real, active Event
+        Type is a 422 from the service instead — see tests/test_event_type_integration.py, which proves
+        a syntactically valid but unknown key like "party" passes this schema check and is rejected later."""
+        with pytest.raises(ValidationError):
+            EventCreate.model_validate({**self.BASE, "event_type": event_type})
+        with pytest.raises(ValidationError):
+            EventUpdate.model_validate({"event_type": event_type})
+
+    def test_a_well_formed_but_unknown_key_passes_schema_validation(self):
+        """The schema no longer knows the vocabulary of real Event Types — see test_event_type_integration.py
+        for the service-level 422 this now gets instead."""
+        EventCreate.model_validate({**self.BASE, "event_type": "party"})
+        EventUpdate.model_validate({"event_type": "party"})
 
     def test_stored_configuration_still_validates_as_an_event_create(self):
         """validate_event_submission re-validates stored columns through EventCreate; stored config must pass."""

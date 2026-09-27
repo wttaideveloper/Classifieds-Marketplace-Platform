@@ -40,6 +40,7 @@ from app.models.event_aux_models import (
 )
 from app.models.event_form_config_model import EventFormConfiguration, EventFormConfigurationVersion
 from app.models.event_model import Event
+from app.models.event_type_model import EventTypeConfig
 
 
 @compiles(JSONB, "sqlite")
@@ -60,7 +61,41 @@ _TABLES = [
     EventCategory.__table__,
     EventFormConfiguration.__table__,
     EventFormConfigurationVersion.__table__,
+    EventTypeConfig.__table__,
 ]
+
+# The 7 Event Types seeded by the Phase 2.2 migration (070237a7c1cf), written out independently here —
+# same "typed out independently of the implementation" convention as SPEC_DEFAULTS in
+# tests/test_event_modules_config.py, so a drift between the two is a real, caught test failure rather
+# than a passing test that merely imports whatever the implementation currently says.
+_ALL_ALLOWED = {k: True for k in (
+    "registration", "tickets", "sessions", "check_in", "online_meeting", "custom_questions", "meals", "accommodation")}
+_NONE_REQUIRED = {k: False for k in _ALL_ALLOWED}
+SEEDED_EVENT_TYPE_DEFAULTS = {
+    "conference": {**_NONE_REQUIRED, "registration": True, "tickets": True, "sessions": True, "check_in": True, "meals": True, "accommodation": True},
+    "workshop": {**_NONE_REQUIRED, "registration": True, "tickets": True, "sessions": True, "check_in": True},
+    "marathon": {**_NONE_REQUIRED, "registration": True, "tickets": True, "check_in": True},
+    "camp": {**_NONE_REQUIRED, "registration": True, "check_in": True, "meals": True, "accommodation": True},
+    "private_function": {**_NONE_REQUIRED, "registration": True, "check_in": True, "custom_questions": True, "meals": True},
+    "webinar": {**_NONE_REQUIRED, "registration": True, "sessions": True, "online_meeting": True},
+    "other": {**_NONE_REQUIRED, "registration": True},
+}
+SEEDED_EVENT_TYPE_NAMES = {
+    "conference": "Conference", "workshop": "Workshop", "marathon": "Marathon", "camp": "Camp",
+    "private_function": "Private Function", "webinar": "Webinar", "other": "Other",
+}
+
+
+def seed_event_types(db):
+    """The 7 Phase 2.2 Event Types, exactly as the real migration seeds them (fully-allowed,
+    nothing-required) — called once per test session so `event_type="conference"` etc. keeps resolving
+    against a real, active EventTypeConfig row without every test needing its own setup."""
+    for key, defaults in SEEDED_EVENT_TYPE_DEFAULTS.items():
+        db.add(EventTypeConfig(
+            key=key, name=SEEDED_EVENT_TYPE_NAMES[key], active=True,
+            default_modules=defaults, allowed_modules=dict(_ALL_ALLOWED), required_modules=dict(_NONE_REQUIRED),
+        ))
+    db.commit()
 
 
 def make_session():
@@ -77,7 +112,9 @@ def make_session():
         conn.exec_driver_sql("BEGIN")
 
     Base.metadata.create_all(engine, tables=_TABLES)
-    return sessionmaker(bind=engine, autocommit=False, autoflush=False)()
+    session = sessionmaker(bind=engine, autocommit=False, autoflush=False)()
+    seed_event_types(session)
+    return session
 
 
 # ---------------------------------------------------------------------------- builders

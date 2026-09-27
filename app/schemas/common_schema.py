@@ -19,16 +19,6 @@ EventStatus = Literal[
     "needs_revision",
     "rejected",
 ]
-# Event category/type (Phase 2.2). Independent of EventStatus (workflow) and lifecycle_state (time-based).
-EventType = Literal[
-    "conference",
-    "workshop",
-    "marathon",
-    "camp",
-    "private_function",
-    "webinar",
-    "other",
-]
 LocationStatus = Literal["draft", "active", "inactive"]
 AttributeType = Literal["text", "number", "date", "boolean", "email", "phone", "dropdown"]
 EntityType = Literal["enterprise", "product", "service", "event", "training", "program"]

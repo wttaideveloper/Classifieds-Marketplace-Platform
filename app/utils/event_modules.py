@@ -1,27 +1,26 @@
-"""Event type + module configuration (Phase 2.2).
+"""Event type + module configuration (Phase 2.2, evolved to a dynamic backend configuration system).
 
 ``Event.event_type`` says what *kind* of event it is; ``Event.modules`` says which capabilities the
 event actually has enabled. The type only supplies the DEFAULT modules for a new event — afterwards
 ``modules`` is the source of truth and is never recalculated from the type.
 
-Everything here is pure: no database access and no writes (in particular nothing is "backfilled" from
-a read path). The single place the defaults live is ``EVENT_TYPE_DEFAULT_MODULES``.
+Event types themselves are no longer a hardcoded Python table: they are rows of ``EventTypeConfig``
+(``app/models/event_type_model.py``), managed through ``/api/v1/event-types`` (Super Admin writes,
+public reads). This module stays pure — no database access, no writes — by taking an already-resolved
+event type record (a plain dict: ``{key, default_modules, allowed_modules, required_modules}``, or
+``None`` for "no type") wherever a caller previously passed a type name. Resolving that record (the DB
+lookup, the "does it exist and is it active" check) is the service layer's job
+(``app/services/event_service.py``); everything here is unchanged in spirit from Phase 2.2 otherwise.
 
-Legacy events (``event_type IS NULL`` / ``modules IS NULL``) are not migrated. They are *resolved*
-on read from what the event actually does today, so introducing this layer can never switch off a
+Legacy events (``event_type IS NULL`` / ``modules IS NULL``) are not migrated. They are *resolved* on
+read from what the event actually does today, so introducing this layer can never switch off a
 capability an existing event is already using (see ``legacy_modules``).
-
-Phase 2.2 stores and exposes the configuration only; no endpoint enforces it yet.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
-from typing import Any, get_args
-
-from app.schemas.common_schema import EventType
-
-EVENT_TYPES: tuple[str, ...] = get_args(EventType)
-DEFAULT_EVENT_TYPE = "other"
+from typing import Any
 
 # The supported modules — nothing else may be stored (see EventModulesInput, which forbids extras).
 EVENT_MODULE_KEYS: tuple[str, ...] = (
@@ -38,49 +37,19 @@ EVENT_MODULE_KEYS: tuple[str, ...] = (
 # Delivery modes that can host an online meeting.
 ONLINE_DELIVERY_MODES = ("online", "hybrid")
 
+# A stable, admin-curated Event Type key: lowercase snake_case, starts with a letter, max 30 characters
+# (matches the existing events.event_type column width — no migration needed on that column).
+EVENT_TYPE_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,29}$")
+EVENT_TYPE_KEY_MAX_LENGTH = 30
 
-def _modules(**flags: bool) -> dict[str, bool]:
-    assert set(flags) == set(EVENT_MODULE_KEYS), "every module must be listed for every event type"
-    return {key: flags[key] for key in EVENT_MODULE_KEYS}
-
-
-# Centralized default configuration by event type. Applied ONCE, when an event is created (or first
-# configured); it is copied into Event.modules and never re-applied on read.
-EVENT_TYPE_DEFAULT_MODULES: dict[str, dict[str, bool]] = {
-    "conference": _modules(
-        registration=True, tickets=True, sessions=True, check_in=True,
-        online_meeting=False, custom_questions=False, meals=True, accommodation=True,
-    ),
-    "workshop": _modules(
-        registration=True, tickets=True, sessions=True, check_in=True,
-        online_meeting=False, custom_questions=False, meals=False, accommodation=False,
-    ),
-    "marathon": _modules(
-        registration=True, tickets=True, sessions=False, check_in=True,
-        online_meeting=False, custom_questions=False, meals=False, accommodation=False,
-    ),
-    "camp": _modules(
-        registration=True, tickets=False, sessions=False, check_in=True,
-        online_meeting=False, custom_questions=False, meals=True, accommodation=True,
-    ),
-    "private_function": _modules(
-        registration=True, tickets=False, sessions=False, check_in=True,
-        online_meeting=False, custom_questions=True, meals=True, accommodation=False,
-    ),
-    "webinar": _modules(
-        registration=True, tickets=False, sessions=True, check_in=False,
-        online_meeting=True, custom_questions=False, meals=False, accommodation=False,
-    ),
-    "other": _modules(
-        registration=True, tickets=False, sessions=False, check_in=False,
-        online_meeting=False, custom_questions=False, meals=False, accommodation=False,
-    ),
-}
-assert set(EVENT_TYPE_DEFAULT_MODULES) == set(EVENT_TYPES), "EventType and the defaults table must stay in sync"
+# Read-side fallback for a legacy event, or one whose stored event_type is missing/malformed. Also the
+# seeded catch-all Event Type key (see the Phase 2.2 migration's seed data).
+DEFAULT_EVENT_TYPE = "other"
 
 
 class EventModuleConfigError(ValueError):
-    """A module override contradicts the event it is applied to (mapped to HTTP 422 by the service)."""
+    """A module override, or an Event Type change, contradicts the event or its Event Type
+    (mapped to HTTP 422 by the service)."""
 
 
 # ---------------------------------------------------------------------------------------------
@@ -113,13 +82,8 @@ def is_paid_event(pricing_type: Any, price: Any, ticket_types: Any) -> bool:
     return any(_ticket_price(ticket) > 0 for ticket in (ticket_types or []))
 
 
-def default_modules_for(event_type: str | None) -> dict[str, bool]:
-    """A fresh copy of the default modules for ``event_type`` (unknown/None -> the safest: "other")."""
-    return dict(EVENT_TYPE_DEFAULT_MODULES.get(event_type or DEFAULT_EVENT_TYPE, EVENT_TYPE_DEFAULT_MODULES[DEFAULT_EVENT_TYPE]))
-
-
 # ---------------------------------------------------------------------------------------------
-# legacy fallback (read side)
+# legacy fallback (read side) — unchanged from Phase 2.2
 # ---------------------------------------------------------------------------------------------
 
 
@@ -164,9 +128,16 @@ def legacy_modules(event: Any) -> dict[str, bool]:
 
 
 def resolve_event_type(event: Any) -> str:
-    """The stored event type, or ``"other"`` for legacy rows (and for any unexpected stored value)."""
+    """The stored event type, or ``"other"`` for a legacy row or anything unexpected.
+
+    Pure and DB-free: whatever is stored was validated against the Event Type table at write time, so
+    a non-empty stored string is returned as-is (never re-checked against the current, possibly since-
+    changed, Event Type table — deactivating or deleting a type must never invalidate an event that
+    already used it). Anything that is not a non-empty string (NULL, wrong-shaped legacy data) falls
+    back to ``"other"``.
+    """
     stored = getattr(event, "event_type", None)
-    return stored if isinstance(stored, str) and stored in EVENT_TYPES else DEFAULT_EVENT_TYPE
+    return stored if isinstance(stored, str) and stored.strip() else DEFAULT_EVENT_TYPE
 
 
 def resolve_event_modules(event: Any) -> dict[str, bool]:
@@ -191,7 +162,7 @@ def resolve_event_modules(event: Any) -> dict[str, bool]:
 
 
 # ---------------------------------------------------------------------------------------------
-# write side: create / update planning + validation
+# write side: create / update planning + validation against an Event Type record
 # ---------------------------------------------------------------------------------------------
 
 
@@ -201,13 +172,14 @@ def clean_overrides(overrides: Mapping[str, Any] | None) -> dict[str, bool]:
 
 
 def validate_module_overrides(overrides: Mapping[str, bool], *, delivery_mode: Any, is_paid: bool) -> None:
-    """Reject only obvious contradictions in *explicitly requested* values. Storage-first: nothing else is enforced.
+    """Reject only obvious contradictions in *explicitly requested* values, independent of any Event Type.
 
     - online_meeting=true needs an online or hybrid delivery_mode (the existing format field).
     - tickets=false is refused for a paid event: checkout sells through ticket types.
 
     Deliberately NOT validated: sessions=false with sessions present (disabling never deletes data),
-    or values that came from an event-type default (a default is a starting point, not a request).
+    or values that came from an Event Type default (a default is a starting point, not a request).
+    Event-Type-specific allowed/required rules are checked separately by ``check_type_constraints``.
     """
     if overrides.get("online_meeting") is True and str(delivery_mode or "").lower() not in ONLINE_DELIVERY_MODES:
         raise EventModuleConfigError(
@@ -219,33 +191,78 @@ def validate_module_overrides(overrides: Mapping[str, bool], *, delivery_mode: A
         )
 
 
-def _defaults_for_new_configuration(event_type: str, *, is_paid: bool) -> dict[str, bool]:
-    modules = default_modules_for(event_type)
-    if is_paid:
-        # A type default must never switch ticketing off for an event that already charges.
-        modules["tickets"] = True
-    return modules
+def check_type_constraints(
+    modules: Mapping[str, bool], event_type_record: Mapping[str, Any], *, changed_keys: Any = None
+) -> None:
+    """Raise ``EventModuleConfigError`` when ``modules`` is incompatible with the Event Type's
+    ``allowed_modules``/``required_modules``.
+
+    ``changed_keys`` (an iterable of module names), when given, restricts the check to those keys —
+    used when validating explicit overrides, so the error names only what the caller actually touched.
+    ``None`` checks every module key — used when an Event Type change must revalidate the event's
+    entire persisted configuration, touched or not.
+    """
+    allowed = event_type_record["allowed_modules"]
+    required = event_type_record["required_modules"]
+    keys = list(changed_keys) if changed_keys is not None else list(EVENT_MODULE_KEYS)
+    not_allowed = sorted(key for key in keys if modules.get(key) and not allowed.get(key))
+    missing_required = sorted(key for key in keys if required.get(key) and not modules.get(key))
+    if not_allowed:
+        raise EventModuleConfigError(
+            f"Event type '{event_type_record['key']}' does not allow: {', '.join(not_allowed)}."
+        )
+    if missing_required:
+        raise EventModuleConfigError(
+            f"Event type '{event_type_record['key']}' requires: {', '.join(missing_required)}; "
+            "it cannot be disabled for this event type."
+        )
 
 
-def modules_for_new_event(event_type: str | None, overrides: Mapping[str, Any] | None, event_like: Any) -> dict[str, bool] | None:
+def _apply_paid_ticket_safeguard(
+    base: dict[str, bool], event_type_record: Mapping[str, Any], *, is_paid: bool, explicit: Mapping[str, bool]
+) -> dict[str, bool]:
+    """A type default must never leave ticketing off for an event that already charges — UNLESS the
+    type's own ``allowed_modules`` forbids tickets entirely, in which case that is a genuine
+    configuration conflict the caller must resolve (422), not something to silently override."""
+    if is_paid and not base.get("tickets") and "tickets" not in explicit:
+        if not event_type_record["allowed_modules"].get("tickets"):
+            raise EventModuleConfigError(
+                f"Event type '{event_type_record['key']}' does not allow tickets, but this event is paid. "
+                "Choose an event type that allows tickets, or make the event free."
+            )
+        base["tickets"] = True
+    return base
+
+
+def modules_for_new_event(
+    overrides: Mapping[str, Any] | None,
+    event_like: Any,
+    event_type_record: Mapping[str, Any] | None,
+    *,
+    is_paid: bool,
+) -> dict[str, bool] | None:
     """Modules to persist for a NEW event.
 
-    - no type, no overrides -> None: the event stays "legacy" (fully backward compatible for clients
-      that do not know about this feature).
-    - type only            -> that type's defaults (tickets kept on if the event is paid).
-    - type + overrides     -> the defaults with the explicit values applied on top.
-    - overrides only       -> the event's behaviour-based (legacy) modules with the overrides on top.
+    - no type record, no overrides -> None: the event stays "legacy" (fully backward compatible for
+      clients that do not know about this feature).
+    - type record only             -> that type's defaults (tickets kept on if the event is paid and
+      the type allows it; 422 if the event is paid and the type does not allow tickets).
+    - type record + overrides      -> the defaults with the explicit values applied on top, after
+      checking the overrides against the type's allowed/required modules.
+    - overrides only (no type)     -> the event's behaviour-based (legacy) modules with the overrides
+      on top.
 
-    The full 8-key dict is always stored, so later edits to the defaults table never change an
+    The full 8-key dict is always stored, so later edits to an Event Type's defaults never change an
     existing event.
     """
     explicit = clean_overrides(overrides)
-    if event_type is None and not explicit:
+    if event_type_record is None and not explicit:
         return None
-    paid = is_paid_event(
-        getattr(event_like, "pricing_type", None), getattr(event_like, "price", None), getattr(event_like, "ticket_types", None)
-    )
-    base = _defaults_for_new_configuration(event_type, is_paid=paid) if event_type else legacy_modules(event_like)
+    if event_type_record is None:
+        return {**legacy_modules(event_like), **explicit}
+    if explicit:
+        check_type_constraints(explicit, event_type_record, changed_keys=explicit.keys())
+    base = _apply_paid_ticket_safeguard(dict(event_type_record["default_modules"]), event_type_record, is_paid=is_paid, explicit=explicit)
     return {**base, **explicit}
 
 
@@ -256,6 +273,7 @@ def plan_config_update(
     *,
     delivery_mode: Any,
     is_paid: bool,
+    new_event_type_record: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute the config columns an update changes. Returns only the keys to set (possibly empty).
 
@@ -269,25 +287,48 @@ def plan_config_update(
        that was never configured (modules NULL) gets the new type's defaults, and only when the type
        actually differs from its current one — so a client that echoes back the "other" it read from a
        legacy event does not silently reset that event's modules to registration-only.
+    4. Changing the Event Type on an already-configured event never rewrites its persisted modules —
+       but if those persisted modules are incompatible with the NEW type's allowed/required modules
+       (with any overrides given in the same request applied first), the whole update is rejected
+       (422) naming the incompatible modules, rather than silently applying an invalid combination.
+
+    ``new_event_type_record`` is the resolved Event Type row (``{key, default_modules, allowed_modules,
+    required_modules}``) for ``new_event_type`` — only needed (and only looked up by the caller) when
+    ``new_event_type`` actually differs from the event's current stored type.
     """
     explicit = clean_overrides(overrides)
     changes: dict[str, Any] = {}
     stored_modules = getattr(event, "modules", None)
     configured = isinstance(stored_modules, Mapping) and bool(stored_modules)
+    type_is_changing = new_event_type is not None and new_event_type != getattr(event, "event_type", None)
 
-    if new_event_type is not None and new_event_type != getattr(event, "event_type", None):
+    if type_is_changing:
         changes["event_type"] = new_event_type
 
     if explicit:
         validate_module_overrides(explicit, delivery_mode=delivery_mode, is_paid=is_paid)
+        if new_event_type_record is not None:
+            check_type_constraints(explicit, new_event_type_record, changed_keys=explicit.keys())
         if configured:
-            base = resolve_event_modules(event)
-        elif new_event_type is not None:
-            base = _defaults_for_new_configuration(new_event_type, is_paid=is_paid)
+            base = dict(resolve_event_modules(event))
+        elif type_is_changing and new_event_type_record is not None:
+            base = _apply_paid_ticket_safeguard(
+                dict(new_event_type_record["default_modules"]), new_event_type_record, is_paid=is_paid, explicit=explicit
+            )
         else:
             base = legacy_modules(event)
-        changes["modules"] = {**base, **explicit}
-    elif new_event_type is not None and not configured and new_event_type != resolve_event_type(event):
-        changes["modules"] = _defaults_for_new_configuration(new_event_type, is_paid=is_paid)
+        merged = {**base, **explicit}
+        if new_event_type_record is not None:
+            check_type_constraints(merged, new_event_type_record, changed_keys=None)
+        changes["modules"] = merged
+    elif type_is_changing and not configured and new_event_type != resolve_event_type(event):
+        if new_event_type_record is not None:
+            changes["modules"] = _apply_paid_ticket_safeguard(
+                dict(new_event_type_record["default_modules"]), new_event_type_record, is_paid=is_paid, explicit={}
+            )
+    elif type_is_changing and configured and new_event_type_record is not None:
+        # No explicit override: the persisted modules are kept exactly as they are — but they must
+        # still make sense under the new Event Type, or the change is rejected outright.
+        check_type_constraints(resolve_event_modules(event), new_event_type_record, changed_keys=None)
 
     return changes

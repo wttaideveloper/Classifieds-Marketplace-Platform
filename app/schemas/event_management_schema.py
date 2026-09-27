@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.common_schema import EventType, PaginatedResponse
+from app.schemas.common_schema import PaginatedResponse
 from app.schemas.event_schema import EventModules
 from app.schemas.event_accommodation_schema import AttendeeAccommodationSelection, DashboardAccommodation
 from app.schemas.event_meal_schema import AttendeeMealSelection, DashboardMeal
@@ -94,7 +94,7 @@ class DashboardEvent(BaseModel):
     lifecycle_state: Literal["upcoming", "ongoing", "finished"] | None = Field(
         None, description="Time-based state from the existing lifecycle_state logic."
     )
-    event_type: EventType = Field(..., description="Legacy events resolve to 'other'.")
+    event_type: str = Field(..., description="Legacy events resolve to 'other'. A backend Event Type key (see /event-types).")
     modules: EventModules = Field(..., description="Effective module configuration (informational; not enforced here).")
     pricing_type: str | None = None
     currency: str | None = None

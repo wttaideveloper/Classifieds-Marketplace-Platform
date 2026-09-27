@@ -1,12 +1,12 @@
 import enum
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, field_validator, model_validator
 
-from app.schemas.common_schema import EventStatus, EventType, PaginatedResponse
+from app.schemas.common_schema import EventStatus, PaginatedResponse
 from app.schemas.event_form_config_schema import EventCustomValueInput
 from app.schemas.event_accommodation_schema import (
     AccommodationId,
@@ -15,9 +15,15 @@ from app.schemas.event_accommodation_schema import (
     reject_duplicate_accommodation_selections,
 )
 from app.schemas.event_meal_schema import EventMeals, EventMealsInput, MAX_SELECTIONS, MealId, reject_duplicate_selections
-from app.utils.event_modules import EVENT_MODULE_KEYS, modules_for_new_event
+from app.utils.event_modules import EVENT_MODULE_KEYS, EVENT_TYPE_KEY_MAX_LENGTH, EVENT_TYPE_KEY_PATTERN
 
 DeliveryMode = str  # in_person|online|hybrid
+# A backend Event Type key (see /api/v1/event-types) — no longer a hardcoded enum. Malformed keys are
+# rejected here (cheap, no DB); whether the key actually names an existing, active Event Type is a
+# service-layer 422 (needs the database — see event_service._resolve_event_type_or_422).
+EventTypeInput = Annotated[
+    str, StringConstraints(min_length=1, max_length=EVENT_TYPE_KEY_MAX_LENGTH, pattern=EVENT_TYPE_KEY_PATTERN.pattern)
+]
 MeetingProvider = str  # zoom|google_meet|teams|other
 
 
@@ -122,7 +128,15 @@ class EventModulesInput(BaseModel):
 
 
 class EventModules(BaseModel):
-    """An Event's effective module configuration — always all eight modules."""
+    """An Event's effective module configuration — always all eight modules.
+
+    Also reused, unchanged, as the input type for an Event Type's default_modules/allowed_modules/
+    required_modules (app/schemas/event_type_schema.py) — extra="forbid" matters there (an unknown key
+    must be a 422, not silently dropped); it is a no-op for every existing response use, which always
+    constructs this from an already-exactly-eight-key dict.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     registration: bool
     tickets: bool
@@ -191,10 +205,11 @@ class EventCreate(BaseModel):
         description="Super Admin custom Event field values (separate from registration custom_fields)",
     )
     sessions: list | None = Field(None, description="Agenda sessions")
-    event_type: EventType | None = Field(
+    event_type: EventTypeInput | None = Field(
         None,
-        description="Event type. Supplies the DEFAULT modules when 'modules' is omitted. Omit both to keep the "
-                    "previous (legacy) behaviour.",
+        description="Event Type key (see GET /api/v1/event-types). Must name an existing, active Event Type. "
+                    "Supplies the DEFAULT modules when 'modules' is omitted. Omit both to keep the previous "
+                    "(legacy) behaviour.",
     )
     modules: EventModulesInput | None = Field(
         None,
@@ -329,8 +344,10 @@ class EventCreate(BaseModel):
             "custom_fields": self.custom_fields or [],
             "sessions": self._normalize_sessions(),
             "event_type": self.event_type,
-            # None (no type, no overrides) keeps the event "legacy": resolved on read, nothing stored.
-            "modules": modules_for_new_event(self.event_type, self.modules.overrides() if self.modules else None, self),
+            # "modules" is deliberately NOT computed here: resolving an Event Type's defaults needs a
+            # database lookup (does the key exist, is it active, what does it allow/require), which a
+            # Pydantic model cannot do. create_event_service sets payload["modules"] right after calling
+            # this, exactly like it already does for "meals"/"accommodation".
             "status": self.status,
         }
         # form_configuration_* and custom_values applied by service layer after validation
@@ -374,9 +391,11 @@ class EventUpdate(BaseModel):
         description="Update Super Admin custom Event field values",
     )
     sessions: list | None = None
-    event_type: EventType | None = Field(
+    event_type: EventTypeInput | None = Field(
         None,
-        description="Change the event type. Never rewrites an already-configured 'modules'; null/omitted = no change.",
+        description="Change the Event Type (see GET /api/v1/event-types; must be an existing, active key). Never "
+                    "rewrites an already-configured 'modules' unless the persisted modules are incompatible with "
+                    "the new type (422 in that case); null/omitted = no change.",
     )
     modules: EventModulesInput | None = Field(
         None,
@@ -496,8 +515,9 @@ class EventResponse(BaseModel):
     form_configuration_id: UUID | None = None
     form_configuration_version_id: UUID | None = None
     sessions: list | None = None
-    event_type: EventType | None = Field(
-        None, description="Event type. Events created before Phase 2.2 (no stored type) resolve to 'other'."
+    event_type: str | None = Field(
+        None, description="Event Type key (see GET /api/v1/event-types). Events created before Phase 2.2 "
+                          "(no stored type) resolve to 'other'."
     )
     modules: EventModules | None = Field(
         None,
