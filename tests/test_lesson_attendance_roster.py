@@ -12,7 +12,7 @@ from app.api.v1.endpoints import training as routes
 from app.core.dependencies import get_current_user
 from app.db.database import Base, get_db
 from app.models.enterprise_model import Enterprise
-from app.models.training_model import Training, TrainingEnrolment, TrainingLessonAttendance, TrainingProgress
+from app.models.training_model import Training, TrainingEnrolment, TrainingLessonAttendance, TrainingProgress, TrainingAssessmentSubmission, TrainingAssignmentSubmission
 
 TID = uuid4()
 VIDEO_LESSON_ID = str(uuid4())
@@ -24,7 +24,7 @@ def setup(monkeypatch):
     monkeypatch.setattr(SQLiteTypeCompiler, "visit_JSONB", lambda *a, **kw: "JSON", raising=False)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine, tables=[
-        m.__table__ for m in (Enterprise, Training, TrainingEnrolment, TrainingLessonAttendance, TrainingProgress)
+        m.__table__ for m in (Enterprise, Training, TrainingEnrolment, TrainingLessonAttendance, TrainingProgress, TrainingAssessmentSubmission, TrainingAssignmentSubmission)
     ])
     sessions = sessionmaker(bind=engine)
     tenant_id = uuid4()
@@ -350,3 +350,49 @@ def test_qr_scan_endpoint_rejects_non_staff_role(setup):
     )
     assert resp.status_code == 403
     client.app.dependency_overrides[get_current_user] = lambda: admin
+
+@pytest.mark.parametrize("endpoint", ["attendance/scan", "attendance"])
+def test_lesson_qr_round_trip_and_wrong_day_rejection(setup, endpoint):
+    from app.services.training_service import get_secure_training_content_service
+    sessions, client, admin, enrol_ids = setup
+    with sessions() as db:
+        training = db.get(Training, TID)
+        training.delivery_mode = "hybrid"
+        training.sections = [{"id": "days", "type": "section", "lessons": [
+            {"id": VIDEO_LESSON_ID, "type": "venue", "title": "Day 1"},
+            {"id": QUIZ_LESSON_ID, "type": "live", "title": "Day 2"},
+        ]}]
+        db.commit()
+    learner = {"role": "customer", "email": "alice@example.com"}
+    def content():
+        with sessions() as db:
+            return get_secure_training_content_service(db, TID, learner)["sections"][0]["lessons"]
+    lessons = content()
+    codes = [lesson["qr_code"] for lesson in lessons]
+    assert len(set(codes)) == 2
+    assert lessons[0]["qr_image_base64"] != lessons[1]["qr_image_base64"]
+    from app.services.response_mappers import _qr_image_base64
+    assert all(l["qr_image_base64"] == _qr_image_base64(l["qr_code"]) for l in lessons)
+    assert [l["qr_code"] for l in content()] == codes
+    wrong = client.post(f"/api/v1/trainings/{TID}/lessons/{QUIZ_LESSON_ID}/{endpoint}",
+                        json={"qr_code": codes[0], "participant_email": "bob@example.com"})
+    assert wrong.status_code == 400, wrong.text
+    assert not any(l["is_attended"] for l in content())
+    url = f"/api/v1/trainings/{TID}/lessons/{VIDEO_LESSON_ID}/{endpoint}"
+    response = client.post(url, json={"qr_code": codes[0]})
+    assert response.status_code == 200, response.text
+    updated = content()
+    assert updated[0]["is_attended"] and updated[0]["attended_at"]
+    assert not updated[1]["is_attended"]
+    assert updated[1]["attended_at"] is None
+    assert client.post(url, json={"qr_code": codes[0]}).status_code == 200
+    assert content()[0]["attended_at"] == updated[0]["attended_at"]
+
+
+def test_scoped_qr_keeps_enrolment_and_tenant_guards(setup):
+    sessions, client, admin, enrol_ids = setup
+    url = f"/api/v1/trainings/{TID}/lessons/{VIDEO_LESSON_ID}/attendance/scan"
+    assert client.post(url, json={"qr_code": f"QR-CARL:{VIDEO_LESSON_ID}"}).status_code == 410
+    assert client.post(url, json={"qr_code": f"unknown:{VIDEO_LESSON_ID}"}).status_code == 404
+    admin["tenant_id"] = str(uuid4())
+    assert client.post(url, json={"qr_code": f"QR-ALICE:{VIDEO_LESSON_ID}"}).status_code in (403, 404)

@@ -13,7 +13,7 @@ from app.api.v1.endpoints import training as routes
 from app.core.dependencies import get_current_user
 from app.db.database import Base, get_db
 from app.models.enterprise_model import Enterprise
-from app.models.training_model import Training, TrainingLiveSession, TrainingEnrolment, TrainingProgress, TrainingAssessmentSubmission, TrainingAssignmentSubmission
+from app.models.training_model import Training, TrainingLiveSession, TrainingEnrolment, TrainingProgress, TrainingAssessmentSubmission, TrainingAssignmentSubmission, TrainingLessonAttendance
 from app.services.training_service import get_live_attendance_service, export_live_attendance_service
 from app.services.training_curriculum import normalize_authoring
 
@@ -25,7 +25,7 @@ SID = '4fad8f33-8634-4c0c-af2e-fc75251ee3c9'
 def setup(request, monkeypatch):
     monkeypatch.setattr(SQLiteTypeCompiler, 'visit_JSONB', lambda *a, **kw: 'JSON', raising=False)
     engine = create_engine('sqlite://', connect_args={'check_same_thread':False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[m.__table__ for m in (Enterprise,Training,TrainingLiveSession,TrainingEnrolment,TrainingProgress,TrainingAssessmentSubmission,TrainingAssignmentSubmission)])
+    Base.metadata.create_all(engine, tables=[m.__table__ for m in (Enterprise,Training,TrainingLiveSession,TrainingEnrolment,TrainingProgress,TrainingAssessmentSubmission,TrainingAssignmentSubmission,TrainingLessonAttendance)])
     sessions=sessionmaker(bind=engine)
     user={'id':str(uuid4()), 'role':'customer', 'email':'learner@example.com'}
     item={'id':SID,'type':'live','title':'Session 1: Understanding Cortisol & the Stress Response','schedule':'18-09-2026 10:00 AM','meeting_link':'https://meet.example.com/session'}

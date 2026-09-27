@@ -764,11 +764,12 @@ def live_attendance(request: Request, training_id: UUID, session_id: str, payloa
     from app.services.training_service import validate_training_qr_service
     qr_code = (payload or {}).get("qr_code")
     email = (payload or {}).get("participant_email")
-    if qr_code and not email:
+    if qr_code:
+        require_training_manager(request, training_id, db, current_user)
         # Admin physical-venue scan path: resolves the learner via the same
         # training-scoped, cancelled/expired-checked QR lookup validate-qr already
         # uses, then records attendance through the same call as self-attendance.
-        email = validate_training_qr_service(db, training_id, qr_code)["participant_email"]
+        email = validate_training_qr_service(db, training_id, qr_code, lesson_id=session_id)["participant_email"]
     email = email or current_user.get("email")
     if not email:
         raise HTTPException(400, "participant_email required")
@@ -791,8 +792,9 @@ def lesson_attendance(request: Request, training_id: UUID, lesson_id: str, paylo
     from app.services.training_service import record_lesson_attendance_service, validate_training_qr_service
     qr_code = (payload or {}).get("qr_code")
     email = (payload or {}).get("participant_email")
-    if qr_code and not email:
-        email = validate_training_qr_service(db, training_id, qr_code)["participant_email"]
+    if qr_code:
+        require_training_manager(request, training_id, db, current_user)
+        email = validate_training_qr_service(db, training_id, qr_code, lesson_id=lesson_id)["participant_email"]
     email = email or current_user.get("email")
     if not email:
         raise HTTPException(400, "participant_email required")
@@ -831,8 +833,8 @@ def batch_mark_lesson_attendance(training_id: UUID, lesson_id: str, payload: Les
     response_model=LessonQrCheckInResponse,
     summary="QR check-in — mark lesson attendance from a scan (admin)",
     description="Enterprise admin/provider only. The lesson is identified by the URL path "
-                "(select the lesson in the scanner UI first — the QR code itself only "
-                "identifies the participant, via their enrolment). Verifies the participant "
+                "and must match the lesson embedded in the QR code. Legacy enrolment-only "
+                "QR codes remain supported for a selected lesson. Verifies the participant "
                 "is enrolled in this training and the lesson belongs to it, then marks them "
                 "Attended in the same attendance roster the manual batch-mark endpoint uses. "
                 "Idempotent: re-scanning an already-attended participant returns "

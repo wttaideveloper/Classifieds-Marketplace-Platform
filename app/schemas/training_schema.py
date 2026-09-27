@@ -704,7 +704,7 @@ class LessonAttendanceBatchRequest(BaseModel):
 
 
 class LessonQrCheckInRequest(BaseModel):
-    qr_code: str = Field(..., description="Scanned value from the participant's enrolment QR code")
+    qr_code: str = Field(..., description="Scanned lesson QR from /content: <enrolment_qr>:<lesson_id>. The lesson must match the URL. Legacy enrolment-only QR codes are also accepted.")
 
 
 class LessonQrCheckInResponse(LessonAttendanceParticipant):

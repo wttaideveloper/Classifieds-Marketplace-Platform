@@ -1431,6 +1431,18 @@ def _actor_identity_fields(actor: dict | None):
     return (str(actor_id) if actor_id is not None else None), actor_uuid, actor_name, actor_email, actor_role
 
 
+def _lesson_qr_enrolment_code(qr_code: str, lesson_id: str | None) -> str:
+    """Resolve a lesson-scoped QR while retaining legacy enrolment QR support."""
+    if ":" not in qr_code:
+        return qr_code
+    enrolment_code, encoded_lesson_id = qr_code.split(":", 1)
+    if not enrolment_code or not encoded_lesson_id:
+        raise HTTPException(status_code=400, detail="Invalid lesson QR code")
+    if lesson_id is None or encoded_lesson_id != str(lesson_id):
+        raise HTTPException(status_code=400, detail="QR code belongs to a different lesson")
+    return enrolment_code
+
+
 def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str, qr_code: str, actor: dict | None):
     """Admin scans a participant's enrolment QR at a specific lesson: verify
     enrolment + lesson, then mark Attended in the same TrainingLessonAttendance
@@ -1448,6 +1460,8 @@ def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str
     _, lesson = _find_lesson_any_type(training, lesson_id)
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
+
+    qr_code = _lesson_qr_enrolment_code(qr_code, lesson_id)
 
     enrol = db.query(TrainingEnrolment).filter(
         TrainingEnrolment.qr_code == qr_code,
@@ -1611,13 +1625,15 @@ def _find_enrolment_by_id_or_qr(db: Session, tid: UUID, enrolment_id, qr_code: s
     raise HTTPException(status_code=400, detail="enrolment_id or qr_code is required")
 
 
-def validate_training_qr_service(db: Session, tid: UUID, qr_code: str | None):
+def validate_training_qr_service(db: Session, tid: UUID, qr_code: str | None, *, lesson_id: str | None = None):
     from datetime import datetime
 
     from app.models.training_model import TrainingEnrolment
 
     if not qr_code:
         raise HTTPException(status_code=400, detail="qr_code is required")
+
+    qr_code = _lesson_qr_enrolment_code(qr_code, lesson_id)
 
     training = _get_training_or_404(db, tid)
     enrol = db.query(TrainingEnrolment).filter(
@@ -2822,6 +2838,18 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
                     for _rec in _live_attendance_rows(_item.get("attendance")):
                         if _rec.get("participant_email") == email:
                             attended_at_by_lesson_id[str(_item.get("id"))] = _rec.get("recorded_at")
+
+    # Admin scans/manual roster marks are authoritative over legacy self-check-in.
+    if enrol:
+        from app.models.training_model import TrainingLessonAttendance
+        for record in db.query(TrainingLessonAttendance).filter(
+            TrainingLessonAttendance.training_id == tid,
+            TrainingLessonAttendance.enrolment_id == enrol.id,
+        ).all():
+            attended_at_by_lesson_id[str(record.lesson_id)] = (
+                record.marked_at.isoformat()
+                if record.status == "attended" and record.marked_at else None
+            )
 
     submissions_by_assessment_id: dict = {}
     if email:
