@@ -397,6 +397,117 @@ def test_venue_lesson_attendance(setup):
     assert lesson['is_attended'] is False
     assert lesson['attended_at'] is None
 
+
+# --- lesson-wise attendance: POST /{training_id}/lessons/{lesson_id}/attendance ---
+# New, additive endpoint — the session-wise /live-sessions/{session_id}/attendance
+# above is untouched and still works for both section- and lesson-level ids.
+
+def test_lesson_attendance_round_trip(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return  # standalone TrainingLiveSession rows stay served by the session-wise endpoint
+
+    content_before = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson_before = content_before.json()['sections'][0]['lessons'][0]
+    assert lesson_before['id'] == SID
+    assert lesson_before['is_attended'] is False
+    assert lesson_before['attended_at'] is None
+
+    url = f'/api/v1/trainings/{TID}/lessons/{SID}/attendance'
+    first = client.post(url, json={})
+    assert first.status_code == 200, first.text
+    assert first.json()['lesson_id'] == SID
+    recorded_at = first.json()['recorded_at']
+
+    # Idempotent on repeat
+    second = client.post(url, json={})
+    assert second.status_code == 200
+    assert second.json()['recorded_at'] == recorded_at
+
+    content_after = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson_after = content_after.json()['sections'][0]['lessons'][0]
+    assert lesson_after['is_attended'] is True
+    assert lesson_after['attended_at'] == recorded_at
+
+
+def test_lesson_attendance_unknown_lesson_404s(setup):
+    sessions, client, user, kind = setup
+    url = f'/api/v1/trainings/{TID}/lessons/{uuid4()}/attendance'
+    resp = client.post(url, json={})
+    assert resp.status_code == 404
+
+
+def test_lesson_attendance_rejects_a_section_id(setup):
+    """The lesson-wise endpoint must not accept a SECTION id — even one that is
+    itself attendance-capable (type live) — that stays the session-wise endpoint's job."""
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    section_id = str(uuid4())
+    with sessions() as db:
+        training = db.get(Training, TID)
+        training.sections = [{
+            'id': section_id, 'type': 'live', 'title': 'Whole-section live',
+            'lessons': [{'id': str(uuid4()), 'type': 'video', 'title': 'Recording'}],
+        }]
+        db.commit()
+
+    url = f'/api/v1/trainings/{TID}/lessons/{section_id}/attendance'
+    resp = client.post(url, json={})
+    assert resp.status_code == 404
+
+
+def test_lesson_attendance_rejects_non_attendable_lesson(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    video_lesson_id = str(uuid4())
+    with sessions() as db:
+        training = db.get(Training, TID)
+        training.sections = [{
+            'id': 'section', 'lessons': [{'id': video_lesson_id, 'type': 'video', 'title': 'Recording'}],
+        }]
+        db.commit()
+
+    url = f'/api/v1/trainings/{TID}/lessons/{video_lesson_id}/attendance'
+    resp = client.post(url, json={})
+    assert resp.status_code == 404
+
+
+def test_lesson_attendance_guards(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    url = f'/api/v1/trainings/{TID}/lessons/{SID}/attendance'
+    assert client.post(url, json={'participant_email': 'other@example.com'}).status_code == 403
+    with sessions() as db:
+        db.query(TrainingEnrolment).one().status = 'cancelled'
+        db.commit()
+    assert client.post(url, json={}).status_code == 403
+
+
+def test_lesson_attendance_admin_qr_scan_marks_correct_learner(setup):
+    sessions, client, user, kind = setup
+    if kind == 'standalone':
+        return
+    admin = {'id': str(uuid4()), 'role': 'super_admin', 'email': 'admin@example.com'}
+    with sessions() as db:
+        db.query(TrainingEnrolment).one().qr_code = 'QR-LEARNER-A'
+        db.commit()
+
+    client.app.dependency_overrides[get_current_user] = lambda: admin
+    url = f'/api/v1/trainings/{TID}/lessons/{SID}/attendance'
+    scan = client.post(url, json={'qr_code': 'QR-LEARNER-A'})
+    assert scan.status_code == 200, scan.text
+    recorded_at = scan.json()['recorded_at']
+    assert scan.json()['attendance']['participant_email'] == user['email']
+
+    client.app.dependency_overrides[get_current_user] = lambda: user
+    content_after = client.get(f'/api/v1/trainings/{TID}/content')
+    lesson_after = content_after.json()['sections'][0]['lessons'][0]
+    assert lesson_after['is_attended'] is True
+    assert lesson_after['attended_at'] == recorded_at
+
     url = f'/api/v1/trainings/{TID}/live-sessions/{SID}/attendance'
     post_resp = client.post(url)
     assert post_resp.status_code == 200, post_resp.text

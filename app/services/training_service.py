@@ -1178,6 +1178,24 @@ def _resolve_live_attendance_target(db: Session, tid: UUID, session_id: str):
     raise HTTPException(404, "Live session not found")
 
 
+def _resolve_lesson_attendance_target(db: Session, tid: UUID, lesson_id: str):
+    """Lesson-wise attendance: only matches a lesson nested inside a section
+    (not the section itself, and not the standalone TrainingLiveSession table —
+    those stay served by the session-wise /live-sessions/{session_id}/attendance)."""
+    from app.services.training_curriculum import normalize_curriculum
+    try:
+        lesson_uuid = UUID(str(lesson_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Invalid lesson_id") from exc
+    training = _get_training_or_404(db, tid)
+    curriculum = normalize_curriculum(training.sections, training.assessments, training.assignments)
+    for section in curriculum["sections"]:
+        for item in section["lessons"]:
+            if str(item["id"]) == str(lesson_uuid) and item.get("type") in ("live", "venue"):
+                return training, item, True
+    raise HTTPException(404, "Lesson not found")
+
+
 def _live_attendance_rows(value):
     # The former duplicate POST handler stored an email-keyed object.
     if isinstance(value, dict):
@@ -1206,24 +1224,23 @@ def _save_live_attendance(owner, session_id, attendance, embedded):
     flag_modified(owner, "sections")
 
 
-def record_live_attendance_service(db: Session, tid: UUID, session_id: str, participant_email: str):
+def _record_attendance_for_target(db: Session, tid: UUID, owner, target: dict, embedded: bool, participant_email: str, *, id_field: str):
     from app.models.training_model import TrainingProgress
     from datetime import datetime
 
-    owner, session, embedded = _resolve_live_attendance_target(db, tid, session_id)
     enrol = _get_enrolment(db, tid, participant_email)
     if not _is_active_enrolment(enrol):
         raise HTTPException(status_code=403, detail="Active enrolment required for attendance")
 
-    attendance = _live_attendance_rows(session.get("attendance"))
+    attendance = _live_attendance_rows(target.get("attendance"))
     existing = next((a for a in attendance if a.get("participant_email") == participant_email), None)
     recorded_at = existing.get("recorded_at") if existing else datetime.utcnow().isoformat()
     if not existing:
         attendance.append({"participant_email": participant_email, "recorded_at": recorded_at})
-        _save_live_attendance(owner, session["id"], attendance, embedded)
+        _save_live_attendance(owner, target["id"], attendance, embedded)
 
     # Curriculum progress uses the same lesson ID as /content.
-    live_lesson_id = str(session["id"]) if embedded else f"live:{session['id']}"
+    live_lesson_id = str(target["id"]) if embedded else f"live:{target['id']}"
     prog = db.query(TrainingProgress).filter(
         TrainingProgress.training_id == tid,
         TrainingProgress.participant_email == participant_email,
@@ -1244,11 +1261,265 @@ def record_live_attendance_service(db: Session, tid: UUID, session_id: str, part
     db.commit()
 
     return {
-        "session_id": str(session_id),
+        id_field: str(target["id"]),
         "participant_email": participant_email,
         "recorded_at": recorded_at,
         "progress_marked": True,
     }
+
+
+def record_live_attendance_service(db: Session, tid: UUID, session_id: str, participant_email: str):
+    owner, session, embedded = _resolve_live_attendance_target(db, tid, session_id)
+    return _record_attendance_for_target(db, tid, owner, session, embedded, participant_email, id_field="session_id")
+
+
+def record_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str, participant_email: str):
+    owner, lesson, embedded = _resolve_lesson_attendance_target(db, tid, lesson_id)
+    return _record_attendance_for_target(db, tid, owner, lesson, embedded, participant_email, id_field="lesson_id")
+
+
+# ---- Admin-marked per-lesson, per-enrolment attendance roster (any lesson type) ----
+
+def _find_lesson_any_type(training, lesson_id: str):
+    """Find a lesson by id across all sections, any type — unlike the self-check-in
+    flow above, this manual roster is not restricted to live/venue lessons."""
+    from app.services.training_curriculum import normalize_curriculum
+    curriculum = normalize_curriculum(training.sections, training.assessments, training.assignments)
+    for section in curriculum["sections"]:
+        for item in section["lessons"]:
+            if str(item.get("id")) == str(lesson_id):
+                return section, item
+    return None, None
+
+
+def _lesson_attendance_participant_payload(enrol, record) -> dict:
+    marked_by = None
+    if record and record.marked_by_id:
+        marked_by = {"id": str(record.marked_by_id), "name": record.marked_by_name, "email": record.marked_by_email}
+    return {
+        "enrolment_id": str(enrol.id),
+        "participant_name": enrol.participant_name,
+        "participant_email": enrol.participant_email,
+        "enrolment_status": enrol.status,
+        "status": (record.status if record else None) or "not_marked",
+        "marked_by": marked_by,
+        "marked_at": record.marked_at if record else None,
+    }
+
+
+def get_lesson_attendance_roster_service(db: Session, tid: UUID, lesson_id: str):
+    from app.models.training_model import TrainingEnrolment, TrainingLessonAttendance
+
+    training = _get_training_or_404(db, tid)
+    _, lesson = _find_lesson_any_type(training, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    enrolments = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.status.in_(ACTIVE_ENROLMENT_STATUSES),
+    ).order_by(TrainingEnrolment.participant_name).all()
+
+    records_by_enrolment = {
+        r.enrolment_id: r
+        for r in db.query(TrainingLessonAttendance).filter(
+            TrainingLessonAttendance.training_id == tid,
+            TrainingLessonAttendance.lesson_id == str(lesson_id),
+        ).all()
+    }
+
+    return {
+        "training_id": str(tid),
+        "lesson_id": str(lesson_id),
+        "lesson_title": lesson.get("title"),
+        "lesson_type": lesson.get("type"),
+        "participants": [
+            _lesson_attendance_participant_payload(enrol, records_by_enrolment.get(enrol.id))
+            for enrol in enrolments
+        ],
+    }
+
+
+def batch_mark_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str, records: list, actor: dict | None):
+    from datetime import datetime
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.models.training_model import TrainingEnrolment, TrainingLessonAttendance
+
+    training = _get_training_or_404(db, tid)
+    _, lesson = _find_lesson_any_type(training, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    seen: set[str] = set()
+    for item in records:
+        eid = str(item.enrolment_id)
+        if eid in seen:
+            raise HTTPException(status_code=422, detail=f"Duplicate enrolment_id '{eid}' in records")
+        seen.add(eid)
+
+    enrolment_ids = [item.enrolment_id for item in records]
+    enrolments_by_id = {
+        e.id: e
+        for e in db.query(TrainingEnrolment).filter(
+            TrainingEnrolment.training_id == tid,
+            TrainingEnrolment.id.in_(enrolment_ids),
+        ).all()
+    }
+    for item in records:
+        enrol = enrolments_by_id.get(item.enrolment_id)
+        if not enrol:
+            raise HTTPException(status_code=422, detail=f"Enrolment '{item.enrolment_id}' does not belong to this training")
+        if enrol.status not in ACTIVE_ENROLMENT_STATUSES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Enrolment '{item.enrolment_id}' is not an eligible (active) participant — status is '{enrol.status}'",
+            )
+
+    existing_by_enrolment = {
+        r.enrolment_id: r
+        for r in db.query(TrainingLessonAttendance).filter(
+            TrainingLessonAttendance.training_id == tid,
+            TrainingLessonAttendance.lesson_id == str(lesson_id),
+            TrainingLessonAttendance.enrolment_id.in_(enrolment_ids),
+        ).all()
+    }
+
+    now = datetime.utcnow()
+    actor_id, actor_uuid, actor_name, actor_email, actor_role = _actor_identity_fields(actor)
+
+    for item in records:
+        new_status = None if item.status == "not_marked" else item.status
+        record = existing_by_enrolment.get(item.enrolment_id)
+        if not record:
+            record = TrainingLessonAttendance(training_id=tid, lesson_id=str(lesson_id), enrolment_id=item.enrolment_id, history=[])
+            db.add(record)
+            existing_by_enrolment[item.enrolment_id] = record
+
+        previous_status = record.status
+        record.status = new_status
+        record.marked_by_id = actor_uuid if new_status is not None else None
+        record.marked_by_name = actor_name if new_status is not None else None
+        record.marked_by_email = actor_email if new_status is not None else None
+        record.marked_at = now if new_status is not None else None
+
+        history = list(record.history or [])
+        history.append({
+            "action": "cleared" if new_status is None else "marked",
+            "previous_status": previous_status,
+            "new_status": new_status,
+            "actor_id": actor_id,
+            "actor_name": actor_name,
+            "actor_email": actor_email,
+            "actor_role": actor_role,
+            "via": "manual",
+            "at": now.isoformat(),
+        })
+        record.history = history
+        flag_modified(record, "history")
+
+    db.commit()
+    return get_lesson_attendance_roster_service(db, tid, lesson_id)
+
+
+def _actor_identity_fields(actor: dict | None):
+    actor = actor or {}
+    actor_id, actor_name, actor_email, actor_role = actor.get("id"), actor.get("name"), actor.get("email"), actor.get("role")
+    try:
+        actor_uuid = UUID(str(actor_id)) if actor_id else None
+    except (TypeError, ValueError):
+        actor_uuid = None  # dev/test identities may use a non-UUID id — audit log still records actor_id as a string
+    return (str(actor_id) if actor_id is not None else None), actor_uuid, actor_name, actor_email, actor_role
+
+
+def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str, qr_code: str, actor: dict | None):
+    """Admin scans a participant's enrolment QR at a specific lesson: verify
+    enrolment + lesson, then mark Attended in the same TrainingLessonAttendance
+    roster the manual batch-mark endpoint uses — a scan and a manual tick
+    produce the identical, auditable record. Idempotent: re-scanning an
+    already-attended participant returns 'already_attended' with no new write."""
+    from datetime import datetime
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.models.training_model import TrainingEnrolment, TrainingLessonAttendance, TrainingProgress
+
+    if not qr_code:
+        raise HTTPException(status_code=400, detail="qr_code is required")
+
+    training = _get_training_or_404(db, tid)
+    _, lesson = _find_lesson_any_type(training, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    enrol = db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.qr_code == qr_code,
+        TrainingEnrolment.training_id == tid,
+    ).first()
+    if not enrol:
+        raise HTTPException(status_code=404, detail="QR code not recognized, or participant is not enrolled in this training")
+    if enrol.status == "cancelled":
+        raise HTTPException(status_code=410, detail="QR code has been revoked — enrolment is cancelled")
+    if enrol.access_expires_at and enrol.access_expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="QR code has expired — enrolment access has ended")
+    if enrol.status not in ACTIVE_ENROLMENT_STATUSES:
+        raise HTTPException(status_code=422, detail=f"Participant is not an eligible (active) enrolment — status is '{enrol.status}'")
+
+    prog = db.query(TrainingProgress).filter(
+        TrainingProgress.training_id == tid,
+        TrainingProgress.participant_email == enrol.participant_email,
+    ).first()
+    completed_lessons = set(prog.lessons_completed or []) if prog else set()
+    accessible, reason = _lesson_is_accessible(lesson, completed_lessons, enrol, training)
+    if not accessible:
+        raise HTTPException(status_code=403, detail=f"Check-in window closed: {reason}")
+
+    record = db.query(TrainingLessonAttendance).filter(
+        TrainingLessonAttendance.training_id == tid,
+        TrainingLessonAttendance.lesson_id == str(lesson_id),
+        TrainingLessonAttendance.enrolment_id == enrol.id,
+    ).first()
+
+    if record and record.status == "attended":
+        return {
+            **_lesson_attendance_participant_payload(enrol, record),
+            "result": "already_attended",
+            "message": f"{enrol.participant_name} is already marked attended for this lesson",
+        }
+
+    now = datetime.utcnow()
+    actor_id, actor_uuid, actor_name, actor_email, actor_role = _actor_identity_fields(actor)
+
+    if not record:
+        record = TrainingLessonAttendance(training_id=tid, lesson_id=str(lesson_id), enrolment_id=enrol.id, history=[])
+        db.add(record)
+
+    previous_status = record.status
+    record.status = "attended"
+    record.marked_by_id = actor_uuid
+    record.marked_by_name = actor_name
+    record.marked_by_email = actor_email
+    record.marked_at = now
+    history = list(record.history or [])
+    history.append({
+        "action": "marked",
+        "previous_status": previous_status,
+        "new_status": "attended",
+        "actor_id": actor_id,
+        "actor_name": actor_name,
+        "actor_email": actor_email,
+        "actor_role": actor_role,
+        "via": "qr_scan",
+        "at": now.isoformat(),
+    })
+    record.history = history
+    flag_modified(record, "history")
+    db.commit()
+    db.refresh(record)
+
+    return {
+        **_lesson_attendance_participant_payload(enrol, record),
+        "result": "marked",
+        "message": f"{enrol.participant_name} marked attended",
+    }
+
 
 def get_certificate_service(db: Session, tid: UUID, participant_email: str):
     from app.models.training_model import TrainingProgress

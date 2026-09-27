@@ -667,6 +667,51 @@ class LessonReorderRequest(BaseModel):
         return self
 
 
+LessonAttendanceStatus = Literal["attended", "absent", "not_marked"]
+
+
+class LessonAttendanceMarkedBy(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    email: str | None = None
+
+
+class LessonAttendanceParticipant(BaseModel):
+    enrolment_id: str = Field(..., description="TrainingEnrolment id — the identifier used to mark attendance")
+    participant_name: str
+    participant_email: str
+    enrolment_status: str = Field(..., description="Enrolment's own status (enrolled/active/completed/...), for context")
+    status: LessonAttendanceStatus = Field(..., description="Current attendance status for this lesson")
+    marked_by: LessonAttendanceMarkedBy | None = Field(None, description="Who last marked this status — null if never marked")
+    marked_at: datetime | None = Field(None, description="When it was last marked — null if never marked")
+
+
+class LessonAttendanceRosterResponse(BaseModel):
+    training_id: str
+    lesson_id: str
+    lesson_title: str | None = None
+    lesson_type: str | None = None
+    participants: list[LessonAttendanceParticipant]
+
+
+class LessonAttendanceMarkItem(BaseModel):
+    enrolment_id: UUID = Field(..., description="TrainingEnrolment id to mark — not participant email")
+    status: LessonAttendanceStatus = Field(..., description="attended|absent|not_marked — not_marked clears any existing status")
+
+
+class LessonAttendanceBatchRequest(BaseModel):
+    records: list[LessonAttendanceMarkItem] = Field(..., min_length=1)
+
+
+class LessonQrCheckInRequest(BaseModel):
+    qr_code: str = Field(..., description="Scanned value from the participant's enrolment QR code")
+
+
+class LessonQrCheckInResponse(LessonAttendanceParticipant):
+    result: Literal["marked", "already_attended"] = Field(..., description="'already_attended' on an idempotent repeat scan — no duplicate record was created")
+    message: str
+
+
 class AssessmentQuestionCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
     question_text: str = Field(..., description="The question text")

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -235,6 +235,32 @@ class TrainingReview(Base):
 
     __table_args__ = (
         Index("ix_training_reviews_training_email", "training_id", "participant_email", unique=True),
+    )
+
+
+class TrainingLessonAttendance(Base):
+    """Admin-marked attendance for one enrolment on one lesson — any lesson type
+    (video/text/quiz/live/venue/...), distinct from the live/venue self-check-in
+    QR flow. status is null when "not marked"; history is an append-only audit
+    trail that survives clearing so who-changed-what is never lost."""
+    __tablename__ = "training_lesson_attendance"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    lesson_id = Column(String(255), nullable=False)
+    enrolment_id = Column(UUID(as_uuid=True), ForeignKey("training_enrolments.id"), nullable=False)
+    status = Column(String(20), nullable=True)  # attended|absent|None (= not marked)
+    marked_by_id = Column(UUID(as_uuid=True), nullable=True)
+    marked_by_name = Column(String(255), nullable=True)
+    marked_by_email = Column(String(255), nullable=True)
+    marked_at = Column(DateTime, nullable=True)
+    history = Column(JSONB, default=list)  # [{action, previous_status, new_status, actor_id, actor_name, actor_email, actor_role, at}]
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("training_id", "lesson_id", "enrolment_id", name="uq_training_lesson_attendance"),
+        Index("ix_training_lesson_attendance_lookup", "training_id", "lesson_id"),
     )
 
 
