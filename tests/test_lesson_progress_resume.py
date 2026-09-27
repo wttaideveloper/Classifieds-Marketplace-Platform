@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.models.enterprise_model import Enterprise
-from app.models.training_model import Training, TrainingAssessmentSubmission, TrainingAssignmentSubmission, TrainingEnrolment, TrainingProgress
+from app.models.training_model import Training, TrainingAssessmentSubmission, TrainingAssignmentSubmission, TrainingEnrolment, TrainingLessonAttendance, TrainingProgress
 from app.schemas.training_schema import LessonProgressSaveRequest, LessonProgressSaveResponse, TrainingProgressResponse
 from app.services import training_service as service
 
@@ -20,7 +20,7 @@ from app.services import training_service as service
 def progress_db(monkeypatch):
     monkeypatch.setattr(SQLiteTypeCompiler, "visit_JSONB", lambda *a, **kw: "JSON", raising=False)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Training.__table__, TrainingEnrolment.__table__, TrainingProgress.__table__, TrainingAssignmentSubmission.__table__, TrainingAssessmentSubmission.__table__])
+    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Training.__table__, TrainingEnrolment.__table__, TrainingProgress.__table__, TrainingAssignmentSubmission.__table__, TrainingAssessmentSubmission.__table__, TrainingLessonAttendance.__table__])
     sessions = sessionmaker(bind=engine)
     ent_id, tid = uuid4(), uuid4()
     section_id, lesson_id, other_lesson_id = "sec-1", "lesson-1", "lesson-2"
