@@ -342,10 +342,11 @@ def learning_response(result, curriculum, training, enrolment, assignment_submis
             raw = source_items[item["id"]]
             kind, locked = item["type"], item["is_locked"]
             # QR-based attendance applies to both venue (in-person) and live
-            # (which may still be scanned in for a hybrid/on-site session) —
-            # same enrolment QR identifier as the section- and training-level
-            # QR, just re-encoded as an image here for the lesson item.
-            item["qr_code"] = qr if kind in ("live", "venue") and not locked else None
+            # (which may still be scanned in for a hybrid/on-site session).
+            # Unique per lesson/day (enrolment code + this lesson's id) so admin
+            # scan can tell which lesson/day to mark — not the same code as the
+            # section- or training-level QR, or any other lesson's.
+            item["qr_code"] = f"{qr}:{item['id']}" if qr and kind in ("live", "venue") and not locked else None
             item["qr_image_base64"] = _qr_image_base64(item["qr_code"]) if item["qr_code"] else None
             item["schedule"] = None if recorded else raw.get("schedule") or section["schedule"]
             if kind == "venue" and venue_mode:
