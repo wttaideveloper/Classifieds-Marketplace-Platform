@@ -238,6 +238,20 @@ class TrainingReview(Base):
     )
 
 
+class TrainingCategory(Base):
+    """Super Admin-managed Training category/subcategory taxonomy — separate
+    from EventCategory (own table, own endpoints). Mirrors EventCategory's
+    shape (name, self-referential parent_id, description) for a consistent
+    Super Admin Categories page UI pattern across modules."""
+    __tablename__ = "training_categories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), nullable=False, unique=True, index=True)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("training_categories.id"), nullable=True, index=True)
+    description = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class TrainingLessonAttendance(Base):
     """Admin-marked attendance for one enrolment on one lesson — any lesson type
     (video/text/quiz/live/venue/...), distinct from the live/venue self-check-in

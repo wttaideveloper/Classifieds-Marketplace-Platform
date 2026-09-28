@@ -23,7 +23,41 @@ Enterprise reads:
 
 Configuration mutations remain Super Admin-only. Existing tenant ownership guards remain in place.
 
-`composite_config` is an **open JSON object**, not a closed nested schema. Arbitrary keys are accepted and returned unchanged. The server explicitly validates and enforces the recognized `frontend_settings.visibility` and `frontend_settings.upload` keys; other metadata does not create additional server behavior. No migration is needed.
+`composite_config` is an **open JSON object**, not a closed nested schema. Arbitrary keys are accepted and returned unchanged. The server explicitly validates and enforces the recognized `frontend_settings.visibility`, `frontend_settings.upload`, and `frontend_settings.allow_custom_value` keys; other metadata does not create additional server behavior. No migration is needed.
+
+## Category/Subcategory options: parent linkage and custom ("Other") entry
+
+`category` and `subcategory` are core fields (`FIELD_REGISTRY`) usable with `renderer: "select"`. `category` can never be disabled (`required_by_domain`) — `subcategory` is fully configurable. Both existed before this addition; this section documents two new, additive pieces of the same field configuration, requested because the frontend team found nothing in Swagger describing them.
+
+**1. Subcategory belongs to a category — `parent_value` on each option.** Add `parent_value` (a category option's `value`) to a subcategory option:
+
+```json
+{
+  "core_key": "subcategory", "renderer": "select", "required": false, "is_enabled": true,
+  "options": [
+    {"value": "yoga", "label": "Yoga", "position": 1, "parent_value": "wellness"},
+    {"value": "nutrition", "label": "Nutrition", "position": 2, "parent_value": "wellness"},
+    {"value": "fire_safety", "label": "Fire Safety", "position": 1, "parent_value": "safety"}
+  ]
+}
+```
+
+Filter the subcategory dropdown client-side to options whose `parent_value` equals the selected category's value. The server independently re-checks this on Training create/update: if the submitted `subcategory` matches a *known* option whose `parent_value` disagrees with the submitted `category`, the request is rejected — `400 {"detail": "Subcategory 'fire_safety' does not belong to category 'wellness'"}`. A subcategory field with no `parent_value` set on any option (legacy/unlinked configs) skips this check entirely — fully backward compatible.
+
+**2. Allow a custom ("Other") value — `frontend_settings.allow_custom_value`.** Set on the field's `composite_config`:
+
+```json
+{
+  "core_key": "subcategory", "renderer": "select",
+  "composite_config": {"frontend_settings": {"allow_custom_value": true}},
+  "options": [{"value": "yoga", "label": "Yoga", "position": 1, "parent_value": "wellness"}]
+}
+```
+
+- **How it's configured:** `composite_config.frontend_settings.allow_custom_value: true` on either `category` or `subcategory` (or both, independently) — the same field-level toggle location as `visibility`/`upload`.
+- **How Enterprise Admin submits a custom value:** No special wrapper, no separate flag, no `"Other"` sentinel string. Show an "Other" choice in the dropdown; when picked, submit whatever the admin types as the plain `category`/`subcategory` string on the Training payload, exactly like any configured option's value.
+- **How it's validated:** when `allow_custom_value` is `true`, a submitted value that is *not* in `options` is accepted rather than rejected (normally, submitting a select value outside `options` is `400 Invalid select value for '<label>'`). A custom subcategory value skips the `parent_value` linkage check above — it isn't tied to any category. When `allow_custom_value` is unset/`false` (the default), behavior is unchanged: only listed option values are accepted.
+- **Backward compatibility:** omitting `allow_custom_value` keeps the existing strict allowlist behavior. Existing Training records with free-text `category`/`subcategory` (from before any options were configured, or from a custom "Other" entry) remain readable and stay visible even if they're no longer in the current `options` list — the read endpoints return the Training's stored value as-is; only *new* create/update submissions are validated against the currently active configuration.
 
 ## Field request and resolved response
 
