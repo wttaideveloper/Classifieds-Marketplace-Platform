@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from uuid import UUID
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status, HTTPException
+from sqlalchemy.orm import Session
+from app.db.database import get_db
 from fastapi.responses import FileResponse
 
 from app.core.dependencies import get_current_user
@@ -22,8 +25,23 @@ router = APIRouter(tags=["Uploads"])
 def upload_file(
     file: UploadFile = File(..., description="File to upload"),
     folder: str | None = Form(None, description="Optional folder, e.g. 'trainings'. Defaults to 'general'."),
+    field_key: str | None = Form(None, description="Training form media field key/id; enforces its resolved upload policy."),
+    training_id: UUID | None = Form(None, description="Owned Training ID for historical form resolution."),
+    purpose: str | None = Form(None, description="Training media purpose: image, lesson_video, lesson_pdf or lesson_document."),
+    db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    if field_key or training_id or (folder or "").lower() in ("training", "trainings", "courses"):
+        from app.services.training_form_media import resolve_upload_field, policy_cap, validate_media_bytes
+        field = resolve_upload_field(db, current_user, field_key, training_id)
+        if field:
+            data = file.file.read(policy_cap(field) + 1)
+            try:
+                if len(data) > policy_cap(field):
+                    raise HTTPException(413, "File exceeds configured maximum size")
+                validate_media_bytes(field, data, file.content_type, purpose)
+            finally:
+                file.file.seek(0)
     return upload_generic_file_service(file, folder)
 
 

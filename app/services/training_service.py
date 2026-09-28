@@ -3383,3 +3383,62 @@ def export_training_enrolments_service(db: Session, tid: UUID, current_user: dic
             values.append(value)
         writer.writerow(values)
     return output.getvalue()
+
+
+# ---- TrainingCategory CRUD (Super Admin-managed taxonomy, mirrors EventCategory) ----
+
+
+def create_training_category_service(db: Session, payload):
+    from app.models.training_model import TrainingCategory
+
+    name = payload.name.strip()
+    existing = db.query(TrainingCategory).filter(TrainingCategory.name == name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Category '{name}' already exists")
+    if payload.parent_id:
+        parent = db.query(TrainingCategory).filter(TrainingCategory.id == payload.parent_id).first()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent category not found")
+    cat = TrainingCategory(name=name, parent_id=payload.parent_id, description=payload.description)
+    db.add(cat)
+    db.commit()
+    db.refresh(cat)
+    return cat
+
+
+def list_training_categories_service(db: Session):
+    from app.models.training_model import TrainingCategory
+    return db.query(TrainingCategory).order_by(TrainingCategory.name).all()
+
+
+def update_training_category_service(db: Session, category_id: UUID, payload):
+    from app.models.training_model import TrainingCategory
+
+    cat = db.query(TrainingCategory).filter(TrainingCategory.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    if payload.name is not None:
+        new_name = payload.name.strip()
+        dup = db.query(TrainingCategory).filter(TrainingCategory.name == new_name, TrainingCategory.id != category_id).first()
+        if dup:
+            raise HTTPException(status_code=400, detail=f"Category '{new_name}' already exists")
+        cat.name = new_name
+    if payload.description is not None:
+        cat.description = payload.description
+    db.commit()
+    db.refresh(cat)
+    return cat
+
+
+def delete_training_category_service(db: Session, category_id: UUID):
+    from app.models.training_model import TrainingCategory
+
+    cat = db.query(TrainingCategory).filter(TrainingCategory.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    child_count = db.query(TrainingCategory).filter(TrainingCategory.parent_id == category_id).count()
+    if child_count > 0:
+        raise HTTPException(status_code=400, detail=f"Cannot delete: category has {child_count} subcategories. Delete subcategories first.")
+    db.delete(cat)
+    db.commit()
+    return {"message": "Category deleted"}

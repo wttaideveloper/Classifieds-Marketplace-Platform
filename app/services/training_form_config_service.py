@@ -21,6 +21,8 @@ from app.models.training_form_config_model import (
     TrainingFormConfiguration,
     TrainingFormConfigurationVersion,
 )
+from app.services.training_form_rules import visibility, validate_settings, validate_constraints, validate_category_subcategory_linkage, empty
+from app.services.training_form_media import validate_media_value
 from app.services.invigorate_auth_client import resolve_tenant_ids_from_slugs
 from app.services.training_form_registry import (
     CUSTOM_RENDERERS,
@@ -155,6 +157,7 @@ def create_configuration_service(db: Session, payload, current_user: dict) -> di
     if scope not in ("global", "selective"):
         raise HTTPException(status_code=400, detail="scope must be global|selective")
     sections = normalize_sections([s.model_dump() for s in payload.sections] if payload.sections else build_default_sections())
+    validate_settings(sections)
     config = TrainingFormConfiguration(
         name=payload.name,
         description=payload.description,
@@ -215,7 +218,9 @@ def update_configuration_service(db: Session, config_id: UUID, payload, current_
     if payload.description is not None:
         config.description = payload.description
     if payload.sections is not None:
-        draft.sections = normalize_sections([s.model_dump() for s in payload.sections])
+        sections = normalize_sections([s.model_dump() for s in payload.sections])
+        validate_settings(sections)
+        draft.sections = sections
     config.updated_at = datetime.utcnow()
     _audit(db, configuration_id=config.id, version_id=draft.id, action="draft_changed", actor_id=_actor(current_user), before=before, after={"name": config.name})
     db.commit()
@@ -244,6 +249,7 @@ def publish_configuration_service(db: Session, config_id: UUID, current_user: di
     if not draft:
         raise HTTPException(status_code=400, detail="No draft version to publish")
     sections = normalize_sections(draft.sections or [], assign_ids=False)
+    validate_settings(sections)
     validate_sections_for_publish(sections, scope=config.scope)
 
     if config.scope == "global" and config.is_active:
@@ -270,6 +276,7 @@ def publish_configuration_service(db: Session, config_id: UUID, current_user: di
     _audit(db, configuration_id=config.id, version_id=draft.id, action="configuration_published", actor_id=_actor(current_user), after={"version": draft.version})
     db.commit()
     return {
+        "sections": sections,
         "configuration_id": config.id,
         "version_id": draft.id,
         "version": draft.version,
@@ -661,12 +668,13 @@ def _normalize_custom_values_input(custom_values) -> list[dict]:
     raise HTTPException(status_code=400, detail="custom_values must be an object or array")
 
 
-def validate_custom_values(custom_values, sections: list[dict]) -> list[dict]:
+def validate_custom_values(custom_values, sections: list[dict], core_data: dict | None = None) -> list[dict]:
     items = _normalize_custom_values_input(custom_values)
+    visible = visibility(sections, core_data or {}, custom_values)
     if not items:
         # still enforce required customs
         for field in _iter_custom_fields(sections):
-            if field.get("required"):
+            if field.get("required") and visible.get(field["id"]):
                 raise HTTPException(status_code=400, detail=f"Required custom field missing: {field.get('label')}")
         return []
 
@@ -694,11 +702,14 @@ def validate_custom_values(custom_values, sections: list[dict]) -> list[dict]:
         if real_id in seen:
             raise HTTPException(status_code=400, detail=f"Duplicate custom value for field_id {real_id}")
         seen.add(real_id)
-        _validate_custom_value(field_def, value)
+        if visible.get(real_id):
+            validate_constraints(field_def, value)
+            _validate_custom_value(field_def, value)
+            validate_media_value(field_def, value)
         normalized.append({"field_id": real_id, "value": value})
 
     for field in _iter_custom_fields(sections):
-        if field.get("required") and field["id"] not in seen:
+        if field.get("required") and visible.get(field["id"]) and field["id"] not in seen:
             raise HTTPException(status_code=400, detail=f"Required custom field missing: {field.get('label')}")
     return normalized
 
@@ -745,17 +756,22 @@ def validate_form_required_core_fields(training_data, sections: list[dict], cust
         training_data.model_dump() if hasattr(training_data, "model_dump") else dict(training_data)
     )
     extras = custom_values_map or {}
+    visible = visibility(sections, payload, extras)
+    active_subcategory_field = None
     for field in _iter_enabled_fields(sections):
-        if field.get("source") != "core" or not field.get("required"):
+        if field.get("source") != "core" or not visible.get(field["id"]):
             continue
         key = field.get("core_key")
         if not key:
             continue
+        if key == "subcategory":
+            active_subcategory_field = field
         val = payload.get(key)
-        if (val is None or val == "" or val == []) and key in extras:
+        if empty(val) and key in extras:
             val = extras[key]
-        if val is None or val == "" or val == []:
-            raise HTTPException(status_code=400, detail=f"Required field '{field.get('label')}' ({key}) is missing")
+        validate_constraints(field, val)
+        validate_media_value(field, val)
+    validate_category_subcategory_linkage(payload, active_subcategory_field)
 
 
 def resolve_version_for_create(
@@ -841,12 +857,10 @@ def apply_form_configuration_to_training_data(db: Session, training_data, curren
     sections = normalize_sections(version.sections or [], assign_ids=False)
 
     raw_custom = getattr(training_data, "custom_values", None)
-    custom_map: dict = {}
-    if isinstance(raw_custom, dict):
-        custom_map = {str(k): v for k, v in raw_custom.items()}
-
-    validate_form_required_core_fields(training_data, sections, custom_map)
-    custom_values = validate_custom_values(raw_custom, sections)
+    from app.services.training_form_rules import custom_map as values_map
+    core = training_data.to_model_data() if hasattr(training_data, "to_model_data") else training_data.model_dump()
+    validate_form_required_core_fields(training_data, sections, values_map(raw_custom))
+    custom_values = validate_custom_values(raw_custom, sections, core)
     return {
         "form_configuration_id": config.id,
         "form_configuration_version_id": version.id,
@@ -857,13 +871,19 @@ def apply_form_configuration_to_training_data(db: Session, training_data, curren
 
 
 def apply_form_configuration_to_training_update(db: Session, training, update_data, current_user: dict) -> dict | None:
-    if getattr(update_data, "custom_values", None) is None:
-        return None
     version_id = training.form_configuration_version_id
+    raw = getattr(update_data, "custom_values", None)
     if not version_id:
-        return {"custom_values": validate_custom_values(update_data.custom_values, [])}
+        return {"custom_values": validate_custom_values(raw, [])} if raw is not None else None
     version = db.query(TrainingFormConfigurationVersion).filter(TrainingFormConfigurationVersion.id == version_id).first()
     if not version:
         raise HTTPException(status_code=400, detail="Training linked to missing form configuration version")
     sections = normalize_sections(version.sections or [], assign_ids=False)
-    return {"custom_values": validate_custom_values(update_data.custom_values, sections)}
+    core = {f.get("core_key"): getattr(training, f.get("core_key"), None)
+            for section in sections for f in section.get("fields", []) if f.get("core_key")}
+    changes = update_data.to_model_data() if hasattr(update_data, "to_model_data") else update_data.model_dump(exclude_unset=True)
+    core.update(changes)
+    custom = raw if raw is not None else training.custom_values
+    from app.services.training_form_rules import custom_map
+    validate_form_required_core_fields(core, sections, custom_map(custom))
+    return {"custom_values": validate_custom_values(custom, sections, core)}

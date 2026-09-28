@@ -71,10 +71,21 @@ def upload_training_media(
         None,
         description="lesson_video | lesson_pdf | lesson_document | audio | image (inferred from content type when omitted)",
     ),
+    field_key: str | None = Form(None, description="Configured media field core_key, stable_key or id. Required when the resolved form has upload policies."),
+    training_id: UUID | None = Form(None, description="For edits: resolve the owned Training's historical configuration. Omit for the tenant's active form."),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_roles(["admin", "provider"])),
 ):
-    file_bytes = file.file.read() if file.file else b""
+    from app.services.training_form_media import resolve_upload_field, policy_cap, validate_media_bytes
+    from app.services.training_upload_service import MAX_SIZE_BYTES
+    from fastapi import HTTPException
+    field = resolve_upload_field(db, current_user, field_key, training_id)
+    cap = policy_cap(field) if field else max(MAX_SIZE_BYTES.values())
+    file_bytes = file.file.read(cap + 1) if file.file else b""
+    if len(file_bytes) > cap:
+        raise HTTPException(413, f"File exceeds maximum size of {cap} bytes")
+    if field:
+        validate_media_bytes(field, file_bytes, file.content_type, purpose.value if purpose else None)
     return save_training_upload(
         file_bytes,
         file.filename or "upload",

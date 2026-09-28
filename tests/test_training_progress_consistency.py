@@ -35,7 +35,7 @@ from app.core.dependencies import get_current_user
 from app.db.database import Base, get_db
 from app.models.enterprise_model import Enterprise
 from app.models.training_model import (
-    Training, TrainingEnrolment, TrainingProgress,
+    Training, TrainingEnrolment, TrainingLessonAttendance, TrainingProgress,
     TrainingAssessmentSubmission, TrainingAssignmentSubmission,
 )
 from app.services import training_service as service
@@ -74,7 +74,7 @@ def setup(monkeypatch):
     engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
     Base.metadata.create_all(engine, tables=[m.__table__ for m in (
         Enterprise, Training, TrainingEnrolment, TrainingProgress,
-        TrainingAssessmentSubmission, TrainingAssignmentSubmission,
+        TrainingAssessmentSubmission, TrainingAssignmentSubmission, TrainingLessonAttendance,
     )])
     sessions = sessionmaker(bind=engine)
     user = {'id': str(uuid4()), 'role': 'customer', 'email': EMAIL}
