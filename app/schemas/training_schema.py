@@ -709,7 +709,32 @@ class LessonQrCheckInRequest(BaseModel):
 
 class LessonQrCheckInResponse(LessonAttendanceParticipant):
     result: Literal["marked", "already_attended"] = Field(..., description="'already_attended' on an idempotent repeat scan — no duplicate record was created")
-    message: str
+
+
+# --- TrainingCategory CRUD schemas — mirrors EventCategoryCreate/Update/Response
+# (event_schema.py) shape-for-shape for a consistent Super Admin Categories page
+# UI pattern. Own table (training_categories), never shared with EventCategory.
+
+
+class TrainingCategoryCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, description="Category name")
+    parent_id: UUID | None = Field(None, description="Parent category ID (for subcategories)")
+    description: str | None = Field(None, description="Category description")
+
+
+class TrainingCategoryUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100, description="Category name")
+    description: str | None = Field(None, description="Category description")
+
+
+class TrainingCategoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    parent_id: UUID | None = None
+    description: str | None = None
+    created_at: datetime | None = None
 
 
 class AssessmentQuestionCreate(BaseModel):

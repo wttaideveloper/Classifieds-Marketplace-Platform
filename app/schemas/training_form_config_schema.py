@@ -52,7 +52,25 @@ class FieldRegistryEntry(BaseModel):
 
 
 class FormFieldInput(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "example": {
+                "id": "field_subcategory",
+                "source": "core",
+                "core_key": "subcategory",
+                "label": "Subcategory",
+                "renderer": "select",
+                "required": False,
+                "is_enabled": True,
+                "options": [
+                    {"value": "yoga", "label": "Yoga", "position": 1, "parent_value": "wellness"},
+                    {"value": "nutrition", "label": "Nutrition", "position": 2, "parent_value": "wellness"},
+                ],
+                "composite_config": {"frontend_settings": {"allow_custom_value": True}},
+            }
+        },
+    )
     id: str | None = None
     source: str = Field(..., description="core|custom")
     core_key: str | None = None
@@ -65,9 +83,20 @@ class FormFieldInput(BaseModel):
     position: int = 1
     placeholder: str | None = None
     help_text: str | None = None
-    options: list[FieldOption | dict] = Field(default_factory=list)
+    options: list[FieldOption | dict] = Field(
+        default_factory=list,
+        description="Dropdown choices for renderer='select'/'multi_select'. For the subcategory core field, "
+                    "each option may set parent_value to a category option's value to scope it under that category.",
+    )
     validation: FieldValidation | dict = Field(default_factory=dict)
-    composite_config: dict | None = Field(None, description="Open JSON metadata, preserved verbatim. frontend_settings.visibility and frontend_settings.upload are validated and enforced server-side.")
+    composite_config: dict | None = Field(
+        None,
+        description="Open JSON metadata, preserved verbatim. frontend_settings.visibility, frontend_settings.upload "
+                    "and frontend_settings.allow_custom_value are validated and enforced server-side. "
+                    "allow_custom_value: true lets a submitted value bypass the options allowlist (an 'Other' free-text "
+                    "entry) — submit it as the plain category/subcategory string, no separate wrapper or flag needed. "
+                    "A custom subcategory value (one not found in options) is not checked against parent_value.",
+    )
 
 
 class FormSectionInput(BaseModel):
@@ -94,9 +123,19 @@ class FormFieldResponse(BaseModel):
     position: int
     placeholder: str | None = None
     help_text: str | None = None
-    options: list[dict] = Field(default_factory=list)
+    options: list[dict] = Field(
+        default_factory=list,
+        description="Dropdown choices. For the subcategory core field, an option's parent_value (if set) names the "
+                    "category option it belongs to — filter the subcategory dropdown to the selected category's value.",
+    )
     validation: dict = Field(default_factory=dict)
-    composite_config: dict | None = Field(None, description="Open JSON metadata, preserved verbatim. frontend_settings.visibility and frontend_settings.upload are validated and enforced server-side.")
+    composite_config: dict | None = Field(
+        None,
+        description="Open JSON metadata, preserved verbatim. frontend_settings.visibility, frontend_settings.upload "
+                    "and frontend_settings.allow_custom_value are validated and enforced server-side. "
+                    "allow_custom_value: true means the field accepts an 'Other' free-text value outside options — "
+                    "render an 'Other' choice and submit whatever the admin types as the plain field value.",
+    )
 
 
 class FormSectionResponse(BaseModel):
