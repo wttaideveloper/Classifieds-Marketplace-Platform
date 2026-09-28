@@ -20,6 +20,12 @@ class FieldOption(BaseModel):
     value: str
     label: str
     position: int = 1
+    parent_value: str | None = Field(
+        None,
+        description="For a subcategory field's options: the parent category option's value this belongs to. "
+                    "Enterprise Admin's subcategory dropdown should filter to options whose parent_value matches "
+                    "the selected category; the server also enforces this pairing on submit.",
+    )
 
 
 class FieldValidation(BaseModel):

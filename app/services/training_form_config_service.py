@@ -21,7 +21,7 @@ from app.models.training_form_config_model import (
     TrainingFormConfiguration,
     TrainingFormConfigurationVersion,
 )
-from app.services.training_form_rules import visibility, validate_settings, validate_constraints, empty
+from app.services.training_form_rules import visibility, validate_settings, validate_constraints, validate_category_subcategory_linkage, empty
 from app.services.training_form_media import validate_media_value
 from app.services.invigorate_auth_client import resolve_tenant_ids_from_slugs
 from app.services.training_form_registry import (
@@ -757,17 +757,21 @@ def validate_form_required_core_fields(training_data, sections: list[dict], cust
     )
     extras = custom_values_map or {}
     visible = visibility(sections, payload, extras)
+    active_subcategory_field = None
     for field in _iter_enabled_fields(sections):
         if field.get("source") != "core" or not visible.get(field["id"]):
             continue
         key = field.get("core_key")
         if not key:
             continue
+        if key == "subcategory":
+            active_subcategory_field = field
         val = payload.get(key)
         if empty(val) and key in extras:
             val = extras[key]
         validate_constraints(field, val)
         validate_media_value(field, val)
+    validate_category_subcategory_linkage(payload, active_subcategory_field)
 
 
 def resolve_version_for_create(

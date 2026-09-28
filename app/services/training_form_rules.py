@@ -173,7 +173,34 @@ def validate_constraints(field, value):
             if rules.get(key) is not None and invalid(float(rules[key])):
                 raise HTTPException(400, f"Field '{label}' violates {key}")
     if field.get("renderer") in ("select", "multi_select"):
+        allow_custom = bool(settings(field).get("allow_custom_value"))
         allowed = [o.get("value") for o in field.get("options") or []]
         values = value if field["renderer"] == "multi_select" and isinstance(value, list) else [value]
-        if allowed and any(v not in allowed for v in values):
+        if allowed and not allow_custom and any(v not in allowed for v in values):
             raise HTTPException(400, f"Invalid select value for '{label}'")
+
+
+def validate_category_subcategory_linkage(payload: dict, subcategory_field: dict | None) -> None:
+    """When the subcategory field is a select whose options declare parent_value,
+    a submitted subcategory that matches a known option must belong to the
+    submitted category. A value not found in options is a custom ("Other")
+    entry — those aren't tied to a category and skip this check. Caller is
+    responsible for passing None when the field is disabled/hidden/not core."""
+    if not subcategory_field or subcategory_field.get("renderer") not in ("select", "multi_select"):
+        return
+    options = subcategory_field.get("options") or []
+    if not any(o.get("parent_value") for o in options):
+        return
+    sub_value = payload.get("subcategory")
+    if empty(sub_value):
+        return
+    sub_values = sub_value if isinstance(sub_value, list) else [sub_value]
+    category_value = payload.get("category")
+    by_value = {o.get("value"): o for o in options}
+    for v in sub_values:
+        option = by_value.get(v)
+        if option is None:
+            continue  # custom/"Other" entry — not tied to a category
+        parent = option.get("parent_value")
+        if parent and parent != category_value:
+            raise HTTPException(400, f"Subcategory '{v}' does not belong to category '{category_value}'")
