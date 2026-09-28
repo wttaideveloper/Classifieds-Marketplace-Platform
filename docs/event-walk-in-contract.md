@@ -30,7 +30,7 @@ event always comes from the path; the request cannot name a tenant.
 | `participant_name` | required, trimmed, 1..255 |
 | `participant_email` | required, must look like an email; stored trimmed and **lower-cased**; the key of the duplicate rule |
 | `ticket_type_id` | one of THIS event's ticket types. Required when a **paid** event has ticket types; optional otherwise, validated when sent |
-| `custom_fields` | answers to the event's registration form, keyed by form field id (see below) |
+| `custom_fields` | answers to the event's own Registration Questions (`Event.custom_fields`), keyed by question label (see below) |
 | `meal_selections` | optional list of meal option ids (Phase 2.6); validated by the same validator as online registration (`422` if meals are off, unknown, retired or duplicated) |
 | `accommodation_selections` | optional list of accommodation option ids (Phase 2.7); validated by the same validator as online registration (`422` if accommodation is off, unknown, retired or duplicated) |
 | `check_in` | default **true**: register and admit in one step (the usual venue flow) |
@@ -122,15 +122,22 @@ and the registration is still created. `check_in: false` leaves the attendee `co
 attendance never needs event-level check-in) and is also withheld while the payment is pending. No other session is
 touched, nothing is ever checked in to "all sessions", and the legacy `event_registrations.session_id` is not written.
 
-## Registration-form answers
+## Registration-question answers
 
-The existing registration form (`GET /events/{id}/registration-form`: the event's pinned form version, or the
-legacy default) is validated with the existing form validator, `validate_custom_values`: unknown field ids,
-wrong types, invalid select/multi-select values, `min_length` / `max_length` / `pattern` and required fields are
-rejected (`400`, its messages, e.g. `Required custom field missing: T-shirt size`). Two additions the existing
-validator does not cover: it skips its required check when no answers are sent, so that is checked here; and the
-bookkeeping keys of group registration (`group_size`, `group_members`, `group_leader`) are refused. Only answers
-to the form's own fields are stored, so nothing arbitrary is saved. An event with no form takes no answers.
+Answers are validated against the Event's **own** Registration Questions — `Event.custom_fields`, e.g.
+`[{"label": "T-shirt size", "type": "select", "options": ["S", "M"], "required": true}]` — keyed by question
+**label**, not the reusable Event Create/Edit Form Configuration
+(`EventFormConfigurationVersion.sections` / `Event.custom_values`). That form is answered once by whoever
+creates/edits the Event (e.g. an admin-added `custom_text` field) and is never attendee-facing: a field being
+required there never makes it a required registration/walk-in field.
+
+An answer to a label the event has no question for is rejected (`400 Unknown custom field: <key>`), as are the
+bookkeeping keys of group registration (`group_size`, `group_members`, `group_leader`). A question with
+`"required": true` (default `false` — omitted on every question before this contract existed, so no existing
+event's behaviour changes) and no matching answer is rejected (`400 Required custom field missing: <label>`),
+including when no answers are sent at all. A `"type": "select"` question with `options` rejects a value that is
+not one of them (`400 Invalid value for '<label>'`). An event with no configured questions takes no answers — so
+walk-in never requires anything from the Event Create/Edit form's own custom fields.
 (Online registration validates none of this today; the walk-in is stricter, on purpose.)
 
 ## Atomicity and audit

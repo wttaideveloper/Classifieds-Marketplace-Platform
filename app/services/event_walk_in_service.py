@@ -9,7 +9,11 @@ dashboard). The only difference is ``registration_source = "walk_in"``. Everythi
   * duplicate protection .......... one active registration per event + lower(email), same 409 as online
   * capacity ...................... ``_seats_taken`` (Phase 2.1 accounting) + live waitlist payment offers, then
                                     the ticket-type and max_participants limits the online flows apply
-  * custom answers ................ the form-config ``validate_custom_values`` behind GET /registration-form
+  * custom answers ................ validated against the Event's OWN Registration Questions
+                                    (``Event.custom_fields``) — NOT the reusable Event Create/Edit Form
+                                    Configuration (``EventFormConfigurationVersion.sections`` /
+                                    ``Event.custom_values``), which is answered once by whoever creates/edits
+                                    the Event and is never attendee-facing. See ``_registration_questions``.
   * check-in ...................... ``check_in_service`` and the Phase 2.4 ``check_in_session_service``
   * audit ......................... ``_log_audit`` (staged, never committed on its own)
 
@@ -52,11 +56,6 @@ from app.services.event_attendee_service import get_attendee_service
 from app.services.event_dashboard_service import _parse_capacity
 from app.services.event_accommodation_service import validated_accommodation_selections
 from app.services.event_meal_service import validated_selections
-from app.services.event_form_config_service import (
-    _iter_custom_fields,
-    get_event_form_configuration_service,
-    validate_custom_values,
-)
 from app.services.event_service import (
     _actor_id,
     _event_is_paid,
@@ -120,34 +119,54 @@ def _amount_due(event, ticket) -> tuple[Decimal, str]:
     return amount, currency
 
 
-def _registration_form_sections(db: Session, event, current_user) -> list[dict]:
-    """The event's registration form (pinned form version, or the legacy default): what GET /registration-form serves."""
-    try:
-        return get_event_form_configuration_service(db, event.id, current_user)["sections"]
-    except HTTPException as exc:
-        if exc.status_code == 503:  # the legacy default form is not seeded: there are no questions to ask
-            return []
-        raise
+def _registration_questions(event) -> list[dict]:
+    """The event's OWN attendee-facing Registration Questions (``Event.custom_fields``) — configured per
+    event, e.g. ``[{"label": "T-shirt size", "type": "select", "options": ["S", "M"], "required": true}]``.
+
+    Deliberately NOT the reusable Event Create/Edit Form Configuration (``EventFormConfigurationVersion.
+    sections`` / ``Event.custom_values``): that form's ``source == "custom"`` fields (e.g. an admin-added
+    "custom_text") are answered ONCE by whoever creates/edits the Event and validated separately by
+    ``apply_form_configuration_to_event_data`` — they are never attendee-facing and must never become a
+    required registration/walk-in field just because they are required on that form.
+    """
+    raw = getattr(event, "custom_fields", None) or []
+    return [q for q in raw if isinstance(q, dict) and q.get("label")]
 
 
-def _validated_answers(db: Session, event, current_user, answers: dict | None) -> dict:
-    """Answers checked with the existing form validator (unknown ids, types, options, pattern, required).
+def _validate_registration_answer(question: dict, value) -> None:
+    label = question.get("label")
+    if value is None:
+        if question.get("required"):
+            raise HTTPException(status_code=400, detail=f"Required custom field '{label}' is empty")
+        return
+    options = question.get("options") or []
+    if question.get("type") == "select" and options and str(value) not in {str(o) for o in options}:
+        raise HTTPException(status_code=400, detail=f"Invalid value for '{label}'")
 
-    The validator returns early when no answers are sent, which would skip its required-field check, so that
-    case is checked here. Nothing outside the form's own field ids is ever stored.
+
+def _validated_answers(event, answers: dict | None) -> dict:
+    """Answers to the event's own Registration Questions (``_registration_questions``), keyed by question
+    label. Unknown labels and missing required questions are rejected; an event with no configured
+    questions takes no answers — nothing outside the event's own questions is ever stored.
     """
     answers = dict(answers or {})
     for key in answers:
         if key in _RESERVED_ANSWER_KEYS:
-            raise HTTPException(status_code=400, detail=f"Unknown custom field_id: {key}")
-    sections = _registration_form_sections(db, event, current_user)
-    items = [{"field_id": str(key), "value": value} for key, value in answers.items()]
-    validate_custom_values(items, sections)
-    if not items:
-        for field in _iter_custom_fields(sections):
-            if field.get("required"):
-                raise HTTPException(status_code=400, detail=f"Required custom field missing: {field.get('label')}")
-    return {item["field_id"]: item["value"] for item in items}
+            raise HTTPException(status_code=400, detail=f"Unknown custom field: {key}")
+    questions = _registration_questions(event)
+    known = {str(q["label"]): q for q in questions}
+    validated: dict = {}
+    for key, value in answers.items():
+        question = known.get(key)
+        if question is None:
+            raise HTTPException(status_code=400, detail=f"Unknown custom field: {key}")
+        _validate_registration_answer(question, value)
+        validated[key] = value
+    for question in questions:
+        label = str(question["label"])
+        if question.get("required") and label not in validated:
+            raise HTTPException(status_code=400, detail=f"Required custom field missing: {label}")
+    return validated
 
 
 def _assert_not_already_registered(db: Session, event_id: UUID, email: str) -> None:
@@ -232,7 +251,7 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
     if payload.session_id:
         _validate_session_for_event(event, payload.session_id)  # 400: not one of this event's own sessions
     ticket = _resolve_walk_in_ticket(event, payload.ticket_type_id, paid)
-    answers = _validated_answers(db, event, current_user, payload.custom_fields)
+    answers = _validated_answers(event, payload.custom_fields)
     meal_selections = validated_selections(event, payload.meal_selections)  # the same validator online registration uses
     accommodation_selections = validated_accommodation_selections(event, payload.accommodation_selections)  # likewise
     amount, currency = _amount_due(event, ticket) if paid else (None, None)

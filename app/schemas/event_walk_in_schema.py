@@ -29,7 +29,7 @@ class EventWalkInRequest(BaseModel):
                 "participant_name": "Asha Rao",
                 "participant_email": "asha@example.com",
                 "ticket_type_id": "general",
-                "custom_fields": {"<registration form field id>": "M"},
+                "custom_fields": {"T-shirt size": "M"},
                 "check_in": True,
                 "session_id": "keynote",
             }
@@ -47,8 +47,9 @@ class EventWalkInRequest(BaseModel):
     )
     custom_fields: dict[str, Any] | None = Field(
         None,
-        description="Answers to the event's registration form (GET /events/{id}/registration-form), keyed by form field id. "
-                    "Validated with the existing form validator: unknown ids, wrong types and missing required fields are rejected.",
+        description="Answers to the event's OWN Registration Questions (the Event's `custom_fields`), keyed by question "
+                    "label — NOT the reusable Event Create/Edit Form Configuration. Unknown labels and missing required "
+                    "questions are rejected; an event with no configured questions takes no answers.",
     )
     meal_selections: list[MealId] | None = Field(
         None, max_length=MAX_SELECTIONS,

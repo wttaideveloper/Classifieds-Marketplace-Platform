@@ -873,28 +873,44 @@ class TestSessions:
 
 
 # ===========================================================================
-# 43-45. Registration-form answers
+# 43-45. Registration Questions vs the Event Create/Edit Form Configuration
 # ===========================================================================
+#
+# Two different, deliberately unrelated concepts:
+#   - Registration Questions (`Event.custom_fields`): per-event, attendee-facing; validated here.
+#   - Event Create/Edit Form Configuration (`EventFormConfigurationVersion.sections` /
+#     `Event.custom_values`, e.g. an admin-added "custom_text"): answered once by whoever creates/edits
+#     the Event; walk-in must never require it just because it is required on that form.
 
-SIZE = {"id": "f-size", "source": "custom", "label": "T-shirt size", "renderer": "select", "required": True, "position": 1,
-        "options": [{"label": "Small", "value": "S"}, {"label": "Medium", "value": "M"}]}
-DIET = {"id": "f-diet", "source": "custom", "label": "Dietary notes", "renderer": "text", "required": False, "position": 2,
-        "validation": {"min_length": 3, "max_length": 20}}
-CODE = {"id": "f-code", "source": "custom", "label": "Badge code", "renderer": "text", "required": False, "position": 3,
-        "validation": {"pattern": "^[A-Z]{3}$"}}
-OFF = {"id": "f-off", "source": "custom", "label": "Retired question", "renderer": "text", "required": False, "position": 4, "is_enabled": False}
+SIZE = {"label": "T-shirt size", "type": "select", "options": ["S", "M"], "required": True}
+DIET = {"label": "Dietary notes", "type": "text", "required": False}
 
 
-class TestCustomQuestions:
+def add_event_create_edit_form(env, event, fields):
+    """Pins a Form Configuration version — the Enterprise-Admin-facing Event Create/Edit form ("Preview as
+    Enterprise Admin" in the builder UI), the SAME mechanism `apply_form_configuration_to_event_data` uses
+    to validate `Event.custom_values` at event creation — as the event's own `form_configuration_version_id`.
+    Walk-in must never read this for attendee/registration validation."""
+    config = EventFormConfiguration(name="Event form", scope="global", status="published", is_active=True)
+    env.db.add(config)
+    env.db.commit()
+    version = EventFormConfigurationVersion(
+        configuration_id=config.id, version=1, status="published",
+        sections=[{"id": "s1", "label": "Details", "position": 1, "is_enabled": True, "fields": fields}])
+    env.db.add(version)
+    env.db.commit()
+    event.form_configuration_version_id = version.id
+    env.db.commit()
+
+
+class TestRegistrationQuestions:
     @pytest.fixture
     def form_event(self, env):
-        event = make_event(env.db, env.tenant, env.ent, capacity="20")
-        add_form(env, event, [SIZE, DIET, CODE, OFF])
-        return event
+        return make_event(env.db, env.tenant, env.ent, capacity="20", custom_fields=[SIZE, DIET])
 
     def test_a_required_field_that_is_missing_rejects_the_walk_in(self, env, form_event):
         before = snapshot(env)
-        resp = walk_in(env, body(custom_fields={"f-diet": "vegan"}), event=form_event)
+        resp = walk_in(env, body(custom_fields={"Dietary notes": "vegan"}), event=form_event)
         assert resp.status_code == 400 and resp.json()["detail"] == "Required custom field missing: T-shirt size"
         assert snapshot(env) == before
 
@@ -905,66 +921,81 @@ class TestCustomQuestions:
         assert regs(env, form_event) == []
 
     def test_optional_fields_may_be_left_out(self, env, form_event):
-        resp = walk_in(env, body(custom_fields={"f-size": "M"}), event=form_event)
+        resp = walk_in(env, body(custom_fields={"T-shirt size": "M"}), event=form_event)
         assert resp.status_code == 201, resp.text
         (row,) = regs(env, form_event)
-        assert row.custom_fields == {"f-size": "M"}
+        assert row.custom_fields == {"T-shirt size": "M"}
 
     def test_valid_answers_are_stored_and_shown_with_their_labels(self, env, form_event):
-        data = walk_in(env, body(custom_fields={"f-size": "S", "f-diet": "vegan", "f-code": "ABC"}), event=form_event).json()
-        assert data["registration"]["custom_answers"] == [
-            {"field_id": "f-size", "label": "T-shirt size", "value": "S"},
-            {"field_id": "f-diet", "label": "Dietary notes", "value": "vegan"},
-            {"field_id": "f-code", "label": "Badge code", "value": "ABC"},
-        ]
+        data = walk_in(env, body(custom_fields={"T-shirt size": "S", "Dietary notes": "vegan"}), event=form_event).json()
+        answers = {a["label"]: (a["field_id"], a["value"]) for a in data["registration"]["custom_answers"]}
+        assert answers == {"T-shirt size": ("T-shirt size", "S"), "Dietary notes": ("Dietary notes", "vegan")}
 
-    @pytest.mark.parametrize("answers, fragment", [
-        ({"f-size": "XXL"}, "Invalid select value for 'T-shirt size'"),
-        ({"f-size": "M", "f-diet": "no"}, "too short"),
-        ({"f-size": "M", "f-diet": "x" * 21}, "too long"),
-        ({"f-size": "M", "f-code": "abc"}, "format invalid"),
-        ({"f-size": "M", "f-unknown": "sneaky"}, "Unknown custom field_id: f-unknown"),
-        ({"f-size": "M", "f-off": "hidden"}, "Unknown custom field_id: f-off"),
-        ({"f-size": ["M"]}, "expects string"),
-        ({"f-size": "M", "f-diet": {"nested": "x"}}, "expects string"),
-        ({"f-size": "M", "group_size": 4}, "Unknown custom field_id: group_size"),
-        ({"f-size": "M", "group_members": []}, "Unknown custom field_id: group_members"),
-        ({"f-size": None}, "is empty"),
-    ])
-    def test_invalid_answers_are_rejected_with_a_useful_message(self, env, form_event, answers, fragment):
+    def test_a_select_question_rejects_a_value_outside_its_options(self, env, form_event):
         before = snapshot(env)
-        resp = walk_in(env, body(custom_fields=answers), event=form_event)
-        assert resp.status_code == 400 and fragment in resp.json()["detail"], resp.text
+        resp = walk_in(env, body(custom_fields={"T-shirt size": "XXL"}), event=form_event)
+        assert resp.status_code == 400 and "Invalid value for 'T-shirt size'" in resp.json()["detail"]
         assert snapshot(env) == before
 
-    def test_the_group_bookkeeping_namespace_is_never_an_answer_even_if_a_form_field_uses_the_name(self, env):
-        """A form field whose id collides with a bookkeeping key would be stored and then hidden from the attendee view."""
-        event = make_event(env.db, env.tenant, env.ent)
-        add_form(env, event, [{"id": "group_size", "source": "custom", "label": "Group size", "renderer": "text", "required": False, "position": 1}])
+    def test_an_unknown_attendee_field_is_rejected(self, env, form_event):
+        before = snapshot(env)
+        resp = walk_in(env, body(custom_fields={"T-shirt size": "M", "favourite_colour": "green"}), event=form_event)
+        assert resp.status_code == 400 and "Unknown custom field: favourite_colour" in resp.json()["detail"]
+        assert snapshot(env) == before
+
+    def test_the_group_bookkeeping_namespace_is_never_an_answer_even_if_a_question_uses_the_name(self, env):
+        """A registration question whose label collides with a bookkeeping key would be stored and then hidden from the attendee view."""
+        event = make_event(env.db, env.tenant, env.ent, custom_fields=[{"label": "group_size", "type": "text", "required": False}])
         resp = walk_in(env, body(custom_fields={"group_size": "4"}), event=event)
-        assert resp.status_code == 400 and "Unknown custom field_id: group_size" in resp.json()["detail"]
+        assert resp.status_code == 400 and "Unknown custom field: group_size" in resp.json()["detail"]
         assert regs(env, event) == []
 
     def test_arbitrary_answers_are_never_stored_silently(self, env):
-        resp = walk_in(env, body(custom_fields={"favourite_colour": "green"}))  # this event has no form at all
-        assert resp.status_code == 400 and "Unknown custom field_id: favourite_colour" in resp.json()["detail"]
+        resp = walk_in(env, body(custom_fields={"favourite_colour": "green"}))  # this event has no questions at all
+        assert resp.status_code == 400 and "Unknown custom field: favourite_colour" in resp.json()["detail"]
         assert regs(env) == []
 
-    def test_an_event_without_a_form_needs_no_answers(self, env):
+    def test_an_event_without_questions_needs_no_answers(self, env):
         assert walk_in(env, body()).status_code == 201
         assert walk_in(env, body(custom_fields={})).status_code == 201
         assert all(r.custom_fields == {} for r in regs(env))
 
-    def test_the_answers_are_checked_by_the_existing_form_validator(self, env, form_event, monkeypatch):
-        calls = []
-        real = walk_in_service.validate_custom_values
-        monkeypatch.setattr(walk_in_service, "validate_custom_values", lambda items, sections: (calls.append(items), real(items, sections))[1])
-        walk_in(env, body(custom_fields={"f-size": "M"}), event=form_event)
-        assert calls == [[{"field_id": "f-size", "value": "M"}]]
-
     def test_the_answers_are_validated_before_anything_is_locked_or_written(self, env, form_event):
         make_registration(env.db, form_event, "dup@example.com")
-        assert walk_in(env, body("dup@example.com", custom_fields={"f-size": "XXL"}), event=form_event).status_code == 400  # not 409
+        assert walk_in(env, body("dup@example.com", custom_fields={"T-shirt size": "XXL"}), event=form_event).status_code == 400  # not 409
+
+    # ---- the reported bug: Event Create/Edit custom fields must never gate Walk-In ----------------
+
+    def test_a_required_event_create_edit_custom_field_never_gates_the_walk_in(self, env):
+        """Exact reported scenario: the Event Create/Edit Form Configuration has a required `custom_text`
+        field (answered once by whoever created the Event, into Event.custom_values) — but this event has
+        ZERO Registration Questions. The walk-in must succeed without providing `custom_text`."""
+        event = make_event(env.db, env.tenant, env.ent, custom_values=[{"field_id": "custom_text", "value": "internal note"}])
+        add_event_create_edit_form(env, event, [
+            {"id": "custom_text", "source": "custom", "label": "custom_text", "renderer": "text", "required": True, "position": 1},
+        ])
+        resp = walk_in(env, body(), event=event)
+        assert resp.status_code == 201, resp.text
+        (row,) = regs(env, event)
+        assert row.custom_fields == {}
+
+    def test_an_event_create_edit_custom_field_is_never_treated_as_a_registration_field(self, env):
+        """Even if an operator tries to answer it by name, it is not a recognised Registration Question."""
+        event = make_event(env.db, env.tenant, env.ent)
+        add_event_create_edit_form(env, event, [
+            {"id": "custom_text", "source": "custom", "label": "custom_text", "renderer": "text", "required": False, "position": 1},
+        ])
+        resp = walk_in(env, body(custom_fields={"custom_text": "whatever"}), event=event)
+        assert resp.status_code == 400 and "Unknown custom field: custom_text" in resp.json()["detail"]
+
+    def test_normal_online_registration_still_validates_nothing(self, env, form_event):
+        """Unchanged, pre-existing behaviour (documented, deliberate): online registration does not
+        validate custom_fields against the event's Registration Questions — only walk-in does. `form_event`
+        has a REQUIRED "T-shirt size" question, yet a plain online registration with no answers still succeeds."""
+        resp = client_for(env.db, customer_user("online@example.com")).post(
+            f"{API}/{form_event.id}/registrations",
+            json={"participant_name": "Online", "participant_email": "online@example.com"})
+        assert resp.status_code == 201, resp.text
 
 
 # ===========================================================================
