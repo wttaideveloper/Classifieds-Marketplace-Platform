@@ -111,6 +111,7 @@ def _make_payload(
     payload.ticket_type_id = ticket_type_id
     payload.quantity = quantity
     payload.payment_provider = payment_provider
+    payload.waitlist_id = None  # a bare MagicMock attribute is truthy and would select the waitlist-offer branch
     return payload
 
 
@@ -351,8 +352,9 @@ class TestCapacityRejected:
 
         ticket = _make_ticket(capacity=5)
         event = _make_event(status="published", ticket_types=[ticket])
-        # 3 confirmed orders + 2 confirmed/attended registrations already == capacity (5)
-        db = _make_db(event, order_count=3, reg_count=2)
+        # 5 confirmed/attended registrations already == capacity (5). Each paid purchase is ONE registration
+        # (its order is not a second seat), so 5 registrations means 5 seats taken.
+        db = _make_db(event, order_count=5, reg_count=5)
         payload = _make_payload(quantity=1)
 
         with patch("app.repository.event_repo.get_event_by_id", return_value=event):
@@ -368,7 +370,22 @@ class TestCapacityRejected:
 
         ticket = _make_ticket(capacity=5)
         event = _make_event(status="published", ticket_types=[ticket])
-        db = _make_db(event, order_count=1, reg_count=1)  # 2/5 used
+        db = _make_db(event, order_count=1, reg_count=1)  # 1/5 used: one purchase == one seat
+        payload = _make_payload(quantity=1)
+
+        with patch("app.repository.event_repo.get_event_by_id", return_value=event):
+            order = event_service.create_event_checkout_service(db, event.id, payload)
+
+        assert isinstance(order, EventOrder)
+
+    def test_an_order_and_its_registration_are_not_counted_as_two_seats(self):
+        """Regression: 3 purchases (3 orders + 3 registrations) used to look like 6 seats and blocked a
+        4th buyer on a capacity-5 ticket."""
+        from app.services import event_service
+
+        ticket = _make_ticket(capacity=5)
+        event = _make_event(status="published", ticket_types=[ticket])
+        db = _make_db(event, order_count=3, reg_count=3)
         payload = _make_payload(quantity=1)
 
         with patch("app.repository.event_repo.get_event_by_id", return_value=event):

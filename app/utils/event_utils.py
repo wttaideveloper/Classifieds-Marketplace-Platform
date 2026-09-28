@@ -61,3 +61,29 @@ def is_registration_open(event, now=None) -> bool:
         return False
     except Exception:
         return False
+
+def get_event_lifecycle_state(event, now=None) -> str | None:
+    """
+    Calculates the lifecycle state of the event based on its dates and timezone.
+    Returns: 'upcoming', 'ongoing', 'finished', or None if no valid start_date exists.
+    """
+    start_date = getattr(event, "start_date", None)
+    if not start_date:
+        return None
+    
+    current_utc = _get_utc_now(now)
+    event_tz = _get_event_tz(event)
+    
+    start_utc = _localize_and_convert(start_date, event_tz)
+    end_date = getattr(event, "end_date", None)
+    end_utc = _localize_and_convert(end_date, event_tz) if end_date else start_utc
+        
+    if start_utc is None:
+        return None
+        
+    if current_utc < start_utc:
+        return "upcoming"
+    elif current_utc > end_utc:
+        return "finished"
+    else:
+        return "ongoing"

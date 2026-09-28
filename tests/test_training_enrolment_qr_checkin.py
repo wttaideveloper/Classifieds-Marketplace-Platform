@@ -106,9 +106,10 @@ def test_check_in_enrolment_flips_enrolled_to_attended(monkeypatch):
     enrol = _enrol(status="enrolled")
     monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
     monkeypatch.setattr(training_service, "_find_enrolment_by_id_or_qr", lambda db, tid, eid, qr: enrol)
+    monkeypatch.setattr(training_service, "_find_active_session_id", lambda db, tid: None)
 
     result = training_service.check_in_enrolment_service(MagicMock(), uuid4(), enrol.id, None, {"id": "admin-1"})
-    assert enrol.status == "attended"
+    assert enrol.status == "enrolled"  # Should NOT change to attended
     assert enrol.checked_in_at is not None
     assert enrol.checked_in_by == "admin-1"
     assert result["message"] == "Checked in successfully"
@@ -119,21 +120,24 @@ def test_check_in_enrolment_by_qr_code(monkeypatch):
     enrol = _enrol(status="active")
     monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
     monkeypatch.setattr(training_service, "_find_enrolment_by_id_or_qr", lambda db, tid, eid, qr: enrol)
+    monkeypatch.setattr(training_service, "_find_active_session_id", lambda db, tid: None)
 
     result = training_service.check_in_enrolment_service(MagicMock(), uuid4(), None, enrol.qr_code, {"id": "admin-1"})
-    assert enrol.status == "attended"
+    assert enrol.status == "active"  # Should NOT change to attended
+    assert enrol.checked_in_at is not None
 
 
 def test_check_in_enrolment_idempotent_on_rescan(monkeypatch):
     """Re-scanning an already-attended enrolment must not error — idempotent."""
     training = MagicMock(status="published")
-    enrol = _enrol(status="attended", checked_in_at=datetime(2026, 1, 1))
+    enrol = _enrol(status="enrolled", checked_in_at=datetime(2026, 1, 1))
     monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
     monkeypatch.setattr(training_service, "_find_enrolment_by_id_or_qr", lambda db, tid, eid, qr: enrol)
+    monkeypatch.setattr(training_service, "_find_active_session_id", lambda db, tid: None)
 
     result = training_service.check_in_enrolment_service(MagicMock(), uuid4(), enrol.id, None, {"id": "admin-1"})
     assert result["message"] == "Already checked in"
-    assert enrol.status == "attended"
+    assert enrol.status == "enrolled"
 
 
 def test_check_in_enrolment_rejects_cancelled(monkeypatch):
@@ -169,7 +173,7 @@ def test_check_in_blocked_when_training_cancelled(monkeypatch):
 # --- uncheck-in ---
 
 def test_uncheck_in_reverses_attended_to_enrolled(monkeypatch):
-    enrol = _enrol(status="attended", checked_in_at=datetime(2026, 1, 1), checked_in_by="admin-1")
+    enrol = _enrol(status="enrolled", checked_in_at=datetime(2026, 1, 1), checked_in_by="admin-1")
     monkeypatch.setattr(training_service, "_find_enrolment_by_id_or_qr", lambda db, tid, eid, qr: enrol)
 
     result = training_service.uncheck_in_enrolment_service(MagicMock(), uuid4(), enrol.id, None)
@@ -180,7 +184,7 @@ def test_uncheck_in_reverses_attended_to_enrolled(monkeypatch):
 
 
 def test_uncheck_in_rejects_non_attended(monkeypatch):
-    enrol = _enrol(status="enrolled")
+    enrol = _enrol(status="enrolled", checked_in_at=None)
     monkeypatch.setattr(training_service, "_find_enrolment_by_id_or_qr", lambda db, tid, eid, qr: enrol)
 
     with pytest.raises(HTTPException) as exc:
@@ -195,9 +199,9 @@ def test_checkin_preview_marks_eligible_and_ineligible_rows(monkeypatch):
     monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: training)
 
     rows = [
-        _enrol(status="enrolled"),
-        _enrol(status="attended"),
-        _enrol(status="cancelled"),
+        _enrol(status="enrolled", checked_in_at=None),
+        _enrol(status="enrolled", checked_in_at=datetime(2026, 1, 1)),
+        _enrol(status="cancelled", checked_in_at=None),
     ]
     db = MagicMock()
     db.query.return_value.filter.return_value.order_by.return_value.all.return_value = rows
@@ -230,4 +234,5 @@ def test_batch_check_in_reports_succeeded_and_failed(monkeypatch):
     assert result["total"] == 3
     assert result["succeeded"] == 1
     assert result["failed"] == 2
-    assert good.status == "attended"
+    assert good.status == "enrolled"  # Should NOT change to attended
+    assert good.checked_in_at is not None

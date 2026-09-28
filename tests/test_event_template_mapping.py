@@ -95,13 +95,30 @@ def test_apply_uses_current_version_and_resets_lifecycle(monkeypatch):
 
 
 def test_no_active_form_does_not_create_event(monkeypatch):
+    tid = uuid4()
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
-        tenant_id=None, enterprise_id=None, template_data={"title": "Legacy"})
+        tenant_id=tid, enterprise_id=None, template_data={"title": "Legacy"})
     monkeypatch.setattr(forms, "_resolve_active_form_configuration", MagicMock(side_effect=HTTPException(404, "No active Event form configuration found")))
+    # Phase 2.1: the caller must belong to the template's tenant (an empty identity used to be let through).
     with pytest.raises(HTTPException) as exc:
-        event_service.apply_template_service(db, uuid4(), {}, {})
+        event_service.apply_template_service(db, uuid4(), {}, {"role": "admin", "tenant_id": str(tid)})
     assert exc.value.status_code == 404
+    db.add.assert_not_called()
+
+
+def test_apply_refuses_a_caller_whose_tenant_cannot_be_resolved(monkeypatch):
+    """Fail closed: no tenant claim must never mean access to another tenant's template."""
+    resolve = MagicMock()
+    monkeypatch.setattr(forms, "_resolve_active_form_configuration", resolve)
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+        tenant_id=uuid4(), enterprise_id=None, template_data={"title": "Legacy"})
+    for user in ({}, {"role": "admin"}, {"role": "admin", "tenant_id": str(uuid4())}):
+        with pytest.raises(HTTPException) as exc:
+            event_service.apply_template_service(db, uuid4(), {}, user)
+        assert exc.value.status_code == 403
+    resolve.assert_not_called()
     db.add.assert_not_called()
 
 

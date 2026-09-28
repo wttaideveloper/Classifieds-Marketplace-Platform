@@ -10,12 +10,24 @@ logger = logging.getLogger(__name__)
 
 from app.models.enterprise_model import Enterprise
 from app.models.location_model import EnterpriseLocation
+from fastapi.encoders import jsonable_encoder
+
 from app.repository.event_repo import (
+    STAFF_ROLES,
+    EventViewer,
+    assert_event_access,
+    build_event_viewer,
+    can_view_event,
     create_event,
     delete_event,
+    event_owner_tenant_id,
+    event_tenant_clause,
     get_event_by_id,
     get_events,
+    is_platform_super_admin,
+    resolve_caller_tenant_id,
     update_event,
+    viewer_owns_event,
 )
 from app.repository.query_utils import build_pagination_meta
 from app.schemas.event_schema import (
@@ -25,6 +37,21 @@ from app.schemas.event_schema import (
     EventResponse,
 )
 from app.services.response_mappers import map_event_detail, map_event_list_item, map_event_write
+from app.utils.event_accommodation import (
+    AccommodationConfigError,
+    accommodation_for_new_event,
+    plan_accommodation_update,
+)
+from app.utils.event_meals import MealConfigError, meals_for_new_event, plan_meals_update
+from app.utils.event_modules import (
+    EventModuleConfigError,
+    is_paid_event,
+    legacy_modules,
+    modules_for_new_event,
+    plan_config_update,
+    resolve_event_modules,
+    validate_module_overrides,
+)
 
 
 def _validate_references(db: Session, enterprise_id: UUID | None, location_id: UUID | None, current_user: dict | None = None):
@@ -112,14 +139,221 @@ def _check_category(db: Session, category: str | None, subcategory: str | None):
             if not sub:
                 raise HTTPException(status_code=400, detail=f"Subcategory '{subcategory}' not found under '{category}'")
 
-def _log_audit(db: Session, event_id: UUID, action: str, before: dict | None, after: dict | None, changed_by: str | None = None, notes: str | None = None):
+def _actor_id(current_user: dict | None) -> str | None:
+    """Audit actor: the authenticated user's id (None for system/unauthenticated callers)."""
+    if not current_user:
+        return None
+    value = current_user.get("id")
+    return str(value)[:255] if value else None
+
+
+def _json_safe(value):
+    """Datetimes/UUIDs/Decimals -> JSON-native values so an audit row can never fail to serialize."""
+    if value is None:
+        return None
+    try:
+        return jsonable_encoder(value)
+    except Exception:
+        return str(value)
+
+
+def _log_audit(
+    db: Session,
+    event_id: UUID,
+    action: str,
+    before: dict | None,
+    after: dict | None,
+    changed_by: str | None = None,
+    notes: str | None = None,
+    commit: bool = True,
+):
+    """Record an EventAudit row.
+
+    ``commit=False`` only stages the row in the caller's transaction (it is committed, or
+    rolled back, together with the change it describes) — use it for every write path so
+    no audit call ever commits a half-finished unit of work. ``commit=True`` is kept for
+    the legacy call shape: it commits the audit row on its own and never raises.
+    """
     try:
         from app.models.event_aux_models import EventAudit
-        audit = EventAudit(event_id=event_id, action=action, before=before, after=after, changed_by=changed_by, notes=notes)
-        db.add(audit); db.commit()
+        audit = EventAudit(
+            event_id=event_id,
+            action=action,
+            before=_json_safe(before),
+            after=_json_safe(after),
+            changed_by=changed_by,
+            notes=notes,
+        )
+        db.add(audit)
+        if commit:
+            db.commit()
     except Exception:
-        try: db.rollback()
-        except: pass
+        logger.warning("Failed to record audit action %s for event %s", action, event_id, exc_info=True)
+        if commit:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+def _validate_event_config_for_create(event_data) -> None:
+    """422 for contradictory *explicit* module overrides on a new event.
+
+    Only what the client asked for is checked. Values that come from an event-type default are a
+    starting point, not a request, so a default can never make a create fail. Stored configuration is
+    never re-validated this way (validate_event_submission only checks its shape), so a valid stored
+    default can never block publishing. Event-Type-specific allowed/required checks happen later, once
+    the Event Type has been resolved from the database (see _resolve_event_type_or_422).
+    """
+    overrides = event_data.modules.overrides() if getattr(event_data, "modules", None) is not None else {}
+    if not overrides:
+        return
+    is_paid = is_paid_event(event_data.pricing_type, event_data.price, event_data._normalize_ticket_types())
+    try:
+        validate_module_overrides(overrides, delivery_mode=event_data.delivery_mode, is_paid=is_paid)
+    except EventModuleConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _event_type_record(row) -> dict:
+    """An EventTypeConfig row as the plain dict app.utils.event_modules expects."""
+    return {
+        "key": row.key,
+        "default_modules": dict(row.default_modules),
+        "allowed_modules": dict(row.allowed_modules),
+        "required_modules": dict(row.required_modules),
+    }
+
+
+def _resolve_event_type_or_422(db: Session, key: str | None) -> dict | None:
+    """The resolved Event Type record for ``key`` (None = no type: the event stays legacy).
+
+    422 when the key does not name an existing, ACTIVE Event Type — a client can never silently create
+    or move an event onto an unknown or deactivated type. This is the only place event_type is checked
+    against the database; app.utils.event_modules stays pure and never queries it.
+    """
+    if key is None:
+        return None
+    from app.models.event_type_model import EventTypeConfig
+
+    row = db.query(EventTypeConfig).filter(EventTypeConfig.key == key).first()
+    if row is None or not row.active:
+        raise HTTPException(status_code=422, detail=f"Unknown or inactive event type: {key}")
+    return _event_type_record(row)
+
+
+def _plan_event_config_update(db: Session, event, update_data) -> dict:
+    """The event_type / modules columns an update changes (empty when it does not touch configuration).
+
+    Partial-update semantics: null/omitted = no change, so an unrelated update — or a client echoing
+    back only what it read — never resets the configuration. See plan_config_update for the rules.
+    """
+    new_type = getattr(update_data, "event_type", None)
+    modules_in = getattr(update_data, "modules", None)
+    overrides = modules_in.overrides() if modules_in is not None else {}
+    if new_type is None and not overrides:
+        return {}
+    fields = update_data.model_fields_set
+    delivery_mode = update_data.delivery_mode if getattr(update_data, "delivery_mode", None) is not None else event.delivery_mode
+    pricing_type = update_data.pricing_type if getattr(update_data, "pricing_type", None) is not None else event.pricing_type
+    price = update_data.price if "price" in fields else event.price
+    ticket_types = update_data.ticket_types if getattr(update_data, "ticket_types", None) is not None else event.ticket_types
+    new_type_record = None
+    if new_type is not None and new_type != getattr(event, "event_type", None):
+        new_type_record = _resolve_event_type_or_422(db, new_type)
+    try:
+        return plan_config_update(
+            event, new_type, overrides,
+            delivery_mode=delivery_mode, is_paid=is_paid_event(pricing_type, price, ticket_types),
+            new_event_type_record=new_type_record,
+        )
+    except EventModuleConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _meals_enabled_flag_matches(meals_in, enabled: bool) -> None:
+    """``meals.enabled`` is a mirror of modules.meals, never a second switch: when sent it must agree."""
+    if meals_in.enabled is not None and meals_in.enabled != enabled:
+        raise HTTPException(
+            status_code=422,
+            detail=f"meals.enabled ({str(meals_in.enabled).lower()}) conflicts with modules.meals ({str(enabled).lower()}). "
+                   "Meals are switched on or off with modules.meals only.",
+        )
+
+
+def _meals_for_new_event(event_data, modules) -> dict | None:
+    """The ``meals`` value for a new event (None = nothing configured); 422 when meals are off or the options are invalid."""
+    meals_in = getattr(event_data, "meals", None)
+    if meals_in is None:
+        return None
+    enabled = bool((modules if isinstance(modules, dict) else legacy_modules(event_data)).get("meals"))
+    _meals_enabled_flag_matches(meals_in, enabled)
+    try:
+        return meals_for_new_event(meals_in.option_dicts(), enabled=enabled)
+    except MealConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _plan_event_meals_update(event, update_data, config_changes: dict) -> dict:
+    """The ``meals`` column an update changes (empty when it does not touch meals).
+
+    null/omitted = no change, so an unrelated update — or one that only changes modules — keeps the meal options and
+    their ids. Meals are judged against the modules AS THEY WILL BE after this same update.
+    """
+    meals_in = getattr(update_data, "meals", None)
+    if meals_in is None:
+        return {}
+    modules_after = config_changes["modules"] if isinstance(config_changes.get("modules"), dict) else resolve_event_modules(event)
+    enabled_after = bool(modules_after.get("meals"))
+    _meals_enabled_flag_matches(meals_in, enabled_after)
+    try:
+        stored = plan_meals_update(event, meals_in.option_dicts(), enabled_after=enabled_after)
+    except MealConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {} if stored is None else {"meals": stored}
+
+
+def _accommodation_enabled_flag_matches(accommodation_in, enabled: bool) -> None:
+    """``accommodation.enabled`` is a mirror of modules.accommodation, never a second switch: when sent it must agree."""
+    if accommodation_in.enabled is not None and accommodation_in.enabled != enabled:
+        raise HTTPException(
+            status_code=422,
+            detail=f"accommodation.enabled ({str(accommodation_in.enabled).lower()}) conflicts with modules.accommodation "
+                   f"({str(enabled).lower()}). Accommodation is switched on or off with modules.accommodation only.",
+        )
+
+
+def _accommodation_for_new_event(event_data, modules) -> dict | None:
+    """The ``accommodation`` value for a new event (None = nothing configured); 422 when accommodation is off or the
+    options are invalid."""
+    accommodation_in = getattr(event_data, "accommodation", None)
+    if accommodation_in is None:
+        return None
+    enabled = bool((modules if isinstance(modules, dict) else legacy_modules(event_data)).get("accommodation"))
+    _accommodation_enabled_flag_matches(accommodation_in, enabled)
+    try:
+        return accommodation_for_new_event(accommodation_in.option_dicts(), enabled=enabled)
+    except AccommodationConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _plan_event_accommodation_update(event, update_data, config_changes: dict) -> dict:
+    """The ``accommodation`` column an update changes (empty when it does not touch accommodation).
+
+    null/omitted = no change, so an unrelated update — or one that only changes modules — keeps the options and their
+    ids. Accommodation is judged against the modules AS THEY WILL BE after this same update.
+    """
+    accommodation_in = getattr(update_data, "accommodation", None)
+    if accommodation_in is None:
+        return {}
+    modules_after = config_changes["modules"] if isinstance(config_changes.get("modules"), dict) else resolve_event_modules(event)
+    enabled_after = bool(modules_after.get("accommodation"))
+    _accommodation_enabled_flag_matches(accommodation_in, enabled_after)
+    try:
+        stored = plan_accommodation_update(event, accommodation_in.option_dicts(), enabled_after=enabled_after)
+    except AccommodationConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {} if stored is None else {"accommodation": stored}
+
 
 def create_event_service(db: Session, event_data, current_user: dict | None = None):
     from app.services.event_form_config_service import apply_form_configuration_to_event_data
@@ -142,17 +376,29 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
         event_data.status = "draft"
     _validate_references(db, event_data.enterprise_id, event_data.location_id, current_user)
     _check_category(db, getattr(event_data, "category", None), getattr(event_data, "subcategory", None))
+    _validate_event_config_for_create(event_data)
     # auto-create meeting link if needed
     if not event_data.meeting_link:
         event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
     payload = event_data.to_model_data()
+    event_type_record = _resolve_event_type_or_422(db, payload.get("event_type"))
+    is_paid = is_paid_event(event_data.pricing_type, event_data.price, event_data._normalize_ticket_types())
+    try:
+        payload["modules"] = modules_for_new_event(
+            event_data.modules.overrides() if event_data.modules else None, event_data, event_type_record, is_paid=is_paid
+        )
+    except EventModuleConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    payload["meals"] = _meals_for_new_event(event_data, payload.get("modules"))
+    payload["accommodation"] = _accommodation_for_new_event(event_data, payload.get("modules"))
     payload.update(form_meta)
     from app.models.event_model import Event
     created = Event(**payload)
     db.add(created)
+    db.flush()  # assigns created.id for the audit row
+    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None, "event_type": created.event_type, "modules": created.modules, "meals": created.meals, "accommodation": created.accommodation}, changed_by=_actor_id(current_user), commit=False)
     db.commit()
     db.refresh(created)
-    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None})
     return EventResponse.model_validate(map_event_write(created))
 
 
@@ -172,9 +418,14 @@ def get_events_service(
     max_price: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    viewer: EventViewer | None = None,
 ) -> EventPaginatedResponse:
+    # No viewer == anonymous public reader (published events only). Callers that legitimately
+    # widen the view (staff of the owning tenant, Platform Super Admin) pass an explicit viewer.
+    viewer = viewer or EventViewer()
     items, total = get_events(
         db,
+        viewer=viewer,
         search=search,
         category=category,
         tenant_id=tenant_id,
@@ -190,16 +441,36 @@ def get_events_service(
         page_size=page_size,
     )
     return EventPaginatedResponse(
-        items=[EventListItemResponse.model_validate(map_event_list_item(e, db)) for e in items],
+        items=[EventListItemResponse.model_validate(_redact_event_data(map_event_list_item(e, db), e, viewer)) for e in items],
         pagination=build_pagination_meta(total, page, page_size),
     )
 
 
-def get_event_service(db: Session, event_id: UUID) -> EventDetailResponse:
+# Internal review/workflow fields: only the owning tenant (or the platform) may read them.
+_OWNER_ONLY_EVENT_FIELDS = ("last_admin_notes", "requires_reapproval")
+# Organiser contact details are not published to the public. Any authenticated staff member keeps
+# them: an owner whose tenant cannot be resolved at that instant must not be handed null and then
+# save it back over the stored value through the edit form (EventUpdate accepts organiser_contact).
+_STAFF_ONLY_EVENT_FIELDS = ("organiser_contact",)
+
+
+def _redact_event_data(data: dict, event, viewer: EventViewer) -> dict:
+    """Blank non-public fields for readers who may not see them (response shape is unchanged)."""
+    if viewer_owns_event(event, viewer):
+        return data
+    hidden = list(_OWNER_ONLY_EVENT_FIELDS)
+    if viewer.role not in (*STAFF_ROLES, "super_admin"):
+        hidden.extend(_STAFF_ONLY_EVENT_FIELDS)
+    return {**data, **{field: None for field in hidden if field in data}}
+
+
+def get_event_service(db: Session, event_id: UUID, viewer: EventViewer | None = None, access_token: str | None = None) -> EventDetailResponse:
+    viewer = viewer or EventViewer()
     event = get_event_by_id(db, event_id)
-    if not event:
+    # 404 (not 403) for events the reader may not see, so hidden events are indistinguishable from absent ones.
+    if not event or not can_view_event(db, event, viewer, access_token=access_token):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    return EventDetailResponse.model_validate(map_event_detail(event))
+    return EventDetailResponse.model_validate(_redact_event_data(map_event_detail(event), event, viewer))
 
 
 def update_event_service(db: Session, event_id: UUID, update_data, current_user: dict = None):
@@ -229,6 +500,13 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
             except Exception:
                 pass
 
+    # Configuration (event_type / modules) is planned against the CURRENT event before anything is mutated.
+    # It is deliberately kept out of old_vals below: that dict also drives schedule-change notifications.
+    config_changes = _plan_event_config_update(db, event, update_data)
+    config_changes.update(_plan_event_meals_update(event, update_data, config_changes))
+    config_changes.update(_plan_event_accommodation_update(event, update_data, config_changes))
+    old_config = {key: getattr(event, key) for key in config_changes}
+
     # capture old values for schedule change detection and audit
     old_vals = {k: getattr(event, k) for k in ["start_date","end_date","venue","meeting_link","time_zone","duration_type","category","subcategory","title","status"] if hasattr(event, k)}
     from app.services.event_form_config_service import apply_form_configuration_to_event_update, validate_form_required_core_fields
@@ -251,13 +529,20 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
         from app.services.event_template_mapping import validate_event_submission
         changes = update_data.to_model_data() if hasattr(update_data, "to_model_data") else update_data.model_dump(exclude_unset=True)
         validate_event_submission(db, event, {**changes, **(extra or {})})
-    updated = update_event(db, event, update_data)
+    updated = update_event(db, event, update_data, commit=False)
     if extra:
         for key, val in extra.items():
             setattr(updated, key, val)
-        db.commit()
-        db.refresh(updated)
-    _log_audit(db, event.id, "update", old_vals, {k: getattr(updated, k) for k in old_vals.keys()})
+    for key, val in config_changes.items():
+        setattr(updated, key, val)  # a new dict for modules, so the JSONB change is always detected
+    _log_audit(
+        db, event.id, "update",
+        {**old_vals, **old_config},
+        {**{k: getattr(updated, k) for k in old_vals.keys()}, **{k: getattr(updated, k) for k in config_changes}},
+        changed_by=_actor_id(current_user), commit=False,
+    )
+    db.commit()
+    db.refresh(updated)
     # detect changes
     changes = {}
     for k, old in old_vals.items():
@@ -277,7 +562,7 @@ def delete_event_service(db: Session, event_id: UUID, current_user: dict = None)
     event = get_event_by_id(db, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    _log_audit(db, event.id, "delete", {"status": event.status}, {"is_deleted": True})
+    _log_audit(db, event.id, "delete", {"status": event.status}, {"is_deleted": True}, changed_by=_actor_id(current_user), commit=False)
     return delete_event(db, event)
 
 
@@ -377,9 +662,9 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
 
     previous = event.status
     event.status = new_status
+    _log_audit(db, event.id, "status_change", {"status": previous}, {"status": new_status}, changed_by=_actor_id(current_user), notes=notes, commit=False)
     db.commit()
     db.refresh(event)
-    _log_audit(db, event.id, "status_change", {"status": previous}, {"status": new_status}, notes=notes)
     if new_status == "cancelled":
         try:
             from app.services.notification_triggers import notify_event_cancelled
@@ -400,6 +685,159 @@ def _get_event_or_404(db: Session, event_id: UUID):
     return event
 
 
+# ---- Seat accounting / payment / authorization helpers ----
+
+_ACTIVE_REGISTRATION_STATUSES = ["confirmed", "attended"]
+
+
+def _to_float(value) -> float:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _event_is_paid(event) -> bool:
+    """A paid event is priced by ``pricing_type``, a top-level ``price`` or any priced ticket type.
+
+    Checking all three matters: events priced only through ``ticket_types`` (or legacy rows whose
+    ``pricing_type`` defaulted to "free") must not be treated as free.
+    """
+    if str(getattr(event, "pricing_type", "") or "").lower() == "paid":
+        return True
+    if _to_float(getattr(event, "price", None)) > 0:
+        return True
+    for ticket in getattr(event, "ticket_types", None) or []:
+        if isinstance(ticket, dict) and _to_float(ticket.get("price")) > 0:
+            return True
+    return False
+
+
+def _seats_taken(db: Session, event_id: UUID, ticket_type_id: str | None = None) -> int:
+    """Seats consumed, counting every seat once.
+
+    Each active (confirmed/attended) registration is one seat. A paid checkout creates one order
+    AND one registration for the same purchase, so orders are NOT counted on top of registrations
+    — only the *extra* seats of a multi-quantity order (an order of N holds N seats but creates a
+    single registration) are added.
+    """
+    from app.models.event_aux_models import EventOrder, EventRegistration
+
+    reg_conditions = [
+        EventRegistration.event_id == event_id,
+        EventRegistration.status.in_(_ACTIVE_REGISTRATION_STATUSES),
+    ]
+    order_conditions = [
+        EventOrder.event_id == event_id,
+        EventOrder.status == "confirmed",
+        EventOrder.quantity != "1",
+    ]
+    if ticket_type_id is not None:
+        reg_conditions.append(EventRegistration.ticket_type_id == ticket_type_id)
+        order_conditions.append(EventOrder.ticket_type_id == ticket_type_id)
+    seats = db.query(EventRegistration).filter(*reg_conditions).count()
+    for order in db.query(EventOrder).filter(*order_conditions).all():
+        seats += max(_to_int(order.quantity, 1) - 1, 0)
+    return seats
+
+
+def _authorize_participant_or_staff(
+    db: Session,
+    event,
+    participant_email: str | None,
+    current_user: dict | None,
+    *,
+    access_token: str | None = None,
+    staff_verified: bool = False,
+    forbidden_detail: str = "Not authorized",
+) -> None:
+    """Allow the participant themself (case-insensitive email), or staff who own the Event's tenant.
+
+    Staff are checked *after* the participant test so a provider who registered for another
+    tenant's event can still manage their own registration. A customer can never act on someone
+    else's registration/order by knowing its id.
+    """
+    user_email = ((current_user or {}).get("email") or "").strip().lower()
+    if user_email and participant_email and participant_email.strip().lower() == user_email:
+        return
+    if current_user and current_user.get("role") in STAFF_ROLES:
+        if staff_verified:
+            return
+        if event is None:
+            raise HTTPException(status_code=404, detail="Event not found")
+        assert_event_access(db, event, current_user, access_token=access_token)
+        return
+    raise HTTPException(status_code=403, detail=forbidden_detail)
+
+
+def _linked_order_for_registration(db: Session, reg):
+    """The order that paid for ``reg``.
+
+    EventOrder has no registration FK, so use the deterministic pairing: same event and participant
+    email (``uq_event_reg_active`` allows at most one active registration per event+email), taking
+    the latest order placed at or shortly before the registration was created.
+    """
+    from datetime import datetime, timedelta
+
+    from app.models.event_aux_models import EventOrder
+
+    cutoff = (reg.created_at or datetime.utcnow()) + timedelta(minutes=5)
+    return (
+        db.query(EventOrder)
+        .filter(
+            EventOrder.event_id == reg.event_id,
+            sa.func.lower(EventOrder.participant_email) == (reg.participant_email or "").strip().lower(),
+            EventOrder.created_at <= cutoff,
+        )
+        .order_by(EventOrder.created_at.desc())
+        .first()
+    )
+
+
+def _active_registration_for_order(db: Session, order):
+    """The active registration an order paid for (at most one per event+email by uq_event_reg_active)."""
+    from app.models.event_aux_models import EventRegistration
+
+    return (
+        db.query(EventRegistration)
+        .filter(
+            EventRegistration.event_id == order.event_id,
+            sa.func.lower(EventRegistration.participant_email) == (order.participant_email or "").strip().lower(),
+            EventRegistration.status.in_(_ACTIVE_REGISTRATION_STATUSES),
+        )
+        .first()
+    )
+
+
+def _cancel_registration_and_release_seat(db: Session, event, reg, *, actor: str | None, audit_action: str, notes: str | None = None) -> None:
+    """Make ``reg`` non-active and offer the freed seat to the waitlist. The caller commits.
+
+    Setting the status is what invalidates the QR for check-in and frees the seat (every capacity
+    count is over confirmed/attended registrations). The audit row is staged in the same transaction.
+    """
+    previous = reg.status
+    reg.status = "cancelled"
+    _log_audit(
+        db, event.id, audit_action,
+        {"registration_id": str(reg.id), "participant_email": reg.participant_email, "status": previous},
+        {"registration_id": str(reg.id), "status": "cancelled"},
+        changed_by=actor, notes=notes, commit=False,
+    )
+    db.flush()  # autoflush is off: the promotion's seat count must see the release
+    try:
+        with db.begin_nested():  # a promotion failure must not undo the cancellation itself
+            _try_promote_from_waitlist(db, event.id, event)
+    except Exception:
+        logger.exception("Waitlist promotion failed after seat release for event %s", event.id)
+
+
 def create_registration_service(db: Session, event_id: UUID, payload):
     from datetime import datetime
     event = _get_event_or_404(db, event_id)
@@ -416,6 +854,29 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     from app.utils.event_utils import validate_registration_window
     validate_registration_window(event)
 
+    # Paid events are registered through checkout/payment only. This endpoint must never mint a
+    # free confirmed registration (and QR) for an event that charges.
+    if _event_is_paid(event):
+        raise HTTPException(
+            status_code=400,
+            detail="This event requires payment. Complete registration through checkout (POST /events/{event_id}/checkout).",
+        )
+
+    # Meal selections (Phase 2.6): optional; validated against the event's meals configuration by the one shared validator.
+    from app.services.event_meal_service import validated_selections
+
+    requested_meals = getattr(payload, "meal_selections", None)
+    # Only a real list is a selection: a payload object without the field (older callers, mocks) means "none".
+    meal_selections = validated_selections(event, requested_meals if isinstance(requested_meals, list) else None)
+
+    # Accommodation selections (Phase 2.7): the same shape, validated by their own single shared validator.
+    from app.services.event_accommodation_service import validated_accommodation_selections
+
+    requested_accommodation = getattr(payload, "accommodation_selections", None)
+    accommodation_selections = validated_accommodation_selections(
+        event, requested_accommodation if isinstance(requested_accommodation, list) else None
+    )
+
     # Group size handling
     group_size = getattr(payload, "group_size", None) or 1
     if group_size < 1:
@@ -427,6 +888,9 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     # Cancelled registrations allow re-registration (legitimate product behaviour).
     norm_email = payload.participant_email.strip().lower()
     try:
+        # `Event` is not imported at module level; without this local import the NameError was swallowed by
+        # the broad except below and the row lock (which serializes the capacity/duplicate checks) never ran.
+        from app.models.event_model import Event
         db.query(Event).filter(Event.id == event_id).with_for_update().first()
     except Exception:
         pass
@@ -496,6 +960,8 @@ def create_registration_service(db: Session, event_id: UUID, payload):
         ticket_type_id=payload.ticket_type_id,
         status="confirmed",
         qr_code=str(uuid.uuid4())[:12].upper(),
+        meal_selections=meal_selections,
+        accommodation_selections=accommodation_selections,
     )
     db.add(reg)
     db.flush()
@@ -581,10 +1047,7 @@ def create_waitlist_entry_service(db: Session, event_id: UUID, payload):
     if event.capacity:
         try:
             max_capacity = int(float(str(event.capacity).strip()))
-            current_count = db.query(EventRegistration).filter(
-                EventRegistration.event_id == event_id,
-                EventRegistration.status.in_(["confirmed", "attended"]),
-            ).count()
+            current_count = _seats_taken(db, event_id)
             if current_count < max_capacity:
                 raise HTTPException(
                     status_code=400,
@@ -599,6 +1062,9 @@ def create_waitlist_entry_service(db: Session, event_id: UUID, payload):
     # --- Duplicate waitlist protection (race-safe with FOR UPDATE on event row) ---
     norm_email = payload.participant_email.strip().lower()
     try:
+        # `Event` is not imported at module level; without this local import the NameError was swallowed by
+        # the broad except below and the row lock (which serializes the capacity/duplicate checks) never ran.
+        from app.models.event_model import Event
         db.query(Event).filter(Event.id == event_id).with_for_update().first()
     except Exception:
         pass
@@ -639,14 +1105,14 @@ def delete_waitlist_entry_service(
     event_id: UUID,
     entry_id: UUID,
     current_user: dict | None = None,
+    access_token: str | None = None,
 ):
     """Leave / remove a waitlist entry.
 
-    Phase A IDOR fix:
-    - Customer role: can only remove their own entry (verified by email).
-    - Admin / provider: can remove any entry for events they manage.
-    - Returns 404 (not 403) when entry is absent or unauthorised to avoid
-      leaking the existence of another user's entry.
+    - The person on the waitlist (case-insensitive email) may always remove their own entry.
+    - Staff may remove any entry of an event they own (admin/provider of the owning tenant, or an
+      active Platform Super Admin); staff of another tenant are refused.
+    - Anyone else gets 404 (not 403) so another user's entry is not revealed.
     """
     from app.models.event_aux_models import EventWaitlist
 
@@ -658,14 +1124,13 @@ def delete_waitlist_entry_service(
     if not entry:
         raise HTTPException(status_code=404, detail="Waitlist entry not found")
 
-    # Ownership check — customers can only remove their own entry.
     if current_user:
-        role = current_user.get("role")
-        if role not in ("admin", "super_admin", "provider"):
-            user_email = (current_user.get("email") or "").strip().lower()
-            entry_email = (entry.participant_email or "").strip().lower()
-            if user_email != entry_email:
-                # Return 404 to avoid leaking that another user's entry exists.
+        user_email = (current_user.get("email") or "").strip().lower()
+        entry_email = (entry.participant_email or "").strip().lower()
+        if not (user_email and user_email == entry_email):
+            if current_user.get("role") in (*STAFF_ROLES, "super_admin"):
+                assert_event_access(db, _get_event_or_404(db, event_id), current_user, access_token=access_token)
+            else:
                 raise HTTPException(status_code=404, detail="Waitlist entry not found")
 
     entry.status = "left"
@@ -702,45 +1167,48 @@ def my_waitlist_service(db: Session, email: str, status: str | None = None):
             "participant_email": w.participant_email,
             "status": w.status,
             "registration_id": w.registration_id,
+            "payment_offer_expires_at": w.payment_offer_expires_at,
             "created_at": w.created_at
         })
     return results
 
 
-def get_sessions_service(db: Session, event_id: UUID):
+def _mask_session_meeting_links(sessions: list) -> list:
+    """Same protection EventResponse/EventSessionResponse apply: never expose a real session URL."""
+    masked = []
+    for session in sessions or []:
+        if isinstance(session, dict) and session.get("meeting_link"):
+            session = {**session, "meeting_link": "protected"}
+        masked.append(session)
+    return masked
+
+
+def _with_session_ids(sessions: list) -> list:
+    """Give any legacy id-less session an id. Called only from paths that already rewrite the list."""
+    import uuid
+
+    return [
+        {**session, "id": str(uuid.uuid4())} if isinstance(session, dict) and not session.get("id") else session
+        for session in (sessions or [])
+    ]
+
+
+def get_sessions_service(db: Session, event_id: UUID, current_user: dict | None = None, access_token: str | None = None):
+    """Agenda for an Event.
+
+    Read-only: a GET never writes (legacy id-less sessions are given ids by the next session
+    add/update/delete, or by an Event edit that resends the list). Staff of the owning tenant
+    get the stored sessions; everyone else gets meeting_link == "protected" and must use the
+    protected meeting-link endpoints for the real URL.
+    """
     event = _get_event_or_404(db, event_id)
-    sessions = event.sessions or []
-    # Backfill missing ids for legacy embedded sessions created via POST /api/v1/events
-    # These were persisted without id before fix, so PUT/DELETE would 404 - generate and persist now
-    if sessions and any(not s.get("id") for s in sessions if isinstance(s, dict)):
-        import copy
-        import uuid
-
-        from sqlalchemy.orm.attributes import flag_modified
-
-        new_sessions = copy.deepcopy(sessions)
-        changed = False
-        for s in new_sessions:
-            if isinstance(s, dict) and not s.get("id"):
-                s["id"] = str(uuid.uuid4())
-                changed = True
-            # normalize date object to string for consistency
-            sd = s.get("session_date") if isinstance(s, dict) else None
-            if hasattr(sd, "isoformat"):
-                s["session_date"] = sd.isoformat()
-                changed = True
-        if changed:
-            # sort by (session_date, start_time) like add/update
-            try:
-                new_sessions = sorted(new_sessions, key=lambda x: (str(x.get("session_date") or ""), str(x.get("start_time") or "")))
-            except Exception:
-                pass
-            event.sessions = new_sessions
-            flag_modified(event, "sessions")
-            db.commit()
-            db.refresh(event)
-            return event.sessions or []
-    return sessions
+    viewer = build_event_viewer(db, current_user, access_token=access_token)
+    if not can_view_event(db, event, viewer, access_token=access_token):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    sessions = list(event.sessions or [])
+    if viewer_owns_event(event, viewer):
+        return sessions
+    return _mask_session_meeting_links(sessions)
 
 
 def _validate_session_date(event, session_date):
@@ -773,7 +1241,7 @@ def add_session_service(db: Session, event_id: UUID, payload):
 
     event = _get_event_or_404(db, event_id)
     _validate_session_date(event, payload.session_date)
-    sessions = copy.deepcopy(event.sessions or [])
+    sessions = _with_session_ids(copy.deepcopy(event.sessions or []))
     # model_dump will serialize date as date object; convert to ISO string for JSONB
     data = payload.model_dump()
     if data.get("session_date"):
@@ -793,7 +1261,7 @@ def update_session_service(db: Session, event_id: UUID, session_id: str, payload
     from sqlalchemy.orm.attributes import flag_modified
 
     event = _get_event_or_404(db, event_id)
-    sessions = copy.deepcopy(event.sessions or [])
+    sessions = _with_session_ids(copy.deepcopy(event.sessions or []))
     for s in sessions:
         if s.get("id") == session_id:
             updates = payload.model_dump(exclude_unset=True)
@@ -819,7 +1287,7 @@ def delete_session_service(db: Session, event_id: UUID, session_id: str):
 
     event = _get_event_or_404(db, event_id)
     original_len = len(event.sessions or [])
-    sessions = [s for s in (event.sessions or []) if s.get("id") != session_id]
+    sessions = [s for s in _with_session_ids(event.sessions or []) if s.get("id") != session_id]
     if len(sessions) == original_len:
         raise HTTPException(status_code=404, detail="Session not found")
     event.sessions = sessions
@@ -833,19 +1301,16 @@ def get_event_attendance_service(db: Session, event_id: UUID):
     from app.models.event_aux_models import EventRegistration
     from app.schemas.event_schema import EventAttendanceItem, EventAttendanceResponse
 
+    event = _get_event_or_404(db, event_id)
     regs = db.query(EventRegistration).filter(EventRegistration.event_id == event_id).all()
     attended = [r for r in regs if r.status == "attended"]
     no_show = [r for r in regs if r.status == "no_show"]
 
-    # Build per-session attendance breakdown
-    by_session: dict[str, dict] = {}
-    for r in regs:
-        if r.session_id:
-            if r.session_id not in by_session:
-                by_session[r.session_id] = {"total": 0, "attended": 0}
-            by_session[r.session_id]["total"] += 1
-            if r.status == "attended":
-                by_session[r.session_id]["attended"] += 1
+    # Per-session breakdown from the dedicated session attendance records (one entry per session of the
+    # event; None when the event has no sessions). EventRegistration.session_id is no longer the source.
+    from app.services.event_session_attendance_service import attendance_by_session_view, summarize_session_attendance
+
+    by_session = attendance_by_session_view(summarize_session_attendance(db, event))
 
     participants = [
         EventAttendanceItem(
@@ -867,7 +1332,7 @@ def get_event_attendance_service(db: Session, event_id: UUID):
         total_registered=len(regs),
         total_attended=len(attended),
         total_no_show=len(no_show),
-        attendance_by_session=by_session if by_session else None,
+        attendance_by_session=by_session,
         participants=participants
     )
 
@@ -945,12 +1410,16 @@ def get_event_feedbacks_service(db: Session, event_id: UUID, is_review: bool = F
     return db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review == is_review).all()
 
 
-def moderate_review_service(db: Session, review_id: UUID, action: str):
+def moderate_review_service(db: Session, review_id: UUID, action: str, event_id: UUID | None = None):
     from app.models.event_aux_models import EventFeedback
     allowed = {"approved", "rejected", "pending"}
     if action not in allowed:
         raise HTTPException(status_code=400, detail=f"Invalid moderation action. Allowed: {sorted(allowed)}")
-    fb = db.query(EventFeedback).filter(EventFeedback.id == review_id).first()
+    conditions = [EventFeedback.id == review_id]
+    if event_id is not None:
+        # The route already proved ownership of ``event_id``; the review must belong to that event.
+        conditions.append(EventFeedback.event_id == event_id)
+    fb = db.query(EventFeedback).filter(*conditions).first()
     if not fb:
         raise HTTPException(status_code=404, detail="Review not found")
     fb.moderation_status = action
@@ -976,13 +1445,9 @@ def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
         attended = sum(1 for r in regs if r.status == "attended")
         no_show = sum(1 for r in regs if r.status == "no_show")
         cancelled = sum(1 for r in regs if r.status == "cancelled")
-        by_session: dict = {}
-        for r in regs:
-            if r.session_id:
-                by_session.setdefault(r.session_id, {"total": 0, "attended": 0})
-                by_session[r.session_id]["total"] += 1
-                if r.status == "attended":
-                    by_session[r.session_id]["attended"] += 1
+        from app.services.event_session_attendance_service import attendance_by_session_view, summarize_session_attendance
+
+        by_session = attendance_by_session_view(summarize_session_attendance(db, event)) or {}
         data = {"total": len(regs), "attended": attended, "no_show": no_show, "cancelled": cancelled, "by_session": by_session}
     elif report_type == "feedback":
         feedbacks = db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review.is_(False)).all()
@@ -992,19 +1457,11 @@ def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
         data = {"total_feedbacks": len(feedbacks), "total_reviews": len(reviews), "average_rating": avg_rating,
                 "feedbacks": [{"id": str(f.id), "rating": f.rating, "comment": f.comment} for f in feedbacks[:20]]}
     elif report_type == "revenue":
-        ticket_prices = {tt.get("id"): float(tt.get("price", 0) or 0) for tt in (event.ticket_types or []) if isinstance(tt, dict)}
-        revenue_by_type: dict = {}
-        total_revenue = 0
-        for r in regs:
-            if r.ticket_type_id and r.status in ("confirmed", "attended"):
-                price = ticket_prices.get(r.ticket_type_id, 0)
-                try:
-                    price = float(price)
-                except Exception:
-                    price = 0
-                revenue_by_type[r.ticket_type_id] = revenue_by_type.get(r.ticket_type_id, 0) + price
-                total_revenue += price
-        data = {"total_revenue": total_revenue, "by_ticket_type": revenue_by_type, "currency": event.currency}
+        # Revenue is what was actually paid (EventOrder), not ticket prices x registrations: that counted
+        # unpaid/free registrations and ignored quantity and refunds. Same shape as before, sourced from orders.
+        from app.services.event_dashboard_service import compute_revenue_report
+
+        data = compute_revenue_report(db, event_id, event.currency)
     elif report_type == "cancellation":
         cancelled = [r for r in regs if r.status == "cancelled"]
         # also orders refund_requested
@@ -1031,13 +1488,33 @@ def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
     return {"event_id": str(event_id), "type": report_type, "data": data}
 
 
-def get_event_summary_service(db: Session, enterprise_id: UUID | None = None):
+def get_event_summary_service(
+    db: Session,
+    enterprise_id: UUID | None = None,
+    *,
+    tenant_id: UUID | str | None = None,
+    platform_wide: bool = False,
+):
+    """Aggregate dashboard for a tenant.
+
+    Scope comes from the authenticated caller (``tenant_id``) — never from a request
+    parameter. ``platform_wide=True`` (explicit, internal, Platform Super Admin only) is the
+    only way to aggregate across tenants; omitting both is refused rather than defaulting to "all".
+    """
     from sqlalchemy import func
     from app.models.event_aux_models import EventFeedback, EventRegistration
     from app.models.event_model import Event
 
     q = db.query(Event).filter(Event.is_deleted.is_(False))
+    if tenant_id is not None:
+        owned = event_tenant_clause(tenant_id)
+        if owned is None:
+            raise HTTPException(status_code=403, detail="Tenant could not be resolved for this caller")
+        q = q.filter(owned)
+    elif not platform_wide:
+        raise HTTPException(status_code=403, detail="Tenant could not be resolved for this caller")
     if enterprise_id:
+        # Narrowing only: combined with the tenant clause above, another tenant's enterprise yields nothing.
         q = q.filter(Event.enterprise_id == enterprise_id)
 
     # by_status
@@ -1095,38 +1572,74 @@ def _validate_payload_tenant_id(payload_tenant_id, auth_tenant_id):
         raise HTTPException(status_code=403, detail="Supplied tenant_id does not belong to authenticated user")
 
 
-def create_template_service(db: Session, payload: dict, current_user: dict | None = None):
+def _template_owner_tenant(db: Session, tmpl) -> str | None:
+    """Owning tenant of a template: its own tenant_id, else its Enterprise's tenant (legacy rows)."""
+    if tmpl.tenant_id:
+        return str(tmpl.tenant_id).strip().lower()
+    if tmpl.enterprise_id:
+        ent = db.query(Enterprise).filter(Enterprise.id == tmpl.enterprise_id).first()
+        if ent is not None and ent.tenant_id:
+            return str(ent.tenant_id).strip().lower()
+    return None
+
+
+def _assert_template_access(db: Session, tmpl, current_user: dict | None, access_token: str | None = None) -> str | None:
+    """Fail-closed tenant isolation for templates; returns the caller's tenant (None for the platform).
+
+    The caller's tenant is resolved from the token, then the database / identity service — a
+    missing tenant claim is a denial, not "access to everything". A template with no
+    resolvable owner is reachable only by an active Platform Super Admin.
+    """
+    if is_platform_super_admin(current_user):
+        return None
+    caller_tenant = resolve_caller_tenant_id(db, current_user, access_token=access_token)
+    owner_tenant = _template_owner_tenant(db, tmpl)
+    if not caller_tenant or not owner_tenant or caller_tenant != owner_tenant:
+        raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
+    return caller_tenant
+
+
+def _verify_enterprise_in_tenant(db: Session, enterprise_id, tenant_id) -> None:
+    """403 when the Enterprise belongs to a different tenant than the caller's."""
+    try:
+        enterprise_uuid = UUID(str(enterprise_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid enterprise_id")
+    ent = db.query(Enterprise).filter(Enterprise.id == enterprise_uuid).first()
+    if ent is None:
+        raise HTTPException(status_code=404, detail="Enterprise not found")
+    if ent.tenant_id and str(ent.tenant_id).strip().lower() != str(tenant_id).strip().lower():
+        raise HTTPException(status_code=403, detail="enterprise_id does not belong to your tenant")
+
+
+def create_template_service(db: Session, payload: dict, current_user: dict | None = None, access_token: str | None = None):
     from app.models.event_aux_models import EventTemplate
 
-    supplied_tenant_id = payload.get("tenant_id")
-    auth_tenant_id = _resolve_auth_tenant_id(current_user)
-    _validate_payload_tenant_id(supplied_tenant_id, auth_tenant_id)
+    # The template is always created under the caller's own tenant. A tenant_id in the body is
+    # only accepted when it equals it (never trusted on its own, even when the token lacks the claim).
+    auth_tenant_id = resolve_caller_tenant_id(db, current_user, access_token=access_token)
+    if not auth_tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant could not be resolved for this caller")
+    _validate_payload_tenant_id(payload.get("tenant_id"), auth_tenant_id)
+    tenant_id = auth_tenant_id
 
-    # Effective tenant_id: payload explicit > auth context > enterprise lookup
-    tenant_id = supplied_tenant_id or auth_tenant_id
     enterprise_id = payload.get("enterprise_id")
-    if current_user:
-        if not enterprise_id:
-            enterprise_id = current_user.get("enterprise_id") or current_user.get("enterpriseId")
-            if not enterprise_id and current_user.get("tenant_slug"):
-                try:
-                    from app.models.enterprise_model import Enterprise
-                    ent = db.query(Enterprise).filter(Enterprise.slug == current_user.get("tenant_slug")).first()
-                    if ent:
-                        enterprise_id = str(ent.id)
-                        if not tenant_id and ent.tenant_id:
-                            tenant_id = str(ent.tenant_id)
-                except Exception:
-                    pass
-        # fallback: resolve tenant_id from enterprise if still missing
-        if not tenant_id and enterprise_id:
+    if enterprise_id:
+        _verify_enterprise_in_tenant(db, enterprise_id, tenant_id)
+    elif current_user:
+        enterprise_id = current_user.get("enterprise_id") or current_user.get("enterpriseId")
+        if not enterprise_id and current_user.get("tenant_slug"):
             try:
-                from app.models.enterprise_model import Enterprise
-                ent = db.query(Enterprise).filter(Enterprise.id == enterprise_id).first()
-                if ent and ent.tenant_id:
-                    tenant_id = str(ent.tenant_id)
+                ent = db.query(Enterprise).filter(Enterprise.slug == current_user.get("tenant_slug")).first()
+                if ent:
+                    enterprise_id = str(ent.id)
             except Exception:
                 pass
+        if enterprise_id:
+            try:
+                _verify_enterprise_in_tenant(db, enterprise_id, tenant_id)
+            except HTTPException:
+                enterprise_id = None  # a default that is not the caller's must not be attached
 
     from app.services.event_template_mapping import template_provenance
     provenance = template_provenance(db, payload)
@@ -1134,8 +1647,8 @@ def create_template_service(db: Session, payload: dict, current_user: dict | Non
         **provenance,
         name=payload.get("name", "Template"),
         template_data=payload.get("template_data", payload),
-        tenant_id=tenant_id,
-        enterprise_id=enterprise_id,
+        tenant_id=UUID(str(tenant_id)),
+        enterprise_id=UUID(str(enterprise_id)) if enterprise_id else None,
     )
     db.add(tmpl)
     db.commit()
@@ -1215,8 +1728,8 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
         if ticket and ticket.get("capacity"):
             try:
                 cap = int(float(str(ticket["capacity"]).strip()))
-                cnt = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.ticket_type_id==payload.ticket_type_id, EventOrder.status.in_(["confirmed"])).count()
-                cnt += db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.ticket_type_id==payload.ticket_type_id, EventRegistration.status.in_(["confirmed","attended"])).count()
+                # One purchase creates one order AND one registration — count each seat once.
+                cnt = _seats_taken(db, event_id, payload.ticket_type_id)
                 if cnt + payload.quantity > cap:
                     raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
             except ValueError:
@@ -1226,7 +1739,11 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
         waitlist_entry = None
         waitlist_id = getattr(payload, "waitlist_id", None)
         if waitlist_id:
-            waitlist_entry = db.query(EventWaitlist).filter(EventWaitlist.id == waitlist_id).with_for_update().first()
+            # Scoped to THIS event: an offer for another event must never unlock a seat here.
+            waitlist_entry = db.query(EventWaitlist).filter(
+                EventWaitlist.id == waitlist_id,
+                EventWaitlist.event_id == event_id,
+            ).with_for_update().first()
             if not waitlist_entry:
                 raise HTTPException(status_code=404, detail="Waitlist entry not found")
             if waitlist_entry.participant_email.strip().lower() != participant_email:
@@ -1240,10 +1757,7 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
             if event.capacity:
                 try:
                     max_capacity = int(float(str(event.capacity).strip()))
-                    current_count = db.query(EventRegistration).filter(
-                        EventRegistration.event_id == event_id,
-                        EventRegistration.status.in_(["confirmed", "attended"])
-                    ).count()
+                    current_count = _seats_taken(db, event_id)
                     if current_count + payload.quantity > max_capacity:
                         raise HTTPException(
                             status_code=400,
@@ -1323,12 +1837,32 @@ def get_event_orders_service(db: Session, event_id: UUID):
     _get_event_or_404(db, event_id)
     return db.query(EventOrder).filter(EventOrder.event_id==event_id).order_by(EventOrder.created_at.desc()).all()
 
-def create_event_refund_service(db: Session, event_id: UUID, reg_id: UUID, payload):
+def create_event_refund_service(
+    db: Session,
+    event_id: UUID,
+    reg_id: UUID,
+    payload,
+    current_user: dict | None = None,
+    access_token: str | None = None,
+    staff_verified: bool = False,
+):
+    """Request a refund for an order (paid) or cancel a registration (free).
+
+    Authorization: the participant themself (case-insensitive email) or staff who own the Event.
+    ``staff_verified`` is set only by routes whose dependency already proved ownership.
+    """
     from app.models.event_aux_models import EventOrder, EventRegistration
     event = _get_event_or_404(db, event_id)
+    actor = _actor_id(current_user)
+    reason = payload.reason if payload and getattr(payload, "reason", None) else None
     # Try order first, then registration
     order = db.query(EventOrder).filter(EventOrder.event_id==event_id, EventOrder.id==reg_id).first()
     if order:
+        _authorize_participant_or_staff(
+            db, event, order.participant_email, current_user,
+            access_token=access_token, staff_verified=staff_verified,
+            forbidden_detail="Not authorized to refund this order",
+        )
         if order.status in ("refunded",):
             raise HTTPException(status_code=400, detail="Already refunded")
         if order.payment_status == "refunded":
@@ -1338,9 +1872,16 @@ def create_event_refund_service(db: Session, event_id: UUID, reg_id: UUID, paylo
         reg = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==order.participant_email, EventRegistration.status=="attended").first()
         if reg:
             raise HTTPException(status_code=400, detail="Cannot refund after attendance (checked-in)")
+        previous = order.status
         order.status = "refund_requested"
         order.payment_status = "refund_requested"
-        order.refund_reason = payload.reason if payload and getattr(payload, "reason", None) else None
+        order.refund_reason = reason
+        _log_audit(
+            db, event_id, "refund",
+            {"order_id": str(order.id), "status": previous},
+            {"order_id": str(order.id), "status": "refund_requested"},
+            changed_by=actor, notes=reason, commit=False,
+        )
         db.commit(); db.refresh(order)
         try:
             from app.services.notification_triggers import notify_refund_status
@@ -1348,13 +1889,25 @@ def create_event_refund_service(db: Session, event_id: UUID, reg_id: UUID, paylo
         except Exception:
             pass
         return order
-    # fallback: registration refund (free events)
+    # fallback: registration refund/cancel
     reg = db.query(EventRegistration).filter(EventRegistration.id==reg_id, EventRegistration.event_id==event_id).first()
     if not reg:
         raise HTTPException(status_code=404, detail="Registration/Order not found")
+    _authorize_participant_or_staff(
+        db, event, reg.participant_email, current_user,
+        access_token=access_token, staff_verified=staff_verified,
+        forbidden_detail="Not authorized to refund this registration",
+    )
     if reg.status == "attended":
         raise HTTPException(status_code=400, detail="Cannot refund after attendance")
-    reg.status = "cancelled"
+    if reg.status != "cancelled":
+        # A paid registration's order must not be left looking settled: record the refund request on it.
+        paid_order = _linked_order_for_registration(db, reg)
+        if paid_order is not None and paid_order.status == "confirmed":
+            paid_order.status = "refund_requested"
+            paid_order.payment_status = "refund_requested"
+            paid_order.refund_reason = reason
+        _cancel_registration_and_release_seat(db, event, reg, actor=actor, audit_action="refund", notes=reason)
     db.commit()
     try:
         from app.services.notification_triggers import notify_refund_status
@@ -1427,29 +1980,21 @@ def delete_event_category_service(db: Session, category_id: UUID):
 # ---- Template CRUD (add update/delete) ----
 
 
-def get_template_service(db: Session, template_id: UUID, current_user: dict | None = None):
+def get_template_service(db: Session, template_id: UUID, current_user: dict | None = None, access_token: str | None = None):
     from app.models.event_aux_models import EventTemplate
     tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found")
-    # Tenant isolation
-    if current_user:
-        user_tid = current_user.get("tenant_id")
-        if user_tid and tmpl.tenant_id and str(tmpl.tenant_id) != str(user_tid):
-            raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
+    _assert_template_access(db, tmpl, current_user, access_token)
     return tmpl
 
 
-def update_template_service(db: Session, template_id: UUID, payload: dict, current_user: dict | None = None):
+def update_template_service(db: Session, template_id: UUID, payload: dict, current_user: dict | None = None, access_token: str | None = None):
     from app.models.event_aux_models import EventTemplate
     tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found")
-    # Tenant isolation
-    if current_user:
-        user_tid = current_user.get("tenant_id")
-        if user_tid and tmpl.tenant_id and str(tmpl.tenant_id) != str(user_tid):
-            raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
+    _assert_template_access(db, tmpl, current_user, access_token)
     from app.services.event_template_mapping import template_provenance
     provenance = template_provenance(db, payload, tmpl)
     for key, value in provenance.items():
@@ -1463,16 +2008,12 @@ def update_template_service(db: Session, template_id: UUID, payload: dict, curre
     return tmpl
 
 
-def delete_template_service(db: Session, template_id: UUID, current_user: dict | None = None):
+def delete_template_service(db: Session, template_id: UUID, current_user: dict | None = None, access_token: str | None = None):
     from app.models.event_aux_models import EventTemplate
     tmpl = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found")
-    # Tenant isolation
-    if current_user:
-        user_tid = current_user.get("tenant_id")
-        if user_tid and tmpl.tenant_id and str(tmpl.tenant_id) != str(user_tid):
-            raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
+    _assert_template_access(db, tmpl, current_user, access_token)
     db.delete(tmpl)
     db.commit()
     return {"message": "Template deleted"}
@@ -1481,7 +2022,35 @@ def delete_template_service(db: Session, template_id: UUID, current_user: dict |
 # ---- Batch Check-in ----
 
 
-def batch_checkin_service(db: Session, event_id: UUID, participants: list):
+def _actor_uuid(current_user: dict | None):
+    """The acting user's id as a UUID for ``checked_in_by`` (None when absent or not a UUID)."""
+    from uuid import UUID as _UUID
+
+    if not current_user or not current_user.get("id"):
+        return None
+    try:
+        return _UUID(str(current_user["id"]))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _validate_session_for_event(event, session_id: str | None) -> None:
+    """A session_id supplied to check-in must be one of the Event's own embedded sessions."""
+    if not session_id or event is None:
+        return
+    known = {str(item.get("id")) for item in (event.sessions or []) if isinstance(item, dict) and item.get("id")}
+    if str(session_id) not in known:
+        raise HTTPException(status_code=400, detail="session_id does not belong to this event")
+
+
+def _registration_is_refunded(db: Session, reg) -> bool:
+    """True when the order that paid for ``reg`` has been refunded (covers rows refunded before
+    approval started cancelling the registration)."""
+    order = _linked_order_for_registration(db, reg)
+    return order is not None and (order.status == "refunded" or order.payment_status == "refunded")
+
+
+def batch_checkin_service(db: Session, event_id: UUID, participants: list, current_user: dict | None = None):
     from datetime import datetime
     from app.models.event_aux_models import EventRegistration
     from app.models.event_model import Event as Ev
@@ -1491,6 +2060,8 @@ def batch_checkin_service(db: Session, event_id: UUID, participants: list):
     if ev_chk and ev_chk.status in ["cancelled", "completed", "archived", "suspended"]:
         raise HTTPException(status_code=400, detail=f"Cannot check-in: event is {ev_chk.status}")
 
+    actor_uuid = _actor_uuid(current_user)
+    actor = _actor_id(current_user)
     results = []
     succeeded = 0
     failed = 0
@@ -1511,6 +2082,18 @@ def batch_checkin_service(db: Session, event_id: UUID, participants: list):
                 "registration_id": item.registration_id or item.qr_code,
                 "status": "failed",
                 "message": "Registration not found"
+            })
+            failed += 1
+            continue
+        try:
+            _validate_session_for_event(ev_chk, item.session_id)
+        except HTTPException as exc:
+            results.append({
+                "registration_id": reg.id,
+                "participant_name": reg.participant_name,
+                "participant_email": reg.participant_email,
+                "status": "failed",
+                "message": exc.detail,
             })
             failed += 1
             continue
@@ -1535,11 +2118,26 @@ def batch_checkin_service(db: Session, event_id: UUID, participants: list):
             })
             succeeded += 1
             continue
+        if _registration_is_refunded(db, reg):
+            results.append({
+                "registration_id": reg.id,
+                "participant_name": reg.participant_name,
+                "participant_email": reg.participant_email,
+                "status": "failed",
+                "message": "Registration was refunded"
+            })
+            failed += 1
+            continue
         reg.status = "attended"
         reg.checked_in_at = datetime.utcnow()
-        reg.checked_in_by = None  # batch — no single user context
+        reg.checked_in_by = actor_uuid  # the operator who ran the batch
         if item.session_id:
             reg.session_id = item.session_id
+        _log_audit(
+            db, event_id, "batch_check_in", None,
+            {"registration_id": str(reg.id), "participant_email": reg.participant_email, "session_id": item.session_id},
+            changed_by=actor, commit=False,
+        )
         results.append({
             "registration_id": reg.id,
             "participant_name": reg.participant_name,
@@ -1556,26 +2154,70 @@ def batch_checkin_service(db: Session, event_id: UUID, participants: list):
 # ---- Waitlist Auto-Promote ----
 
 
-def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
-    """If capacity has opened up, promote the oldest waitlisted person."""
+def cancel_registration_service(db: Session, event_id: UUID, reg_id: UUID, current_user: dict, access_token: str | None = None):
+    """Cancel a registration: by the participant themself or by staff who own the Event."""
+    from app.models.event_aux_models import EventRegistration
+
+    reg = db.query(EventRegistration).filter(EventRegistration.id == reg_id, EventRegistration.event_id == event_id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    event = get_event_by_id(db, event_id)
+    _authorize_participant_or_staff(
+        db, event, reg.participant_email, current_user,
+        access_token=access_token, forbidden_detail="Not authorized to cancel this registration",
+    )
+    if reg.status == "attended":
+        raise HTTPException(status_code=400, detail="Cannot cancel: already attended (use refund flow)")
+    if reg.status == "cancelled":
+        return {"message": "Registration already cancelled"}
+    if event is not None:
+        _cancel_registration_and_release_seat(db, event, reg, actor=_actor_id(current_user), audit_action="registration_cancel")
+    else:  # orphaned registration of a removed event: nothing to promote into
+        reg.status = "cancelled"
+    db.commit()
+    if event is not None:
+        try:
+            from app.services.notification_triggers import notify_single_cancellation
+            notify_single_cancellation(db, event, reg)
+        except Exception:
+            logger.warning("Cancellation notification failed for registration %s", reg_id, exc_info=True)
+    return {"message": "Registration cancelled"}
+
+
+def _try_promote_from_waitlist(db: Session, event_id: UUID, event=None):
+    """If a seat has opened, promote the oldest waiting entry (FIFO).
+
+    Free event -> a confirmed registration is created. Paid event (top-level price OR ticket types)
+    -> the entry becomes ``payment_pending`` with a 15-minute offer redeemed through checkout
+    (``waitlist_id``); ``expire_waitlist_offer_task`` releases it and offers the next person.
+    Only flushes — the caller owns the transaction. Seats already promised to a live payment offer
+    count as taken, so repeated triggers can never offer more seats than exist.
+    """
     import uuid
+    from datetime import datetime, timedelta
     from app.models.event_aux_models import EventRegistration, EventWaitlist
 
-    if not event.capacity:
+    if event is None:
+        event = get_event_by_id(db, event_id)
+    # Never promote into an event that is not open (cancelled/suspended/completed/archived/draft).
+    if event is None or event.status != "published" or not event.capacity:
         return
     try:
         max_capacity = int(float(str(event.capacity).strip()))
     except ValueError:
         return
-        
-    current_count = db.query(EventRegistration).filter(
-        EventRegistration.event_id == event_id,
-        EventRegistration.status.in_(["confirmed", "attended"])
+
+    live_offers = db.query(EventWaitlist).filter(
+        EventWaitlist.event_id == event_id,
+        EventWaitlist.status == "payment_pending",
+        sa.or_(
+            EventWaitlist.payment_offer_expires_at.is_(None),
+            EventWaitlist.payment_offer_expires_at > datetime.utcnow(),
+        ),
     ).count()
-    
-    if current_count >= max_capacity:
+    if _seats_taken(db, event_id) + live_offers >= max_capacity:
         return
-        
+
     # Lock the oldest waitlist entry using with_for_update(skip_locked=True)
     next_in_line = (
         db.query(EventWaitlist)
@@ -1584,36 +2226,32 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
         .with_for_update(skip_locked=True)
         .first()
     )
-    
+
     if not next_in_line:
         return
-        
+
     # Verify they don't already have a confirmed registration (Phase A check)
-    import sqlalchemy as sa
     existing_reg = db.query(EventRegistration).filter(
         EventRegistration.event_id == event_id,
         sa.func.lower(EventRegistration.participant_email) == next_in_line.participant_email.strip().lower(),
         EventRegistration.status.in_(["confirmed", "attended"])
     ).first()
-    
+
     if existing_reg:
         # If they somehow registered already, just mark waitlist as left and abort promotion
         next_in_line.status = "left"
         db.flush()
         return
 
-    # Determine if event is paid
-    price = event.price
-    if price and str(price).replace('.', '', 1).isdigit() and float(price) > 0:
-        is_paid = True
-    else:
-        is_paid = False
-
-    if is_paid:
-        from datetime import datetime, timedelta
+    if _event_is_paid(event):
         # Set payment offer
         next_in_line.status = "payment_pending"
         next_in_line.payment_offer_expires_at = datetime.utcnow() + timedelta(minutes=15)
+        _log_audit(
+            db, event_id, "waitlist_offer", None,
+            {"waitlist_id": str(next_in_line.id), "participant_email": next_in_line.participant_email, "expires_at": next_in_line.payment_offer_expires_at},
+            changed_by="system:waitlist", commit=False,
+        )
         db.flush()
 
         # We must trigger celery task in a way that respects the current transaction.
@@ -1622,20 +2260,29 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
         try:
             from app.tasks.event_tasks import expire_waitlist_offer_task
             expire_waitlist_offer_task.apply_async(
-                args=[str(next_in_line.id)], 
+                args=[str(next_in_line.id)],
                 countdown=15 * 60
             )
         except Exception:
             pass
-        
-        # Notify user of payment offer
+
+        # Notify the person of the payment offer (notify_generic never existed, so this used to be
+        # silently skipped by the broad except below — the offer was made but nobody was told).
         try:
-            # We assume a suitable notification for payment_offer exists, or use a generic one
-            from app.services.notification_triggers import notify_generic
-            notify_generic(db, user_id=None, email=next_in_line.participant_email, title="Spot Available!", body=f"A spot is now available for {event.title}. Complete payment within 15 minutes to secure your place.")
+            from app.services.notification_triggers import _safe_notify
+            _safe_notify(
+                db,
+                "Spot Available!",
+                f"A spot is now available for {event.title}. Complete payment within 15 minutes to secure your place.",
+                "event_waitlist_offer",
+                event.tenant_id,
+                {"event_id": str(event_id), "waitlist_id": str(next_in_line.id)},
+                participant_email=next_in_line.participant_email,
+                channels=["in_app", "push", "email"],
+            )
         except Exception:
-            pass
-            
+            logger.warning("Waitlist offer notification failed for %s", next_in_line.participant_email, exc_info=True)
+
     else:
         # Auto-promote (Free flow)
         reg = EventRegistration(
@@ -1647,14 +2294,19 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
         )
         db.add(reg)
         db.flush() # ensure reg.id is available
-    
+
         # Update waitlist entry instead of deleting
         next_in_line.status = "promoted"
         next_in_line.registration_id = reg.id
+        _log_audit(
+            db, event_id, "waitlist_promoted", None,
+            {"waitlist_id": str(next_in_line.id), "registration_id": str(reg.id), "participant_email": next_in_line.participant_email},
+            changed_by="system:waitlist", commit=False,
+        )
         db.flush()
-    
+
         # The caller manages the db.commit() for the transaction.
-        
+
         # Notify
         try:
             from app.services.notification_triggers import notify_registration_confirmation
@@ -1666,8 +2318,18 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event):
 # ---- Event Auto-Complete ----
 
 
-def auto_complete_past_events_service(db: Session, enterprise_id: UUID | None = None):
-    """Transition published events past their end_date to completed."""
+def auto_complete_past_events_service(
+    db: Session,
+    enterprise_id: UUID | None = None,
+    *,
+    tenant_id: UUID | str | None = None,
+    current_user: dict | None = None,
+):
+    """Transition published events past their end_date to completed.
+
+    ``tenant_id`` (the caller's tenant) restricts the sweep to that tenant's events; only a
+    Platform Super Admin call leaves it ``None`` and sweeps every tenant.
+    """
     from app.models.event_model import Event as Ev
     from datetime import datetime
     now = datetime.utcnow()
@@ -1676,6 +2338,11 @@ def auto_complete_past_events_service(db: Session, enterprise_id: UUID | None = 
         Ev.end_date < now,
         Ev.is_deleted.is_(False)
     )
+    if tenant_id is not None:
+        owned = event_tenant_clause(tenant_id)
+        if owned is None:
+            raise HTTPException(status_code=403, detail="Tenant could not be resolved for this caller")
+        q = q.filter(owned)
     if enterprise_id:
         q = q.filter(Ev.enterprise_id == enterprise_id)
     events = q.all()
@@ -1683,7 +2350,7 @@ def auto_complete_past_events_service(db: Session, enterprise_id: UUID | None = 
     for ev in events:
         previous = ev.status
         ev.status = "completed"
-        _log_audit(db, ev.id, "auto_complete", {"status": previous}, {"status": "completed"})
+        _log_audit(db, ev.id, "auto_complete", {"status": previous}, {"status": "completed"}, changed_by=_actor_id(current_user), commit=False)
         updated += 1
     if updated:
         db.commit()
@@ -1712,8 +2379,12 @@ def _find_registration(db: Session, event_id: UUID, registration_id: UUID | None
     return reg
 
 
-def check_in_service(db: Session, event_id: UUID, payload, current_user: dict | None = None):
-    """Check-in a participant by registration_id or qr_code."""
+def check_in_service(db: Session, event_id: UUID, payload, current_user: dict | None = None, *, commit: bool = True):
+    """Check-in a participant by registration_id or qr_code.
+
+    ``commit=False`` only stages the check-in (and its audit row) in the caller's transaction, so a caller that
+    also created the registration (walk-in) can commit everything atomically. The default is unchanged.
+    """
     from app.models.event_aux_models import EventRegistration
     from app.models.event_model import Event as Ev
     from app.schemas.event_schema import EventCheckInResponse
@@ -1725,6 +2396,7 @@ def check_in_service(db: Session, event_id: UUID, payload, current_user: dict | 
     ev_chk = db.query(Ev).filter(Ev.id == event_id).first()
     if ev_chk and ev_chk.status in ["cancelled", "completed", "archived", "suspended"]:
         raise HTTPException(status_code=400, detail=f"Cannot check-in: event is {ev_chk.status}")
+    _validate_session_for_event(ev_chk, payload.session_id)
     if reg.status == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot check-in: registration is cancelled")
     if reg.status == "attended":
@@ -1737,14 +2409,24 @@ def check_in_service(db: Session, event_id: UUID, payload, current_user: dict | 
             checked_in_at=reg.checked_in_at.isoformat() if reg.checked_in_at else None,
             session_id=payload.session_id,
         )
+    if _registration_is_refunded(db, reg):
+        raise HTTPException(status_code=400, detail="Cannot check-in: registration was refunded")
 
     reg.status = "attended"
     reg.checked_in_at = datetime.utcnow()
-    reg.checked_in_by = current_user.get("id") if current_user else None
+    reg.checked_in_by = _actor_uuid(current_user)
     if payload.session_id:
         reg.session_id = payload.session_id
-    db.commit()
-    db.refresh(reg)
+    _log_audit(
+        db, event_id, "check_in", {"registration_id": str(reg.id), "status": "confirmed"},
+        {"registration_id": str(reg.id), "participant_email": reg.participant_email, "status": "attended", "session_id": payload.session_id, "method": getattr(payload, "method", None)},
+        changed_by=_actor_id(current_user), commit=False,
+    )
+    if commit:
+        db.commit()
+        db.refresh(reg)
+    else:
+        db.flush()
 
     return EventCheckInResponse(
         message="Checked in successfully",
@@ -1757,7 +2439,7 @@ def check_in_service(db: Session, event_id: UUID, payload, current_user: dict | 
     )
 
 
-def uncheck_in_service(db: Session, event_id: UUID, payload):
+def uncheck_in_service(db: Session, event_id: UUID, payload, current_user: dict | None = None):
     """Undo a check-in, restoring registration to 'confirmed'."""
     from app.schemas.event_schema import EventUncheckInResponse
 
@@ -1773,7 +2455,13 @@ def uncheck_in_service(db: Session, event_id: UUID, payload):
     reg.status = "confirmed"
     reg.checked_in_at = None
     reg.checked_in_by = None
+    reg.checked_out_at = None  # a participant who is not checked in cannot be checked out
     reg.session_id = None
+    _log_audit(
+        db, event_id, "uncheck_in", {"registration_id": str(reg.id), "status": "attended"},
+        {"registration_id": str(reg.id), "participant_email": reg.participant_email, "status": "confirmed"},
+        changed_by=_actor_id(current_user), notes=getattr(payload, "reason", None), commit=False,
+    )
     db.commit()
     db.refresh(reg)
 
@@ -1787,7 +2475,7 @@ def uncheck_in_service(db: Session, event_id: UUID, payload):
     )
 
 
-def check_out_service(db: Session, event_id: UUID, payload):
+def check_out_service(db: Session, event_id: UUID, payload, current_user: dict | None = None):
     """Check-out a participant by registration_id or qr_code."""
     from app.schemas.event_schema import EventCheckOutResponse
 
@@ -1798,6 +2486,8 @@ def check_out_service(db: Session, event_id: UUID, payload):
         raise HTTPException(status_code=400, detail="Cannot check-out: registration is cancelled")
     if reg.status == "no_show":
         raise HTTPException(status_code=400, detail="Cannot check-out: registration is marked as no_show")
+    if reg.status != "attended" or not reg.checked_in_at:
+        raise HTTPException(status_code=400, detail="Cannot check-out: participant has not been checked in")
     if reg.checked_out_at:
         return EventCheckOutResponse(
             message="Already checked out",
@@ -1811,6 +2501,11 @@ def check_out_service(db: Session, event_id: UUID, payload):
         )
 
     reg.checked_out_at = datetime.utcnow()
+    _log_audit(
+        db, event_id, "check_out", None,
+        {"registration_id": str(reg.id), "participant_email": reg.participant_email},
+        changed_by=_actor_id(current_user), commit=False,
+    )
     db.commit()
     db.refresh(reg)
 
@@ -1845,8 +2540,7 @@ def validate_qr_service(db: Session, event_id: UUID, qr_code: str | None):
     from app.models.event_model import Event
     event = db.query(Event).filter(Event.id == event_id).first()
 
-    return EventQRValidateResponse(
-        valid=True,
+    identity = dict(
         registration_id=reg.id,
         participant_name=reg.participant_name,
         participant_email=reg.participant_email,
@@ -1854,7 +2548,17 @@ def validate_qr_service(db: Session, event_id: UUID, qr_code: str | None):
         event_id=event_id,
         event_title=event.title if event else None,
         ticket_type_id=reg.ticket_type_id,
+    )
+    # A cancelled (or refunded) registration is not a valid ticket, even though the QR still resolves.
+    if reg.status == "cancelled":
+        return EventQRValidateResponse(valid=False, message="Registration is cancelled", **identity)
+    if _registration_is_refunded(db, reg):
+        return EventQRValidateResponse(valid=False, message="Registration was refunded", **identity)
+
+    return EventQRValidateResponse(
+        valid=True,
         message=f"Valid ticket: {reg.participant_name} ({reg.status})",
+        **identity,
     )
 
 
@@ -1866,7 +2570,8 @@ def my_registrations_service(db: Session, email: str, status_filter: str | None 
     from app.models.event_aux_models import EventRegistration
     from app.models.event_model import Event
 
-    q = db.query(EventRegistration).filter(EventRegistration.participant_email == email)
+    # Registrations store the email lower-cased, so compare case-insensitively (mixed-case token emails).
+    q = db.query(EventRegistration).filter(sa.func.lower(EventRegistration.participant_email) == email.strip().lower())
     if status_filter:
         q = q.filter(EventRegistration.status == status_filter)
     regs = q.order_by(EventRegistration.created_at.desc()).all()
@@ -1896,17 +2601,32 @@ def my_registrations_service(db: Session, email: str, status_filter: str | None 
 # ---- Template CRUD ----
 
 
-def list_templates_service(db: Session, current_user: dict | None = None):
+def list_templates_service(db: Session, current_user: dict | None = None, access_token: str | None = None):
     from app.models.event_aux_models import EventTemplate
     q = db.query(EventTemplate)
-    # Tenant isolation: filter by authenticated tenant (ownership boundary)
-    auth_tid = _resolve_auth_tenant_id(current_user)
-    if auth_tid:
-        q = q.filter(EventTemplate.tenant_id == auth_tid)
-    return q.all()
+    if is_platform_super_admin(current_user):
+        return q.all()
+    # Fail closed: an unresolvable tenant must never widen the list to every tenant's templates.
+    tenant_id = resolve_caller_tenant_id(db, current_user, access_token=access_token)
+    tenant_uuid = None
+    try:
+        tenant_uuid = UUID(str(tenant_id)) if tenant_id else None
+    except ValueError:
+        tenant_uuid = None
+    if tenant_uuid is None:
+        raise HTTPException(status_code=403, detail="Tenant could not be resolved for this caller")
+    return q.filter(
+        sa.or_(
+            EventTemplate.tenant_id == tenant_uuid,
+            sa.and_(
+                EventTemplate.tenant_id.is_(None),
+                EventTemplate.enterprise_id.in_(sa.select(Enterprise.id).where(Enterprise.tenant_id == tenant_uuid)),
+            ),
+        )
+    ).all()
 
 
-def apply_template_service(db: Session, template_id: UUID, payload: dict, current_user: dict | None = None):
+def apply_template_service(db: Session, template_id: UUID, payload: dict, current_user: dict | None = None, access_token: str | None = None):
     from app.models.event_aux_models import EventTemplate
     from app.models.event_model import Event as Ev
     import copy
@@ -1916,12 +2636,11 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found")
 
-    # Tenant isolation: verify template belongs to authenticated tenant
-    auth_tenant_id = _resolve_auth_tenant_id(current_user)
+    # Tenant isolation (fail closed): the template must belong to the caller's tenant, resolved
+    # from the token / database — never from a request payload.
+    auth_tenant_id = _assert_template_access(db, tmpl, current_user, access_token)
     supplied_tenant_id = payload.get("tenant_id")
     _validate_payload_tenant_id(supplied_tenant_id, auth_tenant_id)
-    if current_user and auth_tenant_id and tmpl.tenant_id and str(tmpl.tenant_id) != str(auth_tenant_id):
-        raise HTTPException(status_code=403, detail="Template does not belong to your tenant")
 
     from app.services.event_form_config_service import _resolve_active_form_configuration
     from app.services.event_template_mapping import map_template_values
@@ -1946,6 +2665,9 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
 
     # Resolve enterprise_id: payload > template > auth context — OPTIONAL
     enterprise_id = payload.get("enterprise_id") or data.get("enterprise_id") or tmpl.enterprise_id
+    if enterprise_id and effective_tenant_id:
+        # enterprise_id can come from the request or from template JSON — it must be the caller's.
+        _verify_enterprise_in_tenant(db, enterprise_id, effective_tenant_id)
     if not enterprise_id and current_user:
         enterprise_id = current_user.get("enterprise_id") or current_user.get("enterpriseId")
         if not enterprise_id and current_user.get("tenant_slug"):
@@ -2030,16 +2752,26 @@ def apply_template_service(db: Session, template_id: UUID, payload: dict, curren
     return event
 
 
-def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict):
-    """Get meeting link — admin/provider or registered participant only."""
+def _is_owning_staff(db: Session, event, current_user: dict, access_token: str | None) -> bool:
+    """True when the caller is staff of the Event's tenant (or an active Platform Super Admin)."""
+    if current_user.get("role") not in (*STAFF_ROLES, "super_admin"):
+        return False
+    try:
+        assert_event_access(db, event, current_user, access_token=access_token)
+        return True
+    except HTTPException:
+        return False
+
+
+def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict, access_token: str | None = None):
+    """Get meeting link — staff of the owning tenant, or a registered participant only."""
     from app.models.event_aux_models import EventRegistration
     import sqlalchemy as sa
 
     ev = _get_event_or_404(db, event_id)
-    role = current_user.get("role")
-    email = current_user.get("email", "")
-    
-    if role not in ("admin", "provider", "super_admin"):
+    email = current_user.get("email") or ""
+
+    if not _is_owning_staff(db, ev, current_user, access_token):
         reg = db.query(EventRegistration).filter(
             EventRegistration.event_id == event_id,
             sa.func.lower(EventRegistration.participant_email) == email.strip().lower(),
@@ -2056,7 +2788,7 @@ def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict):
     }
 
 
-def get_session_meeting_link_service(db: Session, event_id: UUID, session_id: str, current_user: dict):
+def get_session_meeting_link_service(db: Session, event_id: UUID, session_id: str, current_user: dict, access_token: str | None = None):
     """Get meeting link for a specific session — admin/provider or registered participant only."""
     from app.models.event_aux_models import EventRegistration
     import sqlalchemy as sa
@@ -2068,10 +2800,9 @@ def get_session_meeting_link_service(db: Session, event_id: UUID, session_id: st
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
         
-    role = current_user.get("role")
-    email = current_user.get("email", "")
-    
-    if role not in ("admin", "provider", "super_admin"):
+    email = current_user.get("email") or ""
+
+    if not _is_owning_staff(db, ev, current_user, access_token):
         # We need to check if the user is registered for the event.
         # If the event requires session-specific registration, we might need to check that, 
         # but the prompt says: "Authorization must be equivalent in principle to the protected event meeting-link endpoint."
@@ -2130,7 +2861,7 @@ def contact_organiser_service(db: Session, event_id: UUID, payload: dict, curren
 
 # ---- Event Order Status & Refund Approval ----
 
-def update_event_order_status_service(db: Session, event_id: UUID, order_id: UUID, payload):
+def update_event_order_status_service(db: Session, event_id: UUID, order_id: UUID, payload, current_user: dict | None = None):
     from app.models.event_aux_models import EventOrder
     VALID_TRANSITIONS = {
         "confirmed": ["cancelled", "completed"],
@@ -2146,13 +2877,36 @@ def update_event_order_status_service(db: Session, event_id: UUID, order_id: UUI
     allowed = VALID_TRANSITIONS.get(order.status, [])
     if new_status not in allowed:
         raise HTTPException(status_code=400, detail=f"Cannot transition from '{order.status}' to '{new_status}'. Allowed: {allowed}")
+
+    # An order that ends refunded/cancelled must not leave its registration valid: release the seat
+    # and invalidate the QR. (EventOrder has no registration FK — see _active_registration_for_order.)
+    reg = None
+    if new_status in ("refunded", "cancelled"):
+        reg = _active_registration_for_order(db, order)
+        if reg is not None and reg.status == "attended":
+            raise HTTPException(status_code=400, detail=f"Cannot mark order {new_status}: participant already attended")
+    previous = order.status
     order.status = new_status
+    if new_status == "refunded":
+        order.payment_status = "refunded"
+    _log_audit(
+        db, event_id, "order_status",
+        {"order_id": str(order.id), "status": previous},
+        {"order_id": str(order.id), "status": new_status},
+        changed_by=_actor_id(current_user), notes=getattr(payload, "reason", None), commit=False,
+    )
+    if reg is not None:
+        _cancel_registration_and_release_seat(
+            db, _get_event_or_404(db, event_id), reg,
+            actor=_actor_id(current_user), audit_action="registration_cancel",
+            notes=f"order {new_status}",
+        )
     db.commit()
     db.refresh(order)
     return {"id": str(order.id), "status": order.status, "message": f"Order status updated to '{new_status}'"}
 
 
-def approve_event_refund_service(db: Session, event_id: UUID, order_id: UUID, payload):
+def approve_event_refund_service(db: Session, event_id: UUID, order_id: UUID, payload, current_user: dict | None = None):
     from app.models.event_aux_models import EventOrder
     order = db.query(EventOrder).filter(EventOrder.id == order_id, EventOrder.event_id == event_id).first()
     if not order:
@@ -2160,14 +2914,36 @@ def approve_event_refund_service(db: Session, event_id: UUID, order_id: UUID, pa
     if order.status != "refund_requested":
         raise HTTPException(status_code=400, detail=f"Order is not in refund_requested state (current: {order.status})")
     action = payload.action
+    actor = _actor_id(current_user)
     if action == "approve":
+        reg = _active_registration_for_order(db, order)
+        if reg is not None and reg.status == "attended":
+            raise HTTPException(status_code=400, detail="Cannot approve refund: participant already attended")
         order.status = "refunded"
         order.payment_status = "refunded"
+        _log_audit(
+            db, event_id, "refund",
+            {"order_id": str(order.id), "status": "refund_requested"},
+            {"order_id": str(order.id), "status": "refunded", "decision": "approved"},
+            changed_by=actor, notes=getattr(payload, "reason", None), commit=False,
+        )
+        # Never mark an order refunded while its registration stays valid.
+        if reg is not None:
+            _cancel_registration_and_release_seat(
+                db, _get_event_or_404(db, event_id), reg,
+                actor=actor, audit_action="registration_cancel", notes="refund approved",
+            )
         message = "Refund approved"
     elif action == "reject":
         order.status = "confirmed"
         order.payment_status = "confirmed"
         order.refund_reason = None
+        _log_audit(
+            db, event_id, "refund",
+            {"order_id": str(order.id), "status": "refund_requested"},
+            {"order_id": str(order.id), "status": "confirmed", "decision": "rejected"},
+            changed_by=actor, notes=getattr(payload, "reason", None), commit=False,
+        )
         message = "Refund rejected — order restored to confirmed"
     else:
         raise HTTPException(status_code=400, detail="action must be approve|reject")
