@@ -178,6 +178,16 @@ SERVER_EVENTS_CATALOG = [
         payload={"conversation_id": "uuid", "message_id": "uuid", "user_id": "uuid", "read_at": "ISO datetime"},
     ),
     ServerEventSchema(
+        event="message_updated",
+        description="Broadcast when a message is edited (PATCH /messages/{id}).",
+        payload={"conversation_id": "uuid", "message": "{...}"},
+    ),
+    ServerEventSchema(
+        event="message_deleted",
+        description="Broadcast when a message is deleted (DELETE /messages/{id}).",
+        payload={"conversation_id": "uuid", "message_id": "uuid"},
+    ),
+    ServerEventSchema(
         event="typing",
         description="Broadcast typing indicator changes.",
         payload={"conversation_id": "uuid", "user_id": "uuid", "is_typing": True},

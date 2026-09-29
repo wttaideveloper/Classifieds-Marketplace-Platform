@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
 from app.db.database import get_db
+from app.realtime.emitters import emit_message_deleted, emit_message_updated
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, PaginatedResponse
 from app.schemas.chat_schema import (
     CursorPaginatedResponse,
@@ -137,13 +138,15 @@ def transcribe_message(
         "conversation last_message_preview is updated."
     ),
 )
-def edit_message(
+async def edit_message(
     message_id: UUID = Path(...),
     payload: MessageUpdate = Body(...),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return edit_message_service(db, current_user, message_id, payload.content)
+    result = edit_message_service(db, current_user, message_id, payload.content)
+    await emit_message_updated(result["conversation_id"], result)
+    return result
 
 
 @router.delete(
@@ -157,9 +160,11 @@ def edit_message(
         "'deleted this message'. Only the sender or admin can delete."
     ),
 )
-def delete_message(
+async def delete_message(
     message_id: UUID = Path(...),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return delete_message_service(db, current_user, message_id)
+    result = delete_message_service(db, current_user, message_id)
+    await emit_message_deleted(result.conversation_id, result.id)
+    return result

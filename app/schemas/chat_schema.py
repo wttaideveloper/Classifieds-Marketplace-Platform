@@ -253,6 +253,7 @@ class MessageReadStatusResponse(BaseModel):
 
 class MessageDeleteResponse(BaseModel):
     id: UUID
+    conversation_id: UUID
     is_deleted: bool
     deleted_at: datetime
 

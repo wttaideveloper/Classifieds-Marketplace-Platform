@@ -36,6 +36,24 @@ async def emit_typing(conversation_id, user_id, is_typing: bool, *, skip_sid: st
     )
 
 
+async def emit_message_updated(conversation_id, message: dict, *, skip_sid: str | None = None):
+    await sio.emit(
+        "message_updated",
+        serialize({"conversation_id": str(conversation_id), "message": message}),
+        room=conversation_room(conversation_id),
+        skip_sid=skip_sid,
+    )
+
+
+async def emit_message_deleted(conversation_id, message_id, *, skip_sid: str | None = None):
+    await sio.emit(
+        "message_deleted",
+        serialize({"conversation_id": str(conversation_id), "message_id": str(message_id)}),
+        room=conversation_room(conversation_id),
+        skip_sid=skip_sid,
+    )
+
+
 async def emit_conversation_updated(conversation_id, conversation: dict):
     await sio.emit(
         "conversation_updated",
