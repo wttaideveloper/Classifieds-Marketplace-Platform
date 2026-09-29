@@ -145,6 +145,10 @@ def resolve_event_modules(event: Any) -> dict[str, bool]:
 
     A persisted dict that is missing a key (or holds a non-boolean for it) is completed per key from
     the legacy resolution rather than guessed, so a partially-populated value can never fail a read.
+
+    ``registration`` is always forced True regardless of what is stored: it is mandatory for every
+    event (product rule), and every write path already refuses to persist it as False — this is the
+    read-side backstop so a stray/legacy row can never resolve as registration-disabled either.
     """
     stored = getattr(event, "modules", None)
     if not isinstance(stored, Mapping) or not stored:
@@ -158,6 +162,7 @@ def resolve_event_modules(event: Any) -> dict[str, bool]:
         else:
             fallback = fallback or legacy_modules(event)
             resolved[key] = fallback[key]
+    resolved["registration"] = True
     return resolved
 
 
@@ -174,6 +179,9 @@ def clean_overrides(overrides: Mapping[str, Any] | None) -> dict[str, bool]:
 def validate_module_overrides(overrides: Mapping[str, bool], *, delivery_mode: Any, is_paid: bool) -> None:
     """Reject only obvious contradictions in *explicitly requested* values, independent of any Event Type.
 
+    - registration=false is refused outright: registration is mandatory for every event (product rule),
+      unconditionally — checked here (not only via an Event Type's required_modules) so a request with
+      no event_type at all is covered too.
     - online_meeting=true needs an online or hybrid delivery_mode (the existing format field).
     - tickets=false is refused for a paid event: checkout sells through ticket types.
 
@@ -181,6 +189,10 @@ def validate_module_overrides(overrides: Mapping[str, bool], *, delivery_mode: A
     or values that came from an Event Type default (a default is a starting point, not a request).
     Event-Type-specific allowed/required rules are checked separately by ``check_type_constraints``.
     """
+    if overrides.get("registration") is False:
+        raise EventModuleConfigError(
+            "modules.registration cannot be disabled: every event requires: registration to remain enabled."
+        )
     if overrides.get("online_meeting") is True and str(delivery_mode or "").lower() not in ONLINE_DELIVERY_MODES:
         raise EventModuleConfigError(
             "modules.online_meeting can only be enabled when delivery_mode is 'online' or 'hybrid'."

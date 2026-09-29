@@ -40,8 +40,10 @@ def list_event_types(
     response_model=EventTypeResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create Event Type",
-    description="Super Admin only. `key` is permanent once created. `allowed_modules`/`required_modules` "
-                "default to \"everything allowed\"/\"nothing required\" when omitted.",
+    description="Super Admin only. `key` is permanent once created. `allowed_modules` defaults to "
+                "\"everything allowed\" when omitted; `required_modules` defaults to \"registration only\" "
+                "when omitted. `registration` is mandatory for every Event Type and cannot be disallowed, "
+                "defaulted off, or left non-required.",
 )
 def create_event_type(
     payload: EventTypeCreate,

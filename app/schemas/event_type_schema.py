@@ -24,6 +24,27 @@ EventTypeKey = Annotated[
 
 _ALL_ALLOWED = {key: True for key in EVENT_MODULE_KEYS}
 _NONE_REQUIRED = {key: False for key in EVENT_MODULE_KEYS}
+# registration is mandatory for every Event Type (product rule): unlike every other module, an omitted
+# required_modules defaults to requiring it, not to requiring nothing.
+_DEFAULT_REQUIRED = {**_NONE_REQUIRED, "registration": True}
+
+
+def _enforce_registration_mandatory(default_modules: EventModules, allowed_modules: EventModules, required_modules: EventModules) -> None:
+    """registration can never be turned off for an Event Type: not disallowed, not defaulted off, and
+    not left non-required. Checked as its own rule (clear, dedicated error) ahead of the generic
+    default/allowed/required consistency check, which would otherwise reject the same request for a
+    less specific reason."""
+    disabled = [
+        f"{name}.registration"
+        for name, modules in (
+            ("default_modules", default_modules), ("allowed_modules", allowed_modules), ("required_modules", required_modules),
+        )
+        if not modules.registration
+    ]
+    if disabled:
+        raise ValueError(
+            f"registration is mandatory for every event type and cannot be disabled (requires: registration): {', '.join(disabled)}"
+        )
 
 
 def _check_module_map_consistency(default_modules: EventModules, allowed_modules: EventModules, required_modules: EventModules) -> None:
@@ -74,7 +95,9 @@ class EventTypeCreate(BaseModel):
         None, description="Which modules an event of this type may enable. Omit to allow all eight modules."
     )
     required_modules: EventModules | None = Field(
-        None, description="Which modules an event of this type may never disable. Omit to require none."
+        None,
+        description="Which modules an event of this type may never disable. Omit to require only "
+                    "registration (mandatory for every event type).",
     )
 
     @model_validator(mode="after")
@@ -82,7 +105,8 @@ class EventTypeCreate(BaseModel):
         if self.allowed_modules is None:
             self.allowed_modules = EventModules(**_ALL_ALLOWED)
         if self.required_modules is None:
-            self.required_modules = EventModules(**_NONE_REQUIRED)
+            self.required_modules = EventModules(**_DEFAULT_REQUIRED)
+        _enforce_registration_mandatory(self.default_modules, self.allowed_modules, self.required_modules)
         _check_module_map_consistency(self.default_modules, self.allowed_modules, self.required_modules)
         return self
 
@@ -112,3 +136,16 @@ class EventTypeResponse(BaseModel):
     required_modules: EventModules
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def _registration_is_always_mandatory(self):
+        """registration is mandatory for every Event Type — forced True here regardless of what is
+        stored, so rows seeded before this rule existed (their required_modules.registration is False
+        in the database) resolve correctly on every read without a migration."""
+        if not self.default_modules.registration:
+            self.default_modules = self.default_modules.model_copy(update={"registration": True})
+        if not self.allowed_modules.registration:
+            self.allowed_modules = self.allowed_modules.model_copy(update={"registration": True})
+        if not self.required_modules.registration:
+            self.required_modules = self.required_modules.model_copy(update={"registration": True})
+        return self

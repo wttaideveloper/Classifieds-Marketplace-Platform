@@ -408,9 +408,9 @@ class TestPlanConfigUpdate:
             plan(ev, new_type="camp", overrides={"meals": False}, new_type_record=record)
 
     def test_a_required_module_missing_from_the_persisted_configuration_blocks_the_type_change(self):
-        ev = event(event_type="conference", modules=flags("tickets"))  # registration off
-        record = type_record("camp", required={**NONE_REQUIRED, "registration": True})
-        with pytest.raises(EventModuleConfigError, match="requires: registration"):
+        ev = event(event_type="conference", modules=flags("registration", "tickets"))  # sessions off
+        record = type_record("camp", required={**NONE_REQUIRED, "sessions": True})
+        with pytest.raises(EventModuleConfigError, match="requires: sessions"):
             plan(ev, new_type="camp", new_type_record=record)
 
 

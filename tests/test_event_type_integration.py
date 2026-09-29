@@ -199,11 +199,11 @@ class TestChangingEventTypeRevalidatesTheConfiguration:
         assert resp.status_code == 422 and "sessions" in resp.json()["detail"]
 
     def test_a_required_module_missing_from_the_persisted_configuration_blocks_the_change(self, env):
-        create_type(env, "type_a", default_modules=flags("check_in"))  # registration off by default here
-        create_type(env, "needs_registration", default_modules=flags("registration"), required_modules=flags("registration"))
-        event_id = create_event(env, event_type="type_a").json()["id"]  # persisted: registration=False
-        resp = staff_client(env).put(f"{API}/{event_id}", json={"event_type": "needs_registration"})
-        assert resp.status_code == 422 and "requires" in resp.json()["detail"] and "registration" in resp.json()["detail"]
+        create_type(env, "type_a", default_modules=flags("registration", "check_in"))  # sessions off by default here
+        create_type(env, "needs_sessions", default_modules=flags("registration", "sessions"), required_modules=flags("registration", "sessions"))
+        event_id = create_event(env, event_type="type_a").json()["id"]  # persisted: sessions=False
+        resp = staff_client(env).put(f"{API}/{event_id}", json={"event_type": "needs_sessions"})
+        assert resp.status_code == 422 and "requires" in resp.json()["detail"] and "sessions" in resp.json()["detail"]
 
 
 # ===========================================================================

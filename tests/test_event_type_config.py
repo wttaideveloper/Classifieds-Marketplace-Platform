@@ -87,8 +87,22 @@ class TestCreate:
     def test_allowed_modules_defaults_to_everything_allowed_when_omitted(self, env):
         assert create(env).json()["allowed_modules"] == ALL_ALLOWED
 
-    def test_required_modules_defaults_to_nothing_required_when_omitted(self, env):
-        assert create(env).json()["required_modules"] == NONE_REQUIRED
+    def test_required_modules_defaults_to_registration_only_when_omitted(self, env):
+        """registration is mandatory for every Event Type (product rule): an omitted required_modules
+        defaults to requiring just registration, not nothing."""
+        assert create(env).json()["required_modules"] == flags("registration")
+
+    def test_required_modules_cannot_disable_registration(self, env):
+        resp = create(env, required_modules=flags())  # explicitly tries to require nothing
+        assert resp.status_code == 422 and "registration" in resp.text
+
+    def test_default_modules_cannot_disable_registration(self, env):
+        resp = create(env, default_modules=flags("check_in"))  # registration missing
+        assert resp.status_code == 422 and "registration" in resp.text
+
+    def test_allowed_modules_cannot_disallow_registration(self, env):
+        resp = create(env, allowed_modules=flags("check_in"))  # registration missing
+        assert resp.status_code == 422 and "registration" in resp.text
 
     def test_allowed_and_required_can_be_set_explicitly(self, env):
         resp = create(

@@ -215,12 +215,24 @@ def _validate_event_config_for_create(event_data) -> None:
 
 
 def _event_type_record(row) -> dict:
-    """An EventTypeConfig row as the plain dict app.utils.event_modules expects."""
+    """An EventTypeConfig row as the plain dict app.utils.event_modules expects.
+
+    ``registration`` is forced True in all three maps regardless of what is stored: registration is
+    mandatory for every Event Type (product rule), and this is the read-side resolution that makes that
+    true even for rows seeded before the rule existed (their ``required_modules.registration`` is
+    False in the database) — no migration needed, same "resolve on read" pattern as ``legacy_modules``.
+    """
+    default_modules = dict(row.default_modules)
+    allowed_modules = dict(row.allowed_modules)
+    required_modules = dict(row.required_modules)
+    default_modules["registration"] = True
+    allowed_modules["registration"] = True
+    required_modules["registration"] = True
     return {
         "key": row.key,
-        "default_modules": dict(row.default_modules),
-        "allowed_modules": dict(row.allowed_modules),
-        "required_modules": dict(row.required_modules),
+        "default_modules": default_modules,
+        "allowed_modules": allowed_modules,
+        "required_modules": required_modules,
     }
 
 
