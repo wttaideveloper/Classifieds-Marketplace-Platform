@@ -70,6 +70,20 @@ def get_current_user(
     return resolve_user_from_token_or_raise(token)
 
 
+def get_optional_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict | None:
+    """Same resolution as get_current_user, but returns None instead of 401
+    when no credentials are supplied at all — for public endpoints that add
+    extra fields (e.g. the caller's own registration status) when signed in.
+    Supplied invalid/expired credentials still fail authentication; this only
+    makes authentication optional, not lenient."""
+    if credentials is None and not get_web_session_cookie_token(request):
+        return None
+    return get_current_user(request, credentials)
+
+
 def get_current_web_session_user(request: Request) -> dict:
     """Authenticate only from the HttpOnly cookie set by Web complete-login."""
     token = get_web_session_cookie_token(request)

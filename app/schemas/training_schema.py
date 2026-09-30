@@ -511,7 +511,7 @@ class TrainingResponse(BaseModel):
     access_expiry_days: str | None = None  # alias of access_duration_days (contract naming)
     current_participants: int | None = None  # alias of enrolled_count (contract naming) — Detail only, requires a query
     moderation_status: str | None = None
-    rejection_reason: str | None = None
+    rejection_reason: str | None = Field(None, description="Admin/provider callers: the training listing's own moderation rejection reason. Learner callers on GET /{training_id}: the caller's own enrolment rejection reason instead (null unless enrolment_status='rejected').")
     published_at: datetime | None = None
     approved_at: datetime | None = None
     archived_at: datetime | None = None
@@ -538,6 +538,8 @@ class TrainingListItemResponse(TrainingResponse):
 
 class TrainingDetailResponse(TrainingResponse):
     enterprise_name: str | None = None
+    is_enrolled: bool = Field(False, description="True while the caller has a live enrolment (pending_approval or enrolled) — false when never enrolled, cancelled, rejected, or waitlisted.")
+    enrolment_status: str | None = Field(None, description="The caller's own enrolment status: pending_approval|enrolled|cancelled|rejected|waitlisted|attended|null (never enrolled). Admin/provider callers never see this — always null for them.")
     enrolled_count: int = Field(0, description="Active enrolments (enrolled/active/completed/approved).")
     available_slots: int | None = Field(
         None, description="capacity minus enrolled_count; null when capacity is not set/numeric."
@@ -1169,6 +1171,7 @@ class TrainingReviewResponse(BaseModel):
     rating: int
     comment: str | None = None
     participant_email: str
+    participant_name: str | None = Field(None, description="Display name from the participant's enrolment on this training — null if no matching enrolment is found")
     verified: bool = True
     created_at: str
 

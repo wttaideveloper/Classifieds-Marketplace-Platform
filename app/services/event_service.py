@@ -195,11 +195,22 @@ def get_events_service(
     )
 
 
-def get_event_service(db: Session, event_id: UUID) -> EventDetailResponse:
+def get_event_service(db: Session, event_id: UUID, current_user: dict | None = None) -> EventDetailResponse:
     event = get_event_by_id(db, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    return EventDetailResponse.model_validate(map_event_detail(event))
+    detail = map_event_detail(event)
+    email = (current_user or {}).get("email")
+    registration = None
+    if email:
+        from app.models.event_aux_models import EventRegistration
+        registration = db.query(EventRegistration).filter(
+            EventRegistration.event_id == event_id,
+            EventRegistration.participant_email == email,
+        ).order_by(EventRegistration.created_at.desc()).first()
+    detail["registration_status"] = registration.status if registration else None
+    detail["is_registered"] = bool(registration) and registration.status in ("confirmed", "attended")
+    return EventDetailResponse.model_validate(detail)
 
 
 def update_event_service(db: Session, event_id: UUID, update_data, current_user: dict = None):

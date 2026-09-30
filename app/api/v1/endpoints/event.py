@@ -7,6 +7,7 @@ from app.core.dependencies import (
     get_current_admin,
     get_current_super_admin,
     get_current_user,
+    get_optional_current_user,
     get_web_session_cookie_token,
     require_event_form_builder_admin,
     require_roles,
@@ -294,8 +295,12 @@ def get_event_form_configuration(
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse, status_code=status.HTTP_200_OK, summary="Get Event by ID")
-def get_event(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db)):
-    return get_event_service(db, event_id)
+def get_event(
+    event_id: UUID = Path(..., description="Event ID"),
+    db: Session = Depends(get_db),
+    current_user: dict | None = Depends(get_optional_current_user),
+):
+    return get_event_service(db, event_id, current_user)
 
 
 @router.put("/{event_id}", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event")
