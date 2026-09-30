@@ -471,7 +471,7 @@ def join_waitlist_service(db: Session, tid: UUID, payload: dict | None = None, c
         TrainingEnrolment.training_id == tid,
         TrainingEnrolment.participant_email == participant_email,
     ).first()
-    if existing_enrol and existing_enrol.status not in ("cancelled", "expired"):
+    if existing_enrol and existing_enrol.status not in ("cancelled", "rejected", "expired"):
         raise HTTPException(status_code=400, detail="Already enrolled on this training")
     existing_wait = db.query(TrainingWaitlist).filter(
         TrainingWaitlist.training_id == tid,
@@ -1469,8 +1469,8 @@ def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str
     ).first()
     if not enrol:
         raise HTTPException(status_code=404, detail="QR code not recognized, or participant is not enrolled in this training")
-    if enrol.status == "cancelled":
-        raise HTTPException(status_code=410, detail="QR code has been revoked — enrolment is cancelled")
+    if enrol.status in ("cancelled", "rejected"):
+        raise HTTPException(status_code=410, detail=f"QR code has been revoked — enrolment is {enrol.status}")
     if enrol.access_expires_at and enrol.access_expires_at < datetime.utcnow():
         raise HTTPException(status_code=410, detail="QR code has expired — enrolment access has ended")
     if enrol.status not in ACTIVE_ENROLMENT_STATUSES:
@@ -1642,8 +1642,8 @@ def validate_training_qr_service(db: Session, tid: UUID, qr_code: str | None, *,
     ).first()
     if not enrol:
         raise HTTPException(status_code=404, detail="QR code not found for this training")
-    if enrol.status == "cancelled":
-        raise HTTPException(status_code=410, detail="QR code has been revoked — enrolment is cancelled")
+    if enrol.status in ("cancelled", "rejected"):
+        raise HTTPException(status_code=410, detail=f"QR code has been revoked — enrolment is {enrol.status}")
     if enrol.access_expires_at and enrol.access_expires_at < datetime.utcnow():
         raise HTTPException(status_code=410, detail="QR code has expired — enrolment access has ended")
 
@@ -1694,8 +1694,8 @@ def check_in_enrolment_service(db: Session, tid: UUID, enrolment_id, qr_code: st
     enrol = _find_enrolment_by_id_or_qr(db, tid, enrolment_id, qr_code)
     if not enrol:
         raise HTTPException(status_code=404, detail="Enrolment not found")
-    if enrol.status == "cancelled":
-        raise HTTPException(status_code=400, detail="Cannot check-in: enrolment is cancelled")
+if enrol.status in ("cancelled", "rejected"):
+        raise HTTPException(status_code=400, detail=f"Cannot check-in: enrolment is {enrol.status}")
     if enrol.checked_in_at:
         return {
             "message": "Already checked in",
@@ -1768,6 +1768,8 @@ def list_training_checkin_preview_service(db: Session, tid: UUID, status_filter:
             reason = "Already checked in"
         elif r.status == "cancelled":
             reason = "Cancelled — cannot check in"
+        elif r.status == "rejected":
+            reason = "Rejected — cannot check in"
         elif r.status == "waitlisted":
             reason = "Waitlisted — not yet enrolled"
         elif can:
@@ -1810,13 +1812,13 @@ def batch_check_in_training_enrolments_service(db: Session, tid: UUID, participa
             })
             failed += 1
             continue
-        if enrol.status == "cancelled":
+        if enrol.status in ("cancelled", "rejected"):
             results.append({
                 "enrolment_id": enrol.id,
                 "participant_name": enrol.participant_name,
                 "participant_email": enrol.participant_email,
                 "status": "failed",
-                "message": "Enrolment is cancelled",
+                "message": f"Enrolment is {enrol.status}",
             })
             failed += 1
             continue
@@ -2213,11 +2215,22 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
                 db.add(extra)
             except: pass
         db.commit()
-    # enrolment confirmation (in_app/push/email/sms stub)
+    # enrolment confirmation (in_app/push stub)
     try:
         from app.services.notification_triggers import _safe_notify
-        _safe_notify(db, f"training:{tid}", "training_enrolment_confirmation", {"training_id": str(tid), "status": status})
-    except: pass
+        if status == "pending_approval":
+            _title = f"Enrolment Pending: {t.title}"
+            _msg = f"Hi {participant_name}, your enrolment in {t.title} is awaiting admin approval."
+        else:
+            _title = f"Enrolment Confirmed: {t.title}"
+            _msg = f"Hi {participant_name}, your enrolment in {t.title} is confirmed."
+        _safe_notify(
+            db, _title, _msg, "training_enrolment_confirmation", t.tenant_id,
+            {"training_id": str(tid), "status": status},
+            participant_email=participant_email, channels=["in_app", "push"],
+        )
+    except Exception:
+        pass
     for key, value in _enrolment_response_context(db, t, tid, participant_email, status).items():
         setattr(e, key, value)
     return e
@@ -2264,6 +2277,7 @@ def list_my_enrolments_service(db: Session, email: str, status_filter: str | Non
         out.append({
             "training_id": str(r.training_id),
             "status": r.status,
+            "rejection_reason": r.rejection_reason,
             "enrolment_id": str(r.id),
             "qr_code": r.qr_code if t and t.delivery_mode not in ("online", "recorded", "self_paced") else None,
             "qr_image_base64": _qr_image_base64(r.qr_code) if t and t.delivery_mode not in ("online", "recorded", "self_paced") else None,
@@ -2295,7 +2309,14 @@ def cancel_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, partic
     promoted = _promote_waitlist(db, tid)
     try:
         from app.services.notification_triggers import _safe_notify
-        _safe_notify(db, f"training:{tid}", "training_enrolment_cancelled", {"training_id": str(tid)})
+        training = _get_training_or_404(db, tid)
+        _safe_notify(
+            db, f"Enrolment Cancelled: {training.title}",
+            f"Hi {e.participant_name}, your enrolment in {training.title} has been cancelled.",
+            "enrolment_cancelled", training.tenant_id,
+            {"training_id": str(tid), "enrolment_id": str(e.id)},
+            participant_email=e.participant_email, channels=["in_app", "push"],
+        )
     except Exception:
         pass
     result = {"id": str(e.id), "status": e.status}
@@ -2311,15 +2332,39 @@ def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, actio
         raise HTTPException(status_code=404, detail="Enrolment not found")
     if action == "approve":
         e.status = "enrolled"
+        e.rejection_reason = None
         _append_moderation(db, training, "enrolment_approved", reason, current_user)
     elif action == "reject":
-        e.status = "cancelled"
+        # Distinct from self-service "cancelled" — a rejection is admin-initiated
+        # and carries a reason the participant can see (mobile: content API and
+        # /my/enrolments both surface this via enrolment_status + rejection_reason).
+        e.status = "rejected"
+        e.rejection_reason = reason
         _append_moderation(db, training, "enrolment_rejected", reason, current_user)
     else:
         raise HTTPException(status_code=400, detail="action must be approve|reject")
     db.commit()
     db.refresh(e)
     db.refresh(training)
+    try:
+        from app.services.notification_triggers import _safe_notify
+        if action == "approve":
+            title = f"Enrolment Approved: {training.title}"
+            message = f"Hi {e.participant_name}, your enrolment in {training.title} has been approved."
+            category = "enrolment_approved"
+        else:
+            title = f"Enrolment Rejected: {training.title}"
+            message = f"Hi {e.participant_name}, your enrolment in {training.title} was not approved."
+            if reason:
+                message += f" Reason: {reason}"
+            category = "enrolment_rejected"
+        _safe_notify(
+            db, title, message, category, training.tenant_id,
+            {"training_id": str(tid), "enrolment_id": str(e.id), "reason": reason},
+            participant_email=e.participant_email, channels=["in_app", "push"],
+        )
+    except Exception:
+        pass
     return {"id": str(e.id), "status": e.status, "reason": reason}
 
 def create_training_checkout_service(db: Session, tid: UUID, payload):
@@ -2828,6 +2873,19 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
         TrainingEnrolment.status.in_(ACTIVE_ENROLMENT_STATUSES),
     ).first() if email else None
     if not enrol and not is_staff:
+        any_enrol = _latest_enrolment_any_status(db, tid, email) if email else None
+        if any_enrol and any_enrol.status == "pending_approval":
+            raise HTTPException(status_code=403, detail={
+                "code": "ENROLMENT_PENDING_APPROVAL",
+                "message": "Admin has not approved your enrolment yet.",
+            })
+        if any_enrol and any_enrol.status in ("rejected", "cancelled"):
+            raise HTTPException(status_code=403, detail={
+                "code": "ENROLMENT_NOT_ACTIVE",
+                "message": "Your enrolment is not active.",
+                "enrolment_status": any_enrol.status,
+                "rejection_reason": any_enrol.rejection_reason,
+            })
         raise HTTPException(status_code=403, detail="Enrolled participants only")
     training = _get_training_or_404(db, tid)
     if training.status in ("draft", "cancelled", "archived") and not is_staff:
@@ -3220,18 +3278,28 @@ def create_training_review_service(db: Session, tid: UUID, data):
     return {
         "id": str(r.id), "training_id": str(r.training_id), "rating": int(r.rating),
         "comment": r.comment, "participant_email": r.participant_email,
+        "participant_name": enrolled.participant_name,
         "verified": True, "created_at": r.created_at.isoformat(),
     }
 
 
 def list_training_reviews_service(db: Session, tid: UUID):
-    from app.models.training_model import TrainingReview
+    from app.models.training_model import TrainingEnrolment, TrainingReview
 
     _get_training_or_404(db, tid)
     rows = db.query(TrainingReview).filter(TrainingReview.training_id == tid).order_by(TrainingReview.created_at.desc()).all()
+    emails = {r.participant_email for r in rows}
+    names_by_email: dict[str, str] = {}
+    if emails:
+        for email, name in db.query(TrainingEnrolment.participant_email, TrainingEnrolment.participant_name).filter(
+            TrainingEnrolment.training_id == tid,
+            TrainingEnrolment.participant_email.in_(emails),
+        ).all():
+            names_by_email.setdefault(email, name)
     reviews = [
         {"id": str(r.id), "training_id": str(r.training_id), "rating": int(r.rating), "comment": r.comment,
-         "participant_email": r.participant_email, "verified": True, "created_at": r.created_at.isoformat()}
+         "participant_email": r.participant_email, "participant_name": names_by_email.get(r.participant_email),
+         "verified": True, "created_at": r.created_at.isoformat()}
         for r in rows
     ]
     avg = round(sum(item["rating"] for item in reviews) / len(reviews), 2) if reviews else 0
@@ -3308,18 +3376,35 @@ def _learner_enrolment(db: Session, tid: UUID, current_user: dict):
     ).first()
 
 
+def _latest_enrolment_any_status(db: Session, tid: UUID, email: str | None):
+    """Unlike _learner_enrolment (active-only), finds the caller's most recent
+    enrolment attempt regardless of status — used to report is_enrolled/
+    enrolment_status/rejection_reason even when pending, rejected, or cancelled."""
+    from app.models.training_model import TrainingEnrolment
+    if not email:
+        return None
+    return db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email == email,
+    ).order_by(TrainingEnrolment.created_at.desc()).first()
+
+
 def get_learner_training_detail_service(db: Session, tid: UUID, current_user: dict):
     detail = get_training_service(db, tid, current_user).model_dump()
     if current_user.get("role") in ("admin", "provider", "super_admin"):
         return TrainingDetailResponse.model_validate(detail)
     enrolment = _learner_enrolment(db, tid, current_user)
+    latest_enrolment = _latest_enrolment_any_status(db, tid, current_user.get("email"))
     from app.services.training_curriculum import curriculum_preview
     detail["sections"] = curriculum_preview(detail.get("sections") or [])
     detail["assessments"] = []
     if not enrolment:
         detail["assignments"] = []
-    for field in ("instructor_notes", "last_admin_notes", "rejection_reason"):
+    for field in ("instructor_notes", "last_admin_notes"):
         detail[field] = None
+    detail["is_enrolled"] = bool(latest_enrolment) and latest_enrolment.status not in ("cancelled", "rejected", "waitlisted")
+    detail["enrolment_status"] = latest_enrolment.status if latest_enrolment else None
+    detail["rejection_reason"] = latest_enrolment.rejection_reason if latest_enrolment else None
     if enrolment:
         content = get_secure_training_content_service(db, tid, current_user)
         detail["sections"] = content["sections"]

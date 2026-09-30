@@ -570,6 +570,8 @@ class EventListItemResponse(EventResponse):
 
 class EventDetailResponse(EventResponse):
     enterprise_name: str | None = Field(None, description="Owning enterprise short name.")
+    is_registered: bool = Field(False, description="True while the signed-in caller has a live registration (confirmed or attended). Always false for an anonymous request.")
+    registration_status: str | None = Field(None, description="The signed-in caller's own registration status: confirmed|cancelled|attended|no_show|null (never registered, or anonymous request).")
 
     model_config = ConfigDict(from_attributes=True)
 

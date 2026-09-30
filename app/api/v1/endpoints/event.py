@@ -432,7 +432,7 @@ def get_event(
 ):
     token = extract_access_token(request)
     viewer = build_event_viewer(db, current_user, access_token=token)
-    return get_event_service(db, event_id, viewer=viewer, access_token=token)
+    return get_event_service(db, event_id, viewer=viewer, access_token=token, current_user=current_user)
 
 
 @router.put("/{event_id}", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event")

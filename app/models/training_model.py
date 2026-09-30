@@ -124,7 +124,8 @@ class TrainingEnrolment(Base):
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False, index=True)
     group_enrol = Column(Boolean, default=False)
-    status = Column(String(20), default="enrolled")  # enrolled|pending_approval|cancelled|waitlisted|expired|attended
+    status = Column(String(20), default="enrolled")  # enrolled|pending_approval|cancelled|rejected|waitlisted|expired|attended
+    rejection_reason = Column(Text, nullable=True)  # set when an admin rejects this enrolment (action=reject)
     coupon_code = Column(String(50))
     access_expires_at = Column(DateTime)
     qr_code = Column(String(255), unique=True, index=True)  # server-generated at enrolment time
