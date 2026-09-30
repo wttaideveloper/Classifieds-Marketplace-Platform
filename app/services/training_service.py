@@ -1694,7 +1694,7 @@ def check_in_enrolment_service(db: Session, tid: UUID, enrolment_id, qr_code: st
     enrol = _find_enrolment_by_id_or_qr(db, tid, enrolment_id, qr_code)
     if not enrol:
         raise HTTPException(status_code=404, detail="Enrolment not found")
-if enrol.status in ("cancelled", "rejected"):
+    if enrol.status in ("cancelled", "rejected"):
         raise HTTPException(status_code=400, detail=f"Cannot check-in: enrolment is {enrol.status}")
     if enrol.checked_in_at:
         return {
