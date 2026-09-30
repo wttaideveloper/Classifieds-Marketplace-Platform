@@ -151,9 +151,11 @@ def search_events(
     "/trainings",
     response_model=TrainingPaginatedResponse,
     summary="Search Trainings",
+    description="query matches (case-insensitive, substring) against title, description, category, and tags. "
+                "Other params filter exactly: tenant_id, enterprise_id, category, city (via location), status.",
 )
 def search_trainings(
-    query: str | None = Query(None),
+    query: str | None = Query(None, description="Case-insensitive substring match against title, description, category, and tags."),
     tenant_id: UUID | None = Query(None),
     enterprise_id: UUID | None = Query(None),
     category: str | None = Query(None),
