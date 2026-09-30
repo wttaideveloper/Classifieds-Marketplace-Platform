@@ -440,10 +440,12 @@ class TestAttendeeIntegration:
             attend(env, reg(env), "workshop")
         assert selects() == few
 
-    def test_the_csv_export_is_unchanged(self, env):
+    def test_the_csv_export_columns_are_stable_with_new_ones_only_appended(self, env):
         a = reg(env, "a@example.com")
         attend(env, a)
         resp = client(env).get(f"{API}/{env.event.id}/registrations/export")
         header = next(csv.reader(io.StringIO(resp.text)))
-        assert header == ["id", "name", "email", "status", "qr_code", "ticket_type", "quantity", "payment_status", "order_id",
+        # The original 18 columns keep their exact name/order (Phase 2.8 only appends after them).
+        assert header[:18] == ["id", "name", "email", "status", "qr_code", "ticket_type", "quantity", "payment_status", "order_id",
                           "amount", "currency", "checked_in", "checked_in_at", "registered_at", "answers", "source", "meals", "accommodation"]
+        assert header[18:] == ["meal_subtotal", "accommodation_subtotal"]

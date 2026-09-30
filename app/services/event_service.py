@@ -866,8 +866,9 @@ def _cancel_registration_and_release_seat(db: Session, event, reg, *, actor: str
 
 def create_registration_service(db: Session, event_id: UUID, payload):
     from datetime import datetime
+    from decimal import Decimal
     event = _get_event_or_404(db, event_id)
-    from app.models.event_aux_models import EventRegistration
+    from app.models.event_aux_models import EventOrder, EventRegistration
     import uuid
 
     # Block cancelled/completed/archived/suspended events
@@ -888,20 +889,29 @@ def create_registration_service(db: Session, event_id: UUID, payload):
             detail="This event requires payment. Complete registration through checkout (POST /events/{event_id}/checkout).",
         )
 
-    # Meal selections (Phase 2.6): optional; validated against the event's meals configuration by the one shared validator.
-    from app.services.event_meal_service import validated_selections
+    # Meal/accommodation selections (Phase 2.6/2.7, priced + capacity-checked since Phase 2.8): validated and
+    # priced by the SAME shared service checkout uses (event_option_pricing_service.resolve_priced_selections),
+    # so a free-ticket registration enforces identical rules — unknown/duplicate/cross-event/inactive/sold-out/
+    # out-of-window/mixed-currency — as paid checkout. See create_event_checkout_service for the paid counterpart.
+    from app.services.event_option_pricing_service import (
+        assert_capacity_available, persist_line_items, resolve_priced_selections,
+    )
 
     requested_meals = getattr(payload, "meal_selections", None)
-    # Only a real list is a selection: a payload object without the field (older callers, mocks) means "none".
-    meal_selections = validated_selections(event, requested_meals if isinstance(requested_meals, list) else None)
-
-    # Accommodation selections (Phase 2.7): the same shape, validated by their own single shared validator.
-    from app.services.event_accommodation_service import validated_accommodation_selections
-
     requested_accommodation = getattr(payload, "accommodation_selections", None)
-    accommodation_selections = validated_accommodation_selections(
-        event, requested_accommodation if isinstance(requested_accommodation, list) else None
+    resolved_ticket = _resolve_ticket(event, getattr(payload, "ticket_type_id", None))
+    ticket_currency_for_pricing = (
+        resolved_ticket.get("currency", event.currency) if isinstance(resolved_ticket, dict) else (event.currency or "INR")
+    ) or "INR"
+    priced_options = resolve_priced_selections(
+        event,
+        # Only a real list is a selection: a payload object without the field (older callers, mocks) means "none".
+        meal_selections=requested_meals if isinstance(requested_meals, list) else None,
+        accommodation_selections=requested_accommodation if isinstance(requested_accommodation, list) else None,
+        ticket_currency=ticket_currency_for_pricing,
     )
+    meal_selections = [line.option_id for line in priced_options.meal_lines] or None
+    accommodation_selections = [line.option_id for line in priced_options.accommodation_lines] or None
 
     # Group size handling
     group_size = getattr(payload, "group_size", None) or 1
@@ -971,6 +981,11 @@ def create_registration_service(db: Session, event_id: UUID, payload):
         except ValueError:
             pass
 
+    # Phase 2.8: meal/accommodation capacity — same (best-effort on SQLite, real on Postgres) row lock as the
+    # capacity checks above, so this is serialized against concurrent purchases of the same option identically
+    # to tickets.
+    assert_capacity_available(db, event, priced_options)
+
     # Build custom_fields with group info and participant questions
     cf = dict(payload.custom_fields or {})
     if getattr(payload, "group_members", None):
@@ -991,6 +1006,35 @@ def create_registration_service(db: Session, event_id: UUID, payload):
     )
     db.add(reg)
     db.flush()
+
+    # Phase 2.8: "free ≠ zero payable" — a free ticket with paid meal/accommodation selections still needs a
+    # real, auditable order (mirrors create_event_checkout_service's EventOrder shape; ticket_subtotal is
+    # always 0 here since this endpoint only ever mints free-ticket registrations — see the paid-event guard
+    # above). No order at all when every selected option is free too — nothing payable, nothing to audit.
+    payable_subtotal = priced_options.meal_subtotal + priced_options.accommodation_subtotal
+    order = None
+    if payable_subtotal > 0:
+        order = EventOrder(
+            event_id=event_id,
+            participant_name=payload.participant_name,
+            participant_email=norm_email,
+            ticket_type_id=payload.ticket_type_id,
+            quantity="1",
+            amount=str(payable_subtotal.quantize(Decimal("0.01"))),
+            currency=priced_options.currency or event.currency or "INR",
+            payment_status="confirmed",
+            status="confirmed",
+            payment_provider="marketplace",
+            ticket_subtotal="0.00",
+            meal_subtotal=str(priced_options.meal_subtotal),
+            accommodation_subtotal=str(priced_options.accommodation_subtotal),
+        )
+        db.add(order)
+        db.flush()
+    # One immutable snapshot row per selected meal/accommodation option, free or paid (order_id is None for a
+    # free-only selection — see the migration's docstring on event_registration_options.order_id).
+    persist_line_items(db, event_id=event_id, registration_id=reg.id, order_id=(order.id if order else None), priced=priced_options)
+
     # Group members: create additional registrations atomically in same transaction
     if getattr(payload, "group_members", None):
         for m in payload.group_members or []:
@@ -1719,7 +1763,8 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
     import sqlalchemy as sa
     from sqlalchemy.exc import IntegrityError
     from datetime import datetime
-    
+    from decimal import Decimal
+
     # Normalize email as established in Phase A
     participant_email = payload.participant_email.strip().lower()
 
@@ -1736,7 +1781,22 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
     ticket = _resolve_ticket(event, payload.ticket_type_id)
     if payload.ticket_type_id and not ticket:
         raise HTTPException(status_code=404, detail="Ticket type not found")
-        
+
+    # Phase 2.8: validate + price meal/accommodation selections BEFORE taking the Event row lock — pure
+    # validation (unknown/retired/duplicate/window/currency) never needs the lock, so bad input fails fast.
+    from app.services.event_option_pricing_service import (
+        assert_capacity_available, persist_line_items, resolve_priced_selections,
+    )
+    ticket_currency_for_pricing = (
+        ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
+    ) or "INR"
+    priced_options = resolve_priced_selections(
+        event,
+        meal_selections=getattr(payload, "meal_selections", None),
+        accommodation_selections=getattr(payload, "accommodation_selections", None),
+        ticket_currency=ticket_currency_for_pricing,
+    )
+
     try:
         # capacity per ticket type — lock Event row to prevent race
         db.query(Event).filter(Event.id == event_id).with_for_update().first()
@@ -1760,7 +1820,11 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
                     raise HTTPException(status_code=400, detail=f"Ticket type at capacity ({cap})")
             except ValueError:
                 pass
-                
+
+        # Phase 2.8: meal/accommodation capacity — same row lock as ticket capacity above, so this is
+        # serialized against concurrent purchases of the same option exactly like tickets already are.
+        assert_capacity_available(db, event, priced_options)
+
         # Waitlist offer processing
         waitlist_entry = None
         waitlist_id = getattr(payload, "waitlist_id", None)
@@ -1793,13 +1857,23 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
                     pass
         price = _ticket_effective_price(ticket or {}, event)
         try:
-            total = float(price) * payload.quantity
-            amount = str(total)
+            ticket_subtotal_decimal = (Decimal(price) * payload.quantity).quantize(Decimal("0.01"))
         except Exception:
-            amount = str(price)
-            
+            # Same fallback the pre-Phase-2.8 code used for an unparseable price: treat it as free rather than
+            # blocking checkout on a malformed ticket price (a pre-existing data-quality concern, not new here).
+            ticket_subtotal_decimal = Decimal("0.00")
+
         currency = ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
-        
+
+        # Phase 2.8: grand total = ticket + meal + accommodation. A free ticket (ticket_subtotal 0) with paid
+        # extras still produces a payable order — "free event" is a ticket-price concept, not a total-due one.
+        # Computed directly in Decimal (compute_totals' float-for-JSON output is for API responses, e.g. the
+        # quote endpoint — not for this persisted amount string).
+        grand_total_decimal = (
+            ticket_subtotal_decimal + priced_options.meal_subtotal + priced_options.accommodation_subtotal
+        ).quantize(Decimal("0.01"))
+        amount = str(grand_total_decimal)
+
         payment_status = "confirmed"  # stub: payment always confirmed (marketplace/merchant)
         order = EventOrder(
             event_id=event_id,
@@ -1812,27 +1886,35 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
             payment_status=payment_status,
             status="confirmed",
             payment_provider=payload.payment_provider or "marketplace",
+            ticket_subtotal=str(ticket_subtotal_decimal),
+            meal_subtotal=str(priced_options.meal_subtotal),
+            accommodation_subtotal=str(priced_options.accommodation_subtotal),
         )
         db.add(order)
         db.flush() # Secure order details without committing
 
         # also create registration for attendance tracking (Atomic with order)
         reg = EventRegistration(
-            event_id=event_id, 
-            participant_name=payload.participant_name, 
+            event_id=event_id,
+            participant_name=payload.participant_name,
             participant_email=participant_email, # Normalized email
-            ticket_type_id=payload.ticket_type_id, 
-            status="confirmed", 
-            qr_code=str(uuid.uuid4())[:12].upper()
+            ticket_type_id=payload.ticket_type_id,
+            status="confirmed",
+            qr_code=str(uuid.uuid4())[:12].upper(),
+            meal_selections=[line.option_id for line in priced_options.meal_lines] or None,
+            accommodation_selections=[line.option_id for line in priced_options.accommodation_lines] or None,
         )
         db.add(reg)
         db.flush()
-        
+
+        # Phase 2.8: one immutable snapshot row per purchased meal/accommodation option.
+        persist_line_items(db, event_id=event_id, registration_id=reg.id, order_id=order.id, priced=priced_options)
+
         # If checked out via waitlist offer, fulfill it
         if waitlist_entry:
             waitlist_entry.status = "promoted"
             waitlist_entry.registration_id = reg.id
-        
+
         # Commit BOTH order and registration (and waitlist update) atomically
         db.commit()
         db.refresh(order)
@@ -1857,6 +1939,50 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
         logger.warning(f"Failed to send checkout notification: {e}")
 
     return order
+
+
+def get_checkout_quote_service(db: Session, event_id: UUID, payload) -> dict:
+    """The authoritative price breakdown checkout would charge for this ticket + meal/accommodation selection.
+    A pure preview: no registration, order, or line item is created, and no row lock is taken — this is
+    advisory, not a reservation. The SAME capacity/pricing rules are re-applied, authoritatively and under
+    lock, at actual checkout (create_event_checkout_service); a quote can go stale between the two calls, same
+    as any other price preview. Reuses the SAME resolve_priced_selections/assert_capacity_available/
+    compute_totals functions checkout itself uses — see event_option_pricing_service.
+    """
+    from decimal import Decimal
+    from app.services.event_option_pricing_service import assert_capacity_available, compute_totals, resolve_priced_selections
+
+    event = _get_event_or_404(db, event_id)
+    if event.status in ["cancelled", "completed", "archived", "suspended"]:
+        raise HTTPException(status_code=400, detail=f"Checkout closed — event is {event.status}")
+    if event.status not in ["published"]:
+        raise HTTPException(status_code=400, detail=f"Event not open for checkout (status: {event.status})")
+
+    from app.utils.event_utils import validate_registration_window
+    validate_registration_window(event)
+
+    ticket = _resolve_ticket(event, payload.ticket_type_id)
+    if payload.ticket_type_id and not ticket:
+        raise HTTPException(status_code=404, detail="Ticket type not found")
+
+    ticket_currency = (
+        ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
+    ) or "INR"
+    priced_options = resolve_priced_selections(
+        event, meal_selections=payload.meal_selections, accommodation_selections=payload.accommodation_selections,
+        ticket_currency=ticket_currency,
+    )
+    assert_capacity_available(db, event, priced_options)  # advisory (no lock) — see docstring
+
+    price = _ticket_effective_price(ticket or {}, event)
+    try:
+        ticket_subtotal = (Decimal(price) * payload.quantity).quantize(Decimal("0.01"))
+    except Exception:
+        # Same fallback create_event_checkout_service uses for an unparseable ticket price.
+        ticket_subtotal = Decimal("0.00")
+
+    return compute_totals(ticket_subtotal, priced_options, currency=priced_options.currency or ticket_currency)
+
 
 def get_event_orders_service(db: Session, event_id: UUID):
     from app.models.event_aux_models import EventOrder
@@ -2592,9 +2718,21 @@ def validate_qr_service(db: Session, event_id: UUID, qr_code: str | None):
 
 
 def my_registrations_service(db: Session, email: str, status_filter: str | None = None):
-    """List registrations for a user by email, with bulk event lookup."""
-    from app.models.event_aux_models import EventRegistration
+    """List registrations for a user by email, with bulk event lookup.
+
+    Phase 2.8: also exposes each registration's meal/accommodation selections, with a purchase-time price/
+    currency snapshot and ``status`` ("confirmed" when an EventRegistrationOption row backs the selection —
+    i.e. it went through checkout/registration/walk-in after Phase 2.8 — else "selected" for a pre-2.8
+    selection with no such row). This is the fix for the gap Mobile's Meals/Accommodation phases documented:
+    until now, no participant-readable endpoint returned a registration's confirmed purchased options at all;
+    the authenticated ticket/QR screen had nothing to read them from.
+    """
+    from app.models.event_aux_models import EventRegistration, EventRegistrationOption
     from app.models.event_model import Event
+    from app.services.event_accommodation_service import attendee_accommodation_selections
+    from app.services.event_meal_service import attendee_meal_selections
+    from app.utils.event_accommodation import stored_accommodation_options
+    from app.utils.event_meals import stored_options
 
     # Registrations store the email lower-cased, so compare case-insensitively (mixed-case token emails).
     q = db.query(EventRegistration).filter(sa.func.lower(EventRegistration.participant_email) == email.strip().lower())
@@ -2608,9 +2746,18 @@ def my_registrations_service(db: Session, email: str, status_filter: str | None 
         if event_ids
         else {}
     )
+
+    # One bulk query for every registration's purchased option rows (no N+1 as the list grows).
+    reg_ids = [r.id for r in regs]
+    purchased_by_reg: dict = {}
+    if reg_ids:
+        for row in db.query(EventRegistrationOption).filter(EventRegistrationOption.registration_id.in_(reg_ids)).all():
+            purchased_by_reg.setdefault(row.registration_id, {"meal": {}, "accommodation": {}})[row.option_type][row.option_id] = row
+
     out = []
     for r in regs:
         ev = ev_map.get(r.event_id)
+        purchased = purchased_by_reg.get(r.id, {"meal": {}, "accommodation": {}})
         out.append({
             "registration_id": str(r.id),
             "event_id": str(r.event_id),
@@ -2620,6 +2767,15 @@ def my_registrations_service(db: Session, email: str, status_filter: str | None 
             "registration_status": r.status,
             "qr_code": r.qr_code,
             "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None,
+            "meal_selections": (
+                [s.model_dump() for s in attendee_meal_selections(stored_options(ev), r.meal_selections, purchased["meal"])]
+                if ev else []
+            ),
+            "accommodation_selections": (
+                [s.model_dump() for s in attendee_accommodation_selections(
+                    stored_accommodation_options(ev), r.accommodation_selections, purchased["accommodation"])]
+                if ev else []
+            ),
         })
     return out
 

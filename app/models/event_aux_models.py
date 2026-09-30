@@ -126,16 +126,68 @@ class EventOrder(Base):
     participant_email = Column(String(255), nullable=False, index=True)
     ticket_type_id = Column(String(100), index=True)
     quantity = Column(String(20), default="1")
-    amount = Column(String(50))  # total amount
+    amount = Column(String(50))  # total amount (Phase 2.8: ticket + meal + accommodation subtotals combined)
     currency = Column(String(10), default="INR")
     payment_status = Column(String(20), default="confirmed", index=True)  # pending|confirmed|failed|refunded
     status = Column(String(20), default="confirmed", index=True)  # confirmed|cancelled|refunded|refund_requested
     payment_provider = Column(String(50), default="marketplace")  # marketplace|merchant
     refund_reason = Column(Text)
+    # Phase 2.8: component breakdown of `amount`, for audit/quote display. NULL on every order created before
+    # this column existed (backfilled to ticket_subtotal=amount, meal/accommodation_subtotal=0 by the migration
+    # for reporting consistency — `amount` itself is untouched and remains authoritative either way).
+    ticket_subtotal = Column(String(50), nullable=True)
+    meal_subtotal = Column(String(50), nullable=True)
+    accommodation_subtotal = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     event = relationship("Event", backref="orders")
+
+
+class EventRegistrationOption(Base):
+    """A purchased/selected Meal or Accommodation option (Phase 2.8) — an immutable, purchase-time snapshot line
+    item, one row per selected option per registration. This is the authoritative financial history for
+    meal/accommodation charges: changing an option's price/name/capacity later never touches an existing row
+    here (name/price/currency are captured at the moment of purchase and never re-derived).
+
+    Capacity is enforced (and released) purely by COUNTING active rows here joined to a non-cancelled
+    EventRegistration — there is no separate reserved/consumed counter, so a registration or its paired order
+    transitioning to cancelled/refunded releases the option's capacity automatically and idempotently (the count
+    simply stops including it), with no dedicated "release" step to get wrong or double-run. See
+    app.services.event_option_pricing_service.
+
+    EventOrder has no FK to EventRegistration (see event_payments.py's docstring — pairing is normally by email
+    heuristic). This table is deliberately FK'd to EventRegistration instead (created by every registration path,
+    free or paid, before this table is ever written to), and also carries a nullable order_id for direct
+    traceability when the purchase was paid, so a query never needs that fragile pairing.
+    """
+
+    __tablename__ = "event_registration_options"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    registration_id = Column(
+        UUID(as_uuid=True), ForeignKey("event_registrations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    order_id = Column(UUID(as_uuid=True), ForeignKey("event_orders.id", ondelete="SET NULL"), nullable=True, index=True)
+    option_type = Column(String(20), nullable=False)  # "meal" | "accommodation"
+    # id inside Event.meals/accommodation options JSONB — no FK, same reasoning as EventSessionAttendance.session_id.
+    option_id = Column(String(64), nullable=False)
+    option_name = Column(String(255), nullable=False)  # snapshot at purchase time
+    unit_price = Column(String(50), nullable=False, default="0")  # snapshot at purchase time
+    currency = Column(String(10), nullable=False, default="INR")  # snapshot at purchase time
+    quantity = Column(String(20), nullable=False, default="1")
+    line_total = Column(String(50), nullable=False, default="0")  # snapshot: unit_price * quantity
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    event = relationship("Event")
+    registration = relationship("EventRegistration", backref="options")
+    order = relationship("EventOrder", backref="line_items")
+
+    __table_args__ = (
+        # Capacity-counting lookup: "how many active rows exist for this event's option X".
+        Index("ix_event_registration_options_event_option", "event_id", "option_type", "option_id"),
+    )
 
 
 class EventCategory(Base):

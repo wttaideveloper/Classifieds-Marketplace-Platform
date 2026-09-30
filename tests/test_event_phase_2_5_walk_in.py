@@ -679,7 +679,7 @@ class TestPayment:
         assert resp.status_code == 201, resp.text
         data = resp.json()
         (order,) = orders(env, event)
-        assert (order.status, order.payment_status, order.amount, order.quantity, order.currency) == ("confirmed", "pending", "500.0", "1", "INR")
+        assert (order.status, order.payment_status, order.amount, order.quantity, order.currency) == ("confirmed", "pending", "500.00", "1", "INR")  # Decimal, quantized to 2dp (Phase 2.8)
         assert order.ticket_type_id == "general" and order.participant_email == "buyer@example.com"
         assert data["payment"] == {
             "required": True, "status": "pending", "amount": 500.0, "currency": "INR", "order_id": str(order.id),
@@ -720,7 +720,7 @@ class TestPayment:
         event = paid_event(env, tickets=[{"id": "comp", "name": "Complimentary", "price": "0"}])
         data = walk_in(env, body(ticket_type_id="comp"), event=event).json()
         (order,) = orders(env, event)
-        assert (order.status, order.payment_status, order.amount) == ("confirmed", "confirmed", "0.0")  # nothing to pay: not a fake success
+        assert (order.status, order.payment_status, order.amount) == ("confirmed", "confirmed", "0.00")  # nothing to pay: not a fake success
         assert data["payment"]["required"] is False and data["payment"]["status"] == "paid"
         assert data["check_in"]["performed"] is True and data["registration"]["registration_status"] == "attended"
 
@@ -1019,7 +1019,7 @@ class TestAuditAndTransactions:
         walk_in(env, body(ticket_type_id="general"), event=event)
         (audit,) = audits(env, "walk_in_registration")
         (order,) = orders(env, event)
-        assert audit.after["order_id"] == str(order.id) and audit.after["amount"] == "500.0" and audit.after["payment_status"] == "pending"
+        assert audit.after["order_id"] == str(order.id) and audit.after["amount"] == "500.00" and audit.after["payment_status"] == "pending"
 
     @pytest.mark.parametrize("failing", [
         lambda env: walk_in(env, body("dup@example.com")),

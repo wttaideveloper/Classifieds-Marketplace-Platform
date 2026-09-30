@@ -45,6 +45,13 @@ def opt(option_id, name, active=True, description=None):
     return {"id": option_id, "name": name, "description": description, "active": active}
 
 
+# Phase 2.8: see the identical helpers in test_event_meals_config.py for why read vs write need different
+# expected currency values.
+_PRICED_DEFAULTS_READ = {"price": "0.00", "currency": "INR", "capacity": None,
+                         "purchase_start_at": None, "purchase_end_at": None, "service_start_at": None, "service_end_at": None}
+_PRICED_DEFAULTS_WRITE = {**_PRICED_DEFAULTS_READ, "currency": None}
+
+
 def event(options=None, modules=ON, accommodation="unset"):
     stored = {"options": options} if accommodation == "unset" and options is not None else (None if accommodation == "unset" else accommodation)
     return SimpleNamespace(modules=modules, accommodation=stored, pricing_type="free", price=None, ticket_types=[], sessions=[],
@@ -72,11 +79,11 @@ class TestReading:
     def test_enabled_is_modules_accommodation_and_nothing_else(self):
         assert resolve_event_accommodation(event(TWO, ON))["enabled"] is True
         assert resolve_event_accommodation(event(TWO, OFF))["enabled"] is False  # options are kept, the switch is modules.accommodation
-        assert stored_accommodation_options(event(TWO, OFF)) == TWO
+        assert stored_accommodation_options(event(TWO, OFF)) == [{**o, **_PRICED_DEFAULTS_READ} for o in TWO]
 
     def test_options_are_returned_normalised(self):
         stored = event([{"id": "a", "name": "  Alpha  ", "description": "  ", "active": True}])
-        assert stored_accommodation_options(stored) == [opt("a", "Alpha")]
+        assert stored_accommodation_options(stored) == [{**opt("a", "Alpha"), **_PRICED_DEFAULTS_READ}]
 
     @pytest.mark.parametrize("garbage", [
         "text", 7, [], {"options": "text"}, {"options": {"a": 1}}, {"options": [None, 1, "x", []]},
@@ -139,8 +146,8 @@ class TestBuildOptions:
 
     def test_relisting_a_retired_option_reactivates_it_with_its_id(self):
         retired = [opt("shared-room", "Shared Room", active=False)]
-        assert build_accommodation_options([{"name": "Shared Room"}], retired) == [opt("shared-room", "Shared Room")]
-        assert build_accommodation_options([{"id": "shared-room", "name": "Shared Room"}], retired) == [opt("shared-room", "Shared Room")]
+        assert build_accommodation_options([{"name": "Shared Room"}], retired) == [{**opt("shared-room", "Shared Room"), **_PRICED_DEFAULTS_WRITE}]
+        assert build_accommodation_options([{"id": "shared-room", "name": "Shared Room"}], retired) == [{**opt("shared-room", "Shared Room"), **_PRICED_DEFAULTS_WRITE}]
 
     def test_an_explicit_active_false_retires_a_listed_option(self):
         assert build_accommodation_options([{"id": "shared-room", "name": "Shared Room", "active": False}], [])[0]["active"] is False
@@ -291,7 +298,7 @@ class TestSchemas:
         assert AccommodationOptionInput(name="Shared Room", description="Bunk beds").as_dict()["description"] == "Bunk beds"
         for bad in ({"name": ""}, {"name": "   "}, {"name": "x" * 101}, {"name": "A", "id": ""}, {"name": "A", "id": "bad id"},
                     {"name": "A", "id": "x" * 65}, {"name": "A", "active": "yes"},
-                    {"name": "A", "description": "x" * 301}, {"name": "A", "price": 5}, {}, {"id": "a"}):
+                    {"name": "A", "description": "x" * 301}, {"name": "A", "price": -5}, {}, {"id": "a"}):
             with pytest.raises(ValidationError):
                 AccommodationOptionInput(**bad)
 

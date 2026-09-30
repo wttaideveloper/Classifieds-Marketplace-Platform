@@ -45,6 +45,7 @@ from app.utils.event_modules import resolve_event_modules, resolve_event_type
 from app.utils.event_payments import (
     PAYMENT_CANCELLED,
     PAYMENT_FAILED,
+    PAYMENT_FREE,
     PAYMENT_PAID,
     PAYMENT_PENDING,
     PAYMENT_REFUND_REQUESTED,
@@ -319,5 +320,56 @@ def get_event_dashboard_service(db: Session, event_id: UUID) -> EventDashboardRe
         sessions=summarize_session_attendance(db, event),
         meals=summarize_meals(db, event),
         accommodation=summarize_accommodation(db, event),
+        generated_at=datetime.utcnow(),
+    )
+
+
+def get_event_fulfilment_service(db: Session, event_id: UUID):
+    """Option-level summary (meals/accommodation — identical to the dashboard's own) plus every participant-
+    level purchase record: who holds which option, at what purchase-time price, and its payment status. For
+    organizers/enterprise fulfilment (catering counts, room assignments) — not the attendee-facing list, which
+    shows the LIVE current option price rather than what was actually charged (Phase 2.8).
+
+    Only ACTIVE (confirmed/attended) registrations are included — the same rule capacity counting and the
+    dashboard's own registration/attendance figures already use, so a cancelled/refunded purchase (whose
+    registration status has already flipped) silently drops out here too, with no separate cleanup needed.
+    """
+    from app.models.event_aux_models import EventOrder, EventRegistration, EventRegistrationOption
+    from app.schemas.event_management_schema import EventFulfilmentResponse, EventOptionPurchase
+
+    event = get_event_by_id(db, event_id)
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    rows = (
+        db.query(EventRegistrationOption, EventRegistration, EventOrder)
+        .join(EventRegistration, EventRegistrationOption.registration_id == EventRegistration.id)
+        .outerjoin(EventOrder, EventRegistrationOption.order_id == EventOrder.id)
+        .filter(EventRegistrationOption.event_id == event_id, EventRegistration.status.in_(["confirmed", "attended"]))
+        .order_by(EventRegistrationOption.created_at.asc())
+        .all()
+    )
+    purchases = []
+    for opt, reg, order in rows:
+        parsed_quantity = parse_money(opt.quantity)
+        purchases.append(EventOptionPurchase(
+            registration_id=reg.id,
+            participant_name=reg.participant_name,
+            participant_email=reg.participant_email,
+            registration_status=reg.status,
+            option_type=opt.option_type,
+            option_id=opt.option_id,
+            option_name=opt.option_name,
+            quantity=int(parsed_quantity) if parsed_quantity is not None else 1,
+            unit_price=money_to_float(parse_money(opt.unit_price) or _ZERO),
+            currency=opt.currency,
+            line_total=money_to_float(parse_money(opt.line_total) or _ZERO),
+            order_id=order.id if order else None,
+            payment_status=derive_payment_status(order.status, order.payment_status) if order else PAYMENT_FREE,
+        ))
+    return EventFulfilmentResponse(
+        meals=summarize_meals(db, event),
+        accommodation=summarize_accommodation(db, event),
+        purchases=purchases,
         generated_at=datetime.utcnow(),
     )

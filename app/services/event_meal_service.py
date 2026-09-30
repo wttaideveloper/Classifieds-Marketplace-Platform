@@ -20,13 +20,14 @@ from fastapi import HTTPException
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from app.models.event_aux_models import EventRegistration
+from app.models.event_aux_models import EventRegistration, EventRegistrationOption
 from app.repository.event_repo import assert_event_access
 from app.schemas.event_meal_schema import AttendeeMealSelection, DashboardMeal, EventMealSelectionResponse
 from app.services.event_service import _actor_id, _get_event_or_404, _log_audit
 from app.utils.event_meals import (
     MealSelectionError,
     meals_enabled,
+    option_price,
     selection_views,
     stored_options,
     validate_meal_selections,
@@ -46,8 +47,39 @@ def validated_selections(event, selections, current=None) -> list[str] | None:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-def attendee_meal_selections(options: list[dict], selected) -> list[AttendeeMealSelection]:
-    return [AttendeeMealSelection(**view) for view in selection_views(options, selected)]
+def purchased_meal_options(db: Session, registration_id: UUID) -> dict[str, EventRegistrationOption]:
+    """This registration's meal EventRegistrationOption rows, by option id — the purchase-time price/currency
+    snapshot (Phase 2.8). Empty for a registration with no priced meal selections (free options, or a
+    registration created before pricing existed) — that is the normal, common case, not an error."""
+    rows = (
+        db.query(EventRegistrationOption)
+        .filter(EventRegistrationOption.registration_id == registration_id, EventRegistrationOption.option_type == "meal")
+        .all()
+    )
+    return {row.option_id: row for row in rows}
+
+
+def attendee_meal_selections(
+    options: list[dict], selected, purchased: dict[str, EventRegistrationOption] | None = None
+) -> list[AttendeeMealSelection]:
+    """``purchased`` (optional — see purchased_meal_options) attaches the purchase-time price/currency snapshot
+    and service window to each selection, for the authenticated participant's own ticket/registration response
+    (Section 15). Omitted by callers that only need the plain name/active view (dashboard, attendee list) —
+    identical output to before Phase 2.8 in that case."""
+    purchased = purchased or {}
+    views = []
+    for view in selection_views(options, selected):
+        option = next((o for o in options if o["id"] == view["meal_id"]), None)
+        line = purchased.get(view["meal_id"])
+        views.append(AttendeeMealSelection(
+            **view,
+            price=float(line.unit_price) if line else (float(option_price(option)) if option else None),
+            currency=(line.currency if line else (option.get("currency") if option else None)),
+            service_start_at=option.get("service_start_at") if option else None,
+            service_end_at=option.get("service_end_at") if option else None,
+            status="confirmed" if line else "selected",
+        ))
+    return views
 
 
 # ---------------------------------------------------------------------------------------------
@@ -86,6 +118,24 @@ def update_registration_meals_service(
 
     before = list(reg.meal_selections) if isinstance(reg.meal_selections, list) else []
     selections = validated_selections(event, payload.meal_selections, current=before)
+
+    # Phase 2.8: this endpoint has never had a payment mechanism, and inventing one here (or a matching partial
+    # refund on removal) is exactly the kind of workaround the spec forbids. So: free selections may still be
+    # freely changed (unchanged behavior), but the moment a PAID option enters or leaves the set, reject —
+    # paid selections are only ever created by checkout/registration/walk-in, which already handle money.
+    options_by_id = {o["id"]: o for o in stored_options(event)}
+    changed = (set(selections or []) ^ set(before)) - set()
+    paid_changed = sorted(
+        options_by_id[option_id]["name"] for option_id in changed
+        if option_id in options_by_id and option_price(options_by_id[option_id]) > 0
+    )
+    if paid_changed:
+        raise HTTPException(
+            status_code=422,
+            detail="Cannot change a paid meal selection here: " + ", ".join(paid_changed)
+            + ". Paid selections are set at registration/checkout and cannot be self-service edited.",
+        )
+
     reg.meal_selections = selections  # a new list (or None), so the JSONB change is always detected
     if not participant:
         _log_audit(
@@ -99,9 +149,10 @@ def update_registration_meals_service(
     except Exception:
         db.rollback()
         raise
+    purchased = purchased_meal_options(db, reg.id)
     return EventMealSelectionResponse(
         event_id=event_id, registration_id=reg.id,
-        meal_selections=attendee_meal_selections(stored_options(event), reg.meal_selections),
+        meal_selections=attendee_meal_selections(stored_options(event), reg.meal_selections, purchased),
     )
 
 
@@ -137,13 +188,27 @@ def selected_meal_counts(db: Session, event_id: UUID) -> dict[str, int]:
 
 def summarize_meals(db: Session, event) -> list[DashboardMeal]:
     """The dashboard's meal section: one row per option of an event that has meals ON. Empty otherwise (meals off, or no
-    options), and no query at all in those cases. Retired options appear only while someone still holds them."""
+    options), and no query at all in those cases. Retired options appear only while someone still holds them.
+
+    Phase 2.8: ``selected_count``/``reserved_count`` reuse the existing JSONB-array count (identical figure —
+    EventRegistrationOption rows are created in lock-step with meal_selections, see event_service.py) rather than
+    a second query against the new table, so this stays exactly as cheap as before pricing existed.
+    """
     options = stored_options(event)
     if not options or not meals_enabled(event):
         return []
     counts = selected_meal_counts(db, event.id)
-    return [
-        DashboardMeal(meal_id=option["id"], name=option["name"], selected_count=counts.get(option["id"], 0), active=option["active"])
-        for option in options
-        if option["active"] or counts.get(option["id"], 0) > 0
-    ]
+    result = []
+    for option in options:
+        if not (option["active"] or counts.get(option["id"], 0) > 0):
+            continue
+        taken = counts.get(option["id"], 0)
+        capacity = option.get("capacity")
+        remaining = None if capacity is None else max(0, int(capacity) - taken)
+        result.append(DashboardMeal(
+            meal_id=option["id"], name=option["name"], selected_count=taken, active=option["active"],
+            price=float(option_price(option)), currency=option.get("currency") or (event.currency or "INR"),
+            capacity=capacity, reserved_count=taken, remaining_capacity=remaining,
+            sold_out=remaining is not None and remaining <= 0,
+        ))
+    return result

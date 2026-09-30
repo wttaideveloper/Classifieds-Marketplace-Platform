@@ -243,14 +243,23 @@ class TestConfiguration:
             {"id": "shared-room-a", "name": "Shared Room", "description": "Bunk beds"},
             {"name": "Private Room", "active": True}]}).json()
         first = data["accommodation"]["options"][0]
-        assert first == {"id": "shared-room-a", "name": "Shared Room", "description": "Bunk beds", "active": True}
+        assert first == {
+            "id": "shared-room-a", "name": "Shared Room", "description": "Bunk beds", "active": True,
+            "price": 0.0, "currency": "INR", "capacity": None, "reserved_count": None, "remaining_capacity": None, "sold_out": False,
+            "purchase_start_at": None, "purchase_end_at": None, "service_start_at": None, "service_end_at": None,
+        }
         stored = row(env, data["id"]).accommodation
-        assert list(stored) == ["options"] and stored["options"][0] == first  # {"options": [...]}: no second "enabled" truth in storage
+        assert list(stored) == ["options"]  # {"options": [...]}: no second "enabled" truth in storage
+        assert stored["options"][0] == {  # stored is compact: raw (currency None = unset, resolved only on read) and no computed fields
+            "id": "shared-room-a", "name": "Shared Room", "description": "Bunk beds", "active": True,
+            "price": "0.00", "currency": None, "capacity": None,
+            "purchase_start_at": None, "purchase_end_at": None, "service_start_at": None, "service_end_at": None,
+        }
         assert "enabled" not in stored
 
     @pytest.mark.parametrize("accommodation", [
         {"options": "Shared Room"}, {"options": ["Shared Room"]}, {"options": [None]}, {"options": [{"name": "A"}, None]},
-        {"options": {"name": "A"}}, {"options": [{"name": "A", "price": 5}]}, {"options": [{"name": "A", "capacity": 10}]},
+        {"options": {"name": "A"}}, {"options": [{"name": "A", "price": -5}]}, {"options": [{"name": "A", "capacity": -1}]},
         {"vendor": "Acme"}, {"options": [{"name": "A", "active": "yes"}]}, {"options": [{"name": "x" * 101}]},
         {"options": [{"name": "A", "description": "x" * 301}]}, {"options": [{"name": f"m{i}"} for i in range(51)]},
         {"enabled": "yes"}, "Shared Room", 5, [],
@@ -421,7 +430,7 @@ class TestUpdates:
 
     def test_a_failed_update_changes_nothing(self, env, event_id):
         before = snapshot(env)
-        for bad in ({"options": [{"name": ""}]}, {"options": [{"name": "A"}, {"name": "a"}]}, {"options": [{"name": "A", "price": 1}]}):
+        for bad in ({"options": [{"name": ""}]}, {"options": [{"name": "A"}, {"name": "a"}]}, {"options": [{"name": "A", "price": -1}]}):
             assert update(env, event_id, title="Should not stick", accommodation=bad).status_code == 422
         assert snapshot(env) == before
 
@@ -599,7 +608,7 @@ class TestRegistration:
         registration = env.db.query(EventRegistration).one()
         assert registration.accommodation_selections is None
         order = env.db.query(EventOrder).one()
-        assert (order.status, order.payment_status, order.amount) == ("confirmed", "confirmed", "500.0")
+        assert (order.status, order.payment_status, order.amount) == ("confirmed", "confirmed", "500.00")  # Decimal, quantized to 2dp (Phase 2.8)
         buyer = client_for(env.db, customer_user("buyer@example.com"))
         assert patch_accommodation(env, paid, registration.id, ["shared-room"], client=buyer).status_code == 200
         assert stored_selections(env, registration.id) == ["shared-room"]
@@ -627,7 +636,10 @@ class TestUpdateEndpoint:
         assert resp.status_code == 200, resp.text
         assert resp.json() == {
             "event_id": str(world.event.id), "registration_id": str(world.mine.id),
-            "accommodation_selections": [{"accommodation_id": "private-room", "name": "Private Room", "active": True}]}
+            "accommodation_selections": [{
+                "accommodation_id": "private-room", "name": "Private Room", "active": True,
+                "price": 0.0, "currency": "INR", "service_start_at": None, "service_end_at": None, "status": "selected",
+            }]}
         assert stored_selections(env, world.mine.id) == ["private-room"]
 
     def test_the_selection_is_replaced_and_an_empty_list_clears_it(self, env, world):
@@ -774,11 +786,19 @@ class TestWalkIn:
         plain = make_event(env.db, env.tenant, env.ent, status="published")
         assert walk_in(env, plain, "p@example.com").status_code == 201
 
-    def test_the_walk_in_uses_the_same_validator_as_online_registration(self, env, monkeypatch):
-        assert walk_in_service.validated_accommodation_selections is accommodation_service.validated_accommodation_selections
+    def test_the_walk_in_uses_the_same_pricing_service_as_online_registration(self, env, monkeypatch):
+        """Phase 2.8: walk-in validates AND prices accommodation selections through the SAME shared service
+        online registration and checkout use (event_option_pricing_service.resolve_priced_selections) — see
+        the identical note in test_event_phase_2_6_meals.py's mirror of this test."""
+        import app.services.event_option_pricing_service as pricing_service
+
+        assert walk_in_service.resolve_priced_selections is pricing_service.resolve_priced_selections
         calls = []
-        real = walk_in_service.validated_accommodation_selections
-        monkeypatch.setattr(walk_in_service, "validated_accommodation_selections", lambda *a, **k: (calls.append(a[1]), real(*a, **k))[1])
+        real = walk_in_service.resolve_priced_selections
+        monkeypatch.setattr(
+            walk_in_service, "resolve_priced_selections",
+            lambda *a, **k: (calls.append(k.get("accommodation_selections")), real(*a, **k))[1],
+        )
         walk_in(env, accommodation_event(env), "w@example.com", ["shared-room"])
         assert calls == [["shared-room"]]
 
@@ -831,7 +851,8 @@ class TestAttendees:
 
     def test_the_attendee_response_includes_accommodation_selections(self, env, world):
         items = self.listing(env, world)
-        assert items["a@example.com"]["accommodation_selections"] == [{"accommodation_id": "shared-room", "name": "Shared Room", "active": True}]
+        free = {"price": 0.0, "currency": "INR", "service_start_at": None, "service_end_at": None, "status": "selected"}
+        assert items["a@example.com"]["accommodation_selections"] == [{"accommodation_id": "shared-room", "name": "Shared Room", "active": True, **free}]
         assert items["b@example.com"]["accommodation_selections"] == []
 
     def test_the_detail_matches_the_list(self, env, world):
@@ -847,11 +868,14 @@ class TestAttendees:
     def test_an_id_the_configuration_does_not_know_is_shown_not_hidden(self, env, world):
         env.db.query(EventRegistration).filter_by(participant_email="b@example.com").update({"accommodation_selections": ["ghost"]})
         env.db.commit()
-        assert self.listing(env, world)["b@example.com"]["accommodation_selections"] == [{"accommodation_id": "ghost", "name": None, "active": False}]
+        assert self.listing(env, world)["b@example.com"]["accommodation_selections"] == [{
+            "accommodation_id": "ghost", "name": None, "active": False,
+            "price": None, "currency": None, "service_start_at": None, "service_end_at": None, "status": "selected",
+        }]
 
     def test_no_internal_fields_are_exposed(self, env, world):
         selection = self.listing(env, world)["a@example.com"]["accommodation_selections"][0]
-        assert set(selection) == {"accommodation_id", "name", "active"}
+        assert set(selection) == {"accommodation_id", "name", "active", "price", "currency", "service_start_at", "service_end_at", "status"}
 
     def test_the_list_costs_no_extra_query_per_attendee(self, env):
         event = accommodation_event(env)
@@ -917,9 +941,10 @@ class TestDashboard:
         for i in range(3):
             make_registration(env.db, event, f"s{i}@example.com", accommodation_selections=["shared-room"])
         make_registration(env.db, event, "p@example.com", accommodation_selections=["private-room"])
+        common = {"price": 0.0, "currency": "INR", "capacity": None, "remaining_capacity": None, "sold_out": False}
         assert dashboard(env, event)["accommodation"] == [
-            {"accommodation_id": "shared-room", "name": "Shared Room", "selected_count": 3, "active": True},
-            {"accommodation_id": "private-room", "name": "Private Room", "selected_count": 1, "active": True}]
+            {"accommodation_id": "shared-room", "name": "Shared Room", "selected_count": 3, "active": True, "reserved_count": 3, **common},
+            {"accommodation_id": "private-room", "name": "Private Room", "selected_count": 1, "active": True, "reserved_count": 1, **common}]
 
     def test_one_attendee_can_select_several_options(self, env):
         event = accommodation_event(env)
@@ -1027,7 +1052,10 @@ class TestDashboard:
                            meals={"options": [{"id": "lunch", "name": "Lunch"}]}, accommodation={"options": [dict(o) for o in TWO]})
         make_registration(env.db, event, "a@example.com", meal_selections=["lunch"], accommodation_selections=["shared-room"])
         body = dashboard(env, event)
-        assert body["meals"] == [{"meal_id": "lunch", "name": "Lunch", "selected_count": 1, "active": True}]
+        assert body["meals"] == [{
+            "meal_id": "lunch", "name": "Lunch", "selected_count": 1, "active": True,
+            "price": 0.0, "currency": "INR", "capacity": None, "reserved_count": 1, "remaining_capacity": None, "sold_out": False,
+        }]
         assert {a["accommodation_id"]: a["selected_count"] for a in body["accommodation"]} == {"shared-room": 1, "private-room": 0}
 
     def test_the_postgres_statement_expands_the_json_array_in_the_database(self):
@@ -1262,7 +1290,13 @@ class TestOpenApi:
         assert accommodation_input["additionalProperties"] is False and set(accommodation_input["properties"]) == {"enabled", "options"}
         option_schema = self.schema(spec, "AccommodationOptionInput")
         assert option_schema["additionalProperties"] is False and option_schema["required"] == ["name"]
-        assert {"id", "name", "description", "active"} == set(option_schema["properties"])
+        # Phase 2.8: pricing/capacity/windows are real input fields now; reserved_count/remaining_capacity/sold_out
+        # are accepted-and-ignored (echo compatibility — see AccommodationOptionInput's docstring), never persisted.
+        assert {
+            "id", "name", "description", "active", "price", "currency", "capacity",
+            "purchase_start_at", "purchase_end_at", "service_start_at", "service_end_at",
+            "reserved_count", "remaining_capacity", "sold_out",
+        } == set(option_schema["properties"])
         assert self.schema(spec, "EventAccommodation")["required"] == ["enabled"] and "active" in self.schema(spec, "AccommodationOption")["required"]
 
     def test_the_selection_fields_are_documented(self, spec):
@@ -1271,7 +1305,11 @@ class TestOpenApi:
             assert field["description"] and "maxItems" in str(field)
         assert "AttendeeAccommodationSelection" in str(self.schema(spec, "EventAttendeeResponse")["properties"]["accommodation_selections"])
         assert "DashboardAccommodation" in str(self.schema(spec, "EventDashboardResponse")["properties"]["accommodation"])
-        assert set(self.schema(spec, "DashboardAccommodation")["properties"]) == {"accommodation_id", "name", "selected_count", "active"}
+        # Phase 2.8: dashboard accommodation rows carry pricing/capacity too.
+        assert set(self.schema(spec, "DashboardAccommodation")["properties"]) == {
+            "accommodation_id", "name", "selected_count", "active", "price", "currency", "capacity",
+            "reserved_count", "remaining_capacity", "sold_out",
+        }
 
     def test_the_new_operation_is_documented(self, spec):
         operation = spec["paths"]["/api/v1/events/{event_id}/registrations/{reg_id}/accommodation"]["patch"]
@@ -1282,9 +1320,15 @@ class TestOpenApi:
         assert operation["security"] == spec["paths"]["/api/v1/events/{event_id}/registrations/{reg_id}"]["delete"]["security"]
 
     def test_checkout_and_the_payment_models_are_untouched(self, spec):
-        assert "accommodation_selections" not in self.schema(spec, "EventCheckoutRequest")["properties"]
+        # Phase 2.8 supersedes the pre-2.8 guarantee this test name describes — see the identical note in
+        # test_event_phase_2_6_meals.py's TestOpenApi.test_checkout_and_the_payment_models_are_untouched.
+        assert "accommodation_selections" in self.schema(spec, "EventCheckoutRequest")["properties"]
         assert not [k for k in self.schema(spec, "EventOrderResponse")["properties"] if "accommodation" in k]
-        assert set(self.schema(spec, "AccommodationOption")["properties"]) == {"id", "name", "description", "active"}  # no price, capacity or vendor
+        assert set(self.schema(spec, "AccommodationOption")["properties"]) == {
+            "id", "name", "description", "active", "price", "currency", "capacity",
+            "reserved_count", "remaining_capacity", "sold_out",
+            "purchase_start_at", "purchase_end_at", "service_start_at", "service_end_at",
+        }
 
     def test_existing_event_fields_are_all_still_there(self, spec):
         properties = set(self.schema(spec, "EventResponse")["properties"])

@@ -39,6 +39,14 @@ def opt(option_id, name, active=True, date=None, description=None):
     return {"id": option_id, "name": name, "description": description, "date": date, "active": active}
 
 
+# Phase 2.8: the extra fields stored_options()/build_options() now always include, at their respective
+# defaults — stored_options() additionally RESOLVES currency (None -> the event's own, "INR" here since
+# event() below never sets one); build_options() does not, so a freshly-built option's currency stays None.
+_PRICED_DEFAULTS_READ = {"price": "0.00", "currency": "INR", "capacity": None,
+                         "purchase_start_at": None, "purchase_end_at": None, "service_start_at": None, "service_end_at": None}
+_PRICED_DEFAULTS_WRITE = {**_PRICED_DEFAULTS_READ, "currency": None}
+
+
 def event(options=None, modules=ON, meals="unset"):
     stored = {"options": options} if meals == "unset" and options is not None else (None if meals == "unset" else meals)
     return SimpleNamespace(modules=modules, meals=stored, pricing_type="free", price=None, ticket_types=[], sessions=[],
@@ -65,11 +73,11 @@ class TestReading:
     def test_enabled_is_modules_meals_and_nothing_else(self):
         assert resolve_event_meals(event(THREE, ON))["enabled"] is True
         assert resolve_event_meals(event(THREE, OFF))["enabled"] is False  # options are kept, the switch is modules.meals
-        assert stored_options(event(THREE, OFF)) == THREE
+        assert stored_options(event(THREE, OFF)) == [{**o, **_PRICED_DEFAULTS_READ} for o in THREE]
 
     def test_options_are_returned_normalised(self):
         stored = event([{"id": "a", "name": "  Alpha  ", "description": "  ", "date": "", "active": True}])
-        assert stored_options(stored) == [opt("a", "Alpha")]
+        assert stored_options(stored) == [{**opt("a", "Alpha"), **_PRICED_DEFAULTS_READ}]
 
     @pytest.mark.parametrize("garbage", [
         "text", 7, [], {"options": "text"}, {"options": {"a": 1}}, {"options": [None, 1, "x", []]},
@@ -132,8 +140,8 @@ class TestBuildOptions:
 
     def test_relisting_a_retired_option_reactivates_it_with_its_id(self):
         retired = [opt("lunch", "Lunch", active=False)]
-        assert build_options([{"name": "Lunch"}], retired) == [opt("lunch", "Lunch")]
-        assert build_options([{"id": "lunch", "name": "Lunch"}], retired) == [opt("lunch", "Lunch")]
+        assert build_options([{"name": "Lunch"}], retired) == [{**opt("lunch", "Lunch"), **_PRICED_DEFAULTS_WRITE}]
+        assert build_options([{"id": "lunch", "name": "Lunch"}], retired) == [{**opt("lunch", "Lunch"), **_PRICED_DEFAULTS_WRITE}]
 
     def test_an_explicit_active_false_retires_a_listed_option(self):
         assert build_options([{"id": "lunch", "name": "Lunch", "active": False}], [])[0]["active"] is False
@@ -285,7 +293,7 @@ class TestSchemas:
         assert MealOptionInput(name="Lunch", date="2027-01-10").as_dict()["date"] == "2027-01-10"
         for bad in ({"name": ""}, {"name": "   "}, {"name": "x" * 101}, {"name": "A", "id": ""}, {"name": "A", "id": "bad id"},
                     {"name": "A", "id": "x" * 65}, {"name": "A", "date": "tomorrow"}, {"name": "A", "active": "yes"},
-                    {"name": "A", "description": "x" * 301}, {"name": "A", "price": 5}, {}, {"id": "a"}):
+                    {"name": "A", "description": "x" * 301}, {"name": "A", "price": -5}, {}, {"id": "a"}):
             with pytest.raises(ValidationError):
                 MealOptionInput(**bad)
 

@@ -32,6 +32,7 @@ from app.schemas.event_management_schema import (
     EventAttendeePaginatedResponse,
     EventAttendeeResponse,
     EventDashboardResponse,
+    EventFulfilmentResponse,
     RegistrationSource,
     RegistrationStatusFilter,
 )
@@ -59,6 +60,8 @@ from app.schemas.event_schema import (
     EventBatchCheckInRequest,
     EventCheckInRequest,
     EventCheckOutRequest,
+    EventCheckoutQuoteRequest,
+    EventCheckoutQuoteResponse,
     EventCheckoutRequest,
     EventOrderResponse,
     EventRefundRequest,
@@ -81,7 +84,7 @@ from app.services.event_attendee_service import (
     get_attendee_service,
     list_attendees_service,
 )
-from app.services.event_dashboard_service import get_event_dashboard_service
+from app.services.event_dashboard_service import get_event_dashboard_service, get_event_fulfilment_service
 from app.services.event_accommodation_service import update_registration_accommodation_service
 from app.services.event_meal_service import update_registration_meals_service
 from app.services.event_walk_in_service import create_walk_in_service
@@ -99,6 +102,7 @@ from app.services.event_service import (
     check_out_service,
     contact_organiser_service,
     create_event_checkout_service,
+    get_checkout_quote_service,
     create_event_refund_service,
     create_event_service,
     create_feedback_service,
@@ -695,6 +699,23 @@ def event_dashboard(event_id: UUID, db: Session = Depends(get_db), current_user:
     return get_event_dashboard_service(db, event_id)
 
 
+@router.get(
+    "/{event_id}/fulfilment",
+    response_model=EventFulfilmentResponse,
+    summary="Event Fulfilment — Meal/Accommodation Purchases",
+    description=(
+        "Option-level summary (same meals/accommodation counts as the dashboard) plus every participant-level "
+        "purchase record — who holds which option, at what purchase-time price, and its payment status "
+        "(Phase 2.8). For organizers/enterprise fulfilment (catering counts, room assignments); unlike the "
+        "attendee list, prices here are the purchase-time snapshot, not the option's current live price. Only "
+        "active (confirmed/attended) registrations are included."
+    ),
+    responses={403: {"description": "Not the event's owner"}, 404: {"description": "Event not found"}},
+)
+def event_fulfilment(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_staff)):
+    return get_event_fulfilment_service(db, event_id)
+
+
 @router.post(
     "/{event_id}/walk-in",
     response_model=EventWalkInResponse,
@@ -729,6 +750,24 @@ def walk_in_registration(
     result = create_walk_in_service(db, event_id, payload, current_user)
     result.ticket.qr_image_path = request.app.url_path_for("get_qr_image", event_id=event_id, reg_id=result.registration.registration_id)
     return result
+
+
+@router.post(
+    "/{event_id}/checkout/quote",
+    response_model=EventCheckoutQuoteResponse,
+    summary="Checkout Quote — Price Preview",
+    description=(
+        "The authoritative price breakdown checkout would charge for this ticket + meal/accommodation "
+        "selection (Phase 2.8): ticket/meal/accommodation subtotals, discount and tax (always 0 today), "
+        "grand_total, currency and a line-item list. The client sends option ids only — never a price or "
+        "total — and every price is resolved from the event's own configuration, same as checkout itself. "
+        "A pure preview: nothing is written or reserved, so a quote can go stale before the matching checkout "
+        "call (e.g. an option sells out in between); checkout re-validates everything, authoritatively, itself."
+    ),
+    responses={400: {"description": "Event closed/not published, or a selected option is sold out"}, 404: {"description": "Event or ticket type not found"}, 422: {"description": "Unknown/duplicate/inactive/out-of-window option, or mixed currencies"}},
+)
+def checkout_quote(event_id: UUID, payload: EventCheckoutQuoteRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return get_checkout_quote_service(db, event_id, payload)
 
 
 @router.post("/{event_id}/checkout", response_model=EventOrderResponse, status_code=status.HTTP_201_CREATED, summary="Checkout — Paid Registration")

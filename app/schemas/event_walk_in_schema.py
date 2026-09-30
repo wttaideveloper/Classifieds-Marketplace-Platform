@@ -110,11 +110,11 @@ class WalkInTicket(BaseModel):
 
 
 class WalkInPayment(BaseModel):
-    required: bool = Field(..., description="False for a free event or a ticket that costs nothing.")
+    required: bool = Field(..., description="False when nothing is owed: a free ticket with no priced meal/accommodation selections.")
     status: AttendeePaymentStatus = Field(
-        ..., description="free | paid (nothing owed) | pending (a priced ticket: no payment has been recorded)."
+        ..., description="free | paid (nothing owed) | pending (something is owed: no payment has been recorded)."
     )
-    amount: float | None = Field(None, description="The ticket price, from the existing ticket-price rules (order total).")
+    amount: float | None = Field(None, description="Order total — ticket + meal + accommodation (Phase 2.8) — or null when nothing is owed.")
     currency: str | None = None
     order_id: UUID | None = None
     note: str | None = Field(

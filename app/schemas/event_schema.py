@@ -46,6 +46,71 @@ class EventCheckoutRequest(BaseModel):
     quantity: int = Field(1, ge=1, description="Quantity")
     payment_provider: str | None = Field("marketplace", description="marketplace|merchant")
     waitlist_id: UUID | None = Field(None, description="Provide if checking out from waitlist payment offer")
+    meal_selections: list[MealId] | None = Field(
+        None, max_length=MAX_SELECTIONS,
+        description="Meal option ids from the event's meals configuration (Phase 2.8). Priced server-side and "
+                    "added to the order total; only allowed when the event has meals enabled.",
+    )
+    accommodation_selections: list[AccommodationId] | None = Field(
+        None, max_length=MAX_SELECTIONS,
+        description="Accommodation option ids from the event's accommodation configuration (Phase 2.8). Priced "
+                    "server-side and added to the order total; only allowed when accommodation is enabled.",
+    )
+
+    @field_validator("meal_selections")
+    @classmethod
+    def _no_duplicate_meals_checkout(cls, values):
+        return reject_duplicate_selections(values)
+
+    @field_validator("accommodation_selections")
+    @classmethod
+    def _no_duplicate_accommodation_checkout(cls, values):
+        return reject_duplicate_accommodation_selections(values)
+
+
+class EventCheckoutQuoteRequest(BaseModel):
+    """What checkout would cost — same ticket/option ids as EventCheckoutRequest, minus buyer identity and
+    payment provider (a quote creates nothing). The client sends ids only; every price is resolved server-side."""
+
+    ticket_type_id: str = Field(..., description="Ticket type ID")
+    quantity: int = Field(1, ge=1, description="Quantity")
+    meal_selections: list[MealId] | None = Field(None, max_length=MAX_SELECTIONS, description="Meal option ids to price.")
+    accommodation_selections: list[AccommodationId] | None = Field(
+        None, max_length=MAX_SELECTIONS, description="Accommodation option ids to price."
+    )
+
+    @field_validator("meal_selections")
+    @classmethod
+    def _no_duplicate_meals_quote(cls, values):
+        return reject_duplicate_selections(values)
+
+    @field_validator("accommodation_selections")
+    @classmethod
+    def _no_duplicate_accommodation_quote(cls, values):
+        return reject_duplicate_accommodation_selections(values)
+
+
+class EventCheckoutQuoteLine(BaseModel):
+    option_type: str = Field(..., description="'meal' | 'accommodation'")
+    option_id: str
+    name: str
+    unit_price: float
+    quantity: int
+    line_total: float
+    currency: str
+
+
+class EventCheckoutQuoteResponse(BaseModel):
+    """The authoritative price breakdown checkout would charge — a preview, nothing is written or reserved."""
+
+    ticket_subtotal: float
+    meal_subtotal: float
+    accommodation_subtotal: float
+    discount: float = Field(0, description="No discount/coupon concept exists yet — always 0.")
+    tax: float = Field(0, description="No tax concept exists yet — always 0.")
+    grand_total: float
+    currency: str
+    items: list[EventCheckoutQuoteLine] = Field(default_factory=list)
 
 
 class EventOrderResponse(BaseModel):

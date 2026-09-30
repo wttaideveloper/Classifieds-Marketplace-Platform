@@ -54,8 +54,7 @@ from app.schemas.event_walk_in_schema import (
 )
 from app.services.event_attendee_service import get_attendee_service
 from app.services.event_dashboard_service import _parse_capacity
-from app.services.event_accommodation_service import validated_accommodation_selections
-from app.services.event_meal_service import validated_selections
+from app.services.event_option_pricing_service import assert_capacity_available, persist_line_items, resolve_priced_selections
 from app.services.event_service import (
     _actor_id,
     _event_is_paid,
@@ -252,10 +251,21 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
         _validate_session_for_event(event, payload.session_id)  # 400: not one of this event's own sessions
     ticket = _resolve_walk_in_ticket(event, payload.ticket_type_id, paid)
     answers = _validated_answers(event, payload.custom_fields)
-    meal_selections = validated_selections(event, payload.meal_selections)  # the same validator online registration uses
-    accommodation_selections = validated_accommodation_selections(event, payload.accommodation_selections)  # likewise
-    amount, currency = _amount_due(event, ticket) if paid else (None, None)
-    payment_complete = (not paid) or amount == 0
+    ticket_amount, ticket_currency = (
+        _amount_due(event, ticket) if paid else (Decimal("0.00"), (ticket or {}).get("currency") or event.currency or "INR")
+    )
+    ticket_amount = ticket_amount.quantize(Decimal("0.01"))  # _amount_due's parse_money does not itself quantize
+    # Phase 2.8: the SAME pricing/capacity service checkout and online registration use — not a duplicated copy
+    # (see test_the_walk_in_uses_the_same_pricing_service_as_online_registration). Pure validation, no DB access.
+    priced_options = resolve_priced_selections(
+        event, meal_selections=payload.meal_selections, accommodation_selections=payload.accommodation_selections,
+        ticket_currency=ticket_currency,
+    )
+    grand_total = (ticket_amount + priced_options.meal_subtotal + priced_options.accommodation_subtotal).quantize(Decimal("0.01"))
+    currency = priced_options.currency or ticket_currency
+    # "Free ≠ zero payable" (Phase 2.8): a free ticket with a priced meal/accommodation selection still owes
+    # money, and a walk-in never records a payment it did not receive — see the module docstring.
+    payment_complete = grand_total == 0
 
     check_in_result = WalkInCheckIn(requested=payload.check_in, performed=False)
     session_result = WalkInSessionCheckIn(requested=bool(payload.session_id), session_id=payload.session_id, performed=False)
@@ -263,21 +273,28 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
         db.query(Event).filter(Event.id == event_id).with_for_update().first()  # serializes the duplicate/capacity checks
         _assert_not_already_registered(db, event_id, email)
         _assert_capacity(db, event, payload.ticket_type_id, ticket)
+        assert_capacity_available(db, event, priced_options)  # Phase 2.8: same lock, same pattern as ticket capacity above
 
         order = None
-        if paid:  # order first, then registration: the pairing the attendee list and refund/check-in code rely on
+        # Phase 2.8: an order is needed whenever the EVENT charges for tickets (unchanged) OR this walk-in
+        # actually owes something (a free-ticket event with a priced meal/accommodation selection) — "free ≠
+        # zero payable". order first, then registration: the pairing the attendee list and refund/check-in code rely on.
+        if paid or grand_total > 0:
             order = EventOrder(
                 event_id=event_id,
                 participant_name=payload.participant_name,
                 participant_email=email,
                 ticket_type_id=payload.ticket_type_id,
                 quantity="1",
-                amount=str(float(amount)),
+                amount=str(grand_total),
                 currency=currency,
-                # A zero-price ticket owes nothing. Otherwise NO payment has been received, so it stays pending.
+                # Nothing owed: complete. Otherwise NO payment has been received, so it stays pending.
                 payment_status="confirmed" if payment_complete else "pending",
                 status="confirmed",
                 payment_provider=sa.null(),  # no provider handled anything: do not claim "marketplace"
+                ticket_subtotal=str(ticket_amount),
+                meal_subtotal=str(priced_options.meal_subtotal),
+                accommodation_subtotal=str(priced_options.accommodation_subtotal),
             )
             db.add(order)
             db.flush()
@@ -291,11 +308,14 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
             status="confirmed",
             qr_code=new_qr_code(),
             registration_source=WALK_IN_SOURCE,
-            meal_selections=meal_selections,
-            accommodation_selections=accommodation_selections,
+            meal_selections=[line.option_id for line in priced_options.meal_lines] or None,
+            accommodation_selections=[line.option_id for line in priced_options.accommodation_lines] or None,
         )
         db.add(reg)
         db.flush()
+
+        # One immutable snapshot row per selected meal/accommodation option, free or paid.
+        persist_line_items(db, event_id=event_id, registration_id=reg.id, order_id=(order.id if order else None), priced=priced_options)
 
         payment_status = derive_payment_status(order.status, order.payment_status) if order is not None else PAYMENT_FREE
         _log_audit(
@@ -306,8 +326,8 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
                 "payment_status": payment_status, "order_id": str(order.id) if order is not None else None,
                 "amount": str(order.amount) if order is not None else None,
                 "check_in_requested": payload.check_in, "session_id": payload.session_id,
-                "meal_selections": meal_selections or [],
-                "accommodation_selections": accommodation_selections or [],
+                "meal_selections": reg.meal_selections or [],
+                "accommodation_selections": reg.accommodation_selections or [],
             },
             changed_by=_actor_id(current_user), commit=False,
         )
@@ -368,10 +388,10 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
             ticket_type_name=registration.ticket_type_name,
         ),
         payment=WalkInPayment(
-            required=bool(paid and amount and amount > 0),
+            required=bool(grand_total > 0),  # Phase 2.8: ticket + meal + accommodation, not the ticket alone
             status=payment_status if payment_status in (PAYMENT_FREE, PAYMENT_PAID, PAYMENT_PENDING) else PAYMENT_PENDING,
-            amount=money_to_float(amount) if amount is not None else None,
-            currency=currency,
+            amount=money_to_float(grand_total) if order is not None else None,
+            currency=currency if order is not None else None,
             order_id=registration.order_id,
             note=None if payment_complete else _PENDING_NOTE,
         ),

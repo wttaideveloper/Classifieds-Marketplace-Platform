@@ -369,6 +369,11 @@ def export_attendees_csv(db: Session, event_id: UUID, filters: AttendeeFilters) 
         "id", "name", "email", "status", "qr_code",
         "ticket_type", "quantity", "payment_status", "order_id", "amount", "currency",
         "checked_in", "checked_in_at", "registered_at", "answers", "source", "meals", "accommodation",
+        # Phase 2.8: appended, never inserted — the 18 columns above keep their existing name/order/meaning
+        # (a pre-2.8 consumer parsing by position is unaffected). meal/accommodation subtotals are the
+        # immutable purchase-time amount from the SAME order as "amount"/"currency" above, not the option's
+        # current live price (which the "meals"/"accommodation" name columns implicitly reference).
+        "meal_subtotal", "accommodation_subtotal",
     ])
     for reg, order in _iter_rows(db, event_id, filters, ctx):
         attendee = _attendee(reg, order, ctx)
@@ -391,5 +396,7 @@ def export_attendees_csv(db: Session, event_id: UUID, filters: AttendeeFilters) 
             attendee.registration_source,
             _csv_text("; ".join(selection.name or selection.meal_id for selection in attendee.meal_selections)),
             _csv_text("; ".join(selection.name or selection.accommodation_id for selection in attendee.accommodation_selections)),
+            "" if order is None or order.meal_subtotal is None else order.meal_subtotal,
+            "" if order is None or order.accommodation_subtotal is None else order.accommodation_subtotal,
         ])
     return output.getvalue()

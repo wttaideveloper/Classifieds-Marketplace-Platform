@@ -22,7 +22,7 @@ from fastapi import HTTPException
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from app.models.event_aux_models import EventRegistration
+from app.models.event_aux_models import EventRegistration, EventRegistrationOption
 from app.repository.event_repo import assert_event_access
 from app.schemas.event_accommodation_schema import (
     AttendeeAccommodationSelection,
@@ -35,6 +35,7 @@ from app.utils.event_accommodation import (
     AccommodationSelectionError,
     accommodation_enabled,
     accommodation_selection_views,
+    option_price,
     stored_accommodation_options,
     validate_accommodation_selections,
 )
@@ -53,8 +54,39 @@ def validated_accommodation_selections(event, selections, current=None) -> list[
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-def attendee_accommodation_selections(options: list[dict], selected) -> list[AttendeeAccommodationSelection]:
-    return [AttendeeAccommodationSelection(**view) for view in accommodation_selection_views(options, selected)]
+def purchased_accommodation_options(db: Session, registration_id: UUID) -> dict[str, EventRegistrationOption]:
+    """This registration's accommodation EventRegistrationOption rows, by option id (Phase 2.8) — see
+    event_meal_service.purchased_meal_options, identical reasoning."""
+    rows = (
+        db.query(EventRegistrationOption)
+        .filter(
+            EventRegistrationOption.registration_id == registration_id,
+            EventRegistrationOption.option_type == "accommodation",
+        )
+        .all()
+    )
+    return {row.option_id: row for row in rows}
+
+
+def attendee_accommodation_selections(
+    options: list[dict], selected, purchased: dict[str, EventRegistrationOption] | None = None
+) -> list[AttendeeAccommodationSelection]:
+    """``purchased`` (optional) attaches the purchase-time price/currency snapshot and service window — see
+    event_meal_service.attendee_meal_selections, identical reasoning."""
+    purchased = purchased or {}
+    views = []
+    for view in accommodation_selection_views(options, selected):
+        option = next((o for o in options if o["id"] == view["accommodation_id"]), None)
+        line = purchased.get(view["accommodation_id"])
+        views.append(AttendeeAccommodationSelection(
+            **view,
+            price=float(line.unit_price) if line else (float(option_price(option)) if option else None),
+            currency=(line.currency if line else (option.get("currency") if option else None)),
+            service_start_at=option.get("service_start_at") if option else None,
+            service_end_at=option.get("service_end_at") if option else None,
+            status="confirmed" if line else "selected",
+        ))
+    return views
 
 
 # ---------------------------------------------------------------------------------------------
@@ -89,6 +121,22 @@ def update_registration_accommodation_service(
 
     before = list(reg.accommodation_selections) if isinstance(reg.accommodation_selections, list) else []
     selections = validated_accommodation_selections(event, payload.accommodation_selections, current=before)
+
+    # Phase 2.8: same boundary as meals (event_meal_service.update_registration_meals_service) — this endpoint
+    # has no payment mechanism, so a paid option may never enter or leave the set here.
+    options_by_id = {o["id"]: o for o in stored_accommodation_options(event)}
+    changed = set(selections or []) ^ set(before)
+    paid_changed = sorted(
+        options_by_id[option_id]["name"] for option_id in changed
+        if option_id in options_by_id and option_price(options_by_id[option_id]) > 0
+    )
+    if paid_changed:
+        raise HTTPException(
+            status_code=422,
+            detail="Cannot change a paid accommodation selection here: " + ", ".join(paid_changed)
+            + ". Paid selections are set at registration/checkout and cannot be self-service edited.",
+        )
+
     reg.accommodation_selections = selections  # a new list (or None), so the JSONB change is always detected
     if not participant:
         _log_audit(
@@ -102,9 +150,12 @@ def update_registration_accommodation_service(
     except Exception:
         db.rollback()
         raise
+    purchased = purchased_accommodation_options(db, reg.id)
     return EventAccommodationSelectionResponse(
         event_id=event_id, registration_id=reg.id,
-        accommodation_selections=attendee_accommodation_selections(stored_accommodation_options(event), reg.accommodation_selections),
+        accommodation_selections=attendee_accommodation_selections(
+            stored_accommodation_options(event), reg.accommodation_selections, purchased
+        ),
     )
 
 
@@ -141,16 +192,22 @@ def selected_accommodation_counts(db: Session, event_id: UUID) -> dict[str, int]
 def summarize_accommodation(db: Session, event) -> list[DashboardAccommodation]:
     """The dashboard's accommodation section: one row per option of an event that has accommodation ON. Empty otherwise
     (accommodation off, or no options), and no query at all in those cases. Retired options appear only while someone
-    still holds them."""
+    still holds them. Phase 2.8: see summarize_meals — reuses the existing JSONB-array count."""
     options = stored_accommodation_options(event)
     if not options or not accommodation_enabled(event):
         return []
     counts = selected_accommodation_counts(db, event.id)
-    return [
-        DashboardAccommodation(
-            accommodation_id=option["id"], name=option["name"],
-            selected_count=counts.get(option["id"], 0), active=option["active"],
-        )
-        for option in options
-        if option["active"] or counts.get(option["id"], 0) > 0
-    ]
+    result = []
+    for option in options:
+        if not (option["active"] or counts.get(option["id"], 0) > 0):
+            continue
+        taken = counts.get(option["id"], 0)
+        capacity = option.get("capacity")
+        remaining = None if capacity is None else max(0, int(capacity) - taken)
+        result.append(DashboardAccommodation(
+            accommodation_id=option["id"], name=option["name"], selected_count=taken, active=option["active"],
+            price=float(option_price(option)), currency=option.get("currency") or (event.currency or "INR"),
+            capacity=capacity, reserved_count=taken, remaining_capacity=remaining,
+            sold_out=remaining is not None and remaining <= 0,
+        ))
+    return result

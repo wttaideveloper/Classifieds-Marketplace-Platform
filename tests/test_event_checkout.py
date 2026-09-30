@@ -112,6 +112,8 @@ def _make_payload(
     payload.quantity = quantity
     payload.payment_provider = payment_provider
     payload.waitlist_id = None  # a bare MagicMock attribute is truthy and would select the waitlist-offer branch
+    payload.meal_selections = None  # same MagicMock trap (Phase 2.8): a bare attribute is a truthy "selection"
+    payload.accommodation_selections = None
     return payload
 
 
@@ -196,7 +198,7 @@ class TestSuccessfulDemoCheckout:
         with patch("app.repository.event_repo.get_event_by_id", return_value=event):
             order = event_service.create_event_checkout_service(db, event.id, payload)
 
-        assert order.amount == "799.0"
+        assert order.amount == "799.00"  # Decimal, quantized to 2dp (Phase 2.8) — was float str() "799.0" pre-Decimal
         assert order.currency == "INR"
 
     def test_checkout_defaults_payment_provider_to_marketplace(self):

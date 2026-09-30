@@ -198,3 +198,37 @@ class EventDashboardResponse(BaseModel):
                     "or there are no options.",
     )
     generated_at: datetime
+
+
+# --------------------------------------------------------------------------- fulfilment (Phase 2.8)
+
+
+class EventOptionPurchase(BaseModel):
+    """One participant's purchase-time snapshot of ONE meal/accommodation option — for organizers/enterprise
+    fulfilment (catering counts, room assignments), not for the attendee-facing list. Unlike the attendee list
+    (which shows the LIVE current option price), this is the immutable price actually charged at purchase time."""
+
+    registration_id: UUID
+    participant_name: str
+    participant_email: str
+    registration_status: str
+    option_type: str = Field(..., description="'meal' | 'accommodation'")
+    option_id: str
+    option_name: str = Field(..., description="Snapshotted at purchase time — unaffected by a later rename.")
+    quantity: int
+    unit_price: float
+    currency: str
+    line_total: float
+    order_id: UUID | None = Field(None, description="null when the option was free (no order was needed for it).")
+    payment_status: AttendeePaymentStatus = Field(..., description="Derived the same way as the attendee list's payment_status.")
+
+
+class EventFulfilmentResponse(BaseModel):
+    """Option-level summary (reuses the dashboard's own meals/accommodation) plus every participant-level
+    purchase record, for organizers/enterprise fulfilment. Read-only; tenant/role authorization is the same
+    as the dashboard and attendee list (require_event_staff)."""
+
+    meals: list[DashboardMeal] = Field(default_factory=list)
+    accommodation: list[DashboardAccommodation] = Field(default_factory=list)
+    purchases: list[EventOptionPurchase] = Field(default_factory=list)
+    generated_at: datetime
