@@ -281,7 +281,17 @@ def search_trainings_service(
     if city:
         db_query = db_query.outerjoin(EnterpriseLocation, Training.location_id == EnterpriseLocation.id).filter(EnterpriseLocation.city.ilike(f"%{city.strip()}%"))
     if query:
-        db_query = apply_ilike_search(db_query, [Training.title, Training.description, Training.category], query)
+        from sqlalchemy import String, cast
+        # Training.tags is a JSONB string array (["yoga", "wellness"]). Casting
+        # to text and reusing the same ILIKE substring match as the other
+        # fields is dialect-portable (Postgres in prod, SQLite in tests) and
+        # correctly satisfies "word/phrase contained in a tag" — any substring
+        # of a tag's characters is also a substring of the serialized array.
+        db_query = apply_ilike_search(
+            db_query,
+            [Training.title, Training.description, Training.category, cast(Training.tags, String)],
+            query,
+        )
     db_query = db_query.order_by(Training.created_at.desc())
     items, total = paginate_query(db_query, page, page_size)
     return TrainingPaginatedResponse(items=[TrainingListItemResponse.model_validate(map_training_list_item(i)) for i in items], pagination=build_pagination_meta(total, page, page_size))
