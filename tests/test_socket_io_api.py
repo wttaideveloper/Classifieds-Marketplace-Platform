@@ -23,7 +23,7 @@ def test_socket_events_catalog():
     assert response.status_code == 200
     body = response.json()
     assert len(body["client_events"]) == 6
-    assert len(body["server_events"]) == 8
+    assert len(body["server_events"]) == 10
     assert body["client_events"][0]["event"] == "join_room"
     assert body["server_events"][0]["event"] == "new_message"
     assert body["auth"]["type"] == "HttpOnly web-session cookie or JWT Bearer"

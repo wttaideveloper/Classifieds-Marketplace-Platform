@@ -1659,6 +1659,31 @@ def validate_training_qr_service(db: Session, tid: UUID, qr_code: str | None, *,
     }
 
 
+def _find_active_session_id(db: Session, training) -> str | None:
+    from app.models.training_model import TrainingLiveSession
+    from datetime import datetime
+    now = datetime.utcnow()
+    sessions = db.query(TrainingLiveSession).filter(
+        TrainingLiveSession.training_id == training.id,
+        TrainingLiveSession.status != "cancelled"
+    ).all()
+    if sessions:
+        try:
+            closest = min(sessions, key=lambda s: abs((s.scheduled_at - now).total_seconds()) if s.scheduled_at else float('inf'))
+            return str(closest.id)
+        except Exception:
+            pass
+
+    from app.services.training_curriculum import normalize_curriculum
+    curriculum = normalize_curriculum(training.sections, training.assessments, training.assignments)
+    for section in curriculum["sections"]:
+        if section.get("type") in ("live", "venue"):
+            return str(section["id"])
+        for item in section.get("lessons", []):
+            if item.get("type") in ("live", "venue"):
+                return str(item["id"])
+    return None
+
 def check_in_enrolment_service(db: Session, tid: UUID, enrolment_id, qr_code: str | None, current_user: dict | None = None):
     from datetime import datetime
 
@@ -1671,7 +1696,7 @@ def check_in_enrolment_service(db: Session, tid: UUID, enrolment_id, qr_code: st
         raise HTTPException(status_code=404, detail="Enrolment not found")
     if enrol.status in ("cancelled", "rejected"):
         raise HTTPException(status_code=400, detail=f"Cannot check-in: enrolment is {enrol.status}")
-    if enrol.status == "attended":
+    if enrol.checked_in_at:
         return {
             "message": "Already checked in",
             "enrolment_id": enrol.id,
@@ -1683,11 +1708,16 @@ def check_in_enrolment_service(db: Session, tid: UUID, enrolment_id, qr_code: st
     if enrol.status not in CHECKIN_ELIGIBLE_STATUSES:
         raise HTTPException(status_code=400, detail=f"Cannot check-in: enrolment status is '{enrol.status}'")
 
-    enrol.status = "attended"
+    # enrol.status = "attended"  # DO NOT change overall enrolment status
     enrol.checked_in_at = datetime.utcnow()
     enrol.checked_in_by = current_user.get("id") if current_user else None
     db.commit()
     db.refresh(enrol)
+
+    # Record attendance at the session level
+    session_id = _find_active_session_id(db, training)
+    if session_id:
+        record_live_attendance_service(db, tid, session_id, enrol.participant_email)
 
     return {
         "message": "Checked in successfully",
@@ -1703,10 +1733,10 @@ def uncheck_in_enrolment_service(db: Session, tid: UUID, enrolment_id, qr_code: 
     enrol = _find_enrolment_by_id_or_qr(db, tid, enrolment_id, qr_code)
     if not enrol:
         raise HTTPException(status_code=404, detail="Enrolment not found")
-    if enrol.status != "attended":
-        raise HTTPException(status_code=400, detail=f"Cannot undo: enrolment status is '{enrol.status}', not 'attended'")
+    if not enrol.checked_in_at:
+        raise HTTPException(status_code=400, detail="Cannot undo: enrolment is not checked in")
 
-    enrol.status = "enrolled"
+    # enrol.status = "enrolled"  # DO NOT change overall enrolment status
     enrol.checked_in_at = None
     enrol.checked_in_by = None
     db.commit()
@@ -1718,7 +1748,7 @@ def uncheck_in_enrolment_service(db: Session, tid: UUID, enrolment_id, qr_code: 
         "participant_name": enrol.participant_name,
         "participant_email": enrol.participant_email,
         "status": enrol.status,
-        "restored_to": "enrolled",
+        "restored_to": enrol.status,
     }
 
 
@@ -1733,8 +1763,8 @@ def list_training_checkin_preview_service(db: Session, tid: UUID, status_filter:
 
     out = []
     for r in rows:
-        can = r.status in CHECKIN_ELIGIBLE_STATUSES
-        if r.status == "attended":
+        can = r.status in CHECKIN_ELIGIBLE_STATUSES and not r.checked_in_at
+        if r.checked_in_at:
             reason = "Already checked in"
         elif r.status == "cancelled":
             reason = "Cancelled — cannot check in"
@@ -1813,9 +1843,14 @@ def batch_check_in_training_enrolments_service(db: Session, tid: UUID, participa
             })
             failed += 1
             continue
-        enrol.status = "attended"
+        # enrol.status = "attended"  # DO NOT change overall enrolment status
         enrol.checked_in_at = datetime.utcnow()
         enrol.checked_in_by = current_user.get("id") if current_user else None
+        
+        session_id = _find_active_session_id(db, training)
+        if session_id:
+            record_live_attendance_service(db, tid, session_id, enrol.participant_email)
+
         results.append({
             "enrolment_id": enrol.id,
             "participant_name": enrol.participant_name,

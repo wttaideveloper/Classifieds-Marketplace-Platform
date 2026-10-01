@@ -517,3 +517,5 @@ def test_lesson_attendance_admin_qr_scan_marks_correct_learner(setup):
     lesson_after = content_after.json()['sections'][0]['lessons'][0]
     assert lesson_after['is_attended'] is True
     assert lesson_after['attended_at'] == recorded_at
+
+

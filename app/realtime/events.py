@@ -11,14 +11,12 @@ from app.realtime.emitters import (
     emit_message_read,
     emit_new_message,
     emit_typing,
-    emit_user_offline,
-    emit_user_online,
     notify_participants_new_message,
 )
 from app.realtime.rooms import conversation_room, serialize, user_room
 from app.realtime.server import sio
 from app.schemas.chat_schema import MessageCreate
-from app.services.chat_service import update_presence_service
+from app.services import presence_service
 from app.services.socket_io_service import (
     process_mark_read,
     process_send_message,
@@ -76,13 +74,7 @@ async def connect(sid, environ, auth):
     await sio.save_session(sid, {"user": user})
     await sio.enter_room(sid, user_room(user["id"]))
 
-    db = SessionLocal()
-    try:
-        update_presence_service(db, user, "online")
-    finally:
-        db.close()
-
-    await emit_user_online(user["id"], skip_sid=sid)
+    await presence_service.handle_connect(str(user["id"]), sid)
     return True
 
 
@@ -92,13 +84,7 @@ async def disconnect(sid):
     if not user:
         return
 
-    db = SessionLocal()
-    try:
-        update_presence_service(db, user, "offline")
-    finally:
-        db.close()
-
-    await emit_user_offline(user["id"])
+    await presence_service.handle_disconnect(str(user["id"]), sid)
 
 
 @sio.on("join_room")

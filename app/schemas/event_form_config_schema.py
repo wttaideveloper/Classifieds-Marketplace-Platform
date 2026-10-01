@@ -62,7 +62,8 @@ class FieldRegistryEntry(BaseModel):
     value_source: str | None = Field(
         None,
         description="Where this field's valid values come from: 'static' (see options), 'event_categories', "
-        "or 'enterprise_locations'. Null when the field has no constrained value set (free text).",
+        "'enterprise_locations', or 'event_types' (see source_endpoint). Null when the field has no "
+        "constrained value set (free text).",
     )
     source_endpoint: str | None = Field(
         None, description="For non-static value_source fields, the authoritative endpoint to fetch live options from."

@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # Gunicorn workers for combined socket_app entrypoint. Must stay 1 for polling to work.
     WEB_CONCURRENCY: int = 1
     SOCKET_WORKERS: int = 1
+    # Grace period (seconds) before a user with zero active sockets is marked
+    # offline — absorbs reconnects/refreshes/transport upgrades without a
+    # false user_offline. See app/services/presence_service.py.
+    PRESENCE_OFFLINE_GRACE_SECONDS: float = 4.0
     # Speech-to-text (OpenAI Whisper). Set OPENAI_API_KEY to enable transcription.
     OPENAI_API_KEY: str = ""
     SPEECH_TO_TEXT_MODEL: str = "whisper-1"

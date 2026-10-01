@@ -1,8 +1,9 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
-from app.core.dependencies import get_current_super_admin
+from app.core.dependencies import extract_access_token, get_current_super_admin
 from app.db.database import get_db
+from app.repository.event_repo import build_event_viewer, is_platform_super_admin, require_event_owner
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.services.event_service import get_events_service, update_event_status_service
 from app.services.training_service import get_trainings_service, get_training_service, update_training_status_service
@@ -13,8 +14,21 @@ from app.models.event_aux_models import EventCategory
 
 router = APIRouter(tags=["Admin — Approvals"])
 
+
+def _scope_event_admin_action(request: Request, db: Session, event_id: UUID, admin_user: dict) -> None:
+    """Tenant-scope the Event routes of this router.
+
+    ``get_current_super_admin`` also admits an Enterprise Admin (role "admin") as a backwards-compatible
+    testing fallback; that policy is unchanged here and still applies to trainings/programs/blogs.
+    For Events, however, that fallback identity is tenant-scoped: only an active Platform Super Admin
+    may approve / reject / publish / read the audit of another tenant's event.
+    """
+    if not is_platform_super_admin(admin_user):
+        require_event_owner(db, event_id, admin_user, access_token=extract_access_token(request), include_deleted=True)
+
 @router.get("/events/pending", summary="Admin — Pending Events Queue")
 def admin_pending_events(
+    request: Request,
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     enterprise_id: UUID | None = Query(None),
@@ -22,20 +36,25 @@ def admin_pending_events(
     db: Session = Depends(get_db),
     _admin: dict = Depends(get_current_super_admin),
 ):
-    return get_events_service(db, status_filter="pending_approval", enterprise_id=enterprise_id, category=category, page=page, page_size=page_size)
+    # Platform Super Admin sees every tenant's queue; the Enterprise Admin fallback only its own.
+    viewer = build_event_viewer(db, _admin, access_token=extract_access_token(request))
+    return get_events_service(db, status_filter="pending_approval", enterprise_id=enterprise_id, category=category, page=page, page_size=page_size, viewer=viewer)
 
 @router.post("/events/{event_id}/approve", summary="Admin — Approve Event")
-def approve_event(event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+def approve_event(request: Request, event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    _scope_event_admin_action(request, db, event_id, _admin)
     return update_event_status_service(db, event_id, "approved", _admin)
 
 @router.post("/events/{event_id}/reject", summary="Admin — Reject Event")
 def reject_event(
+    request: Request,
     event_id: UUID,
     payload: dict | None = None,
     db: Session = Depends(get_db),
     _admin: dict = Depends(get_current_super_admin),
 ):
     from app.schemas.event_schema import EventAdminActionRequest
+    _scope_event_admin_action(request, db, event_id, _admin)
     reason = None
     if payload:
         try:
@@ -47,12 +66,14 @@ def reject_event(
 
 @router.post("/events/{event_id}/request-changes", summary="Admin — Request Changes on Event")
 def request_changes_event(
+    request: Request,
     event_id: UUID,
     payload: dict | None = None,
     db: Session = Depends(get_db),
     _admin: dict = Depends(get_current_super_admin),
 ):
     from app.schemas.event_schema import EventAdminActionRequest
+    _scope_event_admin_action(request, db, event_id, _admin)
     reason = None
     if payload:
         try:
@@ -66,7 +87,8 @@ def request_changes_event(
     return update_event_status_service(db, event_id, "needs_revision", _admin, notes=reason)
 
 @router.post("/events/{event_id}/publish", summary="Admin — Publish Approved Event")
-def publish_event(event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+def publish_event(request: Request, event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    _scope_event_admin_action(request, db, event_id, _admin)
     return update_event_status_service(db, event_id, "published", _admin)
 
 # Trainings admin queue (same flow: draft -> pending_approval -> approved -> published)
@@ -207,8 +229,9 @@ def delete_category(category_id: UUID, db: Session = Depends(get_db), _admin: di
     return {"message": "Category deleted"}
 
 @router.get("/event-audits/{event_id}", summary="Admin — Event Audit History")
-def event_audits(event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+def event_audits(request: Request, event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
     from app.models.event_aux_models import EventAudit
+    _scope_event_admin_action(request, db, event_id, _admin)
     audits = db.query(EventAudit).filter(EventAudit.event_id == event_id).order_by(EventAudit.created_at.desc()).all()
     return [
         {

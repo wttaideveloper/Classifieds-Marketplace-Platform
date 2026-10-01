@@ -1,14 +1,29 @@
 import enum
 import uuid
+from typing import Annotated, Literal
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, field_validator, model_validator
 
 from app.schemas.common_schema import EventStatus, PaginatedResponse
 from app.schemas.event_form_config_schema import EventCustomValueInput
+from app.schemas.event_accommodation_schema import (
+    AccommodationId,
+    EventAccommodation,
+    EventAccommodationInput,
+    reject_duplicate_accommodation_selections,
+)
+from app.schemas.event_meal_schema import EventMeals, EventMealsInput, MAX_SELECTIONS, MealId, reject_duplicate_selections
+from app.utils.event_modules import EVENT_MODULE_KEYS, EVENT_TYPE_KEY_MAX_LENGTH, EVENT_TYPE_KEY_PATTERN
 
 DeliveryMode = str  # in_person|online|hybrid
+# A backend Event Type key (see /api/v1/event-types) — no longer a hardcoded enum. Malformed keys are
+# rejected here (cheap, no DB); whether the key actually names an existing, active Event Type is a
+# service-layer 422 (needs the database — see event_service._resolve_event_type_or_422).
+EventTypeInput = Annotated[
+    str, StringConstraints(min_length=1, max_length=EVENT_TYPE_KEY_MAX_LENGTH, pattern=EVENT_TYPE_KEY_PATTERN.pattern)
+]
 MeetingProvider = str  # zoom|google_meet|teams|other
 
 
@@ -31,6 +46,71 @@ class EventCheckoutRequest(BaseModel):
     quantity: int = Field(1, ge=1, description="Quantity")
     payment_provider: str | None = Field("marketplace", description="marketplace|merchant")
     waitlist_id: UUID | None = Field(None, description="Provide if checking out from waitlist payment offer")
+    meal_selections: list[MealId] | None = Field(
+        None, max_length=MAX_SELECTIONS,
+        description="Meal option ids from the event's meals configuration (Phase 2.8). Priced server-side and "
+                    "added to the order total; only allowed when the event has meals enabled.",
+    )
+    accommodation_selections: list[AccommodationId] | None = Field(
+        None, max_length=MAX_SELECTIONS,
+        description="Accommodation option ids from the event's accommodation configuration (Phase 2.8). Priced "
+                    "server-side and added to the order total; only allowed when accommodation is enabled.",
+    )
+
+    @field_validator("meal_selections")
+    @classmethod
+    def _no_duplicate_meals_checkout(cls, values):
+        return reject_duplicate_selections(values)
+
+    @field_validator("accommodation_selections")
+    @classmethod
+    def _no_duplicate_accommodation_checkout(cls, values):
+        return reject_duplicate_accommodation_selections(values)
+
+
+class EventCheckoutQuoteRequest(BaseModel):
+    """What checkout would cost — same ticket/option ids as EventCheckoutRequest, minus buyer identity and
+    payment provider (a quote creates nothing). The client sends ids only; every price is resolved server-side."""
+
+    ticket_type_id: str = Field(..., description="Ticket type ID")
+    quantity: int = Field(1, ge=1, description="Quantity")
+    meal_selections: list[MealId] | None = Field(None, max_length=MAX_SELECTIONS, description="Meal option ids to price.")
+    accommodation_selections: list[AccommodationId] | None = Field(
+        None, max_length=MAX_SELECTIONS, description="Accommodation option ids to price."
+    )
+
+    @field_validator("meal_selections")
+    @classmethod
+    def _no_duplicate_meals_quote(cls, values):
+        return reject_duplicate_selections(values)
+
+    @field_validator("accommodation_selections")
+    @classmethod
+    def _no_duplicate_accommodation_quote(cls, values):
+        return reject_duplicate_accommodation_selections(values)
+
+
+class EventCheckoutQuoteLine(BaseModel):
+    option_type: str = Field(..., description="'meal' | 'accommodation'")
+    option_id: str
+    name: str
+    unit_price: float
+    quantity: int
+    line_total: float
+    currency: str
+
+
+class EventCheckoutQuoteResponse(BaseModel):
+    """The authoritative price breakdown checkout would charge — a preview, nothing is written or reserved."""
+
+    ticket_subtotal: float
+    meal_subtotal: float
+    accommodation_subtotal: float
+    discount: float = Field(0, description="No discount/coupon concept exists yet — always 0.")
+    tax: float = Field(0, description="No tax concept exists yet — always 0.")
+    grand_total: float
+    currency: str
+    items: list[EventCheckoutQuoteLine] = Field(default_factory=list)
 
 
 class EventOrderResponse(BaseModel):
@@ -59,6 +139,7 @@ class MyWaitlistResponse(BaseModel):
     participant_email: str
     status: str
     registration_id: UUID | None = None
+    payment_offer_expires_at: datetime | None = None
     created_at: datetime
 
 
@@ -78,6 +159,58 @@ class EventVenue(BaseModel):
     longitude: float | None = Field(None, description="Map longitude")
     instructions: str | None = Field(None, description="Venue instructions / how to reach")
     map_url: str | None = Field(None, description="Map link")
+
+
+class EventModulesInput(BaseModel):
+    """Module overrides accepted on Event create/update.
+
+    Partial by design: only the modules that are sent are applied; the rest keep their value (defaults
+    from ``event_type`` on create, the current configuration on update). Unknown module names and
+    non-boolean values (including null) are rejected.
+    """
+
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {"meals": False, "online_meeting": True}})
+
+    registration: StrictBool | None = Field(None, description="Participants can register for the event.")
+    tickets: StrictBool | None = Field(None, description="Ticket types / paid tickets. Cannot be disabled for a paid event.")
+    sessions: StrictBool | None = Field(None, description="Agenda sessions. Disabling never deletes existing session data.")
+    check_in: StrictBool | None = Field(None, description="On-site check-in of registered participants.")
+    online_meeting: StrictBool | None = Field(None, description="Online meeting link. Requires delivery_mode 'online' or 'hybrid'.")
+    custom_questions: StrictBool | None = Field(None, description="Custom registration questions.")
+    meals: StrictBool | None = Field(None, description="Meal options (configuration only for now).")
+    accommodation: StrictBool | None = Field(None, description="Accommodation details (configuration only for now).")
+
+    @model_validator(mode="after")
+    def reject_explicit_nulls(self):
+        for name in self.model_fields_set:
+            if getattr(self, name) is None:
+                raise ValueError(f"module '{name}' must be true or false, not null")
+        return self
+
+    def overrides(self) -> dict[str, bool]:
+        """The modules the client actually set."""
+        return {name: getattr(self, name) for name in EVENT_MODULE_KEYS if name in self.model_fields_set}
+
+
+class EventModules(BaseModel):
+    """An Event's effective module configuration — always all eight modules.
+
+    Also reused, unchanged, as the input type for an Event Type's default_modules/allowed_modules/
+    required_modules (app/schemas/event_type_schema.py) — extra="forbid" matters there (an unknown key
+    must be a 422, not silently dropped); it is a no-op for every existing response use, which always
+    constructs this from an already-exactly-eight-key dict.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    registration: bool
+    tickets: bool
+    sessions: bool
+    check_in: bool
+    online_meeting: bool
+    custom_questions: bool
+    meals: bool
+    accommodation: bool
 
 
 class EventCreate(BaseModel):
@@ -137,6 +270,27 @@ class EventCreate(BaseModel):
         description="Super Admin custom Event field values (separate from registration custom_fields)",
     )
     sessions: list | None = Field(None, description="Agenda sessions")
+    event_type: EventTypeInput | None = Field(
+        None,
+        description="Event Type key (see GET /api/v1/event-types). Must name an existing, active Event Type. "
+                    "Supplies the DEFAULT modules when 'modules' is omitted. Omit both to keep the previous "
+                    "(legacy) behaviour.",
+    )
+    modules: EventModulesInput | None = Field(
+        None,
+        description="Module overrides. Applied on top of the event_type defaults (or, with no event_type, on top "
+                    "of the event's behaviour-based modules). Only supported module names with boolean values.",
+    )
+    meals: EventMealsInput | None = Field(
+        None,
+        description="Meal options (Phase 2.6). Only allowed when modules.meals is on (from the event_type default or an "
+                    "explicit override); otherwise the request is rejected rather than silently enabling meals.",
+    )
+    accommodation: EventAccommodationInput | None = Field(
+        None,
+        description="Accommodation options (Phase 2.7). Only allowed when modules.accommodation is on (from the event_type "
+                    "default or an explicit override); otherwise the request is rejected rather than silently enabling accommodation.",
+    )
     status: EventStatus = Field("draft", description="Event status.")
 
     @model_validator(mode="after")
@@ -254,6 +408,11 @@ class EventCreate(BaseModel):
             "registration_close_at": self.registration_close_at,
             "custom_fields": self.custom_fields or [],
             "sessions": self._normalize_sessions(),
+            "event_type": self.event_type,
+            # "modules" is deliberately NOT computed here: resolving an Event Type's defaults needs a
+            # database lookup (does the key exist, is it active, what does it allow/require), which a
+            # Pydantic model cannot do. create_event_service sets payload["modules"] right after calling
+            # this, exactly like it already does for "meals"/"accommodation".
             "status": self.status,
         }
         # form_configuration_* and custom_values applied by service layer after validation
@@ -297,6 +456,29 @@ class EventUpdate(BaseModel):
         description="Update Super Admin custom Event field values",
     )
     sessions: list | None = None
+    event_type: EventTypeInput | None = Field(
+        None,
+        description="Change the Event Type (see GET /api/v1/event-types; must be an existing, active key). Never "
+                    "rewrites an already-configured 'modules' unless the persisted modules are incompatible with "
+                    "the new type (422 in that case); null/omitted = no change.",
+    )
+    modules: EventModulesInput | None = Field(
+        None,
+        description="Module overrides, merged over the current configuration (unsent modules keep their value). "
+                    "null/omitted = no change.",
+    )
+    meals: EventMealsInput | None = Field(
+        None,
+        description="Meal options. 'options' is the desired set of ACTIVE options: ids of retained options are kept, options "
+                    "no longer listed are retired (active=false, never deleted). null/omitted = no change; unrelated updates "
+                    "and modules updates never touch it.",
+    )
+    accommodation: EventAccommodationInput | None = Field(
+        None,
+        description="Accommodation options (Phase 2.7). 'options' is the desired set of ACTIVE options: ids of retained options "
+                    "are kept, options no longer listed are retired (active=false, never deleted). null/omitted = no change; "
+                    "unrelated updates and modules updates never touch it.",
+    )
     status: EventStatus | None = None
 
     @model_validator(mode="after")
@@ -316,6 +498,14 @@ class EventUpdate(BaseModel):
     def to_model_data(self) -> dict:
         data = self.model_dump(exclude_unset=True)
         data.pop("custom_values", None)  # handled by form configuration service
+        # Ownership is immutable through update: tenant_id is accepted in the body for
+        # backward compatibility but is never applied to the Event.
+        data.pop("tenant_id", None)
+        # Configuration has partial-update semantics that need the current event; the service plans it.
+        data.pop("event_type", None)
+        data.pop("modules", None)
+        data.pop("meals", None)  # needs the current event and modules: planned by the service
+        data.pop("accommodation", None)  # likewise
         if "ticket_types" in data and data["ticket_types"] is not None:
             normalized_tt: list[dict] = []
             for raw in data["ticket_types"] or []:
@@ -390,7 +580,29 @@ class EventResponse(BaseModel):
     form_configuration_id: UUID | None = None
     form_configuration_version_id: UUID | None = None
     sessions: list | None = None
+    event_type: str | None = Field(
+        None, description="Event Type key (see GET /api/v1/event-types). Events created before Phase 2.2 "
+                          "(no stored type) resolve to 'other'."
+    )
+    modules: EventModules | None = Field(
+        None,
+        description="Effective module configuration: the stored modules, or — for events created before Phase 2.2 — "
+                    "derived from what the event already does (never written back).",
+    )
+    meals: EventMeals | None = Field(
+        None,
+        description="Meal configuration (Phase 2.6). enabled mirrors modules.meals; options carry stable ids and an active flag "
+                    "(retired options stay for history). Events with no meals resolve to enabled=false, options=[].",
+    )
+    accommodation: EventAccommodation | None = Field(
+        None,
+        description="Accommodation configuration (Phase 2.7). enabled mirrors modules.accommodation; options carry stable ids and "
+                    "an active flag (retired options stay for history). Events with no accommodation resolve to enabled=false, options=[].",
+    )
     status: str
+    lifecycle_state: Literal["upcoming", "ongoing", "finished"] | None = Field(
+        None, description="Backend-derived lifecycle state based on the event's start/end date and time zone. This does not modify the workflow status."
+    )
     is_deleted: bool | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -445,6 +657,27 @@ class EventRegistrationCreate(BaseModel):
     ticket_type_id: str | None = None
     group_size: int | None = Field(None, ge=1, description="Group size for group registration (1=individual)")
     group_members: list[dict] | None = Field(None, description="List of {name, email} for group members")
+    meal_selections: list[MealId] | None = Field(
+        None, max_length=MAX_SELECTIONS,
+        description="Meal option ids from the event's meals configuration (Phase 2.6). Optional; only allowed when the event "
+                    "has meals enabled. Applies to the registrant (not to group members).",
+    )
+
+    accommodation_selections: list[AccommodationId] | None = Field(
+        None, max_length=MAX_SELECTIONS,
+        description="Accommodation option ids from the event's accommodation configuration (Phase 2.7). Optional; only allowed "
+                    "when the event has accommodation enabled. Applies to the registrant (not to group members).",
+    )
+
+    @field_validator("meal_selections")
+    @classmethod
+    def _no_duplicate_meals(cls, values):
+        return reject_duplicate_selections(values)
+
+    @field_validator("accommodation_selections")
+    @classmethod
+    def _no_duplicate_accommodation(cls, values):
+        return reject_duplicate_accommodation_selections(values)
 
 
 class EventSessionCreate(BaseModel):

@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,11 +24,9 @@ def token(expired=False):
 def handshake(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_DEV_TOKEN", False)
     monkeypatch.setattr(sio.eio, "cors_allowed_origins", ["http://testserver"])
-    monkeypatch.setattr(events, "SessionLocal", MagicMock())
-    presence=MagicMock()
-    monkeypatch.setattr(events, "update_presence_service", presence)
-    monkeypatch.setattr(events, "emit_user_online", AsyncMock())
-    monkeypatch.setattr(events, "emit_user_offline", AsyncMock())
+    presence = AsyncMock()
+    monkeypatch.setattr(events.presence_service, "handle_connect", presence)
+    monkeypatch.setattr(events.presence_service, "handle_disconnect", AsyncMock())
     return TestClient(socket_app), presence
 
 
@@ -47,7 +45,7 @@ def test_cookie_or_bff_bearer_handshake_without_js_token(handshake, monkeypatch,
         assert ws.receive_text().startswith('0')  # Engine.IO transport open
         ws.send_text('40')  # Socket.IO namespace connect; no auth payload
         assert ws.receive_text().startswith('40')
-        assert presence.call_args.args[1]['id']==USER_ID
+        assert presence.call_args.args[0]==USER_ID
 
 
 @pytest.mark.parametrize("credential", [None,"invalid", "expired"])

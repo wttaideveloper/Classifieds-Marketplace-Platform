@@ -147,11 +147,11 @@ Deferred at the user's request. No provider integration contract or connection-s
 `POST /api/v1/events/auto-complete?enterprise_id={optional_uuid}` uses `get_current_admin`, which permits `admin` and `super_admin` (plus the existing development-user fallback).
 
 - Bulk-transitions non-deleted **published** Events whose `end_date` is before server UTC now to `completed`.
-- With `enterprise_id`, it filters to that enterprise. Without it, it processes all matching Events; the function does not infer the caller's tenant scope.
+- **Scope (Phase 2.1):** an `admin` (Enterprise Admin) only ever processes **its own tenant's** Events — the tenant is resolved from the token/database, never from the request, and `enterprise_id` can only narrow within it (a caller whose tenant cannot be resolved gets 403). Only an active Platform Super Admin sweeps every tenant (optionally narrowed by `enterprise_id`).
 - Returns **200** `{"auto_completed":3}` and writes audit records. Repeating after completion does not reprocess those Events.
 - No scheduler wiring invoking this service was found in the repository. The endpoint does not schedule itself.
 
-**UX recommendation:** treat this as a backend maintenance/operations action and wire it to a controlled scheduler. Do not put an Auto-complete button in Enterprise Event detail or trigger it automatically from a page load. Tenant scoping and scheduler ownership need an explicit policy before exposing this bulk action to Enterprise users.
+**UX recommendation:** treat this as a backend maintenance/operations action and wire it to a controlled scheduler. Do not put an Auto-complete button in Enterprise Event detail or trigger it automatically from a page load. Tenant scoping is now enforced by the backend (above); scheduler ownership still needs an explicit policy before exposing this bulk action to Enterprise users.
 
 ## Validation
 

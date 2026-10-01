@@ -61,20 +61,20 @@ docker build -t marketplace-api .
 Before starting the app in production:
 
 ```bash
-docker run --rm --env-file .env marketplace-api alembic upgrade head
+docker run --rm --env-file .env marketplace-api alembic upgrade heads
 ```
 
 For local development:
 
 ```bash
-alembic upgrade head
+alembic upgrade heads
 ```
 
 Generate a new migration after model changes:
 
 ```bash
 alembic revision --autogenerate -m "describe change"
-alembic upgrade head
+alembic upgrade heads
 ```
 
 ## 5. Run the application container
@@ -255,7 +255,7 @@ Expected response:
 ```bash
 git pull
 docker build -t marketplace-api .
-docker run --rm --env-file .env marketplace-api alembic upgrade head
+docker run --rm --env-file .env marketplace-api alembic upgrade heads
 docker stop marketplace-api && docker rm marketplace-api
 docker run -d --name marketplace-api --restart unless-stopped \
   --env-file .env -p 127.0.0.1:8000:8000 \
@@ -269,7 +269,7 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
-alembic upgrade head
+alembic upgrade heads
 uvicorn app.main:socket_app --reload
 ```
 
@@ -279,11 +279,11 @@ With `ENVIRONMENT=development`, tables are auto-created on startup if migrations
 
 | Issue | Check |
 |-------|-------|
-| **500 Internal Server Error on APIs** | Run `alembic upgrade head` — the latest migration adds `is_deleted`, `tenant_id`, `status` (string), and `enterprise_locations`. Without it, list/search endpoints fail. |
+| **500 Internal Server Error on APIs** | Run `alembic upgrade heads` — the latest migration adds `is_deleted`, `tenant_id`, `status` (string), and `enterprise_locations`. Without it, list/search endpoints fail. |
 | DB connection refused | RDS security group, `DATABASE_URL`, VPC/subnet |
 | `psycopg2` errors | Use `postgresql+psycopg2://` in `DATABASE_URL` |
 | CORS errors | `CORS_ORIGINS` must include exact frontend origin; set `CORS_ALLOW_LOCALHOST=true` for local dev against production API |
-| Missing tables | Run `alembic upgrade head` |
+| Missing tables | Run `alembic upgrade heads` |
 | Uploads lost on restart | Mount `/data/uploads` volume |
 | View error details | `docker logs marketplace-api` — unhandled errors are logged server-side |
 
@@ -291,7 +291,7 @@ With `ENVIRONMENT=development`, tables are auto-created on startup if migrations
 
 ```bash
 docker build -t marketplace-api .
-docker run --rm --env-file .env marketplace-api alembic upgrade head
+docker run --rm --env-file .env marketplace-api alembic upgrade heads
 docker stop marketplace-api && docker rm marketplace-api
 docker run -d --name marketplace-api --restart unless-stopped \
   --env-file .env -p 127.0.0.1:8000:8000 \

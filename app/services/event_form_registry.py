@@ -67,6 +67,7 @@ NON_REPEATABLE_CORE_KEYS = frozenset(
         "description",
         "category",
         "subcategory",
+        "event_type",
         "start_date",
         "end_date",
         "duration_type",
@@ -277,6 +278,13 @@ EVENT_FIELD_REGISTRY: list[dict] = [
     _entry(
         "subcategory", "Subcategory", "string", ["text", "select"],
         value_source="event_categories", source_endpoint="/api/v1/event-categories/", depends_on="category",
+    ),
+    # Backend-authoritative Event Type registry (app/models/event_type_model.py, /api/v1/event-types).
+    # Deliberately separate from delivery_mode: option value = Event Type `key`, option label = `name`,
+    # resolved live from the registry (active types only) — never a static/hardcoded list here.
+    _entry(
+        "event_type", "Event Type", "string", ["select"], default_renderer="select",
+        value_source="event_types", source_endpoint="/api/v1/event-types/",
     ),
     _entry("tags", "Tags", "string[]", ["tags"], default_renderer="tags", configurable=_cfg(renderer=False)),
     _entry("organiser_name", "Organiser Name", "string", ["text"]),

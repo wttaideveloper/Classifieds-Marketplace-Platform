@@ -949,23 +949,38 @@ def update_presence(
     db: Session,
     user_id: UUID,
     status: str,
-) -> UserPresence:
+) -> tuple[UserPresence, bool]:
+    """Set the user's presence status.
+
+    Returns (presence, changed) — `changed` is False when the status was
+    already the requested value, so callers (presence_service) can skip
+    re-emitting user_online/user_offline and skip bumping last_seen_at on a
+    no-op transition. `with_for_update()` row-locks the presence row so
+    concurrent workers racing to flip the same user's status serialize
+    instead of double-emitting.
+    """
     presence = (
         db.query(UserPresence)
         .filter(UserPresence.user_id == user_id)
+        .with_for_update()
         .first()
     )
     now = datetime.utcnow()
-    if presence:
+    if presence is None:
+        presence = UserPresence(user_id=user_id, status=status, last_seen_at=now)
+        db.add(presence)
+        db.commit()
+        db.refresh(presence)
+        return presence, True
+
+    changed = presence.status != status
+    if changed:
         presence.status = status
         presence.last_seen_at = now
         presence.updated_at = now
-    else:
-        presence = UserPresence(user_id=user_id, status=status, last_seen_at=now)
-        db.add(presence)
-    db.commit()
-    db.refresh(presence)
-    return presence
+        db.commit()
+        db.refresh(presence)
+    return presence, changed
 
 
 def get_online_users(db: Session) -> list[UserPresence]:

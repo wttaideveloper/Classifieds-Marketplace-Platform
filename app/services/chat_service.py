@@ -580,6 +580,7 @@ def delete_message_service(db: Session, current_user: dict, message_id: UUID):
     chat_repo.sync_conversation_last_message(db, message.conversation_id)
     return MessageDeleteResponse(
         id=message.id,
+        conversation_id=message.conversation_id,
         is_deleted=message.is_deleted,
         deleted_at=message.deleted_at,
     )
@@ -710,8 +711,12 @@ def monthly_limit_service(db: Session, current_user: dict):
 
 
 def update_presence_service(db: Session, current_user: dict, status: str):
+    from app.services import presence_service
+
     user_id = _parse_user_id(current_user)
-    presence = chat_repo.update_presence(db, user_id, status)
+    presence, changed = chat_repo.update_presence(db, user_id, status)
+    if changed:
+        presence_service.schedule_presence_emit(str(user_id), status)
     return PresenceResponse(
         user_id=presence.user_id,
         status=presence.status,
