@@ -192,8 +192,8 @@ class TrainingCreate(BaseModel):
     location_id: UUID | None = None
     title: str
     description: str | None = None
-    category: str = Field(..., description="Category")
-    subcategory: str | None = None
+    category: str = Field(..., min_length=1, max_length=100, description="Category — any non-empty string up to 100 chars; no taxonomy allowlist is enforced here. Submit a custom ('Other') value as a plain string, same as a predefined one.")
+    subcategory: str | None = Field(None, max_length=100, description="Subcategory — any string up to 100 chars, or null/omitted. No taxonomy allowlist is enforced. Submit a custom ('Other') value as a plain string.")
     tags: list[str] | None = None
     instructor_id: UUID | None = None
     instructor_name: str | None = Field(None, description="Instructor display name")
@@ -350,8 +350,8 @@ class TrainingUpdate(BaseModel):
     duration: str | None = None
     title: str | None = None
     description: str | None = None
-    category: str | None = None
-    subcategory: str | None = None
+    category: str | None = Field(None, min_length=1, max_length=100, description="Omit to leave unchanged. Any non-empty string up to 100 chars; no taxonomy allowlist. Custom ('Other') values are plain strings.")
+    subcategory: str | None = Field(None, max_length=100, description="Omit to leave unchanged. Any string up to 100 chars, or null to clear. No taxonomy allowlist.")
     tags: list | None = None
     instructor_id: UUID | None = None
     instructor_name: str | None = None
