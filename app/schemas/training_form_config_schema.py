@@ -95,7 +95,15 @@ class FormFieldInput(BaseModel):
                     "and frontend_settings.allow_custom_value are validated and enforced server-side. "
                     "allow_custom_value: true lets a submitted value bypass the options allowlist (an 'Other' free-text "
                     "entry) — submit it as the plain category/subcategory string, no separate wrapper or flag needed. "
-                    "A custom subcategory value (one not found in options) is not checked against parent_value.",
+                    "A custom value (one not found in options) on EITHER category or subcategory is not checked "
+                    "against parent_value — a predefined subcategory paired with a custom category is accepted too, "
+                    "not just a custom subcategory under a predefined category. The literal string "
+                    "'_ihp_training_other_option_' (the frontend's internal 'Other' placeholder) is always rejected "
+                    "with 400 if ever submitted as a value — it must be replaced by the typed custom text first. "
+                    "Training.category/subcategory have no DB-level taxonomy allowlist beyond length (max 100 chars "
+                    "each; category additionally requires a non-empty value) — any other string is accepted and "
+                    "stored/returned verbatim (list, detail, search, and by_category summary all include it "
+                    "unfiltered); no trimming or empty/null normalization is applied.",
     )
 
 

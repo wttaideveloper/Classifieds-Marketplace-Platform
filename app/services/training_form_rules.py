@@ -149,13 +149,27 @@ def visibility(sections, payload, custom_values=None):
     return result
 
 
+OTHER_OPTION_SENTINEL = "_ihp_training_other_option_"
+
+
+def _contains_other_sentinel(value) -> bool:
+    values = value if isinstance(value, list) else [value]
+    return any(v == OTHER_OPTION_SENTINEL for v in values)
+
+
 def validate_constraints(field, value):
     if empty(value):
         if field.get("required"):
             raise HTTPException(400, f"Required field '{field.get('label')}' is missing")
         return
-    rules = field.get("validation") or {}
     label = field.get("label")
+    if _contains_other_sentinel(value):
+        raise HTTPException(
+            400,
+            f"'{OTHER_OPTION_SENTINEL}' is a UI placeholder for the 'Other' choice, not a valid value for "
+            f"'{label}' — submit the typed custom text instead.",
+        )
+    rules = field.get("validation") or {}
     if isinstance(value, str):
         for key, invalid in (("min_length", lambda n: len(value) < n), ("max_length", lambda n: len(value) > n)):
             if rules.get(key) is not None and invalid(int(rules[key])):
@@ -180,12 +194,17 @@ def validate_constraints(field, value):
             raise HTTPException(400, f"Invalid select value for '{label}'")
 
 
-def validate_category_subcategory_linkage(payload: dict, subcategory_field: dict | None) -> None:
+def validate_category_subcategory_linkage(payload: dict, subcategory_field: dict | None, category_field: dict | None = None) -> None:
     """When the subcategory field is a select whose options declare parent_value,
     a submitted subcategory that matches a known option must belong to the
-    submitted category. A value not found in options is a custom ("Other")
-    entry — those aren't tied to a category and skip this check. Caller is
-    responsible for passing None when the field is disabled/hidden/not core."""
+    submitted category — but only when the category is itself a known/predefined
+    value. A custom subcategory (not found in options) is never tied to a
+    category and skips this check; a custom category (not found in the category
+    field's own options) also skips it, since no predefined subcategory option
+    can have a parent_value matching free-text the admin just typed — enforcing
+    the pairing in that direction would make "custom category + predefined
+    subcategory" permanently unsubmittable. Caller passes None for either field
+    when it's disabled/hidden/not core."""
     if not subcategory_field or subcategory_field.get("renderer") not in ("select", "multi_select"):
         return
     options = subcategory_field.get("options") or []
@@ -194,13 +213,17 @@ def validate_category_subcategory_linkage(payload: dict, subcategory_field: dict
     sub_value = payload.get("subcategory")
     if empty(sub_value):
         return
-    sub_values = sub_value if isinstance(sub_value, list) else [sub_value]
     category_value = payload.get("category")
+    if category_field and category_field.get("renderer") in ("select", "multi_select"):
+        category_options = {o.get("value") for o in (category_field.get("options") or [])}
+        if category_options and category_value not in category_options:
+            return  # custom ("Other") category — nothing to check subcategory's parent against
+    sub_values = sub_value if isinstance(sub_value, list) else [sub_value]
     by_value = {o.get("value"): o for o in options}
     for v in sub_values:
         option = by_value.get(v)
         if option is None:
-            continue  # custom/"Other" entry — not tied to a category
+            continue  # custom/"Other" subcategory entry — not tied to a category
         parent = option.get("parent_value")
         if parent and parent != category_value:
             raise HTTPException(400, f"Subcategory '{v}' does not belong to category '{category_value}'")

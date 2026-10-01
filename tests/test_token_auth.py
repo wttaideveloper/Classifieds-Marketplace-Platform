@@ -165,6 +165,40 @@ def test_payload_to_user_maps_internal_user_to_provider():
     assert user["role"] == "provider"
 
 
+# --- name claim extraction — feeds the participant_name fallback used by
+# Training/Event enrolment creation (payload.get("participant_name") or
+# current_user.get("name") or participant_email) ---
+
+def test_payload_to_user_extracts_name_claim():
+    user = payload_to_user({"sub": "u1", "email": "suresh@example.com", "name": "Suresh Inti"})
+    assert user["name"] == "Suresh Inti"
+
+
+def test_payload_to_user_falls_back_to_given_and_family_name():
+    user = payload_to_user({"sub": "u1", "email": "suresh@example.com", "given_name": "Suresh", "family_name": "Inti"})
+    assert user["name"] == "Suresh Inti"
+
+
+def test_payload_to_user_falls_back_to_given_name_only():
+    user = payload_to_user({"sub": "u1", "email": "s@example.com", "given_name": "Suresh"})
+    assert user["name"] == "Suresh"
+
+
+def test_payload_to_user_falls_back_to_preferred_username_when_no_name_claims():
+    user = payload_to_user({"sub": "u1", "email": "s@example.com", "preferred_username": "suresh.inti"})
+    assert user["name"] == "suresh.inti"
+
+
+def test_payload_to_user_name_is_none_when_nothing_available():
+    user = payload_to_user({"sub": "u1", "email": "s@example.com"})
+    assert user["name"] is None
+
+
+def test_payload_to_user_prefers_name_claim_over_given_family():
+    user = payload_to_user({"sub": "u1", "name": "Dr. Suresh Inti", "given_name": "Suresh", "family_name": "Inti"})
+    assert user["name"] == "Dr. Suresh Inti"
+
+
 def test_validate_keycloak_audience_accepts_azp(monkeypatch):
     from app.core.token_auth import _validate_keycloak_audience
 
