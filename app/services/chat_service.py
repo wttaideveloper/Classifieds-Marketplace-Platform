@@ -9,6 +9,7 @@ from app.repository import chat_repo as chat_repo
 from app.services.chat_notification_service import (
     create_message_notifications,
     mark_conversation_notifications_read_service,
+    sync_platform_inbox_read_for_conversation,
 )
 from app.repository.query_utils import build_pagination_meta
 from app.schemas.chat_schema import (
@@ -529,6 +530,7 @@ def mark_message_read_service(db: Session, current_user: dict, message_id: UUID)
         raise HTTPException(status_code=403, detail="Not authorized")
 
     receipt = chat_repo.mark_message_read(db, message_id, user_id)
+    sync_platform_inbox_read_for_conversation(db, current_user, message.conversation_id)
     return MessageReadResponse(
         message_id=receipt.message_id,
         user_id=receipt.user_id,
@@ -542,6 +544,7 @@ def mark_conversation_read_service(db: Session, current_user: dict, conversation
         raise HTTPException(status_code=403, detail="Not authorized")
     chat_repo.mark_conversation_read(db, conversation_id, user_id)
     mark_conversation_notifications_read_service(db, current_user, conversation_id)
+    sync_platform_inbox_read_for_conversation(db, current_user, conversation_id)
     return {"conversation_id": conversation_id, "read_at": datetime.utcnow()}
 
 

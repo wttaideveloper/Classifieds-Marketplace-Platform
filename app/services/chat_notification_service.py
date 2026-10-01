@@ -336,6 +336,20 @@ def mark_all_notifications_read_service(db: Session, current_user: dict):
     return NotificationReadAllResponse(marked_read=marked)
 
 
+def sync_platform_inbox_read_for_conversation(db: Session, current_user: dict, conversation_id: UUID) -> int:
+    """Bridge the other direction: when chat marks a conversation/message read
+    (PATCH /conversations/{id}/read, the mark_read socket event, or its REST
+    fallback POST /socket-io/mark-read), also mark the matching chat_message
+    rows in GET /users/me/notifications read — mobile already calls the chat
+    read APIs and must not have to separately fetch+filter+mark-read every
+    notification one by one. Best-effort: caller already validated the user
+    is a participant before marking chat state read, so this just syncs the
+    platform inbox and never raises on its own."""
+    user_id = _parse_user_id(current_user)
+    from app.repository import notification_repo
+    return notification_repo.mark_user_notifications_read_by_conversation(db, user_id, conversation_id)
+
+
 def mark_conversation_notifications_read_service(
     db: Session,
     current_user: dict,
