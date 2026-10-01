@@ -24,12 +24,13 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.utils.event_modules import resolve_event_modules
 from app.utils.event_payments import parse_money
+from app.utils.event_utils import get_event_timezone, resolve_naive_or_aware
 
 # Safe, URL/JSON-friendly ids: a uuid4 string, or a readable slug such as "shared-room".
 ACCOMMODATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -111,11 +112,17 @@ def option_price(option: Mapping) -> Decimal:
     return (parsed if parsed is not None else ZERO).quantize(Decimal("0.01"))
 
 
-def is_within_purchase_window(option: Mapping, now: datetime) -> bool:
+def is_within_purchase_window(option: Mapping, now: datetime, event_tz) -> bool:
+    """See event_meals.is_within_purchase_window — identical reasoning: ``now`` must be aware UTC;
+    ``event_tz`` (app.utils.event_utils.get_event_timezone(event)) resolves a naive purchase_start_at/
+    purchase_end_at as the organizer's own event-local wall-clock time, never assumed UTC. An
+    already timezone-aware stored value is trusted as-is."""
     start, end = option.get("purchase_start_at"), option.get("purchase_end_at")
-    if start and now < datetime.fromisoformat(start):
+    start_at = resolve_naive_or_aware(datetime.fromisoformat(start), event_tz) if start else None
+    end_at = resolve_naive_or_aware(datetime.fromisoformat(end), event_tz) if end else None
+    if start_at and now < start_at:
         return False
-    if end and now >= datetime.fromisoformat(end):
+    if end_at and now >= end_at:
         return False
     return True
 
@@ -338,10 +345,11 @@ def validate_accommodation_selections(
         raise AccommodationSelectionError(
             "Accommodation option(s) no longer available: " + ", ".join(known[i]["name"] for i in retired)
         )
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
+    event_tz = get_event_timezone(event)
     closed = sorted(
         selected for selected in seen
-        if selected not in held and not is_within_purchase_window(known[selected], now)
+        if selected not in held and not is_within_purchase_window(known[selected], now, event_tz)
     )
     if closed:
         raise AccommodationSelectionError(

@@ -25,12 +25,13 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.utils.event_modules import resolve_event_modules
 from app.utils.event_payments import parse_money
+from app.utils.event_utils import get_event_timezone, resolve_naive_or_aware
 
 # Safe, URL/JSON-friendly ids: a uuid4 string, or a readable slug such as "breakfast-day-1".
 MEAL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -123,13 +124,23 @@ def option_price(option: Mapping) -> Decimal:
     return (parsed if parsed is not None else ZERO).quantize(Decimal("0.01"))
 
 
-def is_within_purchase_window(option: Mapping, now: datetime) -> bool:
-    """Whether ``now`` is inside the option's purchase window. No window configured = always open (Section 8:
-    "If a purchase window is omitted, preserve backward-compatible behavior")."""
+def is_within_purchase_window(option: Mapping, now: datetime, event_tz) -> bool:
+    """Whether ``now`` (aware UTC) is inside the option's purchase window. No window configured = always open
+    (Section 8: "If a purchase window is omitted, preserve backward-compatible behavior").
+
+    ``purchase_start_at``/``purchase_end_at`` may be a naive ISO string (the organizer's own event-local
+    wall-clock entry — see ``_normalize_window_value``: "never guesses a timezone that isn't there") or an
+    already timezone-aware one (explicit offset/Z, e.g. from an API client that sent one). ``event_tz``
+    (``app.utils.event_utils.get_event_timezone(event)``) resolves which timezone a naive value means; an
+    aware value is trusted as-is. Never assume naive = UTC here — that is only correct for server-generated
+    timestamps elsewhere in the app, not for a human's local wall-clock input.
+    """
     start, end = option.get("purchase_start_at"), option.get("purchase_end_at")
-    if start and now < datetime.fromisoformat(start):
+    start_at = resolve_naive_or_aware(datetime.fromisoformat(start), event_tz) if start else None
+    end_at = resolve_naive_or_aware(datetime.fromisoformat(end), event_tz) if end else None
+    if start_at and now < start_at:
         return False
-    if end and now >= datetime.fromisoformat(end):
+    if end_at and now >= end_at:
         return False
     return True
 
@@ -350,10 +361,11 @@ def validate_meal_selections(event: Any, selections: Sequence[str] | None, curre
     retired = sorted(selected for selected in seen if not known[selected]["active"] and selected not in held)
     if retired:
         raise MealSelectionError("Meal option(s) no longer available: " + ", ".join(known[i]["name"] for i in retired))
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
+    event_tz = get_event_timezone(event)
     closed = sorted(
         selected for selected in seen
-        if selected not in held and not is_within_purchase_window(known[selected], now)
+        if selected not in held and not is_within_purchase_window(known[selected], now, event_tz)
     )
     if closed:
         raise MealSelectionError("Meal option(s) outside their purchase window: " + ", ".join(known[i]["name"] for i in closed))
