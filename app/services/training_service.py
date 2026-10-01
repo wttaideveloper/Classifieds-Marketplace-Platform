@@ -3294,8 +3294,10 @@ def list_training_reviews_service(db: Session, tid: UUID):
         for email, name in db.query(TrainingEnrolment.participant_email, TrainingEnrolment.participant_name).filter(
             TrainingEnrolment.training_id == tid,
             TrainingEnrolment.participant_email.in_(emails),
-        ).all():
-            names_by_email.setdefault(email, name)
+        ).order_by(TrainingEnrolment.created_at.desc()).all():
+            current = names_by_email.get(email)
+            if not current or current == email:
+                names_by_email[email] = name
     reviews = [
         {"id": str(r.id), "training_id": str(r.training_id), "rating": int(r.rating), "comment": r.comment,
          "participant_email": r.participant_email, "participant_name": names_by_email.get(r.participant_email),
