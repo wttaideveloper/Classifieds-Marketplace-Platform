@@ -354,12 +354,27 @@ def _all_lesson_ids(training) -> set[str]:
 
 
 def _enforce_enrolment_window(training) -> None:
-    from datetime import datetime
-    now = datetime.utcnow()
-    if training.enrolment_start and now < training.enrolment_start:
-        raise HTTPException(status_code=400, detail=f"Enrolment not yet open (opens {training.enrolment_start.isoformat()})")
-    if training.enrolment_end and now > training.enrolment_end:
-        raise HTTPException(status_code=400, detail=f"Enrolment closed (closed {training.enrolment_end.isoformat()})")
+    # enrolment_start/enrolment_end are stored as naive datetimes representing
+    # wall-clock time in training.time_zone (not UTC) — the same convention
+    # app.utils.event_utils already solves for events, so reuse its helpers
+    # (they're generic: they only read time_zone-style attrs via getattr).
+    from app.utils.event_utils import _get_event_tz, _get_utc_now, _localize_and_convert
+
+    now_utc = _get_utc_now()
+    tz = _get_event_tz(training)
+    # Display name reflects the *resolved* zone, not the raw stored string —
+    # an invalid time_zone value falls back to UTC, so the message should too.
+    tz_name = getattr(tz, "key", "UTC")
+
+    start_utc = _localize_and_convert(training.enrolment_start, tz)
+    end_utc = _localize_and_convert(training.enrolment_end, tz)
+
+    if start_utc and now_utc < start_utc:
+        opens_at = training.enrolment_start.replace(tzinfo=tz).isoformat()
+        raise HTTPException(status_code=400, detail=f"Enrolment not yet open (opens {opens_at} ({tz_name}))")
+    if end_utc and now_utc > end_utc:
+        closes_at = training.enrolment_end.replace(tzinfo=tz).isoformat()
+        raise HTTPException(status_code=400, detail=f"Enrolment closed (closed {closes_at} ({tz_name}))")
 
 
 def _get_enrolment(db: Session, tid: UUID, participant_email: str):
