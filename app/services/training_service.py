@@ -358,10 +358,10 @@ def _enforce_enrolment_window(training) -> None:
     # wall-clock time in training.time_zone (not UTC) — the same convention
     # app.utils.event_utils already solves for events, so reuse its helpers
     # (they're generic: they only read time_zone-style attrs via getattr).
-    from app.utils.event_utils import _get_event_tz, _get_utc_now, _localize_and_convert
+    from app.utils.event_utils import get_event_timezone, _get_utc_now, _localize_and_convert
 
     now_utc = _get_utc_now()
-    tz = _get_event_tz(training)
+    tz = get_event_timezone(training)
     # Display name reflects the *resolved* zone, not the raw stored string —
     # an invalid time_zone value falls back to UTC, so the message should too.
     tz_name = getattr(tz, "key", "UTC")
