@@ -203,6 +203,35 @@ def mark_all_user_notifications_read(db: Session, user_id: UUID) -> int:
     return int(updated or 0)
 
 
+def mark_user_notifications_read_by_conversation(db: Session, user_id: UUID, conversation_id: UUID, *, category: str = "chat_message") -> int:
+    """Bulk-marks UserNotification rows read for one user, scoped to a chat
+    conversation — the bridge between chat read-state and the platform inbox
+    (GET /users/me/notifications). Notification.metadata_json lives on a
+    different table than UserNotification.is_read, so this is two queries
+    (find matching Notification ids, then bulk-update the join rows) rather
+    than a single UPDATE...JOIN, which isn't portable across SQLite/Postgres."""
+    notification_ids = [
+        row[0] for row in db.query(Notification.id).filter(
+            Notification.category == category,
+            Notification.metadata_json["conversation_id"].astext == str(conversation_id),
+        ).all()
+    ]
+    if not notification_ids:
+        return 0
+    now = datetime.utcnow()
+    updated = (
+        db.query(UserNotification)
+        .filter(
+            UserNotification.user_id == user_id,
+            UserNotification.notification_id.in_(notification_ids),
+            UserNotification.is_read.is_(False),
+        )
+        .update({"is_read": True, "read_at": now}, synchronize_session=False)
+    )
+    db.commit()
+    return int(updated or 0)
+
+
 def count_unread_user_notifications(db: Session, user_id: UUID) -> int:
     return (
         db.query(UserNotification)

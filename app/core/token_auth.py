@@ -250,10 +250,21 @@ def payload_to_user(payload: dict) -> dict:
         explicit = _normalize_slug(payload.get("role"))
         role = explicit if explicit in {"admin", "super_admin", "provider", "customer"} else None
         role = role or _map_keycloak_role(payload)
+    # Standard OIDC claims (Keycloak includes these by default when the token
+    # request includes the "profile" scope, which this realm's clients do).
+    # Not authoritative like the application-id lookup below, but it's the
+    # only real display name available without an extra network round trip —
+    # used as the display-name fallback wherever a caller doesn't explicitly
+    # supply one (e.g. Training/Event enrolment participant_name).
+    full_name = payload.get("name")
+    if not full_name:
+        parts = [p for p in (payload.get("given_name"), payload.get("family_name")) if p]
+        full_name = " ".join(parts) if parts else None
     user = {
         "id": str(user_id),
         "role": role,
         "email": payload.get("email") or payload.get("preferred_username"),
+        "name": full_name or payload.get("preferred_username"),
     }
     if payload.get("sub"):
         # Kept for diagnostics / internal lookups that key off the Keycloak

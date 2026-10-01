@@ -7,7 +7,7 @@ from fastapi import HTTPException
 import pytest
 
 from app.services.training_form_registry import _core_field, normalize_sections
-from app.services.training_form_rules import validate_constraints, validate_category_subcategory_linkage
+from app.services.training_form_rules import OTHER_OPTION_SENTINEL, validate_constraints, validate_category_subcategory_linkage
 from app.services.training_form_config_service import validate_form_required_core_fields
 
 
@@ -129,6 +129,89 @@ def test_full_pipeline_still_requires_category_even_with_allow_custom():
     with pytest.raises(HTTPException) as exc:
         validate_form_required_core_fields({"category": None, "subcategory": "yoga"}, sections)
     assert exc.value.status_code == 400
+
+
+# --- "vice versa": predefined subcategory + custom ("Other") category ---
+
+def test_linkage_accepts_predefined_subcategory_under_custom_category():
+    """A custom (free-text, 'Other') category has no predefined subcategory
+    option whose parent_value could ever match it — enforcing the pairing in
+    this direction would make this combination permanently unsubmittable."""
+    cat_field = _category_field(allow_custom=True)
+    sub_field = _subcategory_field()
+    validate_category_subcategory_linkage(
+        {"category": "Corporate Offsite", "subcategory": "yoga"}, sub_field, cat_field,
+    )
+
+
+def test_linkage_still_rejects_predefined_subcategory_under_wrong_predefined_category():
+    """The fix for the custom-category case must not weaken the original
+    predefined-vs-predefined mismatch check."""
+    cat_field = _category_field()
+    sub_field = _subcategory_field()
+    with pytest.raises(HTTPException) as exc:
+        validate_category_subcategory_linkage(
+            {"category": "safety", "subcategory": "yoga"}, sub_field, cat_field,
+        )
+    assert exc.value.status_code == 400
+
+
+def test_linkage_without_category_field_arg_keeps_old_strict_behavior():
+    """Backward compatibility: callers that don't pass category_field (the
+    2-arg call signature) keep the original behavior."""
+    sub_field = _subcategory_field()
+    with pytest.raises(HTTPException):
+        validate_category_subcategory_linkage({"category": "Custom Thing", "subcategory": "yoga"}, sub_field)
+
+
+def test_full_pipeline_accepts_predefined_subcategory_under_custom_category():
+    sections = _sections(_category_field(allow_custom=True), _subcategory_field())
+    validate_form_required_core_fields({"category": "Offsite Retreat", "subcategory": "yoga"}, sections)
+
+
+# --- the "Other" option sentinel must never be accepted as real data ---
+
+def test_sentinel_rejected_for_select_field():
+    field = _category_field(allow_custom=True)
+    with pytest.raises(HTTPException) as exc:
+        validate_constraints(field, OTHER_OPTION_SENTINEL)
+    assert exc.value.status_code == 400
+    assert OTHER_OPTION_SENTINEL in exc.value.detail
+
+
+def test_sentinel_rejected_for_plain_text_field():
+    """The guard is not select-specific — it must reject the sentinel for a
+    plain text-rendered category/subcategory too."""
+    field = _core_field("category", "Category", "text", 1, required=True)
+    with pytest.raises(HTTPException) as exc:
+        validate_constraints(field, OTHER_OPTION_SENTINEL)
+    assert exc.value.status_code == 400
+
+
+def test_sentinel_rejected_in_multi_select_list():
+    field = _core_field("subcategory", "Subcategory", "multi_select", 2, options=[{"value": "yoga", "label": "Yoga", "position": 1}])
+    field["composite_config"] = {"frontend_settings": {"allow_custom_value": True}}
+    with pytest.raises(HTTPException):
+        validate_constraints(field, ["yoga", OTHER_OPTION_SENTINEL])
+
+
+def test_full_pipeline_rejects_sentinel_as_category():
+    sections = _sections(_category_field(allow_custom=True), _subcategory_field(allow_custom=True))
+    with pytest.raises(HTTPException) as exc:
+        validate_form_required_core_fields({"category": OTHER_OPTION_SENTINEL, "subcategory": "yoga"}, sections)
+    assert exc.value.status_code == 400
+
+
+def test_full_pipeline_rejects_sentinel_as_subcategory():
+    sections = _sections(_category_field(), _subcategory_field(allow_custom=True))
+    with pytest.raises(HTTPException) as exc:
+        validate_form_required_core_fields({"category": "wellness", "subcategory": OTHER_OPTION_SENTINEL}, sections)
+    assert exc.value.status_code == 400
+
+
+def test_sentinel_guard_does_not_block_normal_values():
+    field = _category_field()
+    validate_constraints(field, "wellness")  # sanity: unrelated values still pass
 
 
 def test_backward_compatible_plain_text_fields_unaffected():
