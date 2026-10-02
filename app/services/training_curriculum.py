@@ -349,13 +349,22 @@ def learning_response(result, curriculum, training, enrolment, assignment_submis
             item["qr_code"] = f"{qr}:{item['id']}" if qr and kind in ("live", "venue") and not locked else None
             item["qr_image_base64"] = _qr_image_base64(item["qr_code"]) if item["qr_code"] else None
             item["schedule"] = None if recorded else raw.get("schedule") or section["schedule"]
+            # scheduled_at was already timezone-formatted upstream in
+            # _base_lesson_payload — only clear it here, never reassign from raw.
+            if recorded:
+                item["scheduled_at"] = None
             if kind == "venue" and venue_mode:
                 item["venue"] = raw.get("venue") or source.get("venue") or getattr(training, "venue", None)
                 item["address"] = raw.get("address") or source.get("address") or getattr(training, "address", None)
                 section["venue"] = section["venue"] or item["venue"]
                 section["address"] = section["address"] or item["address"]
             if kind != "venue" or not venue_mode:
-                item.update(venue=None, address=None, pass_code=None, check_in_window=None)
+                item.update(venue=None, address=None, pass_code=None)
+            # check_in_window is the join/check-in window for BOTH venue and live
+            # lessons — it must not be bundled with the venue-only fields above,
+            # or every "live" lesson's check-in window gets wiped unconditionally.
+            if not ((kind == "venue" and venue_mode) or (kind == "live" and online_mode)):
+                item["check_in_window"] = None
             if kind not in ("live", "venue") or not venue_mode:
                 item["qr_code"] = None
                 item["qr_image_base64"] = None

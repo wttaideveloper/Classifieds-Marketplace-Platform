@@ -615,6 +615,18 @@ class LessonCreate(BaseModel):
     content_url: str | None = None
     topics: list[TopicCreate] | None = Field(None, description="Topics within lesson: [{title, content_url, videos, documents, notes}]")
     duration: int | str | None = Field(None, description="Minutes (int) for content lessons, or a display string (e.g. 'Tue 7:00–7:40 AM') for live/venue lessons")
+    scheduled_at: datetime | None = Field(
+        None,
+        description="When this live/venue lesson takes place (ISO 8601). Include a UTC "
+        "offset to be unambiguous — a value with no offset is interpreted as wall-clock "
+        "time in the training's time_zone, same convention as Training.enrolment_start/"
+        "enrolment_end. Returned by GET /content with an explicit offset.",
+    )
+    schedule: str | dict | None = Field(
+        None,
+        description="Human-readable or structured schedule for this lesson, e.g. "
+        "'Tue 7:00–7:40 AM' or {start, end}. Falls back to the section's schedule when omitted.",
+    )
     is_preview: bool | None = Field(False, description="Preview allowed without enrolment")
     is_draft: bool | None = Field(False, description="Draft mode — hidden until published")
     is_mandatory: bool | None = Field(False, description="Mandatory lesson")
@@ -625,7 +637,7 @@ class LessonCreate(BaseModel):
     venue: str | None = Field(None, description="In-person venue name for this specific lesson (e.g. 'Restwell Studio · Room B')")
     address: str | None = Field(None, description="Address for this lesson's venue")
     pass_code: str | None = Field(None, description="Check-in pass code for this lesson's venue")
-    check_in_window: str | None = Field(None, description="Display string for the check-in window, e.g. 'Opens 8:40 AM · closes 9:20 AM'")
+    check_in_window: str | None = Field(None, description="Display string for the check-in/join window, e.g. 'Opens 8:40 AM · closes 9:20 AM'. Applies to both venue and live lessons.")
     assessment_id: str | None = Field(None, description="Linked assessment id, for type='exam' lessons — matched against Training.assessments[].id")
     assignment_id: str | None = Field(None, description="Linked assignment id, for type='assignment' lessons — matched against Training.assignments[].id")
     file_size: str | None = Field(None, description="Content file size, e.g. '24 MB' — informational, client-supplied")
