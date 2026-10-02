@@ -109,11 +109,71 @@ def test_list_reviews_computes_average(monkeypatch):
         MagicMock(id=uuid4(), training_id=training_id, rating="3", comment="b", participant_email="b@x.com", created_at=__import__("datetime").datetime(2026, 1, 2)),
     ]
     db = MagicMock()
-    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = rows
+    def query_side_effect(model, *args, **kwargs):
+        q = MagicMock()
+        if getattr(model, "__name__", "") == "TrainingReview":
+            q.filter.return_value.order_by.return_value.all.return_value = rows
+        else:
+            q.filter.return_value.order_by.return_value.all.return_value = []
+        return q
+    db.query.side_effect = query_side_effect
 
     result = list_training_reviews_service(db, training_id)
     assert result["count"] == 2
     assert result["average_rating"] == 4.0
+
+
+def test_list_reviews_resolves_participant_names(monkeypatch):
+    from app.services import training_service
+    from unittest.mock import call
+
+    training_id = uuid4()
+    monkeypatch.setattr(training_service, "_get_training_or_404", lambda db, tid: MagicMock())
+
+    dt = __import__("datetime").datetime
+    # Two reviews from two participants
+    rows = [
+        MagicMock(id=uuid4(), training_id=training_id, rating="5", comment="a", participant_email="real@x.com", created_at=dt(2026, 1, 1)),
+        MagicMock(id=uuid4(), training_id=training_id, rating="4", comment="b", participant_email="noname@x.com", created_at=dt(2026, 1, 2)),
+    ]
+    
+    # Mocking TrainingEnrolment query returns.
+    # We want to simulate:
+    # 1. real@x.com has an older enrolment where name=email, but a newer enrolment where name="Real Name"
+    # 2. noname@x.com only has an enrolment where name=email (fallback)
+    enrolment_rows = [
+        ("real@x.com", "Real Name"),          # Newer enrolment for real@x.com
+        ("real@x.com", "real@x.com"),         # Older enrolment for real@x.com
+        ("noname@x.com", "noname@x.com"),     # Enrolment for noname@x.com
+    ]
+
+    db = MagicMock()
+    # First query is for reviews, second is for enrolments to resolve names
+    def query_side_effect(model, *args, **kwargs):
+        q = MagicMock()
+        if getattr(model, "__name__", "") == "TrainingReview":
+            q.filter.return_value.order_by.return_value.all.return_value = rows
+        else: # Querying TrainingEnrolment columns
+            q.filter.return_value.order_by.return_value.all.return_value = enrolment_rows
+        return q
+
+    db.query.side_effect = query_side_effect
+
+    result = list_training_reviews_service(db, training_id)
+    reviews = result["reviews"]
+    assert len(reviews) == 2
+    
+    # Review fields should remain unchanged
+    assert reviews[0]["rating"] == 5
+    assert reviews[0]["comment"] == "a"
+    # participant_email remains the email
+    assert reviews[0]["participant_email"] == "real@x.com"
+    # participant_name returns the actual name, picking the non-email over the email
+    assert reviews[0]["participant_name"] == "Real Name"
+    
+    assert reviews[1]["participant_email"] == "noname@x.com"
+    # If participant name is unavailable, verify fallback to email
+    assert reviews[1]["participant_name"] == "noname@x.com"
 
 
 def test_add_and_remove_wishlist(monkeypatch):

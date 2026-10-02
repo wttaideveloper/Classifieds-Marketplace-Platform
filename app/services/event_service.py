@@ -691,6 +691,9 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
     _log_audit(db, event.id, "status_change", {"status": previous}, {"status": new_status}, changed_by=_actor_id(current_user), notes=notes, commit=False)
     db.commit()
     db.refresh(event)
+    if new_status in ("pending_approval", "approved", "rejected", "needs_revision"):
+        from app.services.event_notification_service import notify_event_approval_workflow
+        notify_event_approval_workflow(db, event, previous_status=previous, reason=notes)
     if new_status == "cancelled":
         try:
             from app.services.notification_triggers import notify_event_cancelled

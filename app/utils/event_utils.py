@@ -19,7 +19,12 @@ def _localize_and_convert(dt: datetime | None, event_tz: zoneinfo.ZoneInfo) -> d
     local_aware = dt.replace(tzinfo=event_tz)
     return local_aware.astimezone(timezone.utc)
 
-def _get_event_tz(event):
+def get_event_timezone(event):
+    """The event's configured IANA timezone (``Event.time_zone``, e.g. "Asia/Kolkata"), or UTC if unset/invalid.
+    The single canonical resolver for "which timezone does this event's organizer-entered wall-clock time mean" —
+    reused by registration-window validation (below) and by Phase 2.8 meal/accommodation purchase/service windows
+    (app/utils/event_meals.py, app/utils/event_accommodation.py). Do not re-derive this elsewhere.
+    """
     tz_str = getattr(event, "time_zone", None) or "UTC"
     if tz_str == "UTC":
         return timezone.utc
@@ -29,6 +34,23 @@ def _get_event_tz(event):
         logger.warning(f"Invalid timezone '{tz_str}' for event, falling back to UTC. Error: {e}")
         return timezone.utc
 
+
+def resolve_naive_or_aware(dt: datetime | None, event_tz) -> datetime | None:
+    """A datetime that may be naive OR already timezone-aware -> aware UTC.
+
+    A naive value (no tzinfo) is the organizer's own event-local wall-clock entry (e.g. a
+    datetime-local picker with no offset) and is localized to ``event_tz`` before converting to
+    UTC. An already-aware value (explicit offset or Z) is trusted exactly as given and only
+    converted to UTC for comparison — never re-localized, so pre-existing tz-aware data keeps
+    working unchanged. Unlike ``_localize_and_convert`` (which assumes every input is naive), use
+    this wherever a field's timezone-awareness may vary depending on when/how it was entered.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=event_tz).astimezone(timezone.utc)
+    return dt.astimezone(timezone.utc)
+
 def validate_registration_window(event, now=None):
     """
     Validates whether the event registration window is open, considering the event's configured timezone.
@@ -37,7 +59,7 @@ def validate_registration_window(event, now=None):
     Raises HTTPException if the window is closed.
     """
     current_utc = _get_utc_now(now)
-    event_tz = _get_event_tz(event)
+    event_tz = get_event_timezone(event)
 
     open_at_utc = _localize_and_convert(getattr(event, "registration_open_at", None), event_tz)
     close_at_utc = _localize_and_convert(getattr(event, "registration_close_at", None), event_tz)
@@ -72,7 +94,7 @@ def get_event_lifecycle_state(event, now=None) -> str | None:
         return None
     
     current_utc = _get_utc_now(now)
-    event_tz = _get_event_tz(event)
+    event_tz = get_event_timezone(event)
     
     start_utc = _localize_and_convert(start_date, event_tz)
     end_date = getattr(event, "end_date", None)

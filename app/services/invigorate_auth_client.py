@@ -89,8 +89,13 @@ def resolve_tenant_ids_from_slugs(slugs: list[str]) -> list[UUID]:
     return resolved
 
 
-def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
-    """Resolve tenant members via Invigorate internal API when configured."""
+def list_tenant_users(tenant_id: UUID) -> list[dict]:
+    """Resolve tenant member records via the established internal API.
+
+    Keep the complete records here rather than losing their RBAC fields at the
+    boundary.  Callers that only need ids should continue to use
+    :func:`list_tenant_user_ids` below.
+    """
     if not settings.invigorate_internal_api_configured:
         return []
 
@@ -110,6 +115,13 @@ def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
     items = payload.get("items") or payload.get("data") or payload
     if not isinstance(items, list):
         return []
+
+    return [item for item in items if isinstance(item, dict)]
+
+
+def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
+    """Resolve tenant member ids via Invigorate internal API when configured."""
+    items = list_tenant_users(tenant_id)
 
     user_ids: list[UUID] = []
     for item in items:
