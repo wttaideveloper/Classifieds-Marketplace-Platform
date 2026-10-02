@@ -968,7 +968,7 @@ def post_discussion(training_id: UUID, payload: TrainingDiscussionCreate, db: Se
     disc=list(getattr(obj, "discussions", []) or [])
     
     question_text = payload.question or payload.text or ""
-    entry={"id": str(_uuid.uuid4()), "author": current_user.get("email","anonymous"), "question": question_text, "answer": None, "created_at": __import__("datetime").datetime.utcnow().isoformat()}
+    entry={"id": str(_uuid.uuid4()), "author": current_user.get("email","anonymous"), "author_id": current_user.get("id"), "question": question_text, "answer": None, "created_at": __import__("datetime").datetime.utcnow().isoformat()}
     if not entry["question"].strip():
         from fastapi import HTTPException; raise HTTPException(400, "Question is required")
     disc.append(entry)

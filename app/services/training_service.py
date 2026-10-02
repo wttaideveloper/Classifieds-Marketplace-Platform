@@ -288,6 +288,7 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
     from datetime import datetime
 
     previous_status = obj.status
+    first_publish = st == "published" and obj.published_at is None
     obj.status = st
     if st == "draft":
         obj.is_deleted = False
@@ -320,7 +321,14 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
     elif st == "cancelled":
         obj.cancelled_at = now
     _append_moderation(db, obj, st, notes, current_user, previous_status=previous_status, new_status=st)
-    db.commit(); db.refresh(obj); return TrainingResponse.model_validate(map_training_write(obj))
+    db.commit(); db.refresh(obj)
+    if first_publish:  # not on re-publish after an unpublish/suspend — users were already told once
+        try:
+            from app.services import training_notifications
+            training_notifications.notify_new_training(obj, exclude_user_id=(current_user or {}).get("id"))
+        except Exception:
+            pass
+    return TrainingResponse.model_validate(map_training_write(obj))
 
 
 def restore_training_service(db: Session, tid: UUID, current_user: dict | None = None):
@@ -1123,10 +1131,22 @@ def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant
     prog.overall_percent=str(overall)
     prog.last_accessed_at=datetime.utcnow()
     # completion when 100% or mandatory done
+    newly_completed = False
     if overall==100 or (mandatory_total and mandatory_done==mandatory_total):
+        newly_completed = prog.completed_at is None
         prog.completed_at=datetime.utcnow()
         prog.certificate_url=f"/api/v1/trainings/{tid}/certificate.pdf?participant_email={participant_email}"
     db.commit(); db.refresh(prog)
+    if newly_completed:  # first completion only — later lesson saves must not re-send the certificate email
+        try:
+            from app.services import training_notifications
+            enrol = _get_enrolment(db, tid, participant_email)
+            training_notifications.notify_certificate_ready(
+                t, email=participant_email, name=getattr(enrol, "participant_name", None),
+                user_id=getattr(enrol, "user_id", None), certificate_url=prog.certificate_url,
+            )
+        except Exception:
+            pass
     return {"overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url}
 
 
@@ -2099,6 +2119,11 @@ def create_training_announcement_service(db: Session, tid: UUID, data, current_u
     training.announcements = announcements
     flag_modified(training, "announcements")
     db.commit()
+    try:
+        from app.services import training_notifications
+        training_notifications.notify_announcement(db, training, entry)
+    except Exception:
+        pass
     return entry
 
 
@@ -2212,7 +2237,12 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             expires = datetime.utcnow() + timedelta(days=days)
         except Exception:
             pass
-    e = TrainingEnrolment(training_id=tid, participant_name=participant_name, participant_email=participant_email, group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
+    # Only a self-enrolment carries the caller's user id — an admin enrolling someone else
+    # must not stamp the admin's id on that learner's enrolment.
+    from app.services.training_notifications import _as_uuid
+    _cu = current_user or {}
+    enrolling_self = str(_cu.get("email") or "").lower() == str(participant_email).lower()
+    e = TrainingEnrolment(training_id=tid, participant_name=participant_name, participant_email=participant_email, user_id=_as_uuid(_cu.get("id")) if enrolling_self else None, group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
     db.add(e)
     if not commit:
         db.flush()
@@ -2230,20 +2260,12 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
                 db.add(extra)
             except: pass
         db.commit()
-    # enrolment confirmation (in_app/push stub)
     try:
-        from app.services.notification_triggers import _safe_notify
+        from app.services import training_notifications
         if status == "pending_approval":
-            _title = f"Enrolment Pending: {t.title}"
-            _msg = f"Hi {participant_name}, your enrolment in {t.title} is awaiting admin approval."
+            training_notifications.notify_enrolment_pending(t, e)
         else:
-            _title = f"Enrolment Confirmed: {t.title}"
-            _msg = f"Hi {participant_name}, your enrolment in {t.title} is confirmed."
-        _safe_notify(
-            db, _title, _msg, "training_enrolment_confirmation", t.tenant_id,
-            {"training_id": str(tid), "status": status},
-            participant_email=participant_email, channels=["in_app", "push"],
-        )
+            training_notifications.notify_enrolment_confirmed(t, e)
     except Exception:
         pass
     for key, value in _enrolment_response_context(db, t, tid, participant_email, status).items():
@@ -2323,15 +2345,8 @@ def cancel_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, partic
     db.refresh(e)
     promoted = _promote_waitlist(db, tid)
     try:
-        from app.services.notification_triggers import _safe_notify
-        training = _get_training_or_404(db, tid)
-        _safe_notify(
-            db, f"Enrolment Cancelled: {training.title}",
-            f"Hi {e.participant_name}, your enrolment in {training.title} has been cancelled.",
-            "enrolment_cancelled", training.tenant_id,
-            {"training_id": str(tid), "enrolment_id": str(e.id)},
-            participant_email=e.participant_email, channels=["in_app", "push"],
-        )
+        from app.services import training_notifications
+        training_notifications.notify_enrolment_cancelled(_get_training_or_404(db, tid), e)
     except Exception:
         pass
     result = {"id": str(e.id), "status": e.status}
@@ -2345,6 +2360,7 @@ def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, actio
     e = db.query(TrainingEnrolment).filter(TrainingEnrolment.id == enrol_id, TrainingEnrolment.training_id == tid).first()
     if not e:
         raise HTTPException(status_code=404, detail="Enrolment not found")
+    already_enrolled = e.status == "enrolled"
     if action == "approve":
         e.status = "enrolled"
         e.rejection_reason = None
@@ -2362,22 +2378,12 @@ def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, actio
     db.refresh(e)
     db.refresh(training)
     try:
-        from app.services.notification_triggers import _safe_notify
+        from app.services import training_notifications
         if action == "approve":
-            title = f"Enrolment Approved: {training.title}"
-            message = f"Hi {e.participant_name}, your enrolment in {training.title} has been approved."
-            category = "enrolment_approved"
+            if not already_enrolled:  # re-approving an already-enrolled learner must not email them again
+                training_notifications.notify_enrolment_approved(training, e)
         else:
-            title = f"Enrolment Rejected: {training.title}"
-            message = f"Hi {e.participant_name}, your enrolment in {training.title} was not approved."
-            if reason:
-                message += f" Reason: {reason}"
-            category = "enrolment_rejected"
-        _safe_notify(
-            db, title, message, category, training.tenant_id,
-            {"training_id": str(tid), "enrolment_id": str(e.id), "reason": reason},
-            participant_email=e.participant_email, channels=["in_app", "push"],
-        )
+            training_notifications.notify_enrolment_rejected(training, e, reason)
     except Exception:
         pass
     return {"id": str(e.id), "status": e.status, "reason": reason}
@@ -3282,6 +3288,14 @@ def reply_discussion_service(db: Session, tid: UUID, discussion_id: str, payload
         training.discussions = discussions
         flag_modified(training, "discussions")
         db.commit()
+        if current_user.get("role") in ("admin", "provider", "super_admin"):
+            try:
+                from app.services import training_notifications
+                training_notifications.notify_question_answered(
+                    training, discussion=entry, answer_text=reply["text"], answered_by=reply["author"],
+                )
+            except Exception:
+                pass
         return entry
     raise HTTPException(status_code=404, detail="Discussion not found")
 
