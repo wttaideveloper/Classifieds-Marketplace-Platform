@@ -2755,6 +2755,36 @@ def _extract_schedule(value):
     return None
 
 
+def _format_scheduled_at(value, time_zone: str | None) -> str | None:
+    """Formats a lesson's scheduled_at with an explicit UTC offset. A naive
+    stored value is interpreted as wall-clock time in the training's
+    time_zone — same convention as Training.enrolment_start/enrolment_end."""
+    from datetime import datetime, timezone as _timezone
+
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    else:
+        return None
+    if dt.tzinfo is not None:
+        return dt.isoformat()
+
+    import zoneinfo
+
+    tz_str = time_zone or "UTC"
+    try:
+        tz = _timezone.utc if tz_str == "UTC" else zoneinfo.ZoneInfo(tz_str)
+    except Exception:
+        tz = _timezone.utc
+    return dt.replace(tzinfo=tz).isoformat()
+
+
 _DEFAULT_LESSON_DETAIL_BY_TYPE = {
     "video": "Watch inside this session",
     "youtube": "Watch inside this session",
@@ -2771,7 +2801,7 @@ def _default_lesson_detail(ltype: str, is_locked: bool, is_completed: bool) -> s
     return _DEFAULT_LESSON_DETAIL_BY_TYPE.get(ltype)
 
 
-def _base_lesson_payload(lesson: dict, is_locked: bool, is_completed: bool, completed_at: str | None, *, attended_at: str | None = None) -> dict:
+def _base_lesson_payload(lesson: dict, is_locked: bool, is_completed: bool, completed_at: str | None, *, attended_at: str | None = None, time_zone: str | None = None) -> dict:
     ltype = lesson.get("type") or "text"
     payload = {
         "id": lesson.get("id"),
@@ -2786,6 +2816,7 @@ def _base_lesson_payload(lesson: dict, is_locked: bool, is_completed: bool, comp
         "duration_minutes": lesson.get("duration_minutes"),
         "file_size": lesson.get("file_size"),
         "schedule": lesson.get("schedule"),
+        "scheduled_at": _format_scheduled_at(lesson.get("scheduled_at"), time_zone),
         "video_url": lesson.get("video_url") if not is_locked else None,
         "join_url": lesson.get("meeting_link") if not is_locked else None,
         "meeting_type": lesson.get("meeting_type"),
@@ -3017,7 +3048,7 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
                     section_exam_passed = True
                 is_completed = submission is not None
                 completed_at = submission.submitted_at.isoformat() if submission else None
-                lesson_payload = _base_lesson_payload(lesson, locked, is_completed, completed_at)
+                lesson_payload = _base_lesson_payload(lesson, locked, is_completed, completed_at, time_zone=training.time_zone)
                 lesson_payload["assessment"] = (
                     _build_exam_assessment_payload(assessment, submission, include_answer=is_staff)
                     if assessment and not locked
@@ -3028,7 +3059,7 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
                     locked = False
                 is_completed = str(lesson.get("id")) in completed_lesson_ids
                 attended_at = attended_at_by_lesson_id.get(str(lesson.get("id"))) if ltype in ("live", "venue") else None
-                lesson_payload = _base_lesson_payload(lesson, locked, is_completed, None, attended_at=attended_at)
+                lesson_payload = _base_lesson_payload(lesson, locked, is_completed, None, attended_at=attended_at, time_zone=training.time_zone)
             position = position_by_lesson_id.get(str(lesson.get("id")))
             lesson_payload["progress_seconds"] = position.get("position_seconds") if position else None
             lesson_payload["duration_seconds"] = position.get("duration_seconds") if position else None
