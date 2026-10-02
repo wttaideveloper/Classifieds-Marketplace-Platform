@@ -183,6 +183,9 @@ def startup():
             logger.warning(
                 "Database not reachable — start PostgreSQL with: docker compose up -d db"
             )
+    from app.services.training_notifications import start_reminder_scheduler
+
+    start_reminder_scheduler()
 
 
 app.include_router(api_router, prefix="/api/v1")

@@ -123,6 +123,10 @@ class TrainingEnrolment(Base):
     training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False, index=True)
+    # Application user id of the learner, set when they enrol themselves — lets in-app
+    # notifications reach their inbox without an email -> user lookup. NULL for admin-created,
+    # group-member and checkout enrolments (those fall back to resolving by email).
+    user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     group_enrol = Column(Boolean, default=False)
     status = Column(String(20), default="enrolled")  # enrolled|pending_approval|cancelled|rejected|waitlisted|expired|attended
     rejection_reason = Column(Text, nullable=True)  # set when an admin rejects this enrolment (action=reject)
@@ -133,6 +137,26 @@ class TrainingEnrolment(Base):
     checked_out_at = Column(DateTime, nullable=True)
     checked_in_by = Column(UUID(as_uuid=True), nullable=True)  # user id of the admin/provider who scanned them in
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class TrainingNotificationLog(Base):
+    """Claim row written *before* a scheduled notification is sent, so the reminder
+    scheduler (which runs in every API worker) sends each reminder at most once per
+    participant per occurrence date — the unique index is what makes concurrent
+    workers and restarts safe."""
+
+    __tablename__ = "training_notification_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
+    participant_email = Column(String(255), nullable=False)
+    kind = Column(String(40), nullable=False)  # reminder_day_before|final_day
+    ref_date = Column(String(10), nullable=False)  # the start/end date (YYYY-MM-DD) the reminder was for
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("uq_training_notification_log_claim", "training_id", "participant_email", "kind", "ref_date", unique=True),
+    )
 
 
 class TrainingWaitlist(Base):

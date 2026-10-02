@@ -90,9 +90,19 @@ class Settings(BaseSettings):
     # Celery / Redis background jobs
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
+    # Training day-before / final-day reminders run on an in-process thread (no Celery worker or
+    # beat is deployed). Unset = on in production, off in development; set explicitly to override.
+    TRAINING_REMINDERS_ENABLED: bool | None = None
+    TRAINING_REMINDER_INTERVAL_SECONDS: int = 900
 
     class Config:
         env_file = ".env"
+
+    @property
+    def training_reminders_enabled(self) -> bool:
+        if self.TRAINING_REMINDERS_ENABLED is not None:
+            return self.TRAINING_REMINDERS_ENABLED
+        return self.ENVIRONMENT == "production"
 
     @property
     def celery_broker_url(self) -> str:
