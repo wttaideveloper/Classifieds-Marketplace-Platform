@@ -38,13 +38,17 @@ from app.models.training_model import (
 
 @pytest.fixture(autouse=True)
 def _no_real_notify(monkeypatch):
-    # _safe_notify opens a real SessionLocal() (bound to the app's configured
-    # DATABASE_URL, not the test's SQLite override) — stub it so tests stay
-    # fast/offline and we can assert it was *called* without a live DB/SMTP.
+    # Training notifications open a real SessionLocal() (bound to the app's configured
+    # DATABASE_URL, not the test's SQLite override) and may send SMTP — stub the delivery
+    # step (and run the usual background dispatch inline) so tests stay fast/offline and
+    # we can assert it was *called* without a live DB/SMTP.
+    from app.services import training_notifications
+
     calls = []
-    def fake_safe_notify(db, title, message, category, tenant_id, metadata, participant_email=None, channels=None):
-        calls.append({"title": title, "message": message, "category": category, "metadata": metadata, "participant_email": participant_email})
-    monkeypatch.setattr("app.services.notification_triggers._safe_notify", fake_safe_notify)
+    def fake_deliver(*, tenant_id, email, user_id, title, message, category, metadata=None, send_email=False, in_app=True):
+        calls.append({"title": title, "message": message, "category": category, "metadata": metadata, "participant_email": email})
+    monkeypatch.setattr(training_notifications, "_dispatch", lambda fn, *a, **k: fn(*a, **k))
+    monkeypatch.setattr(training_notifications, "deliver_to_participant", fake_deliver)
     return calls
 
 

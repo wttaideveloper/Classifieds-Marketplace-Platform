@@ -498,6 +498,28 @@ def test_delivery_sends_email_once_and_keeps_email_out_of_the_inbox_pipeline(del
     assert delivery["resolved"] == []  # known user id — no email lookup
 
 
+def test_metadata_carries_category_and_drops_none_values(delivery):
+    # Mobile routes on metadata.category (push data has nothing else), and FCM would turn a
+    # None value into the string "None".
+    tn.deliver_to_participant(
+        tenant_id=None, email="a@example.com", user_id=uuid4(), title="T", message="M",
+        category="enrolment_rejected", metadata={"training_id": "t1", "reason": None, "enrolment_id": "e1"},
+    )
+    assert delivery["inbox"][0]["metadata"] == {"training_id": "t1", "enrolment_id": "e1", "category": "enrolment_rejected"}
+
+
+def test_fan_out_metadata_carries_category(monkeypatch):
+    created = []
+    monkeypatch.setattr("app.services.invigorate_auth_client.list_tenant_user_ids", lambda tenant: [uuid4()])
+    monkeypatch.setattr("app.db.database.SessionLocal", lambda: contextlib.nullcontext(MagicMock()))
+    monkeypatch.setattr("app.services.notification_service.create_automatic_notification", lambda db, **kw: created.append(kw))
+    tn._fan_out_new_training(
+        training_id="t1", tenant_id=str(TENANT), title="x", message="m",
+        metadata={"training_id": "t1"}, exclude_user_id=None,
+    )
+    assert created[0]["metadata"] == {"training_id": "t1", "category": "training_new"}
+
+
 def test_delivery_without_send_email_sends_none(delivery):
     tn.deliver_to_participant(tenant_id=None, email="a@example.com", user_id=uuid4(), title="T", message="M", category="c")
     assert delivery["email"] == [] and len(delivery["inbox"]) == 1

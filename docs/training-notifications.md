@@ -19,6 +19,26 @@ Already existing, now delivered through the same path: `training_enrolment_confi
 \* Announcements honor the `channel` the admin picks: `in_app` (default) = inbox only, `email` = email only,
 `both` = inbox and email. `sms` is not implemented and is treated as `in_app`.
 
+## Payloads and routing
+
+Every notification carries `metadata.category` plus the ids below, identically in the inbox
+(`GET /users/me/notifications` → `items[].metadata`), the socket `notification` event, and the push
+`data` block (where every value is a string). Keys with no value are omitted, never `null`/`"None"`.
+Route on `category`; `training_id` is always present.
+
+| `category` | Extra `metadata` keys | Open |
+|---|---|---|
+| `training_enrolment_confirmation` | `enrolment_id`, `status` (`enrolled`\|`pending_approval`) | training detail |
+| `enrolment_approved` | `enrolment_id`, `status` | training / learning screen |
+| `enrolment_rejected` | `enrolment_id`, `status`, `reason`? | training detail (shows reason) |
+| `enrolment_cancelled` | `enrolment_id`, `status` | training detail |
+| `training_new` | — | training detail |
+| `training_certificate` | `certificate_url` | training certificate |
+| `training_announcement` | `announcement_id` | training announcements |
+| `training_answer` | `discussion_id` | training Q&A thread |
+| `training_reminder` | `kind`, `date` (start date) | training detail |
+| `training_final_day` | `kind`, `date` (end date) | training detail / learning screen |
+
 ## Who gets what
 
 - **Approval, certificate, answer:** the one learner concerned.
