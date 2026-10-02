@@ -498,6 +498,28 @@ def test_delivery_sends_email_once_and_keeps_email_out_of_the_inbox_pipeline(del
     assert delivery["resolved"] == []  # known user id — no email lookup
 
 
+def test_metadata_carries_category_and_drops_none_values(delivery):
+    # Mobile routes on metadata.category (push data has nothing else), and FCM would turn a
+    # None value into the string "None".
+    tn.deliver_to_participant(
+        tenant_id=None, email="a@example.com", user_id=uuid4(), title="T", message="M",
+        category="enrolment_rejected", metadata={"training_id": "t1", "reason": None, "enrolment_id": "e1"},
+    )
+    assert delivery["inbox"][0]["metadata"] == {"training_id": "t1", "enrolment_id": "e1", "category": "enrolment_rejected"}
+
+
+def test_fan_out_metadata_carries_category(monkeypatch):
+    created = []
+    monkeypatch.setattr("app.services.invigorate_auth_client.list_tenant_user_ids", lambda tenant: [uuid4()])
+    monkeypatch.setattr("app.db.database.SessionLocal", lambda: contextlib.nullcontext(MagicMock()))
+    monkeypatch.setattr("app.services.notification_service.create_automatic_notification", lambda db, **kw: created.append(kw))
+    tn._fan_out_new_training(
+        training_id="t1", tenant_id=str(TENANT), title="x", message="m",
+        metadata={"training_id": "t1"}, exclude_user_id=None,
+    )
+    assert created[0]["metadata"] == {"training_id": "t1", "category": "training_new"}
+
+
 def test_delivery_without_send_email_sends_none(delivery):
     tn.deliver_to_participant(tenant_id=None, email="a@example.com", user_id=uuid4(), title="T", message="M", category="c")
     assert delivery["email"] == [] and len(delivery["inbox"]) == 1
@@ -536,6 +558,93 @@ def test_delivery_never_raises_when_the_inbox_pipeline_fails(delivery, monkeypat
         tenant_id=None, email="a@example.com", user_id=uuid4(), title="T", message="M", category="c", send_email=True,
     )
     assert result == {"in_app": False, "email": True}
+
+
+# --- payload contract mobile routes on ---------------------------------------------------
+
+EID = uuid4()
+LEARNER_ID = uuid4()
+CERT_URL = f"/api/v1/trainings/{TID}/certificate.pdf?participant_email=a@example.com"
+
+
+def _training_stub():
+    return SimpleNamespace(id=TID, title="Ergonomics 101", tenant_id=TENANT, start_date=None)
+
+
+def _enrolment_stub():
+    return SimpleNamespace(id=EID, participant_name="Asha", participant_email="a@example.com", user_id=LEARNER_ID)
+
+
+def _payload_cases():
+    t, e = _training_stub(), _enrolment_stub()
+    base = {"training_id": str(TID)}
+    return [
+        ("training_enrolment_confirmation", lambda: tn.notify_enrolment_pending(t, e),
+         {**base, "enrolment_id": str(EID), "status": "pending_approval"}),
+        ("training_enrolment_confirmation", lambda: tn.notify_enrolment_confirmed(t, e),
+         {**base, "enrolment_id": str(EID), "status": "enrolled"}),
+        ("enrolment_approved", lambda: tn.notify_enrolment_approved(t, e),
+         {**base, "enrolment_id": str(EID), "status": "enrolled"}),
+        ("enrolment_rejected", lambda: tn.notify_enrolment_rejected(t, e, None),
+         {**base, "enrolment_id": str(EID), "status": "rejected"}),
+        ("enrolment_rejected", lambda: tn.notify_enrolment_rejected(t, e, "Seat full"),
+         {**base, "enrolment_id": str(EID), "status": "rejected", "reason": "Seat full"}),
+        ("enrolment_cancelled", lambda: tn.notify_enrolment_cancelled(t, e),
+         {**base, "enrolment_id": str(EID), "status": "cancelled"}),
+        ("training_certificate", lambda: tn.notify_certificate_ready(
+            t, email="a@example.com", name="Asha", user_id=LEARNER_ID, certificate_url=CERT_URL),
+         {**base, "certificate_url": CERT_URL}),
+        ("training_answer", lambda: tn.notify_question_answered(
+            t, discussion={"id": "d1", "author": "a@example.com", "author_id": str(LEARNER_ID)},
+            answer_text="Yes", answered_by="admin@example.com"),
+         {**base, "discussion_id": "d1"}),
+        ("training_announcement", lambda: tn.notify_announcement(
+            None, t, {"id": "an1", "title": "Venue change", "message": "Room B", "channel": "in_app"}),
+         {**base, "announcement_id": "an1"}),
+    ]
+
+
+@pytest.mark.parametrize("category,fire,expected", _payload_cases(), ids=lambda v: v if isinstance(v, str) else "")
+def test_inbox_metadata_is_exactly_category_plus_routing_ids(delivery, monkeypatch, category, fire, expected):
+    monkeypatch.setattr(tn, "_dispatch", lambda fn, *a, **k: fn(*a, **k))
+    monkeypatch.setattr(tn, "audience_for_training", lambda db, tid: [
+        {"email": "a@example.com", "name": "Asha", "user_id": LEARNER_ID}])
+    fire()
+    [inbox] = delivery["inbox"]
+    assert inbox["category"] == category
+    assert inbox["metadata"] == {**expected, "category": category}
+    assert all(isinstance(v, str) for v in inbox["metadata"].values())  # push data is built from this, string-for-string
+
+
+def test_push_data_block_is_the_flattened_metadata_with_category(monkeypatch):
+    """The FCM message has no separate category field — everything mobile routes on must be in `data`."""
+    from app.services import notification_delivery_service as nds
+
+    pushed = []
+    monkeypatch.setattr(nds.notification_repo, "create_user_notifications", lambda *a, **k: None)
+    monkeypatch.setattr(nds.notification_repo, "create_notification_log", lambda *a, **k: None)
+    monkeypatch.setattr(nds, "_emit_realtime_notification", lambda *a, **k: None)
+    monkeypatch.setattr(nds.chat_repo, "get_notification_preferences", lambda db, uid: SimpleNamespace(push_enabled=True))
+    monkeypatch.setattr(nds.chat_repo, "get_active_device_tokens", lambda db, uid: [SimpleNamespace(token="tok", is_active=True)])
+
+    def fake_push(tokens, *, title, body, data=None):
+        pushed.append({"tokens": tokens, "title": title, "body": body, "data": data})
+        return SimpleNamespace(sent_count=1, credentials_error=None, failures=[])
+
+    monkeypatch.setattr(nds, "send_push_to_tokens", fake_push)
+
+    metadata = tn._routing_metadata("training_reminder", {
+        "training_id": str(TID), "kind": "reminder_day_before", "date": "2026-10-10", "reason": None,
+    })
+    nds.deliver_notification_to_users(
+        MagicMock(), notification_id=uuid4(), title="Reminder: Ergonomics 101 starts tomorrow",
+        body="Hi Asha, …", user_ids=[LEARNER_ID], channels=["in_app", "push"], metadata=metadata,
+    )
+    [push] = pushed
+    assert push["title"] == "Reminder: Ergonomics 101 starts tomorrow"
+    assert push["data"] == {
+        "training_id": str(TID), "kind": "reminder_day_before", "date": "2026-10-10", "category": "training_reminder",
+    }
 
 
 # --- scheduler wiring --------------------------------------------------------------------

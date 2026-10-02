@@ -50,6 +50,13 @@ def _as_uuid(value) -> UUID | None:
         return None
 
 
+def _routing_metadata(category: str, metadata: dict | None) -> dict:
+    """What mobile reads to open the right screen. The push `data` block is built from this
+    dict alone (the FCM message has no separate category field), so `category` must live here,
+    and None values are dropped because FCM stringifies them to the literal text "None"."""
+    return {k: v for k, v in {**(metadata or {}), "category": category}.items() if v is not None}
+
+
 def deliver_to_participant(
     *,
     tenant_id,
@@ -64,7 +71,7 @@ def deliver_to_participant(
 ) -> dict:
     """Synchronous delivery to one person. Returns {"in_app": bool, "email": bool}; never raises."""
     result = {"in_app": False, "email": False}
-    metadata = dict(metadata or {})
+    metadata = _routing_metadata(category, metadata)
 
     if send_email and email:
         try:
@@ -261,7 +268,7 @@ def _fan_out_new_training(*, training_id, tenant_id, title, message, metadata, e
     with SessionLocal() as db:
         create_automatic_notification(
             db, title=title, message=message, category="training_new", user_ids=user_ids,
-            tenant_id=tenant_uuid, metadata=metadata, channels=["in_app", "push"],
+            tenant_id=tenant_uuid, metadata=_routing_metadata("training_new", metadata), channels=["in_app", "push"],
         )
     return len(user_ids)
 
