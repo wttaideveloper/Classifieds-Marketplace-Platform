@@ -158,7 +158,12 @@ def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 @app.on_event("startup")
-def startup():
+async def startup():
+    # Sync REST routes and background jobs emit Socket.IO events through this loop.
+    import asyncio
+    from app.realtime.loop_bridge import set_main_loop
+
+    set_main_loop(asyncio.get_running_loop())
     redis_url = settings.SOCKETIO_REDIS_URL.strip()
     if settings.WEB_CONCURRENCY > 1:
         logger.info(

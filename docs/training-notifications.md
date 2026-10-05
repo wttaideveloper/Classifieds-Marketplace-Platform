@@ -5,7 +5,7 @@ device token). Two triggers also send an email. Code: `app/services/training_not
 
 | # | Trigger | `category` | In-app / push | Email | `metadata` keys |
 |---|---------|-----------|:---:|:---:|---|
-| 1 | Admin approves an enrolment | `enrolment_approved` | yes | **yes** | `training_id`, `enrolment_id`, `status` |
+| 1 | Admin approves an enrolment | `training_enrollment_accepted` | yes | **yes** | `training_id`, `entity_type`, `entity_id`, `enrollment_id`, `status` |
 | 2 | A new training is published | `training_new` | yes | no | `training_id` |
 | 3 | Learner completes the training (certificate earned) | `training_certificate` | yes | **yes** | `training_id`, `certificate_url` |
 | 4 | Admin posts an announcement | `training_announcement` | yes* | only if channel is `email`/`both` | `training_id`, `announcement_id` |
@@ -14,7 +14,9 @@ device token). Two triggers also send an email. Code: `app/services/training_not
 | 7 | On the final day of the training | `training_final_day` | yes | no | `training_id`, `kind`, `date` |
 
 Already existing, now delivered through the same path: `training_enrolment_confirmation`
-(enrolled / pending approval), `enrolment_rejected`, `enrolment_cancelled`.
+(enrolled / pending approval) and `enrolment_cancelled`. Rejection is now `training_enrollment_rejected` — see
+[training-workflow-notifications.md](training-workflow-notifications.md) for it, the approval/enrollment admin
+notifications and the retry-safety rules.
 
 \* Announcements honor the `channel` the admin picks: `in_app` (default) = inbox only, `email` = email only,
 `both` = inbox and email. `sms` is not implemented and is treated as `in_app`.
@@ -29,8 +31,8 @@ Route on `category`; `training_id` is always present.
 | `category` | Extra `metadata` keys | Open |
 |---|---|---|
 | `training_enrolment_confirmation` | `enrolment_id`, `status` (`enrolled`\|`pending_approval`) | training detail |
-| `enrolment_approved` | `enrolment_id`, `status` | training / learning screen |
-| `enrolment_rejected` | `enrolment_id`, `status`, `reason`? | training detail (shows reason) |
+| `training_enrollment_accepted` | `entity_type`, `entity_id`, `enrollment_id`, `status` | training / learning screen |
+| `training_enrollment_rejected` | `entity_type`, `entity_id`, `enrollment_id`, `status`, `reason`? (feed/socket only, not push) | training detail (shows reason) |
 | `enrolment_cancelled` | `enrolment_id`, `status` | training detail |
 | `training_new` | — | training detail |
 | `training_certificate` | `certificate_url` | training certificate |

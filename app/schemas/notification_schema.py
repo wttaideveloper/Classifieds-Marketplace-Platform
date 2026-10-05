@@ -24,7 +24,44 @@ NotificationCategory = Literal[
     "payment_successful",
     "booking_confirmed",
     "chat_message",
+    # System-generated workflow notifications (notification_type="automatic") — see
+    # docs/training-workflow-notifications.md. Clients never create these via the send endpoints.
+    "event_submitted",
+    "event_approved",
+    "event_rejected",
+    "event_changes_requested",
+    "training_submitted",
+    "training_approved",
+    "training_rejected",
+    "training_changes_requested",
+    "training_enrolled",
+    "training_enrollment_accepted",
+    "training_enrollment_rejected",
+    "training_enrolment_confirmation",
+    "enrolment_cancelled",
+    "training_new",
+    "training_certificate",
+    "training_announcement",
+    "training_answer",
+    "training_reminder",
+    "training_final_day",
 ]
+
+_TYPE_DOC = (
+    "nudge | manual | automatic. `nudge` and `manual` are what the send endpoints create. "
+    "`automatic` is system-generated and reserved for server-side triggers — its meaning is carried by "
+    "`category` (e.g. training_submitted, training_approved, training_rejected, training_changes_requested, "
+    "training_enrolled, training_enrollment_accepted, training_enrollment_rejected; see NotificationCategory)."
+)
+_CATEGORY_DOC = (
+    "Free-form for manual notifications. For system-generated (`automatic`) notifications it is the event "
+    "type, and the same value is repeated in `metadata.category` so push `data` can be routed. Training "
+    "approval/enrollment types: training_submitted (to Platform/Super Admins), training_approved | "
+    "training_rejected | training_changes_requested (to the owning Enterprise Admins), training_enrolled "
+    "(to the owning Enterprise Admins), training_enrollment_accepted | training_enrollment_rejected (to the "
+    "learner). Their metadata always has training_id, entity_type=\"training\", entity_id and status; "
+    "enrollment notifications add enrollment_id; rejections add reason when one was given."
+)
 DeliveryType = Literal["immediate", "scheduled"]
 NotificationStatus = Literal["draft", "scheduled", "processing", "sent", "failed", "cancelled"]
 DeliveryChannel = Literal["in_app", "push", "email", "sms"]
@@ -33,8 +70,8 @@ DeliveryChannel = Literal["in_app", "push", "email", "sms"]
 class NotificationCreate(BaseModel):
     title: str = Field(..., max_length=255)
     message: str
-    notification_type: NotificationType = "manual"
-    category: str = "general"
+    notification_type: NotificationType = Field("manual", description=_TYPE_DOC)
+    category: str = Field("general", description=_CATEGORY_DOC)
     delivery_type: DeliveryType = "immediate"
     scheduled_at: datetime | None = None
     tenant_id: UUID | None = None
@@ -44,8 +81,8 @@ class NotificationCreate(BaseModel):
 class NotificationUpdate(BaseModel):
     title: str | None = Field(None, max_length=255)
     message: str | None = None
-    notification_type: NotificationType | None = None
-    category: str | None = None
+    notification_type: NotificationType | None = Field(None, description=_TYPE_DOC)
+    category: str | None = Field(None, description=_CATEGORY_DOC)
     delivery_type: DeliveryType | None = None
     scheduled_at: datetime | None = None
     status: NotificationStatus | None = None
@@ -60,8 +97,8 @@ class NotificationResponse(BaseModel):
     created_by: UUID | None
     title: str
     message: str
-    notification_type: str
-    category: str
+    notification_type: str = Field(..., description=_TYPE_DOC)
+    category: str = Field(..., description=_CATEGORY_DOC)
     delivery_type: str
     scheduled_at: datetime | None
     status: str
@@ -75,8 +112,46 @@ class NotificationPaginatedResponse(BaseModel):
     pagination: dict
 
 
+_TRAINING_ID_EXAMPLE = "62078973-39ac-46e5-b867-6196935025ba"
+_ENROLLMENT_ID_EXAMPLE = "a972be06-bdb7-4307-ae7c-7a734f234662"
+
+
+def _feed_example(category: str, title: str, message: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "0b6f3c1e-5d1a-4a8e-9a53-0d2f6d4a7c11",
+        "notification_id": "4e7d2c90-1f3b-4c55-8d0a-6b1e9a2f3c77",
+        "user_id": "9d1f7a52-3c4e-4b86-a0d5-2e8c6f1b7a90",
+        "is_read": False, "read_at": None, "delivered_at": None,
+        "title": title, "message": message,
+        "notification_type": "automatic", "category": category,
+        "metadata": {"category": category, **metadata},
+        "created_at": "2026-10-05T10:15:00",
+    }
+
+
+_TRAINING_ENTITY = {"training_id": _TRAINING_ID_EXAMPLE, "entity_type": "training", "entity_id": _TRAINING_ID_EXAMPLE}
+
+
 class UserNotificationResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    """One item of the user's notification feed (GET /users/me/notifications). The same record is
+    pushed live as the generic Socket.IO `notification` event and, with a reduced `data` block, as
+    an FCM push — see docs/training-workflow-notifications.md."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"examples": [
+            _feed_example("training_submitted", "Training submitted for approval",
+                          '"Ergonomics 101" was submitted for approval.', {**_TRAINING_ENTITY, "status": "pending_approval"}),
+            _feed_example("training_changes_requested", "Training changes requested",
+                          'Changes were requested for "Ergonomics 101".',
+                          {**_TRAINING_ENTITY, "status": "needs_revision", "reason": "Please add the agenda"}),
+            _feed_example("training_enrolled", "New enrollment", 'A learner enrolled in "Ergonomics 101".',
+                          {**_TRAINING_ENTITY, "enrollment_id": _ENROLLMENT_ID_EXAMPLE, "status": "enrolled"}),
+            _feed_example("training_enrollment_rejected", "Enrollment rejected",
+                          'Your enrollment in "Ergonomics 101" was not accepted.',
+                          {**_TRAINING_ENTITY, "enrollment_id": _ENROLLMENT_ID_EXAMPLE, "status": "rejected", "reason": "Seat full"}),
+        ]},
+    )
 
     id: UUID
     notification_id: UUID
@@ -86,9 +161,13 @@ class UserNotificationResponse(BaseModel):
     delivered_at: datetime | None
     title: str
     message: str
-    notification_type: str
-    category: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    notification_type: str = Field(..., description=_TYPE_DOC)
+    category: str = Field(..., description=_CATEGORY_DOC)
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Routing/context fields. Always includes `category`. Workflow notifications add "
+        "training_id, entity_type, entity_id, status, enrollment_id (enrollment events) and reason (when relevant).",
+    )
     created_at: datetime
 
 

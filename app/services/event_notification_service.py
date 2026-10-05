@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.enterprise_model import Enterprise
 from app.repository.event_repo import event_owner_tenant_id
 from app.services.invigorate_auth_client import list_tenant_users, list_tenants
 from app.services.notification_service import create_automatic_notification
 from app.services.super_admin_identity import profile_is_super_admin, profile_status_is_active
 
+
+logger = logging.getLogger(__name__)
 
 _EVENT_NOTIFICATION_TYPES = {
     "pending_approval": "event_submitted",
@@ -131,6 +135,12 @@ def notify_event_approval_workflow(db: Session, event, *, previous_status: str, 
     # repeated request cannot re-enter the same target status.  Avoid creating
     # an orphaned feed record when no correctly scoped recipient can be found.
     if not recipients:
+        logger.warning(
+            "%s notification NOT sent for event %s: no eligible recipients "
+            "(invigorate_internal_api_configured=%s). "
+            "GET /api/v1/admin/notifications/diagnostics?event_id=%s shows what resolved.",
+            notification_type, event.id, settings.invigorate_internal_api_configured, event.id,
+        )
         return None
 
     metadata = {

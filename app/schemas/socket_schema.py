@@ -209,8 +209,30 @@ SERVER_EVENTS_CATALOG = [
     ),
     ServerEventSchema(
         event="notification",
-        description="Sent to user room for new message alerts.",
-        payload={"type": "new_message", "conversation_id": "uuid", "title": "string", "body": "string", "message": "{...}"},
+        description=(
+            "Generic notification event, sent to the recipient's own room (`user:<user_id>`) — one event "
+            "for every platform notification, delivered at the same time the record is added to "
+            "GET /users/me/notifications. Route on `metadata.category` (there is no top-level category). "
+            "Categories include training_submitted, training_approved, training_rejected, "
+            "training_changes_requested, training_enrolled, training_enrollment_accepted, "
+            "training_enrollment_rejected (see docs/training-workflow-notifications.md). Workflow "
+            "metadata: training_id, entity_type, entity_id, status, enrollment_id (enrollment events), "
+            "reason (when given). The legacy new-message alert uses the same event name with the "
+            "different shape shown in `legacy_new_message_payload`."
+        ),
+        payload={
+            "notification_id": "uuid",
+            "title": "string",
+            "message": "string",
+            "metadata": {
+                "category": "training_enrollment_rejected", "training_id": "uuid", "entity_type": "training",
+                "entity_id": "uuid", "enrollment_id": "uuid", "status": "rejected", "reason": "string (optional)",
+            },
+            "created_at": "ISO datetime",
+            "legacy_new_message_payload": {
+                "type": "new_message", "conversation_id": "uuid", "title": "string", "body": "string", "message": "{...}",
+            },
+        },
     ),
     ServerEventSchema(
         event="error",
