@@ -1,7 +1,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
-from app.core.dependencies import get_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
+from app.core.dependencies import get_current_user, get_optional_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
 from app.schemas.training_schema import TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse
@@ -99,14 +99,33 @@ def upload_training_media(
 @router.get(
     "/upload/{stored_name}",
     summary="Serve uploaded training media file",
-    description="Streams a previously uploaded training media file by its stored name.",
+    description=(
+        "Streams a previously uploaded training media file by its stored name. **Public (no Authorization) "
+        "for cover images only**: an image (jpg/jpeg/png/gif/webp) used as the `primary_image` or in the "
+        "`gallery_images` of a *published* training can be loaded with a plain image URL, with "
+        "`Cache-Control: public`. Every other file — videos, PDFs, documents, lesson thumbnails, and images "
+        "of draft/unpublished trainings — requires a login (401 without one)."
+    ),
 )
 def download_training_media(
     stored_name: str = Path(..., description="Stored file name returned by the upload endpoint."),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = Depends(get_optional_current_user),
 ):
+    from fastapi import HTTPException
+    from app.services.training_upload_service import is_published_cover, public_image_media_type
+
     path = resolve_training_upload(stored_name)
+    image_type = public_image_media_type(stored_name)
+    if image_type and is_published_cover(db, stored_name):
+        # Public cover art: a plain <Image> URL works with no Authorization header. Cacheable
+        # by CDNs/browsers; nosniff stops a client treating it as anything but an image.
+        return FastAPIFileResponse(
+            path=str(path), media_type=image_type,
+            headers={"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"},
+        )
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     return FastAPIFileResponse(path=str(path))
 
 @router.post("/", response_model=TrainingResponse, status_code=201)
