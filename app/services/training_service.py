@@ -112,6 +112,12 @@ def create_training_service(db: Session, data, current_user: dict | None = None)
     db.add(obj)
     db.commit()
     db.refresh(obj)
+    if obj.status == "pending_approval":  # created straight into the approval queue
+        try:
+            from app.services import training_workflow_notifications
+            training_workflow_notifications.notify_training_approval(obj)
+        except Exception:
+            pass
     return TrainingResponse.model_validate(map_training_write(obj))
 
 def get_trainings_service(db: Session, **kw):
@@ -322,6 +328,12 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
         obj.cancelled_at = now
     _append_moderation(db, obj, st, notes, current_user, previous_status=previous_status, new_status=st)
     db.commit(); db.refresh(obj)
+    if st in ("pending_approval", "approved", "rejected", "needs_revision"):
+        try:
+            from app.services import training_workflow_notifications
+            training_workflow_notifications.notify_training_approval(obj, reason=notes)
+        except Exception:
+            pass
     if first_publish:  # not on re-publish after an unpublish/suspend — users were already told once
         try:
             from app.services import training_notifications
@@ -480,6 +492,12 @@ def _promote_waitlist(db: Session, tid: UUID) -> dict | None:
     db.delete(next_wait)
     db.commit()
     db.refresh(promoted)
+    if promoted.status == "enrolled":
+        try:
+            from app.services import training_workflow_notifications
+            training_workflow_notifications.notify_enrollment_confirmed_to_admins(training, promoted)
+        except Exception:
+            pass
     return {"enrolment_id": str(promoted.id), "participant_email": promoted.participant_email, "status": promoted.status}
 
 
@@ -2261,11 +2279,14 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             except: pass
         db.commit()
     try:
-        from app.services import training_notifications
+        from app.services import training_notifications, training_workflow_notifications
         if status == "pending_approval":
             training_notifications.notify_enrolment_pending(t, e)
         else:
             training_notifications.notify_enrolment_confirmed(t, e)
+            # automatic acceptance — the Enterprise Admin is told once the enrollment is confirmed
+            # (held back for a paid training until its payment is recorded)
+            training_workflow_notifications.notify_enrollment_confirmed_to_admins(t, e)
     except Exception:
         pass
     for key, value in _enrolment_response_context(db, t, tid, participant_email, status).items():
@@ -2361,6 +2382,7 @@ def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, actio
     if not e:
         raise HTTPException(status_code=404, detail="Enrolment not found")
     already_enrolled = e.status == "enrolled"
+    already_rejected = e.status == "rejected"
     if action == "approve":
         e.status = "enrolled"
         e.rejection_reason = None
@@ -2378,12 +2400,18 @@ def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, actio
     db.refresh(e)
     db.refresh(training)
     try:
-        from app.services import training_notifications
+        from app.services import training_notifications, training_workflow_notifications
+        # Only a real status change notifies: re-approving an enrolled learner or re-rejecting a
+        # rejected one is a retry, not a decision. history length identifies this decision.
+        decision_index = len(training.moderation_history or [])
         if action == "approve":
-            if not already_enrolled:  # re-approving an already-enrolled learner must not email them again
-                training_notifications.notify_enrolment_approved(training, e)
-        else:
-            training_notifications.notify_enrolment_rejected(training, e, reason)
+            if not already_enrolled:
+                training_notifications.notify_enrollment_accepted(training, e, decision_index=decision_index)
+                training_workflow_notifications.notify_enrollment_confirmed_to_admins(
+                    training, e, actor_id=(current_user or {}).get("id"),
+                )
+        elif not already_rejected:
+            training_notifications.notify_enrollment_rejected(training, e, reason, decision_index=decision_index)
     except Exception:
         pass
     return {"id": str(e.id), "status": e.status, "reason": reason}
@@ -2412,6 +2440,12 @@ def create_training_checkout_service(db: Session, tid: UUID, payload):
     except Exception:
         db.rollback()
         raise
+    if enrol.status == "enrolled":  # the order is committed with a confirmed payment — safe to tell the admin now
+        try:
+            from app.services import training_workflow_notifications
+            training_workflow_notifications.notify_enrollment_confirmed_to_admins(t, enrol)
+        except Exception:
+            pass
     return order
 
 

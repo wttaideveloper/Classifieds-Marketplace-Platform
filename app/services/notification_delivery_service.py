@@ -14,16 +14,18 @@ from app.services.firebase_push_service import send_push_to_tokens
 
 logger = logging.getLogger(__name__)
 
+# Metadata keys that are delivered to the in-app feed and the realtime event but never put in the
+# push `data` block.
+PUSH_OMITTED_METADATA_KEYS = frozenset({"reason"})
+
 
 def _emit_realtime_notification(user_id: UUID, payload: dict) -> None:
     try:
         from app.realtime.emitters import emit_notification
+        from app.realtime.loop_bridge import run_coroutine
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.create_task(emit_notification(str(user_id), payload))
-        else:
-            loop.run_until_complete(emit_notification(str(user_id), payload))
+        # Works from the REST worker threadpool and background threads, not just the server loop.
+        run_coroutine(emit_notification(str(user_id), payload))
     except Exception:
         logger.exception("Failed to emit realtime notification for user_id=%s", user_id)
 
@@ -41,7 +43,12 @@ def deliver_notification_to_users(
     """Deliver in-app + optional push channels and write delivery logs."""
     notification_repo.create_user_notifications(db, notification_id, user_ids)
     delivered = 0
-    payload_data = {key: str(value) for key, value in (metadata or {}).items()}
+    # Push is shown on lock screens and passes through FCM — keep it to routing ids. Free-text
+    # fields like `reason` stay in the feed/socket metadata only.
+    payload_data = {
+        key: str(value) for key, value in (metadata or {}).items()
+        if key not in PUSH_OMITTED_METADATA_KEYS and value is not None
+    }
 
     for user_id in user_ids:
         channel_delivered = False

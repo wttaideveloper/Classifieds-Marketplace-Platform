@@ -229,11 +229,9 @@ def schedule_presence_emit(user_id: str, status: str) -> None:
 
     coro = _emit_online(user_id) if status == "online" else _emit_offline(user_id)
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.create_task(coro)
-        else:
-            loop.run_until_complete(coro)
+        from app.realtime.loop_bridge import run_coroutine
+
+        run_coroutine(coro)
     except Exception:
         logger.exception(
             "Failed to emit presence transition for user_id=%s status=%s", user_id, status

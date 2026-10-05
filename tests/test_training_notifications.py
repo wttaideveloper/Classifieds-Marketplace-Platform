@@ -47,6 +47,10 @@ def env(monkeypatch):
 
     monkeypatch.setattr(tn, "_dispatch", lambda fn, *a, **k: fn(*a, **k))
     monkeypatch.setattr(tn, "deliver_to_participant", record)
+    # admin-facing workflow notifications are covered in tests/test_training_workflow_notifications.py
+    from app.services import training_workflow_notifications as twn
+    monkeypatch.setattr(twn, "notify_enrollment_confirmed_to_admins", lambda *a, **k: None)
+    monkeypatch.setattr(twn, "notify_training_approval", lambda *a, **k: None)
     yield sessions, delivered
     engine.dispose()
 
@@ -221,10 +225,10 @@ def test_approval_sends_in_app_and_email(env):
         service.approve_training_enrol_service(db, TID, e.id, "approve", current_user=_staff())
 
     [n] = delivered
-    assert n["category"] == "enrolment_approved"
+    assert n["category"] == "training_enrollment_accepted"
     assert n["send_email"] is True
     assert n["user_id"] == uid and n["email"] == "a@example.com"
-    assert "Asha" in n["message"] and "approved" in n["message"]
+    assert "accepted" in n["message"] and "Asha" not in n["message"]  # no personal data in the push body
 
 
 def test_approving_an_already_enrolled_learner_does_not_notify_again(env):
@@ -243,9 +247,9 @@ def test_rejection_notifies_in_app_without_email(env):
         e = add_enrolment(db, "a@example.com", status="pending_approval")
         service.approve_training_enrol_service(db, TID, e.id, "reject", reason="Class is full", current_user=_staff())
     [n] = delivered
-    assert n["category"] == "enrolment_rejected"
+    assert n["category"] == "training_enrollment_rejected"
     assert not n.get("send_email")
-    assert "Class is full" in n["message"]
+    assert n["metadata"]["reason"] == "Class is full" and "Class is full" not in n["message"]
 
 
 def test_self_enrolment_records_user_id_and_confirms(env):
@@ -488,7 +492,7 @@ def test_delivery_sends_email_once_and_keeps_email_out_of_the_inbox_pipeline(del
     uid = uuid4()
     result = tn.deliver_to_participant(
         tenant_id=str(TENANT), email="a@example.com", user_id=uid, title="T", message="M",
-        category="enrolment_approved", send_email=True,
+        category="training_enrollment_accepted", send_email=True,
     )
     assert result == {"in_app": True, "email": True}
     assert delivery["email"] == [("a@example.com", "T", "M")]
@@ -503,9 +507,9 @@ def test_metadata_carries_category_and_drops_none_values(delivery):
     # None value into the string "None".
     tn.deliver_to_participant(
         tenant_id=None, email="a@example.com", user_id=uuid4(), title="T", message="M",
-        category="enrolment_rejected", metadata={"training_id": "t1", "reason": None, "enrolment_id": "e1"},
+        category="training_enrollment_rejected", metadata={"training_id": "t1", "reason": None, "enrollment_id": "e1"},
     )
-    assert delivery["inbox"][0]["metadata"] == {"training_id": "t1", "enrolment_id": "e1", "category": "enrolment_rejected"}
+    assert delivery["inbox"][0]["metadata"] == {"training_id": "t1", "enrollment_id": "e1", "category": "training_enrollment_rejected"}
 
 
 def test_fan_out_metadata_carries_category(monkeypatch):
@@ -583,12 +587,12 @@ def _payload_cases():
          {**base, "enrolment_id": str(EID), "status": "pending_approval"}),
         ("training_enrolment_confirmation", lambda: tn.notify_enrolment_confirmed(t, e),
          {**base, "enrolment_id": str(EID), "status": "enrolled"}),
-        ("enrolment_approved", lambda: tn.notify_enrolment_approved(t, e),
-         {**base, "enrolment_id": str(EID), "status": "enrolled"}),
-        ("enrolment_rejected", lambda: tn.notify_enrolment_rejected(t, e, None),
-         {**base, "enrolment_id": str(EID), "status": "rejected"}),
-        ("enrolment_rejected", lambda: tn.notify_enrolment_rejected(t, e, "Seat full"),
-         {**base, "enrolment_id": str(EID), "status": "rejected", "reason": "Seat full"}),
+        ("training_enrollment_accepted", lambda: tn.notify_enrollment_accepted(t, e, decision_index=3),
+         {**base, "entity_type": "training", "entity_id": str(TID), "enrollment_id": str(EID), "status": "enrolled"}),
+        ("training_enrollment_rejected", lambda: tn.notify_enrollment_rejected(t, e, None, decision_index=3),
+         {**base, "entity_type": "training", "entity_id": str(TID), "enrollment_id": str(EID), "status": "rejected"}),
+        ("training_enrollment_rejected", lambda: tn.notify_enrollment_rejected(t, e, "Seat full", decision_index=3),
+         {**base, "entity_type": "training", "entity_id": str(TID), "enrollment_id": str(EID), "status": "rejected", "reason": "Seat full"}),
         ("enrolment_cancelled", lambda: tn.notify_enrolment_cancelled(t, e),
          {**base, "enrolment_id": str(EID), "status": "cancelled"}),
         ("training_certificate", lambda: tn.notify_certificate_ready(

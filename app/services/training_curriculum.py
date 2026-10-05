@@ -255,6 +255,11 @@ def normalize_authoring(payload, existing=None):
             section["schedule"] = None
             if any(item["type"] in ("live", "venue") for item in section["lessons"]):
                 raise HTTPException(400, "Recorded training cannot contain live or venue items")
+    # Store https links only (primary_image, gallery, promo video, instructor photo, notes PDF,
+    # documents, lesson video/content/videos/documents/notes ...) — the read side repairs old rows.
+    from app.utils.public_urls import deep_https
+
+    deep_https(data)
     return data
 
 

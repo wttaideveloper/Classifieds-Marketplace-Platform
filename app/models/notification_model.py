@@ -56,6 +56,19 @@ class UserNotification(Base):
     )
 
 
+class NotificationEventLog(Base):
+    """Idempotency claim for system-generated workflow notifications. A row is inserted *before*
+    delivery; the unique key means a retried request, a duplicated webhook or two concurrent
+    workers can deliver a given state change at most once. Released if delivery fails so a
+    later retry can still deliver."""
+
+    __tablename__ = "notification_event_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dedupe_key = Column(String(255), nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class NotificationTemplate(Base):
     __tablename__ = "notification_templates"
 

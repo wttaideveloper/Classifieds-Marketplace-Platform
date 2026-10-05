@@ -121,7 +121,9 @@ set in production `.env`:
 
 ```env
 SOCKETIO_PATH=/api/socket.io
-PUBLIC_API_BASE_URL=http://13.207.85.164
+PUBLIC_API_BASE_URL=https://chat.wisdomtooth.tech
+# Media/file links are returned as https only; links stored earlier as http://<ip>/api/... are rewritten to this origin
+PUBLIC_MEDIA_BASE_URL=https://chat.wisdomtooth.tech
 ```
 
 Frontend Socket.IO client:

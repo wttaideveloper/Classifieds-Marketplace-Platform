@@ -68,11 +68,47 @@ def deliver_to_participant(
     metadata: dict | None = None,
     send_email: bool = False,
     in_app: bool = True,
+    dedupe_key: str | None = None,
 ) -> dict:
-    """Synchronous delivery to one person. Returns {"in_app": bool, "email": bool}; never raises."""
+    """Synchronous delivery to one person. Returns {"in_app": bool, "email": bool}; never raises.
+
+    With ``dedupe_key`` the delivery is claimed first (see notification_idempotency): a repeat of
+    the same key does nothing and returns {"duplicate": True}. If nothing at all was delivered the
+    claim is released, so a later retry can still deliver."""
     result = {"in_app": False, "email": False}
     metadata = _routing_metadata(category, metadata)
 
+    claimed = False
+    if dedupe_key:
+        try:
+            from app.db.database import SessionLocal
+            from app.services import notification_idempotency
+
+            with SessionLocal() as claim_db:
+                if not notification_idempotency.claim(claim_db, dedupe_key):
+                    logger.info("training notification %s skipped: already delivered (%s)", category, dedupe_key)
+                    return {**result, "duplicate": True}
+            claimed = True
+        except Exception:
+            logger.exception("could not claim %s — not delivering to avoid a duplicate", dedupe_key)
+            return result
+
+    try:
+        _deliver(result, tenant_id, email, user_id, title, message, category, metadata, send_email, in_app)
+    finally:
+        if claimed and not (result["in_app"] or result["email"]):
+            try:
+                from app.db.database import SessionLocal
+                from app.services import notification_idempotency
+
+                with SessionLocal() as release_db:
+                    notification_idempotency.release(release_db, dedupe_key)
+            except Exception:
+                logger.exception("could not release claim %s", dedupe_key)
+    return result
+
+
+def _deliver(result, tenant_id, email, user_id, title, message, category, metadata, send_email, in_app) -> None:
     if send_email and email:
         try:
             from app.services.notification_triggers import _send_email_via_smtp
@@ -82,7 +118,7 @@ def deliver_to_participant(
             logger.exception("training email to %s failed", email)
 
     if not in_app:
-        return result
+        return
 
     try:
         from app.db.database import SessionLocal
@@ -96,7 +132,7 @@ def deliver_to_participant(
                 uid = _resolve_user_id_from_email(db, email)
             if uid is None:
                 logger.info("training notification %s: no user id for %s — in-app skipped", category, email)
-                return result
+                return
             create_automatic_notification(
                 db, title=title, message=message, category=category, user_ids=[uid],
                 tenant_id=_as_uuid(tenant_id), metadata=metadata, channels=["in_app", "push"],
@@ -104,7 +140,6 @@ def deliver_to_participant(
             result["in_app"] = True
     except Exception:
         logger.exception("training in-app notification %s failed", category)
-    return result
 
 
 def _person(enrolment) -> dict:
@@ -115,14 +150,22 @@ def _person(enrolment) -> dict:
     }
 
 
-def _send(training, person: dict, *, title, message, category, metadata, send_email=False, in_app=True) -> None:
+def _send(training, person: dict, *, title, message, category, metadata, send_email=False, in_app=True, dedupe_key=None) -> None:
     _dispatch(
         deliver_to_participant,
         tenant_id=training.tenant_id, email=person["email"], user_id=person.get("user_id"),
         title=title, message=message, category=category,
         metadata={"training_id": str(training.id), **metadata},
-        send_email=send_email, in_app=in_app,
+        send_email=send_email, in_app=in_app, dedupe_key=dedupe_key,
     )
+
+
+def _workflow_metadata(training, enrolment, status: str, reason: str | None = None) -> dict:
+    """Payload shape shared by every enrollment-workflow notification (feed, socket, push)."""
+    return {
+        "entity_type": "training", "entity_id": str(training.id),
+        "enrollment_id": str(enrolment.id), "status": status, "reason": reason,
+    }
 
 
 # --- 1. enrolment lifecycle (approved also emails) ---------------------------------------
@@ -147,27 +190,31 @@ def notify_enrolment_confirmed(training, enrolment) -> None:
     )
 
 
-def notify_enrolment_approved(training, enrolment) -> None:
+def notify_enrollment_accepted(training, enrolment, *, decision_index: int) -> None:
+    """Learner: an Enterprise Admin accepted the enrollment request (also emailed).
+    `decision_index` is the position of this decision in the training's moderation history — each
+    real decision gets its own idempotency key, a retry of the same decision reuses it."""
     _send(
         training, _person(enrolment),
-        title=f"Enrolment Approved: {training.title}",
-        message=f"Hi {enrolment.participant_name}, your enrolment in {training.title} has been approved. "
-                f"You can start learning from the training page.",
-        category="enrolment_approved",
-        metadata={"status": "enrolled", "enrolment_id": str(enrolment.id)},
+        title="Enrollment accepted",
+        message=f'Your enrollment in "{training.title}" was accepted.',
+        category="training_enrollment_accepted",
+        metadata=_workflow_metadata(training, enrolment, "enrolled"),
         send_email=True,
+        dedupe_key=f"training_enrollment_accepted:{enrolment.id}:{decision_index}",
     )
 
 
-def notify_enrolment_rejected(training, enrolment, reason: str | None) -> None:
-    message = f"Hi {enrolment.participant_name}, your enrolment in {training.title} was not approved."
-    if reason:
-        message += f" Reason: {reason}"
+def notify_enrollment_rejected(training, enrolment, reason: str | None, *, decision_index: int) -> None:
+    """Learner: an Enterprise Admin rejected the request. `reason` rides in the feed/socket metadata
+    only — never in the push body or push data."""
     _send(
         training, _person(enrolment),
-        title=f"Enrolment Rejected: {training.title}", message=message,
-        category="enrolment_rejected",
-        metadata={"status": "rejected", "enrolment_id": str(enrolment.id), "reason": reason},
+        title="Enrollment rejected",
+        message=f'Your enrollment in "{training.title}" was not accepted.',
+        category="training_enrollment_rejected",
+        metadata=_workflow_metadata(training, enrolment, "rejected", reason),
+        dedupe_key=f"training_enrollment_rejected:{enrolment.id}:{decision_index}",
     )
 
 

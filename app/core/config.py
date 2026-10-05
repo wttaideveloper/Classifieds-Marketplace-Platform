@@ -94,9 +94,23 @@ class Settings(BaseSettings):
     # beat is deployed). Unset = on in production, off in development; set explicitly to override.
     TRAINING_REMINDERS_ENABLED: bool | None = None
     TRAINING_REMINDER_INTERVAL_SECONDS: int = 900
+    # Public HTTPS origin used for every file/media link the API returns, e.g. https://chat.wisdomtooth.tech.
+    # Mobile blocks cleartext http:// media, and links already stored with a bare-IP http:// host
+    # (http://13.207.85.164/api/v1/trainings/upload/...) are rewritten to this origin when served.
+    # Falls back to PUBLIC_API_BASE_URL when that one is already an https hostname.
+    PUBLIC_MEDIA_BASE_URL: str = ""
+    # Rewrite http:// links to https:// in Training API responses and when saving. Unset = on in
+    # production, off in development (local servers have no TLS).
+    FORCE_HTTPS_MEDIA_URLS: bool | None = None
 
     class Config:
         env_file = ".env"
+
+    @property
+    def force_https_media_urls(self) -> bool:
+        if self.FORCE_HTTPS_MEDIA_URLS is not None:
+            return self.FORCE_HTTPS_MEDIA_URLS
+        return self.ENVIRONMENT == "production"
 
     @property
     def training_reminders_enabled(self) -> bool:

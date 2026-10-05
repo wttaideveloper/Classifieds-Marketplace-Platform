@@ -45,10 +45,15 @@ def _no_real_notify(monkeypatch):
     from app.services import training_notifications
 
     calls = []
-    def fake_deliver(*, tenant_id, email, user_id, title, message, category, metadata=None, send_email=False, in_app=True):
+    def fake_deliver(*, tenant_id, email, user_id, title, message, category, metadata=None, send_email=False, in_app=True, dedupe_key=None):
         calls.append({"title": title, "message": message, "category": category, "metadata": metadata, "participant_email": email})
     monkeypatch.setattr(training_notifications, "_dispatch", lambda fn, *a, **k: fn(*a, **k))
     monkeypatch.setattr(training_notifications, "deliver_to_participant", fake_deliver)
+    # Admin-facing workflow notifications resolve recipients over the network and are covered in
+    # tests/test_training_workflow_notifications.py — keep them out of these unit tests.
+    from app.services import training_workflow_notifications
+    monkeypatch.setattr(training_workflow_notifications, "notify_enrollment_confirmed_to_admins", lambda *a, **k: None)
+    monkeypatch.setattr(training_workflow_notifications, "notify_training_approval", lambda *a, **k: None)
     return calls
 
 
@@ -160,9 +165,10 @@ def test_reject_sets_distinct_rejected_status_with_reason(setup, _no_real_notify
 
     # Notification fired for the reject action.
     categories = [c["category"] for c in _no_real_notify]
-    assert "enrolment_rejected" in categories
-    rejected_call = next(c for c in _no_real_notify if c["category"] == "enrolment_rejected")
-    assert "Seat full" in rejected_call["message"]
+    assert "training_enrollment_rejected" in categories
+    rejected_call = next(c for c in _no_real_notify if c["category"] == "training_enrollment_rejected")
+    assert rejected_call["metadata"]["reason"] == "Seat full"  # feed/socket only
+    assert "Seat full" not in rejected_call["message"]  # the message is also the push body
     assert rejected_call["participant_email"] == learner["email"]
 
 
@@ -186,7 +192,7 @@ def test_approve_notifies_and_clears_prior_rejection_reason(setup, _no_real_noti
     body = client.get(f"/api/v1/trainings/{tid}").json()
     assert body["enrolment_status"] == "enrolled"
     assert body["rejection_reason"] is None
-    assert "enrolment_approved" in [c["category"] for c in _no_real_notify]
+    assert "training_enrollment_accepted" in [c["category"] for c in _no_real_notify]
 
 
 def test_rejected_learner_can_re_enrol(setup, _no_real_notify):

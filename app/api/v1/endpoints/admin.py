@@ -1,5 +1,5 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from app.core.dependencies import extract_access_token, get_current_super_admin
 from app.db.database import get_db
@@ -246,3 +246,54 @@ def event_audits(request: Request, event_id: UUID, db: Session = Depends(get_db)
         }
         for a in audits
     ]
+
+
+@router.get(
+    "/notifications/diagnostics",
+    summary="Admin — Why did (or didn't) a workflow notification reach someone",
+    description=(
+        "Platform Super Admin only. Shows what the notification recipient resolvers see right now: whether the "
+        "Invigorate internal API is configured, which Platform Super Admin and owning Enterprise Admin user ids "
+        "resolve (and why others were excluded), whether the realtime loop is attached, and — when `event_id` or "
+        "`training_id` is given — the notification rows actually recorded for it and their recipients. "
+        "Counts and ids only; no emails, names or secrets."
+    ),
+)
+def notification_diagnostics(
+    event_id: UUID | None = Query(None, description="Event whose approval notifications to inspect"),
+    training_id: UUID | None = Query(None, description="Training whose approval/enrollment notifications to inspect"),
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(get_current_super_admin),
+):
+    from app.core.config import settings
+    from app.models.event_model import Event
+    from app.models.training_model import Training
+    from app.realtime.loop_bridge import has_main_loop
+    from app.services import notification_diagnostics as diag
+
+    # get_current_super_admin also admits an Enterprise Admin fallback; this view lists admin ids, so it is stricter.
+    if not is_platform_super_admin(_admin):
+        raise HTTPException(status_code=403, detail="Platform Super Admin only")
+
+    result = {
+        "caller_user_id": str(_admin.get("id")),
+        "config": {
+            "invigorate_internal_api_configured": settings.invigorate_internal_api_configured,
+            "socketio_redis_configured": bool(settings.SOCKETIO_REDIS_URL.strip()),
+            "realtime_loop_attached": has_main_loop(),
+        },
+        "platform_admins": diag.diagnose_platform_admins(),
+    }
+    for kind, entity_id, model in (("event", event_id, Event), ("training", training_id, Training)):
+        if entity_id is None:
+            continue
+        entity = db.get(model, entity_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail=f"{kind.title()} not found")
+        result[kind] = {
+            "id": str(entity.id),
+            "status": entity.status,
+            "enterprise_admins": diag.diagnose_enterprise_admins(db, entity),
+            "recorded_notifications": diag.recorded_notifications(db, entity.id),
+        }
+    return result

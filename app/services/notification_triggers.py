@@ -64,14 +64,10 @@ def _emit_inapp_notification(db: Session, user_id: UUID, title: str, message: st
     """Emit an in-app notification via the realtime emitter if available."""
     try:
         from app.realtime.emitters import emit_notification
-        import asyncio
+        from app.realtime.loop_bridge import run_coroutine
         notif_id = str(uuid4())
         payload = {"notification_id": notif_id, "title": title, "message": message, "metadata": metadata}
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.create_task(emit_notification(str(user_id), payload))
-        else:
-            loop.run_until_complete(emit_notification(str(user_id), payload))
+        run_coroutine(emit_notification(str(user_id), payload))
     except Exception as e:
         logger.debug("In-app emit failed for user_id=%s: %s", user_id, e)
 

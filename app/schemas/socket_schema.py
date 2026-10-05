@@ -90,7 +90,7 @@ class SocketAuthInfo(BaseModel):
         ...,
         description="Example socket.io-client connect call.",
         examples=[
-            'io("http://13.207.85.164", { path: "/api/socket.io", auth: { token: "<JWT>" } })'
+            'io("https://chat.wisdomtooth.tech", { path: "/api/socket.io", auth: { token: "<JWT>" } })'
         ],
     )
 
@@ -209,8 +209,30 @@ SERVER_EVENTS_CATALOG = [
     ),
     ServerEventSchema(
         event="notification",
-        description="Sent to user room for new message alerts.",
-        payload={"type": "new_message", "conversation_id": "uuid", "title": "string", "body": "string", "message": "{...}"},
+        description=(
+            "Generic notification event, sent to the recipient's own room (`user:<user_id>`) — one event "
+            "for every platform notification, delivered at the same time the record is added to "
+            "GET /users/me/notifications. Route on `metadata.category` (there is no top-level category). "
+            "Categories include training_submitted, training_approved, training_rejected, "
+            "training_changes_requested, training_enrolled, training_enrollment_accepted, "
+            "training_enrollment_rejected (see docs/training-workflow-notifications.md). Workflow "
+            "metadata: training_id, entity_type, entity_id, status, enrollment_id (enrollment events), "
+            "reason (when given). The legacy new-message alert uses the same event name with the "
+            "different shape shown in `legacy_new_message_payload`."
+        ),
+        payload={
+            "notification_id": "uuid",
+            "title": "string",
+            "message": "string",
+            "metadata": {
+                "category": "training_enrollment_rejected", "training_id": "uuid", "entity_type": "training",
+                "entity_id": "uuid", "enrollment_id": "uuid", "status": "rejected", "reason": "string (optional)",
+            },
+            "created_at": "ISO datetime",
+            "legacy_new_message_payload": {
+                "type": "new_message", "conversation_id": "uuid", "title": "string", "body": "string", "message": "{...}",
+            },
+        },
     ),
     ServerEventSchema(
         event="error",
@@ -226,12 +248,12 @@ def _catalog_to_dict(items: list[ServerEventSchema]) -> list[dict[str, Any]]:
 
 def build_events_catalog_swagger_example() -> dict[str, Any]:
     return {
-        "connection_url": "http://13.207.85.164",
+        "connection_url": "https://chat.wisdomtooth.tech",
         "connection_path": "/api/socket.io",
-        "polling_test_url": "http://13.207.85.164/api/socket.io?EIO=4&transport=polling",
+        "polling_test_url": "https://chat.wisdomtooth.tech/api/socket.io?EIO=4&transport=polling",
         "auth": {
             "type": "JWT Bearer",
-            "connect": 'io("http://13.207.85.164", { path: "/api/socket.io", auth: { token: "<JWT>" } })',
+            "connect": 'io("https://chat.wisdomtooth.tech", { path: "/api/socket.io", auth: { token: "<JWT>" } })',
         },
         "deployment_notes": [
             "Socket.IO is mounted on app.main:socket_app.",
@@ -251,7 +273,7 @@ class ServerEventsCatalogResponse(BaseModel):
     connection_url: str = Field(
         ...,
         description="Public base URL for Socket.IO (no trailing slash).",
-        examples=["http://13.207.85.164"],
+        examples=["https://chat.wisdomtooth.tech"],
     )
     connection_path: str = Field(
         ...,
@@ -261,7 +283,7 @@ class ServerEventsCatalogResponse(BaseModel):
     polling_test_url: str = Field(
         ...,
         description="Engine.IO polling probe URL for deployment verification.",
-        examples=["http://13.207.85.164/api/socket.io?EIO=4&transport=polling"],
+        examples=["https://chat.wisdomtooth.tech/api/socket.io?EIO=4&transport=polling"],
     )
     auth: SocketAuthInfo = Field(
         ...,

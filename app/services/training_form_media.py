@@ -99,8 +99,12 @@ def validate_media_value(field, value):
         url = item.get("url") if isinstance(item, dict) else item
         if not isinstance(url, str):
             raise HTTPException(400, "Configured media requires an uploaded file URL")
-        parsed = urlsplit(url)
-        base = urlsplit(config.PUBLIC_API_BASE_URL or "")
+        from app.utils.public_urls import public_media_base, to_https
+
+        # Clients may echo back a link stored before HTTPS-only (http://<ip>/api/...): compare it
+        # in its https form against the https origin we now issue.
+        parsed = urlsplit(to_https(url))
+        base = urlsplit(public_media_base() or config.PUBLIC_API_BASE_URL or "")
         if parsed.query or parsed.fragment or (parsed.netloc and (parsed.scheme, parsed.netloc) != (base.scheme, base.netloc)):
             raise HTTPException(400, "Configured media requires a local uploaded file URL")
         if parsed.path.startswith("/api/v1/trainings/upload/"):
