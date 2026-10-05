@@ -184,3 +184,33 @@ def resolve_training_upload(stored_name: str) -> Path:
             detail="Training media file not found",
         )
     return candidate
+
+IMAGE_MEDIA_TYPES = {
+    "jpeg": "image/jpeg", "jpg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp",
+}
+
+
+def public_image_media_type(stored_name: str) -> str | None:
+    """Content type if ``stored_name`` is one of the allowed image formats, else None. Decided by
+    extension, which is safe because uploads are validated against that same allowlist."""
+    ext = Path(stored_name).suffix.lstrip(".").lower()
+    return IMAGE_MEDIA_TYPES.get(ext)
+
+
+def is_published_cover(db: Session, stored_name: str) -> bool:
+    """True when a *published, non-deleted* Training uses this file as its cover (primary_image) or
+    in its gallery. Only such images may be fetched without a login — a draft's artwork, lesson
+    thumbnails, videos, PDFs and every other upload stay behind authentication."""
+    from sqlalchemy import Text, cast, or_
+
+    from app.models.training_model import Training
+
+    ref = f"/api/v1/trainings/upload/{stored_name}"
+    return db.query(Training.id).filter(
+        Training.status == "published",
+        Training.is_deleted.is_(False),
+        or_(
+            Training.primary_image.endswith(ref, autoescape=True),
+            cast(Training.gallery_images, Text).contains(f'{ref}"', autoescape=True),
+        ),
+    ).first() is not None
