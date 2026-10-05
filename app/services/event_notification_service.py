@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.models.enterprise_model import Enterprise
 from app.repository.event_repo import event_owner_tenant_id
 from app.services.invigorate_auth_client import list_tenant_users, list_tenants
+from app.services import notification_idempotency, training_notifications
 from app.services.notification_service import create_automatic_notification
 from app.services.super_admin_identity import profile_is_super_admin, profile_status_is_active
 
@@ -34,9 +35,16 @@ def _nested_values(user: dict) -> list[dict]:
     return values
 
 
-def _user_id(user: dict) -> UUID | None:
+def _application_user_id(user: dict) -> UUID | None:
+    """Return the recipient's application ``users.id``, never its Keycloak subject.
+
+    The internal tenant-users endpoint exposes the application id as ``user_id``/``id``
+    (occasionally camel-cased).  ``keycloak_id`` deliberately is not a fallback: it is
+    an authentication identity, while ``user_notifications.user_id`` is the
+    application-user UUID used by the authenticated feed APIs.
+    """
     for value in _nested_values(user):
-        for field in ("user_id", "id", "keycloak_id"):
+        for field in ("application_user_id", "user_id", "userId", "id"):
             raw_id = value.get(field)
             if raw_id:
                 try:
@@ -85,7 +93,7 @@ def resolve_platform_admin_user_ids() -> list[UUID]:
             continue
         seen_tenants.add(tenant_id)
         for user in list_tenant_users(tenant_id):
-            user_id = _user_id(user)
+            user_id = _application_user_id(user)
             is_platform_admin = any(
                 profile_is_super_admin(value) and profile_status_is_active(value)
                 for value in _nested_values(user)
@@ -111,7 +119,7 @@ def resolve_enterprise_admin_user_ids(db: Session, event) -> tuple[list[UUID], U
 
     recipients: set[UUID] = set()
     for user in list_tenant_users(tenant_id):
-        user_id = _user_id(user)
+        user_id = _application_user_id(user)
         # Invigorate maps tenant_owner to the marketplace's Enterprise Admin
         # role.  Do not include tenant_admin/provider or ordinary members.
         if user_id and _active(user) and _roles(user) & {"admin", "tenant_owner"}:
@@ -119,7 +127,14 @@ def resolve_enterprise_admin_user_ids(db: Session, event) -> tuple[list[UUID], U
     return sorted(recipients, key=str), tenant_id
 
 
-def notify_event_approval_workflow(db: Session, event, *, previous_status: str, reason: str | None = None):
+def notify_event_approval_workflow(
+    db: Session,
+    event,
+    *,
+    previous_status: str,
+    reason: str | None = None,
+    transition_id: UUID | None = None,
+):
     """Persist and deliver one notification for a successful approval transition."""
     notification_type = _EVENT_NOTIFICATION_TYPES.get(event.status)
     if notification_type is None:
@@ -144,12 +159,14 @@ def notify_event_approval_workflow(db: Session, event, *, previous_status: str, 
         return None
 
     metadata = {
+        "category": notification_type,
         "event_id": str(event.id),
         "entity_type": "event",
         "entity_id": str(event.id),
         "status": event.status,
-        "reason": reason if event.status in {"rejected", "needs_revision"} else None,
     }
+    if reason and event.status in {"rejected", "needs_revision"}:
+        metadata["reason"] = reason
     event_title = getattr(event, "title", None) or "Event"
     titles_and_messages = {
         "event_submitted": ("Event submitted for approval", f'"{event_title}" was submitted for approval.'),
@@ -157,14 +174,32 @@ def notify_event_approval_workflow(db: Session, event, *, previous_status: str, 
         "event_rejected": ("Event rejected", f'"{event_title}" has been rejected.'),
         "event_changes_requested": ("Event changes requested", f'Changes were requested for "{event_title}".'),
     }
+    # A committed audit row identifies one real state transition.  It lets a retry
+    # be silent without preventing a later resubmission/review from notifying again.
+    dedupe_key = f"{notification_type}:{event.id}:{transition_id or f'{previous_status}->{event.status}'}"
+    if not notification_idempotency.claim(db, dedupe_key):
+        logger.info("%s skipped for event %s: transition already delivered", notification_type, event.id)
+        return None
+
     title, message = titles_and_messages[notification_type]
-    return create_automatic_notification(
-        db,
-        title=title,
-        message=message,
-        category=notification_type,
-        user_ids=recipients,
-        tenant_id=tenant_id,
-        metadata=metadata,
-        channels=["in_app"],
-    )
+    try:
+        return create_automatic_notification(
+            db,
+            title=title,
+            message=message,
+            category=notification_type,
+            user_ids=recipients,
+            tenant_id=tenant_id,
+            metadata=training_notifications._routing_metadata(notification_type, metadata),
+            channels=["in_app"],
+        )
+    except Exception:
+        logger.exception(
+            "%s notification failed for event %s recipients=%s",
+            notification_type,
+            event.id,
+            [str(user_id) for user_id in recipients],
+        )
+        db.rollback()
+        notification_idempotency.release(db, dedupe_key)
+        return None

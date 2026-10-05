@@ -187,6 +187,7 @@ def _log_audit(
         db.add(audit)
         if commit:
             db.commit()
+        return audit
     except Exception:
         logger.warning("Failed to record audit action %s for event %s", action, event_id, exc_info=True)
         if commit:
@@ -194,6 +195,7 @@ def _log_audit(
                 db.rollback()
             except Exception:
                 pass
+        return None
 
 def _validate_event_config_for_create(event_data) -> None:
     """422 for contradictory *explicit* module overrides on a new event.
@@ -408,9 +410,20 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
     created = Event(**payload)
     db.add(created)
     db.flush()  # assigns created.id for the audit row
-    _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None, "event_type": created.event_type, "modules": created.modules, "meals": created.meals, "accommodation": created.accommodation}, changed_by=_actor_id(current_user), commit=False)
+    audit = _log_audit(db, created.id, "create", None, {"title": created.title, "status": created.status, "form_configuration_version_id": str(created.form_configuration_version_id) if created.form_configuration_version_id else None, "event_type": created.event_type, "modules": created.modules, "meals": created.meals, "accommodation": created.accommodation}, changed_by=_actor_id(current_user), commit=False)
     db.commit()
     db.refresh(created)
+    if created.status == "pending_approval":
+        try:
+            from app.services.event_notification_service import notify_event_approval_workflow
+            notify_event_approval_workflow(
+                db,
+                created,
+                previous_status="draft",
+                transition_id=getattr(audit, "id", None),
+            )
+        except Exception:
+            logger.exception("event_submitted notification failed for event %s", created.id)
     return EventResponse.model_validate(map_event_write(created))
 
 
@@ -688,12 +701,25 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
 
     previous = event.status
     event.status = new_status
-    _log_audit(db, event.id, "status_change", {"status": previous}, {"status": new_status}, changed_by=_actor_id(current_user), notes=notes, commit=False)
+    audit = _log_audit(db, event.id, "status_change", {"status": previous}, {"status": new_status}, changed_by=_actor_id(current_user), notes=notes, commit=False)
     db.commit()
     db.refresh(event)
     if new_status in ("pending_approval", "approved", "rejected", "needs_revision"):
-        from app.services.event_notification_service import notify_event_approval_workflow
-        notify_event_approval_workflow(db, event, previous_status=previous, reason=notes)
+        try:
+            from app.services.event_notification_service import notify_event_approval_workflow
+            notify_event_approval_workflow(
+                db,
+                event,
+                previous_status=previous,
+                reason=notes,
+                transition_id=getattr(audit, "id", None),
+            )
+        except Exception:
+            logger.exception(
+                "event workflow notification failed for event %s type=%s",
+                event.id,
+                new_status,
+            )
     if new_status == "cancelled":
         try:
             from app.services.notification_triggers import notify_event_cancelled

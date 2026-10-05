@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
-from app.db.database import Base
-from app.models.notification_model import Notification, NotificationLog, UserNotification
+from app.core.dependencies import get_current_user
+from app.db.database import Base, get_db
+from app.models.notification_model import Notification, NotificationEventLog, NotificationLog, UserNotification
 from app.services import event_notification_service
-from app.services.event_service import update_event_status_service
+from app.schemas.event_schema import EventCreate
+from app.services.event_service import create_event_service, update_event_status_service
 from tests.event_sql_support import make_enterprise, make_event, make_session
 
 
@@ -19,7 +23,7 @@ def workflow_db():
     db = make_session()
     Base.metadata.create_all(
         db.bind,
-        tables=[Notification.__table__, UserNotification.__table__, NotificationLog.__table__],
+        tables=[Notification.__table__, UserNotification.__table__, NotificationLog.__table__, NotificationEventLog.__table__],
     )
     try:
         yield db
@@ -71,16 +75,89 @@ def test_event_approval_notifications_persist_to_feed_and_emit_generic_socket_ev
     assert row.category == expected_type
     assert row.notification_type == "automatic"
     assert row.metadata_json == {
+        "category": expected_type,
         "event_id": str(event.id),
         "entity_type": "event",
         "entity_id": str(event.id),
         "status": status,
-        "reason": reason,
+        **({"reason": reason} if reason else {}),
     }
     assert workflow_db.query(UserNotification).filter_by(notification_id=row.id, user_id=recipient_id).one()
     assert emitted and emitted[0][0] == str(recipient_id)
     assert emitted[0][1]["notification_id"] == str(row.id)
     assert emitted[0][1]["metadata"] == row.metadata_json
+
+    # This is the unchanged Web contract: the same application-user UUID that
+    # receives the row can list it and gets the corresponding unread badge.
+    from app.api.v1.endpoints import user_notification
+
+    app = FastAPI()
+    app.include_router(user_notification.router, prefix="/api/v1/users")
+    app.dependency_overrides[get_db] = lambda: workflow_db
+    app.dependency_overrides[get_current_user] = lambda: {"id": str(recipient_id), "role": "admin"}
+    client = TestClient(app)
+    response = client.get("/api/v1/users/me/notifications")
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["id"]
+    assert item["notification_id"] == str(row.id)
+    assert item["user_id"] == str(recipient_id)
+    assert item["is_read"] is False and item["delivered_at"]
+    assert item["notification_type"] == "automatic"
+    assert item["category"] == expected_type
+    assert item["metadata"] == row.metadata_json
+    assert client.get("/api/v1/users/me/notifications/unread-count").json() == {"unread_count": 1}
+
+
+def test_event_notification_retry_is_idempotent(workflow_db, monkeypatch):
+    tenant_id = uuid4()
+    event = make_event(workflow_db, tenant_id, enterprise=make_enterprise(workflow_db, tenant_id), status="pending_approval")
+    recipient_id = uuid4()
+    monkeypatch.setattr(event_notification_service, "resolve_platform_admin_user_ids", lambda: [recipient_id])
+
+    first = event_notification_service.notify_event_approval_workflow(
+        workflow_db, event, previous_status="draft"
+    )
+    retry = event_notification_service.notify_event_approval_workflow(
+        workflow_db, event, previous_status="draft"
+    )
+
+    assert first is not None and retry is None
+    assert workflow_db.query(Notification).filter_by(category="event_submitted").count() == 1
+    assert workflow_db.query(UserNotification).filter_by(user_id=recipient_id).count() == 1
+
+
+def test_creating_an_event_directly_in_pending_approval_notifies_platform_admins(workflow_db, monkeypatch):
+    tenant_id = uuid4()
+    enterprise = make_enterprise(workflow_db, tenant_id)
+    recipient_id = uuid4()
+    monkeypatch.setattr(event_notification_service, "resolve_platform_admin_user_ids", lambda: [recipient_id])
+    monkeypatch.setattr(
+        "app.services.event_form_config_service.apply_form_configuration_to_event_data",
+        lambda *_args: {},
+    )
+
+    create_event_service(
+        workflow_db,
+        EventCreate(
+            tenant_id=tenant_id,
+            enterprise_id=enterprise.id,
+            title="Awaiting review",
+            description="A complete event",
+            category="Wellness",
+            organiser_name="Acme",
+            organiser_contact="events@acme.example",
+            start_date=datetime.utcnow() + timedelta(days=7),
+            end_date=datetime.utcnow() + timedelta(days=8),
+            status="pending_approval",
+        ),
+        {"id": str(uuid4()), "role": "admin", "tenant_id": str(tenant_id)},
+    )
+
+    row = workflow_db.query(Notification).filter_by(category="event_submitted").one()
+    assert row.metadata_json["event_id"] == row.metadata_json["entity_id"]
+    assert row.metadata_json["status"] == "pending_approval"
+    assert workflow_db.query(UserNotification).filter_by(notification_id=row.id, user_id=recipient_id).one()
 
 
 def test_enterprise_recipient_resolution_is_limited_to_the_owning_tenant_admin(workflow_db, monkeypatch):
@@ -167,7 +244,11 @@ def test_valid_event_approval_transition_triggers_notification_after_commit(
     )
 
     assert workflow_db.get(type(event), event.id).status == target_status
-    assert calls == [(target_status, {"previous_status": initial_status, "reason": reason})]
+    assert len(calls) == 1
+    assert calls[0][0] == target_status
+    assert calls[0][1]["previous_status"] == initial_status
+    assert calls[0][1]["reason"] == reason
+    assert calls[0][1]["transition_id"] is not None
 
 
 def test_failed_event_status_transition_does_not_emit_a_notification(workflow_db, monkeypatch):

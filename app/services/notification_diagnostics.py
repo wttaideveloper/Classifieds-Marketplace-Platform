@@ -38,7 +38,7 @@ def diagnose_platform_admins() -> dict:
             continue
         for user in users:
             scanned += 1
-            user_id = resolvers._user_id(user)
+            user_id = resolvers._application_user_id(user)
             flagged = any(profile_is_super_admin(v) for v in resolvers._nested_values(user))
             if user_id is None:
                 excluded["no_usable_user_id"] += 1
@@ -81,7 +81,7 @@ def diagnose_enterprise_admins(db: Session, entity) -> dict:
     roles_seen: Counter = Counter()
     resolved: set[UUID] = set()
     for user in users:
-        user_id = resolvers._user_id(user)
+        user_id = resolvers._application_user_id(user)
         roles = resolvers._roles(user)
         roles_seen.update(roles or {"(no role field)"})
         if user_id is None:
