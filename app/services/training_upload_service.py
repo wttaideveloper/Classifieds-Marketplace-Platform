@@ -147,8 +147,10 @@ def save_training_upload(
     target = training_upload_root() / stored_name
     target.write_bytes(file_bytes)
 
-    base = (settings.PUBLIC_API_BASE_URL or "").rstrip("/")
-    url = f"{base}/api/v1/trainings/upload/{stored_name}"
+    from app.utils.public_urls import public_media_base, to_https
+
+    # https origin when HTTPS-only media is on (PUBLIC_MEDIA_BASE_URL / https PUBLIC_API_BASE_URL)
+    url = to_https(f"{public_media_base()}/api/v1/trainings/upload/{stored_name}")
 
     logger.info("Saved training media %s (%s bytes, %s)", stored_name, size, purpose)
     return {

@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
 from app.core.config import settings
+from app.core.https_links import HttpsLinkRewriteMiddleware
 
 # Must run before any other app module logs anything: nothing else in this
 # codebase calls logging.basicConfig, so without this the root logger stays
@@ -116,6 +117,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mobile blocks cleartext media: Training API responses never carry an http:// link.
+app.add_middleware(HttpsLinkRewriteMiddleware)
+
 
 _notification_debug_logger = logging.getLogger("notification_debug")
 
@@ -164,6 +168,14 @@ async def startup():
     from app.realtime.loop_bridge import set_main_loop
 
     set_main_loop(asyncio.get_running_loop())
+    from app.utils.public_urls import canonical_https_origin
+
+    if settings.force_https_media_urls and canonical_https_origin() is None:
+        logger.warning(
+            "HTTPS-only media is on but no https hostname is configured: set PUBLIC_MEDIA_BASE_URL (or "
+            "PUBLIC_API_BASE_URL) to e.g. https://chat.wisdomtooth.tech. Until then links on a bare-IP "
+            "http:// host cannot be rewritten and stay as stored."
+        )
     redis_url = settings.SOCKETIO_REDIS_URL.strip()
     if settings.WEB_CONCURRENCY > 1:
         logger.info(

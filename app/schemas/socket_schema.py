@@ -90,7 +90,7 @@ class SocketAuthInfo(BaseModel):
         ...,
         description="Example socket.io-client connect call.",
         examples=[
-            'io("http://13.207.85.164", { path: "/api/socket.io", auth: { token: "<JWT>" } })'
+            'io("https://chat.wisdomtooth.tech", { path: "/api/socket.io", auth: { token: "<JWT>" } })'
         ],
     )
 
@@ -248,12 +248,12 @@ def _catalog_to_dict(items: list[ServerEventSchema]) -> list[dict[str, Any]]:
 
 def build_events_catalog_swagger_example() -> dict[str, Any]:
     return {
-        "connection_url": "http://13.207.85.164",
+        "connection_url": "https://chat.wisdomtooth.tech",
         "connection_path": "/api/socket.io",
-        "polling_test_url": "http://13.207.85.164/api/socket.io?EIO=4&transport=polling",
+        "polling_test_url": "https://chat.wisdomtooth.tech/api/socket.io?EIO=4&transport=polling",
         "auth": {
             "type": "JWT Bearer",
-            "connect": 'io("http://13.207.85.164", { path: "/api/socket.io", auth: { token: "<JWT>" } })',
+            "connect": 'io("https://chat.wisdomtooth.tech", { path: "/api/socket.io", auth: { token: "<JWT>" } })',
         },
         "deployment_notes": [
             "Socket.IO is mounted on app.main:socket_app.",
@@ -273,7 +273,7 @@ class ServerEventsCatalogResponse(BaseModel):
     connection_url: str = Field(
         ...,
         description="Public base URL for Socket.IO (no trailing slash).",
-        examples=["http://13.207.85.164"],
+        examples=["https://chat.wisdomtooth.tech"],
     )
     connection_path: str = Field(
         ...,
@@ -283,7 +283,7 @@ class ServerEventsCatalogResponse(BaseModel):
     polling_test_url: str = Field(
         ...,
         description="Engine.IO polling probe URL for deployment verification.",
-        examples=["http://13.207.85.164/api/socket.io?EIO=4&transport=polling"],
+        examples=["https://chat.wisdomtooth.tech/api/socket.io?EIO=4&transport=polling"],
     )
     auth: SocketAuthInfo = Field(
         ...,

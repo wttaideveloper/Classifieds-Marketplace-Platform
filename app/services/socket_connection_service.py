@@ -8,7 +8,9 @@ from app.realtime.server import SOCKETIO_PATH
 
 
 def build_socket_connection_info() -> dict:
-    base_url = settings.PUBLIC_API_BASE_URL.strip().rstrip("/")
+    from app.utils.public_urls import public_media_base
+
+    base_url = public_media_base()  # https origin when HTTPS-only is on, else PUBLIC_API_BASE_URL
     if not base_url:
         base_url = settings.FRONTEND_URL.strip().rstrip("/")
 
