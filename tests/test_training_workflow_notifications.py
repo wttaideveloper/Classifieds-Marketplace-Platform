@@ -78,8 +78,8 @@ def world(monkeypatch):
     monkeypatch.setattr(training_notifications, "_dispatch", lambda fn, *a, **k: fn(*a, **k))
     monkeypatch.setattr("app.realtime.emitters.emit_notification", capture_socket_event)
     monkeypatch.setattr("app.services.notification_delivery_service.send_push_to_tokens", capture_push)
-    monkeypatch.setattr(recipient_resolvers, "list_tenants", lambda: [{"id": str(t)} for t in TENANT_USERS])
-    monkeypatch.setattr(recipient_resolvers, "list_tenant_users", lambda tenant_id: TENANT_USERS.get(tenant_id, []))
+    monkeypatch.setattr(recipient_resolvers, "list_super_admins", lambda token=None: TENANT_USERS[PLATFORM_TENANT])
+    monkeypatch.setattr(recipient_resolvers, "list_tenant_users", lambda tenant_id, token=None: TENANT_USERS.get(tenant_id, []))
     monkeypatch.setattr("app.services.notification_triggers._send_email_via_smtp", lambda *a, **k: True)
     # publishing fans "new training" out to tenant users via the Invigorate API — never from a test
     monkeypatch.setattr("app.services.invigorate_auth_client.list_tenant_user_ids", lambda tenant_id: [])
@@ -239,7 +239,8 @@ def test_failed_delivery_releases_the_claim_so_a_retry_can_deliver(world, monkey
 
 
 def test_no_eligible_recipient_creates_no_orphan_feed_record(world, monkeypatch):
-    monkeypatch.setattr(recipient_resolvers, "list_tenant_users", lambda tenant_id: [])
+    monkeypatch.setattr(recipient_resolvers, "list_tenant_users", lambda tenant_id, token=None: [])
+    monkeypatch.setattr(recipient_resolvers, "list_super_admins", lambda token=None: [])
     tid = make_training(world, status="draft")
     with world.sessions() as db:
         service.update_training_status_service(db, tid, "pending_approval", owner_actor)

@@ -52,12 +52,12 @@ def test_event_approval_notifications_persist_to_feed_and_emit_generic_socket_ev
     monkeypatch.setattr(
         event_notification_service,
         "resolve_platform_admin_user_ids",
-        lambda: [recipient_id],
+        lambda **_kw: [recipient_id],
     )
     monkeypatch.setattr(
         event_notification_service,
         "resolve_enterprise_admin_user_ids",
-        lambda _db, _event: ([recipient_id], tenant_id),
+        lambda _db, _event, **_kw: ([recipient_id], tenant_id),
     )
 
     async def capture_generic_notification(user_id, payload):
@@ -113,7 +113,7 @@ def test_event_notification_retry_is_idempotent(workflow_db, monkeypatch):
     tenant_id = uuid4()
     event = make_event(workflow_db, tenant_id, enterprise=make_enterprise(workflow_db, tenant_id), status="pending_approval")
     recipient_id = uuid4()
-    monkeypatch.setattr(event_notification_service, "resolve_platform_admin_user_ids", lambda: [recipient_id])
+    monkeypatch.setattr(event_notification_service, "resolve_platform_admin_user_ids", lambda **_kw: [recipient_id])
 
     first = event_notification_service.notify_event_approval_workflow(
         workflow_db, event, previous_status="draft"
@@ -131,7 +131,7 @@ def test_creating_an_event_directly_in_pending_approval_notifies_platform_admins
     tenant_id = uuid4()
     enterprise = make_enterprise(workflow_db, tenant_id)
     recipient_id = uuid4()
-    monkeypatch.setattr(event_notification_service, "resolve_platform_admin_user_ids", lambda: [recipient_id])
+    monkeypatch.setattr(event_notification_service, "resolve_platform_admin_user_ids", lambda **_kw: [recipient_id])
     monkeypatch.setattr(
         "app.services.event_form_config_service.apply_form_configuration_to_event_data",
         lambda *_args: {},
@@ -170,7 +170,7 @@ def test_enterprise_recipient_resolution_is_limited_to_the_owning_tenant_admin(w
     other_tenant_admin = uuid4()
     queried_tenants = []
 
-    def users_for_tenant(tenant_id):
+    def users_for_tenant(tenant_id, token=None):
         queried_tenants.append(tenant_id)
         if tenant_id == owner_tenant:
             return [
@@ -194,19 +194,15 @@ def test_platform_recipient_resolution_excludes_ordinary_tenant_admins(monkeypat
     platform_admin = uuid4()
     tenant_admin = uuid4()
 
+    # /internal/super-admins lists only super admins; the ordinary tenant admin is never in it,
+    # and a defensive flag/status check still drops anything that is not an active super admin.
     monkeypatch.setattr(
         event_notification_service,
-        "list_tenants",
-        lambda: [{"id": str(platform_tenant)}, {"id": str(ordinary_tenant)}],
-    )
-    monkeypatch.setattr(
-        event_notification_service,
-        "list_tenant_users",
-        lambda tenant_id: (
-            [{"id": str(platform_admin), "isSuperAdmin": True, "status": "active"}]
-            if tenant_id == platform_tenant
-            else [{"id": str(tenant_admin), "role": "admin", "status": "active"}]
-        ),
+        "list_super_admins",
+        lambda token=None: [
+            {"id": str(platform_admin), "isSuperAdmin": True, "status": "active"},
+            {"id": str(tenant_admin), "role": "admin", "status": "active"},
+        ],
     )
 
     assert event_notification_service.resolve_platform_admin_user_ids() == [platform_admin]

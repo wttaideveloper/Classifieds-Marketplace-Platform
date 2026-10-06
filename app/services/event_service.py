@@ -369,7 +369,7 @@ def _plan_event_accommodation_update(event, update_data, config_changes: dict) -
     return {} if stored is None else {"accommodation": stored}
 
 
-def create_event_service(db: Session, event_data, current_user: dict | None = None):
+def create_event_service(db: Session, event_data, current_user: dict | None = None, access_token: str | None = None):
     from app.services.event_form_config_service import apply_form_configuration_to_event_data
 
     form_meta = apply_form_configuration_to_event_data(db, event_data, current_user or {})
@@ -421,6 +421,7 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
                 created,
                 previous_status="draft",
                 transition_id=getattr(audit, "id", None),
+                access_token=access_token,
             )
         except Exception:
             logger.exception("event_submitted notification failed for event %s", created.id)
@@ -637,7 +638,7 @@ def duplicate_event_service(db: Session, event_id: UUID, current_user: dict = No
     return EventResponse.model_validate(map_event_write(clone))
 
 
-def update_event_status_service(db: Session, event_id: UUID, new_status: str, current_user: dict = None, notes: str | None = None):
+def update_event_status_service(db: Session, event_id: UUID, new_status: str, current_user: dict = None, notes: str | None = None, access_token: str | None = None):
     event = get_event_by_id(db, event_id, include_deleted=True)
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -713,6 +714,7 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
                 previous_status=previous,
                 reason=notes,
                 transition_id=getattr(audit, "id", None),
+                access_token=access_token,
             )
         except Exception:
             logger.exception(

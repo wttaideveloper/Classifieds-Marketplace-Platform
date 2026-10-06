@@ -20,43 +20,32 @@ from app.services.super_admin_identity import profile_is_super_admin
 ENTERPRISE_ADMIN_ROLES = ("admin", "tenant_owner")
 
 
-def diagnose_platform_admins() -> dict:
+def diagnose_platform_admins(access_token: str | None = None) -> dict:
+    """What ``resolve_platform_admin_user_ids`` sees (Identity ``GET /internal/super-admins``)."""
     configured = settings.invigorate_internal_api_configured
-    tenants = resolvers.list_tenants() if configured else []
+    records = resolvers.list_super_admins(access_token) if configured else []
     excluded: Counter = Counter()
     resolved: set[UUID] = set()
-    scanned = 0
-    seen: set[str] = set()
-    for tenant in tenants:
-        tenant_id = tenant.get("id") if isinstance(tenant, dict) else None
-        if not tenant_id or str(tenant_id) in seen:
-            continue
-        seen.add(str(tenant_id))
-        try:
-            users = resolvers.list_tenant_users(UUID(str(tenant_id)))
-        except ValueError:
-            continue
-        for user in users:
-            scanned += 1
-            user_id = resolvers._application_user_id(user)
-            flagged = any(profile_is_super_admin(v) for v in resolvers._nested_values(user))
-            if user_id is None:
-                excluded["no_usable_user_id"] += 1
-            elif not flagged:
-                excluded["not_flagged_super_admin"] += 1
-            elif not resolvers._active(user):
-                excluded["super_admin_not_active"] += 1
-            else:
-                resolved.add(user_id)
+    for record in records:
+        user_id = resolvers.member_application_user_id(record)
+        if user_id is None:
+            excluded["no_usable_user_id"] += 1
+        elif not profile_is_super_admin(record):
+            excluded["not_flagged_super_admin"] += 1
+        elif not resolvers._active(record):
+            excluded["super_admin_not_active"] += 1
+        else:
+            resolved.add(user_id)
     return {
-        "tenants_listed": len(seen),
-        "users_scanned": scanned,
+        "source": "internal/super-admins",
+        "bearer_token_supplied": bool(access_token),
+        "super_admins_listed": len(records),
         "resolved_user_ids": sorted(str(u) for u in resolved),
         "excluded": dict(excluded),
     }
 
 
-def diagnose_enterprise_admins(db: Session, entity) -> dict:
+def diagnose_enterprise_admins(db: Session, entity, access_token: str | None = None) -> dict:
     enterprise = getattr(entity, "enterprise", None)
     if enterprise is None and getattr(entity, "enterprise_id", None):
         enterprise = db.query(Enterprise).filter(Enterprise.id == entity.enterprise_id).first()
@@ -76,7 +65,8 @@ def diagnose_enterprise_admins(db: Session, entity) -> dict:
     }
     if tenant_id is None or not settings.invigorate_internal_api_configured:
         return result
-    users = resolvers.list_tenant_users(tenant_id)
+    users, source = resolvers.owning_tenant_users(tenant_id, access_token)
+    result["source"] = source
     excluded: Counter = Counter()
     roles_seen: Counter = Counter()
     resolved: set[UUID] = set()

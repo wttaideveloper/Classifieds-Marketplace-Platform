@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.enterprise_model import Enterprise
 from app.repository.event_repo import event_owner_tenant_id
-from app.services.invigorate_auth_client import list_tenant_users, list_tenants
+from app.services.invigorate_auth_client import (
+    fetch_tenant_me_profile,
+    list_super_admins,
+    list_tenant_members,
+    list_tenant_users,
+    member_application_user_id,
+)
 from app.services import notification_idempotency, training_notifications
 from app.services.notification_service import create_automatic_notification
 from app.services.super_admin_identity import profile_is_super_admin, profile_status_is_active
@@ -38,19 +44,15 @@ def _nested_values(user: dict) -> list[dict]:
 def _application_user_id(user: dict) -> UUID | None:
     """Return the recipient's application ``users.id``, never its Keycloak subject.
 
-    The internal tenant-users endpoint exposes the application id as ``user_id``/``id``
-    (occasionally camel-cased).  ``keycloak_id`` deliberately is not a fallback: it is
-    an authentication identity, while ``user_notifications.user_id`` is the
-    application-user UUID used by the authenticated feed APIs.
+    Documented member records expose it as ``userId`` (their ``id``/``membershipId`` is the
+    membership record id) and super-admin records as ``id``. ``keycloakId`` / ``keycloak_id``
+    are authentication identities and are never accepted: ``user_notifications.user_id`` is
+    the application-user UUID used by the authenticated feed APIs.
     """
     for value in _nested_values(user):
-        for field in ("application_user_id", "user_id", "userId", "id"):
-            raw_id = value.get(field)
-            if raw_id:
-                try:
-                    return UUID(str(raw_id))
-                except (TypeError, ValueError):
-                    continue
+        user_id = member_application_user_id(value)
+        if user_id is not None:
+            return user_id
     return None
 
 
@@ -68,43 +70,69 @@ def _roles(user: dict) -> set[str]:
     return roles
 
 
+_STATUS_FIELDS = ("status", "membershipStatus", "userStatus")
+
+
 def _active(user: dict) -> bool:
-    return all(profile_status_is_active(value) for value in _nested_values(user))
+    """Active only if EVERY status field the record carries is active (an absent field is
+    not evidence of inactivity, but any present non-active one excludes the user)."""
+    for value in _nested_values(user):
+        for field in _STATUS_FIELDS:
+            if field in value and not profile_status_is_active({"status": value[field]}):
+                return False
+    return True
 
 
-def resolve_platform_admin_user_ids() -> list[UUID]:
-    """Find active platform super-admin identities from existing tenant users.
+def resolve_platform_admin_user_ids(access_token: str | None = None) -> list[UUID]:
+    """Active Platform Super Admin application user ids.
 
-    The identity service exposes tenant membership through the already-used
-    internal tenant-users endpoint.  Platform administrators are identified by
-    the same ``isSuperAdmin`` / ``super_admin`` identity rules used for Event
-    authorization; ordinary tenant admins are deliberately excluded.
+    Source: Identity API ``GET /api/v1/internal/super-admins`` (``X-Internal-Api-Key`` +
+    the caller's Bearer token). Each record's ``id`` is the application user id;
+    ``keycloakId`` is ignored. Ordinary tenant admins are not in this list, and a record
+    must also carry ``isSuperAdmin`` and an active status.
     """
     recipients: set[UUID] = set()
-    seen_tenants: set[UUID] = set()
-    for tenant in list_tenants():
-        if not isinstance(tenant, dict):
+    for record in list_super_admins(access_token):
+        if not profile_is_super_admin(record):
             continue
-        try:
-            tenant_id = UUID(str(tenant.get("id")))
-        except (TypeError, ValueError):
-            continue
-        if tenant_id in seen_tenants:
-            continue
-        seen_tenants.add(tenant_id)
-        for user in list_tenant_users(tenant_id):
-            user_id = _application_user_id(user)
-            is_platform_admin = any(
-                profile_is_super_admin(value) and profile_status_is_active(value)
-                for value in _nested_values(user)
-            )
-            if user_id and _active(user) and is_platform_admin:
-                recipients.add(user_id)
+        user_id = member_application_user_id(record)
+        if user_id and _active(record):
+            recipients.add(user_id)
     return sorted(recipients, key=str)
 
 
-def resolve_enterprise_admin_user_ids(db: Session, event) -> tuple[list[UUID], UUID | None]:
-    """Return only owning-tenant Enterprise Admins, never arbitrary members."""
+def owning_tenant_users(tenant_id: UUID, access_token: str | None) -> tuple[list[dict], str]:
+    """Members of the OWNING tenant, plus which documented endpoint supplied them.
+
+    If the caller's token belongs to that tenant, ``GET /api/v1/tenant/members`` is used.
+    Otherwise (e.g. a Platform Super Admin acting on another tenant's event), or if that
+    lookup fails, Identity ``GET /api/v1/internal/tenants/{tenant_id}/users`` is used with
+    ``X-Internal-Api-Key`` + the Bearer token. The caller's own tenant is never queried
+    on behalf of another tenant's event.
+    """
+    if access_token:
+        profile = fetch_tenant_me_profile(access_token)
+        try:
+            token_tenant = UUID(str((profile or {}).get("id")))
+        except (TypeError, ValueError):
+            token_tenant = None
+        if token_tenant == tenant_id:
+            members = list_tenant_members(access_token)
+            if members is not None:
+                return members, "tenant/members"
+    return list_tenant_users(tenant_id, access_token), "internal/tenants/{tenant_id}/users"
+
+
+def resolve_enterprise_admin_user_ids(
+    db: Session, event, *, access_token: str | None = None
+) -> tuple[list[UUID], UUID | None]:
+    """Return only owning-tenant Enterprise Admins, never arbitrary members.
+
+    The owning tenant always comes from the Event. If the caller's token belongs to that
+    tenant, members come from ``GET /api/v1/tenant/members``; otherwise (Super Admin acting
+    on another tenant's event) from Identity ``GET /api/v1/internal/tenants/{owning_tenant_id}/users``
+    with ``X-Internal-Api-Key`` + the Bearer token.
+    """
     enterprise = getattr(event, "enterprise", None)
     if enterprise is None and getattr(event, "enterprise_id", None):
         enterprise = db.query(Enterprise).filter(Enterprise.id == event.enterprise_id).first()
@@ -117,8 +145,10 @@ def resolve_enterprise_admin_user_ids(db: Session, event) -> tuple[list[UUID], U
     if tenant_id is None:
         return [], None
 
+    users, _source = owning_tenant_users(tenant_id, access_token)
+
     recipients: set[UUID] = set()
-    for user in list_tenant_users(tenant_id):
+    for user in users:
         user_id = _application_user_id(user)
         # Invigorate maps tenant_owner to the marketplace's Enterprise Admin
         # role.  Do not include tenant_admin/provider or ordinary members.
@@ -134,6 +164,7 @@ def notify_event_approval_workflow(
     previous_status: str,
     reason: str | None = None,
     transition_id: UUID | None = None,
+    access_token: str | None = None,
 ):
     """Persist and deliver one notification for a successful approval transition."""
     notification_type = _EVENT_NOTIFICATION_TYPES.get(event.status)
@@ -141,10 +172,10 @@ def notify_event_approval_workflow(
         return None
 
     if event.status == "pending_approval":
-        recipients = resolve_platform_admin_user_ids()
+        recipients = resolve_platform_admin_user_ids(access_token=access_token)
         tenant_id = None
     else:
-        recipients, tenant_id = resolve_enterprise_admin_user_ids(db, event)
+        recipients, tenant_id = resolve_enterprise_admin_user_ids(db, event, access_token=access_token)
 
     # The status-transition graph is the workflow's idempotency guard: a
     # repeated request cannot re-enter the same target status.  Avoid creating

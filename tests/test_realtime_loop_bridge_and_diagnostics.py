@@ -19,7 +19,7 @@ from app.api.v1.endpoints import admin as admin_routes
 from app.core.config import settings
 from app.core.dependencies import get_current_super_admin
 from app.db.database import Base, get_db
-from app.models.notification_model import Notification, NotificationLog, UserNotification
+from app.models.notification_model import Notification, NotificationEventLog, NotificationLog, UserNotification
 from app.realtime import loop_bridge
 from app.services import event_notification_service as resolvers
 from app.services import notification_delivery_service as delivery
@@ -106,7 +106,7 @@ def test_a_failing_emit_never_raises_into_the_caller(server_loop, caplog):
 
 def _feed_db():
     db = make_session()
-    Base.metadata.create_all(db.bind, tables=[Notification.__table__, UserNotification.__table__, NotificationLog.__table__])
+    Base.metadata.create_all(db.bind, tables=[Notification.__table__, UserNotification.__table__, NotificationLog.__table__, NotificationEventLog.__table__])
     return db
 
 
@@ -157,8 +157,8 @@ def diag_env(monkeypatch):
         ],
     }
     monkeypatch.setattr(settings, "INVIGORATE_INTERNAL_API_KEY", "test-key")
-    monkeypatch.setattr(resolvers, "list_tenants", lambda: [{"id": str(t)} for t in users])
-    monkeypatch.setattr(resolvers, "list_tenant_users", lambda tenant_id: users.get(tenant_id, []))
+    monkeypatch.setattr(resolvers, "list_super_admins", lambda token=None: users[PLATFORM_TENANT])
+    monkeypatch.setattr(resolvers, "list_tenant_users", lambda tenant_id, token=None: users.get(tenant_id, []))
     monkeypatch.setattr(delivery, "_emit_realtime_notification", lambda *a, **k: None)
 
     app = FastAPI()
@@ -213,7 +213,7 @@ def test_diagnostics_404_for_an_unknown_event(diag_env):
 
 def test_no_recipients_is_logged_as_a_warning_not_swallowed(diag_env, monkeypatch, caplog):
     db, event, _, _ = diag_env
-    monkeypatch.setattr(resolvers, "list_tenant_users", lambda tenant_id: [])
+    monkeypatch.setattr(resolvers, "list_tenant_users", lambda tenant_id, token=None: [])
     with caplog.at_level(logging.WARNING, logger="app.services.event_notification_service"):
         assert resolvers.notify_event_approval_workflow(db, event, previous_status="pending_approval") is None
     assert "NOT sent" in caplog.text and "invigorate_internal_api_configured=True" in caplog.text

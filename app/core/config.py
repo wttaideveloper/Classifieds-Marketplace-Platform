@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     # Invigorate Auth internal API (tenant user lookup for bulk notifications)
     INVIGORATE_AUTH_BASE_URL: str = "https://admin.apis.invigor8.app"
     INVIGORATE_INTERNAL_API_KEY: str = ""
+    # Base URL of the Invigorate admin API that serves GET /api/v1/tenant/members.
+    # Empty = fall back to INVIGORATE_AUTH_BASE_URL.
+    INVIGORATE_ADMIN_API_BASE_URL: str = ""
     # Celery / Redis background jobs
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
@@ -143,6 +146,10 @@ class Settings(BaseSettings):
             if name.strip() and name.strip() != self.WEB_SESSION_COOKIE_NAME
         ]
         return names
+
+    @property
+    def invigorate_admin_api_base_url(self) -> str:
+        return (self.INVIGORATE_ADMIN_API_BASE_URL.strip() or self.INVIGORATE_AUTH_BASE_URL.strip()).rstrip("/")
 
     @property
     def invigorate_internal_api_configured(self) -> bool:

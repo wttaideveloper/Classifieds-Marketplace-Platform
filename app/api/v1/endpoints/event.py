@@ -188,8 +188,8 @@ def attendee_filters(
 
 
 @router.post("/", response_model=EventResponse, status_code=status.HTTP_201_CREATED, summary="Create Event")
-def create_event(event: EventCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
-    return create_event_service(db, event, current_user)
+def create_event(event: EventCreate, request: Request, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_event_service(db, event, current_user, access_token=extract_access_token(request))
 
 
 @router.get(
@@ -491,7 +491,7 @@ def update_status(
     # Tenant ownership (an active Platform Super Admin passes across tenants). Runs before any
     # transition, so a cross-tenant caller can neither change nor probe another tenant's event.
     require_event_owner(db, event_id, current_user, access_token=token, include_deleted=True)
-    return update_event_status_service(db, event_id, payload.status, current_user)
+    return update_event_status_service(db, event_id, payload.status, current_user, access_token=token)
 
 
 @router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Unpublish Event")

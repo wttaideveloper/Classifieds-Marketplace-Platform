@@ -43,7 +43,7 @@ def admin_pending_events(
 @router.post("/events/{event_id}/approve", summary="Admin — Approve Event")
 def approve_event(request: Request, event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
     _scope_event_admin_action(request, db, event_id, _admin)
-    return update_event_status_service(db, event_id, "approved", _admin)
+    return update_event_status_service(db, event_id, "approved", _admin, access_token=extract_access_token(request))
 
 @router.post("/events/{event_id}/reject", summary="Admin — Reject Event")
 def reject_event(
@@ -62,7 +62,7 @@ def reject_event(
             reason = body.reason
         except Exception:
             reason = payload.get("reason") or payload.get("message") or str(payload)
-    return update_event_status_service(db, event_id, "rejected", _admin, notes=reason)
+    return update_event_status_service(db, event_id, "rejected", _admin, notes=reason, access_token=extract_access_token(request))
 
 @router.post("/events/{event_id}/request-changes", summary="Admin — Request Changes on Event")
 def request_changes_event(
@@ -84,7 +84,7 @@ def request_changes_event(
     if not reason:
         from fastapi import HTTPException as _HE
         raise _HE(status_code=400, detail="reason is required for requesting changes")
-    return update_event_status_service(db, event_id, "needs_revision", _admin, notes=reason)
+    return update_event_status_service(db, event_id, "needs_revision", _admin, notes=reason, access_token=extract_access_token(request))
 
 @router.post("/events/{event_id}/publish", summary="Admin — Publish Approved Event")
 def publish_event(request: Request, event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
@@ -112,7 +112,7 @@ def reject_training(
     _admin: dict = Depends(get_current_super_admin),
 ):
     reason = payload.reason if payload else None
-    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason)
+    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason, access_token=extract_access_token(request))
 
 @router.post("/trainings/{training_id}/request-changes", summary="Admin — Request Changes on Training")
 def request_changes_training(
@@ -149,7 +149,7 @@ def reject_course(
     _admin: dict = Depends(get_current_super_admin),
 ):
     reason = payload.reason if payload else None
-    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason)
+    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason, access_token=extract_access_token(request))
 
 @router.post("/courses/{training_id}/request-changes", summary="Admin — Request Changes on Course")
 def request_changes_course(
@@ -185,7 +185,7 @@ def reject_program(
     _admin: dict = Depends(get_current_super_admin),
 ):
     reason = payload.reason if payload else None
-    return update_program_status_service(db, program_id, "rejected", _admin, notes=reason)
+    return update_program_status_service(db, program_id, "rejected", _admin, notes=reason, access_token=extract_access_token(request))
 
 @router.post("/programs/{program_id}/request-changes", summary="Admin — Request Changes on Program")
 def request_changes_program(
@@ -260,6 +260,7 @@ def event_audits(request: Request, event_id: UUID, db: Session = Depends(get_db)
     ),
 )
 def notification_diagnostics(
+    request: Request,
     event_id: UUID | None = Query(None, description="Event whose approval notifications to inspect"),
     training_id: UUID | None = Query(None, description="Training whose approval/enrollment notifications to inspect"),
     db: Session = Depends(get_db),
@@ -275,6 +276,7 @@ def notification_diagnostics(
     if not is_platform_super_admin(_admin):
         raise HTTPException(status_code=403, detail="Platform Super Admin only")
 
+    token = extract_access_token(request)
     result = {
         "caller_user_id": str(_admin.get("id")),
         "config": {
@@ -282,7 +284,7 @@ def notification_diagnostics(
             "socketio_redis_configured": bool(settings.SOCKETIO_REDIS_URL.strip()),
             "realtime_loop_attached": has_main_loop(),
         },
-        "platform_admins": diag.diagnose_platform_admins(),
+        "platform_admins": diag.diagnose_platform_admins(token),
     }
     for kind, entity_id, model in (("event", event_id, Event), ("training", training_id, Training)):
         if entity_id is None:
@@ -293,7 +295,7 @@ def notification_diagnostics(
         result[kind] = {
             "id": str(entity.id),
             "status": entity.status,
-            "enterprise_admins": diag.diagnose_enterprise_admins(db, entity),
+            "enterprise_admins": diag.diagnose_enterprise_admins(db, entity, token),
             "recorded_notifications": diag.recorded_notifications(db, entity.id),
         }
     return result

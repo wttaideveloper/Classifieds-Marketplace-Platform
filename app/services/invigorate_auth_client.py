@@ -8,23 +8,102 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-def list_tenants() -> list[dict]:
-    """Fetch all tenants from the Invigorate internal API."""
-    if not settings.invigorate_internal_api_configured:
-        return []
+def _extract_items(payload) -> list[dict] | None:
+    """Rows of an Invigorate ``ListResource`` (``{"message", "data": [...], "total"}``).
 
-    url = f"{settings.INVIGORATE_AUTH_BASE_URL.rstrip('/')}/api/v1/internal/tenants"
-    headers = {"X-Internal-Api-Key": settings.INVIGORATE_INTERNAL_API_KEY}
+    Also tolerates a bare list or ``items``/``members`` keys. ``None`` = unrecognised shape.
+    """
+    items = payload
+    if isinstance(payload, dict):
+        items = payload.get("data")
+        if items is None:
+            items = payload.get("items") if payload.get("items") is not None else payload.get("members")
+        if isinstance(items, dict):
+            items = items.get("items") or items.get("members")
+    if not isinstance(items, list):
+        return None
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _get_items(url: str, headers: dict, *, params: dict | None = None, what: str) -> list[dict] | None:
+    """GET a list endpoint. ``None`` on any failure; logs method/url/status only (never headers)."""
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, params=params, timeout=15)
         response.raise_for_status()
         payload = response.json()
-    except Exception:
-        logger.exception("Failed to fetch tenants from Invigorate internal API")
-        return []
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "unknown"
+        logger.error("Invigorate %s lookup failed: GET %s -> HTTP %s", what, url, status)
+        return None
+    except Exception as exc:
+        logger.error("Invigorate %s lookup failed: GET %s (%s)", what, url, type(exc).__name__)
+        return None
+    items = _extract_items(payload)
+    if items is None:
+        logger.error("Invigorate %s lookup returned an unexpected shape: GET %s", what, url)
+    return items
 
-    items = payload.get("items") or payload.get("data") or payload
-    return items if isinstance(items, list) else []
+
+def _internal_get(
+    path: str, access_token: str | None, *, params: dict | None = None, what: str
+) -> list[dict] | None:
+    """Call a documented Identity-API ``/api/v1/internal/*`` endpoint.
+
+    The Identity API documents these as requiring BOTH ``X-Internal-Api-Key`` and the
+    caller's Keycloak Bearer access token. Without a token only the key is sent (the
+    API will reject it; the failure is logged with its status).
+    """
+    base = settings.invigorate_admin_api_base_url
+    key = settings.INVIGORATE_INTERNAL_API_KEY.strip()
+    if not base or not key:
+        return None
+    headers = {"X-Internal-Api-Key": key}
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    return _get_items(f"{base}{path}", headers, params=params, what=what)
+
+
+def list_tenants(access_token: str | None = None) -> list[dict]:
+    """Tenants via Identity API GET /api/v1/internal/tenants (``data[]``: id, slug, name, status, ...)."""
+    return _internal_get("/api/v1/internal/tenants", access_token, what="tenants") or []
+
+
+def list_super_admins(access_token: str | None = None) -> list[dict]:
+    """Platform Super Admins via Identity API GET /api/v1/internal/super-admins.
+
+    Documented ``data[]`` fields: ``id`` (application user id), ``keycloakId`` (identity only —
+    never a recipient id), ``email``, ``isSuperAdmin``, ``status``, ``inviteStatus``.
+    """
+    return _internal_get("/api/v1/internal/super-admins", access_token, what="super admins") or []
+
+
+_MEMBERSHIP_MARKERS = ("membershipId", "roleName", "tenantRbacRoles")
+
+
+def member_application_user_id(record: dict) -> UUID | None:
+    """Application user id of a tenant-member record.
+
+    Documented member shapes carry the user id in ``userId``; their ``id`` /
+    ``membershipId`` is the MEMBERSHIP record id and must never be used. ``id`` is
+    only accepted for records with no membership fields (flat user records).
+    ``keycloakId`` / ``keycloak_id`` are never accepted.
+    """
+    for field in ("application_user_id", "user_id", "userId"):
+        raw = record.get(field)
+        if raw:
+            try:
+                return UUID(str(raw))
+            except (TypeError, ValueError):
+                return None
+    if any(marker in record for marker in _MEMBERSHIP_MARKERS):
+        return None
+    raw = record.get("id")
+    if raw:
+        try:
+            return UUID(str(raw))
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def _normalize_tenant_slug(value: str) -> str:
@@ -89,34 +168,43 @@ def resolve_tenant_ids_from_slugs(slugs: list[str]) -> list[UUID]:
     return resolved
 
 
-def list_tenant_users(tenant_id: UUID) -> list[dict]:
-    """Resolve tenant member records via the established internal API.
+def list_tenant_users(tenant_id: UUID, access_token: str | None = None) -> list[dict]:
+    """Members of ANY tenant via Identity API GET /api/v1/internal/tenants/{tenant_id}/users.
 
-    Keep the complete records here rather than losing their RBAC fields at the
-    boundary.  Callers that only need ids should continue to use
-    :func:`list_tenant_user_ids` below.
+    Documented ``data[]`` fields: ``userId`` (application user id), ``membershipId``, ``role``
+    (e.g. tenant_owner), ``membershipStatus``, ``userStatus``, ``isSuperAdmin``. Requires
+    ``X-Internal-Api-Key`` plus the caller's Bearer token. Complete records are returned so
+    callers keep their RBAC fields; use :func:`list_tenant_user_ids` for ids only.
     """
-    if not settings.invigorate_internal_api_configured:
-        return []
-
-    url = (
-        f"{settings.INVIGORATE_AUTH_BASE_URL.rstrip('/')}"
-        f"/api/v1/internal/tenants/{tenant_id}/users"
+    return (
+        _internal_get(
+            f"/api/v1/internal/tenants/{tenant_id}/users",
+            access_token,
+            what="tenant users",
+        )
+        or []
     )
-    headers = {"X-Internal-Api-Key": settings.INVIGORATE_INTERNAL_API_KEY}
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        payload = response.json()
-    except Exception:
-        logger.exception("Failed to fetch tenant users from Invigorate internal API")
-        return []
 
-    items = payload.get("items") or payload.get("data") or payload
-    if not isinstance(items, list):
-        return []
 
-    return [item for item in items if isinstance(item, dict)]
+def list_tenant_members(access_token: str) -> list[dict] | None:
+    """List the members of the caller's own tenant via Invigorate
+    GET /api/v1/tenant/members, authenticated with the caller's Bearer token.
+
+    The endpoint takes no tenant parameter: the tenant is implied by the token.
+    Callers MUST confirm the token's tenant is the tenant they need (see
+    ``fetch_tenant_me_profile``) before trusting the result.
+
+    Returns ``None`` when the lookup failed (so callers can tell a failure from
+    an empty tenant). The token is never logged.
+    """
+    base = settings.invigorate_admin_api_base_url
+    if not access_token or not base:
+        return None
+    return _get_items(
+        f"{base}/api/v1/tenant/members",
+        {"Authorization": f"Bearer {access_token}"},
+        what="tenant members",
+    )
 
 
 def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
@@ -125,19 +213,9 @@ def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
 
     user_ids: list[UUID] = []
     for item in items:
-        if not isinstance(item, dict):
-            continue
-        raw_id = (
-            item.get("user_id")
-            or item.get("id")
-            or item.get("keycloak_id")
-            or (item.get("user") or {}).get("id")
-        )
-        if raw_id:
-            try:
-                user_ids.append(UUID(str(raw_id)))
-            except ValueError:
-                continue
+        user_id = member_application_user_id(item)
+        if user_id is not None:
+            user_ids.append(user_id)
     return user_ids
 
 
