@@ -29,6 +29,7 @@ from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 
 import event_sql_support as _sqlite_shims  # noqa: F401  (registers the JSONB -> JSON shim and every model)
+from event_sql_support import other_heads
 from app.models.event_aux_models import EventRegistration
 
 REPO = Path(__file__).resolve().parents[1]
@@ -85,7 +86,7 @@ class TestGraph:
             descendants = [r.revision for r in script_dir.walk_revisions() if r.down_revision == node]
             assert len(descendants) == 1, f"{node} became a branch point: {descendants}"
             node = descendants[0]
-        assert heads == {node} | OTHER_HEADS
+        assert heads == {node} | other_heads(script_dir)
 
     def test_nothing_was_merged_and_history_is_untouched(self, script_dir):
         assert [r.revision for r in script_dir.walk_revisions() if isinstance(r.down_revision, tuple) and REVISION in r.down_revision] == []

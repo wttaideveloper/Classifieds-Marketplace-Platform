@@ -277,3 +277,22 @@ def silence_side_effects(monkeypatch):
 
 
 API = "/api/v1/events"
+
+
+# ---------------------------------------------------------------------------- alembic graph
+
+def other_heads(script_dir) -> set[str]:
+    """The three heads the Event migration-graph tests treat as "not ours".
+
+    Two are pinned as they always were. The third is the Training chain that begins at
+    ``d5e6f7a8b9c0``: later Training migrations legitimately extend it, so it is followed to wherever it
+    ends instead of being pinned (pinning it made every Training migration fail these Event tests).
+    """
+    node = "d5e6f7a8b9c0"
+    while True:
+        descendants = [r.revision for r in script_dir.walk_revisions() if r.down_revision == node]
+        if not descendants:
+            break
+        assert len(descendants) == 1, f"the Training chain branched at {node}: {descendants}"
+        node = descendants[0]
+    return {"a2b3c4d5e6f7", "f7a8b9c0d1e2", node}
