@@ -243,10 +243,10 @@ class EventCreate(BaseModel):
     duration_type: str = Field("custom", description="one_day|half_day|custom")
     time_zone: str | None = Field("Asia/Kolkata", description="Time zone")
     registration_cutoff: datetime | None = Field(None, description="Registration cutoff")
-    primary_image: str | None = Field(None, description="Primary image URL")
-    gallery_images: list | None = Field(None, description="Gallery images")
-    videos: list | None = Field(None, description="Videos")
-    documents: list | None = Field(None, description="Documents")
+    primary_image: str | None = Field(None, description="Cover image: the `url` returned by POST /events/media (field=primary_image), or an https:// URL. One value. null/\"\" clears it.")
+    gallery_images: list | None = Field(None, description="Gallery: list of `url`s from POST /events/media (field=gallery_images) or https:// URLs. Max 10. Replaces the whole list; [] clears it.")
+    videos: list | None = Field(None, description="Videos: list of `url`s from POST /events/media (field=videos) or https:// URLs. Max 3. Replaces the whole list; [] clears it.")
+    documents: list | None = Field(None, description="Documents: list of objects `{id,url,name,size,type}` (the upload response) or bare urls / https:// URLs. Max 10. Hosted files are stored with name/size/type taken from our record, not from the request. Replaces the whole list; [] clears it.")
     delivery_mode: DeliveryMode = Field("in_person", description="in_person|online|hybrid — display as In Person/Online/Hybrid")
     venue: EventVenue | dict | None = Field(None, description="Venue: name, address, city, latitude, longitude, instructions, map_url")
     meeting_link: str | None = Field(None, description="Manual meeting link (auto-generated if delivery_mode online/hybrid and meeting_provider set)")
@@ -433,10 +433,10 @@ class EventUpdate(BaseModel):
     duration_type: str | None = None
     time_zone: str | None = None
     registration_cutoff: datetime | None = None
-    primary_image: str | None = None
-    gallery_images: list | None = None
-    videos: list | None = None
-    documents: list | None = None
+    primary_image: str | None = Field(None, description="Cover image: the `url` returned by POST /events/media (field=primary_image), or an https:// URL. One value. null/\"\" clears it. Omit to leave unchanged.")
+    gallery_images: list | None = Field(None, description="Gallery: list of `url`s from POST /events/media (field=gallery_images) or https:// URLs. Max 10. Replaces the whole list; [] clears it. Omit to leave unchanged.")
+    videos: list | None = Field(None, description="Videos: list of `url`s from POST /events/media (field=videos) or https:// URLs. Max 3. Replaces the whole list; [] clears it. Omit to leave unchanged.")
+    documents: list | None = Field(None, description="Documents: list of objects `{id,url,name,size,type}` (the upload response) or bare urls / https:// URLs. Max 10. Hosted files are stored with name/size/type taken from our record, not from the request. Replaces the whole list; [] clears it. Omit to leave unchanged.")
     delivery_mode: DeliveryMode | None = None
     venue: EventVenue | dict | None = None
     meeting_link: str | None = None
