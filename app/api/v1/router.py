@@ -42,6 +42,8 @@ _safe_include(
 )
 
 # Events
+# Before the Events router: /events/media/... must not be read as /events/{event_id}/...
+_safe_include("app.api.v1.endpoints.event_media", prefix="/events/media", tags=["Event Media"])
 _safe_include("app.api.v1.endpoints.event", prefix="/events", tags=["Events"])
 _safe_include("app.api.v1.endpoints.event_category", prefix="/event-categories", tags=["Event Categories"])
 _safe_include("app.api.v1.endpoints.event_type", prefix="/event-types", tags=["Event Types"])

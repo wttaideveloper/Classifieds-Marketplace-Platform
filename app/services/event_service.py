@@ -369,6 +369,60 @@ def _plan_event_accommodation_update(event, update_data, config_changes: dict) -
     return {} if stored is None else {"accommodation": stored}
 
 
+def _validate_event_media_for_create(db: Session, payload: dict) -> None:
+    """Primary image / gallery / videos / documents: verify uploaded-file URLs belong to the owning tenant
+    and fit their field, cap counts, and store the canonical https form. Runs on the final payload, once the
+    owning tenant/enterprise are known (the form-configuration step can supply them)."""
+    from app.models.enterprise_model import Enterprise
+    from app.services import event_media_service as media
+
+    values = {f: payload.get(f) for f in media.FIELDS if payload.get(f) not in (None, "", [])}
+    if not values:
+        return
+    tenant_id = payload.get("tenant_id")
+    if tenant_id is None and payload.get("enterprise_id"):
+        enterprise = db.query(Enterprise).filter(Enterprise.id == payload["enterprise_id"]).first()
+        tenant_id = getattr(enterprise, "tenant_id", None)
+    try:
+        tenant_id = UUID(str(tenant_id)) if tenant_id else None
+    except (ValueError, TypeError):
+        tenant_id = None
+    normalized, _ = media.normalize_event_media(db, tenant_id, values)
+    payload.update(normalized)
+
+
+def _validate_event_media_for_update(db: Session, event, update_data) -> set:
+    """Same checks for the media fields an update actually sends. Returns the asset ids the Event used before."""
+    from app.repository.event_repo import event_owner_tenant_id
+    from app.services import event_media_service as media
+
+    before = media.referenced_asset_ids(event)
+    sent = getattr(update_data, "model_fields_set", set())
+    values = {f: getattr(update_data, f, None) for f in media.FIELDS if f in sent}
+    if not values:
+        return before
+    owner = event_owner_tenant_id(event)
+    try:
+        tenant_id = UUID(str(owner)) if owner else None
+    except (ValueError, TypeError):
+        tenant_id = None
+    normalized, _ = media.normalize_event_media(db, tenant_id, values)
+    for field, value in normalized.items():
+        setattr(update_data, field, value)
+    return before
+
+
+def _sync_event_media_quietly(db: Session, event, before: set) -> None:
+    """Mark uploads attached / released after a successful save. The Event is already saved; a failure
+    here is harmless because cleanup only deletes files no Event references."""
+    try:
+        from app.services import event_media_service as media
+
+        media.sync_event_media(db, event, before)
+    except Exception:
+        db.rollback()
+
+
 def create_event_service(db: Session, event_data, current_user: dict | None = None, access_token: str | None = None):
     from app.services.event_form_config_service import apply_form_configuration_to_event_data
 
@@ -406,6 +460,7 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
     payload["meals"] = _meals_for_new_event(event_data, payload.get("modules"))
     payload["accommodation"] = _accommodation_for_new_event(event_data, payload.get("modules"))
     payload.update(form_meta)
+    _validate_event_media_for_create(db, payload)
     from app.models.event_model import Event
     created = Event(**payload)
     db.add(created)
@@ -425,6 +480,7 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
             )
         except Exception:
             logger.exception("event_submitted notification failed for event %s", created.id)
+    _sync_event_media_quietly(db, created, set())
     return EventResponse.model_validate(map_event_write(created))
 
 
@@ -569,6 +625,7 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
         from app.services.event_template_mapping import validate_event_submission
         changes = update_data.to_model_data() if hasattr(update_data, "to_model_data") else update_data.model_dump(exclude_unset=True)
         validate_event_submission(db, event, {**changes, **(extra or {})})
+    media_before = _validate_event_media_for_update(db, event, update_data)
     updated = update_event(db, event, update_data, commit=False)
     if extra:
         for key, val in extra.items():
@@ -583,6 +640,7 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
     )
     db.commit()
     db.refresh(updated)
+    _sync_event_media_quietly(db, updated, media_before)
     # detect changes
     changes = {}
     for k, old in old_vals.items():

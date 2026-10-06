@@ -3334,9 +3334,32 @@ def reply_discussion_service(db: Session, tid: UUID, discussion_id: str, payload
     raise HTTPException(status_code=404, detail="Discussion not found")
 
 
+def _utc_iso(value) -> str | None:
+    """A stored timestamp as ISO 8601 UTC with a trailing Z. History entries are written with
+    datetime.utcnow().isoformat() — UTC, but with no designator — so naive values are UTC by definition;
+    an offset-aware value is converted."""
+    from datetime import datetime, timezone
+
+    if not value:
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    parsed = parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    return parsed.isoformat().replace("+00:00", "Z")
+
+
 def get_moderation_history_service(db: Session, tid: UUID):
+    """Every history entry with its own `created_at` (UTC, ISO 8601, trailing Z), oldest first. Existing
+    keys are returned unchanged — `at` is the same instant without the Z."""
     training = _get_training_or_404(db, tid)
-    return list(getattr(training, "moderation_history", None) or [])
+    out = []
+    for entry in getattr(training, "moderation_history", None) or []:
+        item = dict(entry) if isinstance(entry, dict) else {"action": str(entry)}
+        item["created_at"] = _utc_iso(item.get("created_at") or item.get("at"))
+        out.append(item)
+    return out
 
 
 # ---- Reviews (verified — must be enrolled) ----

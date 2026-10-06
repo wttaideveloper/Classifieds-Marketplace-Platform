@@ -1,4 +1,6 @@
+import hashlib
 import logging
+import time
 from uuid import UUID
 
 import requests
@@ -327,3 +329,52 @@ def fetch_internal_user_by_id(user_id: str) -> dict | None:
         if isinstance(payload, list) and payload and isinstance(payload[0], dict):
             return payload[0]
     return None
+
+
+# --- application roles from the /auth/me profile ------------------------------------------------
+# The access token's own claims are the first source of a user's role. A user who has not joined a
+# tenant often has none (the role then resolved to null and Products/Services answered 403), while the
+# same user's /auth/me profile says roles.tenantRole = "external_user", roles.userRole = "customer".
+# The profile is the Auth team's source of truth, so it is the fallback.
+
+_ROLES_CACHE: dict[str, tuple[float, dict]] = {}
+_ROLES_TTL_SECONDS = 60.0
+_ROLES_CACHE_MAX = 2048
+
+
+def _extract_profile_roles(profile: dict | None) -> dict | None:
+    """{"tenant_role", "user_role", "tenant_rbac_roles"} from a /auth/me response, or None."""
+    if not isinstance(profile, dict):
+        return None
+    candidates = [profile] + [profile[k] for k in ("data", "user", "profile") if isinstance(profile.get(k), dict)]
+    for candidate in candidates:
+        roles = candidate.get("roles")
+        if not isinstance(roles, dict):
+            continue
+        found = {
+            "tenant_role": roles.get("tenantRole") or roles.get("tenant_role"),
+            "user_role": roles.get("userRole") or roles.get("user_role"),
+            "tenant_rbac_roles": roles.get("tenantRbacRoles") or roles.get("tenant_rbac_roles"),
+        }
+        found = {k: v for k, v in found.items() if v}
+        if found:
+            return found
+    return None
+
+
+def fetch_application_roles(access_token: str) -> dict | None:
+    """Roles the Auth service reports for the caller, cached for a minute per token so a request that
+    needs the fallback does not add a network round trip every time. Failures are not cached."""
+    if not access_token:
+        return None
+    key = hashlib.sha256(access_token.encode()).hexdigest()
+    now = time.monotonic()
+    hit = _ROLES_CACHE.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    roles = _extract_profile_roles(fetch_auth_me_profile(access_token))
+    if roles:
+        if len(_ROLES_CACHE) >= _ROLES_CACHE_MAX:
+            _ROLES_CACHE.pop(min(_ROLES_CACHE, key=lambda k: _ROLES_CACHE[k][0]), None)
+        _ROLES_CACHE[key] = (now + _ROLES_TTL_SECONDS, roles)
+    return roles

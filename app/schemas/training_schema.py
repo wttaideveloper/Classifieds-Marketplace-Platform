@@ -1241,3 +1241,41 @@ class TrainingDiscussionResponse(BaseModel):
     question: str
     answer: str | None = None
     created_at: str
+
+
+class TrainingModerationHistoryItem(BaseModel):
+    """One action in a Training's moderation / lifecycle history, oldest first."""
+
+    model_config = ConfigDict(extra="allow", json_schema_extra={"example": {
+        "action": "approved",
+        "previous_status": "pending_approval",
+        "new_status": "approved",
+        "actor_id": "9d1f7a52-3c4e-4b86-a0d5-2e8c6f1b7a90",
+        "actor_email": "root@platform.example",
+        "actor_role": "super_admin",
+        "reason": None,
+        "created_at": "2026-10-06T10:30:00.123456Z",
+        "at": "2026-10-06T10:30:00.123456",
+    }})
+
+    action: str | None = Field(
+        None,
+        description="What happened: the status the Training moved to (approved, rejected, needs_revision = changes "
+        "requested, published, unpublished, pending_approval, suspended, cancelled, archived, ...) or an enrolment "
+        "decision (enrolment_approved, enrolment_rejected).",
+    )
+    previous_status: str | None = Field(None, description="Status before the action (status changes only).")
+    new_status: str | None = Field(None, description="Status after the action (status changes only).")
+    actor_id: str | None = Field(None, description="Application user id of who did it.")
+    actor_email: str | None = None
+    actor_role: str | None = None
+    reason: str | None = Field(None, description="Reviewer's reason / notes, when given.")
+    created_at: str | None = Field(
+        None,
+        description="When this action happened, ISO 8601 in UTC with a trailing Z (e.g. 2026-10-06T10:30:00.123456Z). "
+        "Every entry has its own. null only for an entry that carries no timestamp at all (none are known to exist).",
+    )
+    at: str | None = Field(
+        None,
+        description="Legacy field: the same instant as created_at, UTC but without the Z. Kept for existing clients; prefer created_at.",
+    )

@@ -31,7 +31,9 @@ from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 from sqlalchemy.dialects.postgresql import JSONB
 
-import event_sql_support as _sqlite_jsonb_shim  # noqa: F401  (registers the JSONB -> JSON shim so the migration runs on SQLite)
+import event_sql_support as _sqlite_jsonb_shim  # noqa: F401
+# (event_sql_support also registers the JSONB -> JSON shim so the migration runs on SQLite)
+from event_sql_support import other_heads
 from app.models.event_type_model import EventTypeConfig
 
 REPO = Path(__file__).resolve().parents[1]
@@ -105,7 +107,7 @@ class TestGraph:
         assert PARENT not in heads
         assert [r.revision for r in script_dir.walk_revisions() if r.down_revision == PARENT] == [REVISION]
         assert REVISION in heads  # this revision IS the current event-domain head
-        assert heads == {REVISION} | OTHER_HEADS
+        assert heads == {REVISION} | other_heads(script_dir)
 
     def test_nothing_was_merged_and_history_is_untouched(self, script_dir):
         assert [r.revision for r in script_dir.walk_revisions() if isinstance(r.down_revision, tuple) and REVISION in r.down_revision] == []
