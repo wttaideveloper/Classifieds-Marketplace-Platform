@@ -19,6 +19,61 @@ Event create/update also accepted any string in these fields. So there is now a 
   init/complete call: files go straight to this API's own disk, so there is no pre-signed-URL handshake. (If storage
   later moves to S3/CDN, init + complete endpoints would be added; the Event JSON would not change.)
 
+## Link OR upload — both are supported, in every field
+
+For each of the four fields the Enterprise Admin chooses, per item, either **paste a URL** or **upload a file**.
+In the request they look like this, and **they can be mixed freely inside `gallery_images`, `videos` and `documents`**:
+
+| Field | A pasted link | An uploaded file |
+|---|---|---|
+| `primary_image` (one value) | `"https://images.pexels.com/photos/1/p.jpeg"` | `"https://chat.wisdomtooth.tech/api/v1/events/media/<id>.png"` (the upload response's `url`) |
+| `gallery_images`, `videos` (arrays of strings) | `"https://www.youtube.com/watch?v=abc"` | the upload response's `url` |
+| `documents` (array) | `"https://cdn.example.com/Terms.pdf"` or `{"url": "...", "name": "Terms"}` | the upload response's `url`, or the whole asset object `{id,url,name,size,type}` |
+
+There is **no type flag** to send. The server tells the two apart by the url: a url of the form
+`/api/v1/events/media/<uuid>.<ext>` is an uploaded file (checked against your tenant); anything else is a link.
+The same request can therefore contain both, and order is preserved:
+
+```json
+{
+  "primary_image": "https://chat.wisdomtooth.tech/api/v1/events/media/6a1f….png",
+  "gallery_images": [
+    "https://chat.wisdomtooth.tech/api/v1/events/media/b3c9….jpg",
+    "https://images.pexels.com/photos/1/p.jpeg?auto=compress",
+    "https://chat.wisdomtooth.tech/api/v1/events/media/0d77….png"
+  ],
+  "videos": ["https://www.youtube.com/watch?v=abc123", "https://chat.wisdomtooth.tech/api/v1/events/media/91ce….mp4"],
+  "documents": [
+    { "id": "7d2c…", "url": "https://chat.wisdomtooth.tech/api/v1/events/media/7d2c….pdf", "name": "Agenda.pdf", "size": 482113, "type": "application/pdf" },
+    { "url": "https://cdn.example.com/files/Terms.pdf", "name": "Terms.pdf" }
+  ]
+}
+```
+
+**What gets stored and returned** (hosted URL — not a media id or storage key):
+
+- An uploaded file becomes its **hosted https URL**; a link stays the link (stored as `https://`).
+- `documents` are always returned as **objects** with at least `{url, name}` — uploads add `id, size, type`; a link's
+  `name` is the one you sent, or the file name at the end of the url. (Events saved before this change may still hold a
+  bare string in `documents`; render both.)
+- To tell them apart in the UI: an entry whose url contains `/api/v1/events/media/` (documents: has an `id`) is an
+  uploaded file, so removing it from the form removes the file; otherwise it's a link.
+- The limits below (count) apply to links and uploads **together**. File type/size limits apply to uploads only.
+
+### Link rules
+
+A link is accepted if it is an `http://` or `https://` URL (stored as `https://`) that:
+
+- is at most 2048 characters, with no spaces;
+- has a **public hostname** — a bare IP address (`13.207.85.164`, `[::1]`, `192.168.x.x`), `localhost` and
+  single-word hosts (`intranet`) are refused;
+- carries no `user:password@` credentials.
+
+Anything else (`javascript:`, `data:`, `ftp:`, `//host/x`, relative paths) is refused with `422`. The server **does
+not fetch** the link, so it cannot know the file type, that it exists, or that it is an image: a gallery link to a
+page rather than a picture is accepted. Query strings are kept (signed S3 URLs work). YouTube/Vimeo/etc. page links
+are fine for `videos`.
+
 ## Endpoints
 
 Base: `https://chat.wisdomtooth.tech/api/v1/events/media`
@@ -83,8 +138,8 @@ Same endpoints as today (`POST /events/`, `PUT /events/{id}`); only these four f
 
 - Send `url` from the upload response. For `documents` you may send the whole asset object or just the url — the server
   stores `id/url/name/size/type` from **its own record** and ignores whatever name/size/type the client sent.
-- Plain `https://` URLs (Pexels, S3, a CDN) are still accepted anywhere. `http://` is stored as `https://`. Anything else
-  (`javascript:`, `data:`, relative paths, other schemes) → `422`.
+- Plain URLs (Pexels, S3, a CDN, YouTube) are accepted anywhere and mix with uploads — see "Link OR upload" above for the
+  link rules.
 - **PUT is "set what you send":** omit a field to leave it unchanged; send the **full** list to replace it; send `null`
   (`primary_image`) or `[]` (lists) to clear it.
 - A bad request returns `422` with every problem at once:
@@ -119,7 +174,7 @@ They return exactly what was stored, so no extra call is needed to render:
 |---|---|
 | `primary_image` | url string (or `null`) |
 | `gallery_images`, `videos` | array of url strings |
-| `documents` | array of `{id, url, name, size, type}` for uploaded files (older / external entries may be a bare url string or `{url, name?, size?, type?}` — handle both) |
+| `documents` | array of `{id, url, name, size, type}` for uploaded files (a link is `{url, name}`; Events saved before this change may still hold a bare url string — handle both) |
 
 Render images/videos from `url` directly; offer documents as downloads using `name` and `url` (the response carries
 `Content-Disposition: attachment` with the original file name). The same `GET /events/{id}` payload is what the

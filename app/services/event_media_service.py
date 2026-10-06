@@ -11,14 +11,14 @@ import re
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import Text, cast, or_
 from sqlalchemy.orm import Session
 
 from app.models.event_media_model import EventMedia
-from app.utils.public_urls import public_media_base, to_https
+from app.utils.public_urls import _is_ip, public_media_base, to_https
 
 MB = 1024 * 1024
 FIELDS = ("primary_image", "gallery_images", "videos", "documents")
@@ -291,11 +291,20 @@ def _clean_url(db: Session, raw, field: str, tenant_id, problems: list, assets: 
             return None
         assets[asset.id] = asset
         return asset_url(asset)
-    scheme = urlsplit(url).scheme.lower()
-    if scheme not in ("http", "https"):
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https"):
         problems.append(f"{field}: only an uploaded file or an https:// URL is accepted")
         return None
-    return to_https(url)
+    host = parts.hostname or ""
+    if any(ch.isspace() for ch in url):
+        problems.append(f"{field}: a URL must not contain spaces")
+    elif parts.username or parts.password:
+        problems.append(f"{field}: a URL must not contain a username or password")
+    elif not host or "." not in host or host == "localhost" or _is_ip(host):
+        problems.append(f"{field}: a URL must use a public hostname (not an IP address or localhost)")
+    else:
+        return to_https(url)
+    return None
 
 
 def normalize_event_media(db: Session, tenant_id, values: dict) -> tuple[dict, set[uuid.UUID]]:
@@ -350,13 +359,22 @@ def _store_shape(field: str, url: str, entry, assets: dict):
     if hosted:
         asset = assets[hosted[0]]
         return {"id": str(asset.id), "url": url, "name": asset.original_name, "size": asset.size, "type": asset.mime_type}
-    if isinstance(entry, dict):  # external document: keep only the display fields we define
-        kept = {"url": url}
+    # A pasted link. Always stored as an object with at least {url, name} so the UI renders documents
+    # uniformly; any name the client gave wins, otherwise it is taken from the end of the URL.
+    kept = {"url": url}
+    if isinstance(entry, dict):
         for key in ("name", "size", "type"):
             if entry.get(key) is not None:
                 kept[key] = str(entry[key])[:255] if key != "size" else entry[key]
-        return kept
-    return url
+    if not kept.get("name"):
+        kept["name"] = _name_from_url(url)
+    return kept
+
+
+def _name_from_url(url: str) -> str:
+    parts = urlsplit(url)
+    last = unquote(parts.path.rsplit("/", 1)[-1]).strip()
+    return (last or parts.hostname or "document")[:255]
 
 
 def sync_event_media(db: Session, event, before_ids: set[uuid.UUID]) -> None:

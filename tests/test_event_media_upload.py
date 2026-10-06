@@ -410,3 +410,116 @@ def test_upload_housekeeping_runs_opportunistically(world):
     put_asset(world, name="fresh.png")  # any later upload sweeps expired leftovers
     world.db.expire_all()
     assert world.db.get(EventMedia, UUID(stale["id"])) is None
+
+
+# --- link OR upload, mixed -------------------------------------------------------------------
+
+def test_every_field_accepts_a_link_or_an_upload_and_lists_may_mix_them(world):
+    up_cover = put_asset(world, "primary_image", "cover.png")
+    up_g1 = put_asset(world, "gallery_images", "g1.png")
+    up_g2 = put_asset(world, "gallery_images", "g2.jpg", "image/jpeg", JPEG)
+    up_video = put_asset(world, "videos", "v.mp4", "video/mp4", MP4)
+    up_doc = put_asset(world, "documents", "Agenda.pdf", "application/pdf", PDF)
+    event = draft_event(world)
+
+    resp = act(world, world.owner).put(f"{API}/{event.id}", json={
+        "primary_image": up_cover["url"],
+        "gallery_images": [up_g1["url"], "https://images.pexels.com/photos/1/p.jpeg?auto=compress", up_g2["url"]],
+        "videos": ["https://www.youtube.com/watch?v=abc123", up_video["url"]],
+        "documents": [
+            up_doc["url"],
+            "https://cdn.example.com/files/Annual%20Report.pdf?v=2",
+            {"url": "https://s3.amazonaws.com/bucket/brochure.pdf", "name": "Brochure"},
+        ],
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["primary_image"] == up_cover["url"]
+    assert body["gallery_images"] == [up_g1["url"], "https://images.pexels.com/photos/1/p.jpeg?auto=compress", up_g2["url"]]  # order kept
+    assert body["videos"] == ["https://www.youtube.com/watch?v=abc123", up_video["url"]]
+    assert body["documents"] == [
+        {"id": up_doc["id"], "url": up_doc["url"], "name": "Agenda.pdf", "size": len(PDF), "type": "application/pdf"},
+        {"url": "https://cdn.example.com/files/Annual%20Report.pdf?v=2", "name": "Annual Report.pdf"},
+        {"url": "https://s3.amazonaws.com/bucket/brochure.pdf", "name": "Brochure"},
+    ]
+    world.db.expire_all()
+    assert all(world.db.get(EventMedia, UUID(a["id"])).attached_at for a in (up_cover, up_g1, up_g2, up_video, up_doc))
+
+
+def test_the_count_limit_covers_links_and_uploads_together(world):
+    uploads = [put_asset(world, name=f"g{i}.png") for i in range(6)]
+    links = [f"https://cdn.example.com/{i}.png" for i in range(5)]
+    event = draft_event(world)
+    resp = act(world, world.owner).put(f"{API}/{event.id}", json={"gallery_images": [u["url"] for u in uploads] + links})
+    assert resp.status_code == 422 and "at most 10 allowed, got 11" in resp.json()["detail"]["errors"][0]
+    ok = act(world, world.owner).put(f"{API}/{event.id}", json={"gallery_images": [u["url"] for u in uploads] + links[:4]})
+    assert ok.status_code == 200
+
+
+def test_switching_between_a_link_and_an_upload(world):
+    upload_asset = put_asset(world, "primary_image", "cover.png")
+    event = draft_event(world)
+    put = lambda value: act(world, world.owner).put(f"{API}/{event.id}", json={"primary_image": value})
+
+    assert put("https://images.pexels.com/photos/1/p.jpeg").json()["primary_image"] == "https://images.pexels.com/photos/1/p.jpeg"
+    assert put(upload_asset["url"]).json()["primary_image"] == upload_asset["url"]
+    world.db.expire_all()
+    assert world.db.get(EventMedia, UUID(upload_asset["id"])).attached_at is not None
+
+    assert put("https://images.pexels.com/photos/2/q.jpeg").status_code == 200  # back to a link
+    world.db.expire_all()
+    assert world.db.get(EventMedia, UUID(upload_asset["id"])).released_at is not None  # the unused upload starts its grace period
+
+
+def test_the_same_file_or_link_listed_twice_is_stored_once(world):
+    asset = put_asset(world)
+    event = draft_event(world)
+    resp = act(world, world.owner).put(f"{API}/{event.id}", json={
+        "gallery_images": [asset["url"], asset["url"], "https://cdn.example.com/a.png", "https://cdn.example.com/a.png"],
+    })
+    assert resp.json()["gallery_images"] == [asset["url"], "https://cdn.example.com/a.png"]
+
+
+# --- link validation ------------------------------------------------------------------------
+
+@pytest.mark.parametrize(("link", "reason"), [
+    ("http://13.207.85.164/pic.png", "public hostname"),
+    ("https://192.168.0.5/pic.png", "public hostname"),
+    ("https://[::1]/pic.png", "public hostname"),
+    ("https://localhost/pic.png", "public hostname"),
+    ("https://intranet/pic.png", "public hostname"),          # single-label host
+    ("https://user:secret@cdn.example.com/pic.png", "username or password"),
+    ("https://cdn.example.com/my pic.png", "spaces"),
+    ("https://cdn.example.com/" + "a" * 2100, "longer than"),
+    ("javascript:alert(1)", "https:// URL"),
+    ("data:image/png;base64,AAAA", "https:// URL"),
+    ("//cdn.example.com/pic.png", "https:// URL"),
+    ("", "needs a url"),
+])
+def test_links_that_are_not_ordinary_public_urls_are_refused(world, link, reason):
+    event = draft_event(world)
+    resp = act(world, world.owner).put(f"{API}/{event.id}", json={"gallery_images": [link]})
+    assert resp.status_code == 422, resp.text
+    assert reason in resp.json()["detail"]["errors"][0]
+
+
+@pytest.mark.parametrize("link", [
+    "https://www.youtube.com/watch?v=abc123",
+    "https://youtu.be/abc123",
+    "https://vimeo.com/123456",
+    "https://bucket.s3.ap-south-1.amazonaws.com/events/pic.png?X-Amz-Signature=abc&X-Amz-Expires=3600",
+    "https://images.pexels.com/photos/1/p.jpeg?auto=compress&cs=tinysrgb",
+    "http://cdn.example.com/pic.png",
+])
+def test_ordinary_links_are_accepted_whatever_the_field(world, link):
+    event = draft_event(world)
+    for field in ("gallery_images", "videos", "documents"):
+        assert act(world, world.owner).put(f"{API}/{event.id}", json={field: [link]}).status_code == 200
+
+
+def test_a_document_link_without_a_name_gets_one_from_the_url(world):
+    event = draft_event(world)
+    resp = act(world, world.owner).put(f"{API}/{event.id}", json={"documents": [
+        "https://cdn.example.com/files/Terms%20and%20Conditions.pdf", "https://docs.example.com",
+    ]})
+    assert [d["name"] for d in resp.json()["documents"]] == ["Terms and Conditions.pdf", "docs.example.com"]

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, get_optional_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
-from app.schemas.training_schema import TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse
+from app.schemas.training_schema import TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse, TrainingModerationHistoryItem
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonAttendanceBatchRequest, LessonAttendanceRosterResponse, LessonCreate, LessonProgressSaveRequest, LessonProgressSaveResponse, LessonQrCheckInRequest, LessonQrCheckInResponse, LessonReorderRequest, SectionReorderRequest, TrainingAssignmentResponse, TrainingProgressResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingSummaryResponse, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, batch_mark_lesson_attendance_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_lesson_attendance_roster_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, qr_check_in_lesson_attendance_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, reorder_sections_service, reorder_lessons_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
@@ -260,7 +260,17 @@ def archive_training(training_id: UUID, db: Session = Depends(get_db), current_u
 def restore_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     return restore_training_service(db, training_id, current_user)
 
-@router.get("/{training_id}/moderation-history", summary="Admin moderation / rejection history")
+@router.get(
+    "/{training_id}/moderation-history",
+    response_model=list[TrainingModerationHistoryItem],
+    summary="Admin moderation / rejection history",
+    description=(
+        "Every approval-workflow and lifecycle action on the Training, oldest first — approved, rejected, changes "
+        "requested (`needs_revision`), published, unpublished, submitted, suspended, cancelled, archived — plus "
+        "enrolment approve/reject decisions. Each item carries its own `created_at` (ISO 8601 UTC, trailing Z), the "
+        "time that action happened; it is not the Training's `updated_at`."
+    ),
+)
 def moderation_history(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     return get_moderation_history_service(db, training_id)
 
