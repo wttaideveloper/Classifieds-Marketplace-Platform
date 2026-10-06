@@ -415,6 +415,8 @@ def _mock_keycloak_request_raw_claims(monkeypatch, *, application_user_id, claim
         "app.services.invigorate_auth_client.fetch_application_user_id",
         lambda _token: application_user_id,
     )
+    # Role-less tokens fall back to the /auth/me profile's roles; here that profile reports none.
+    monkeypatch.setattr("app.services.invigorate_auth_client.fetch_application_roles", lambda _token: None)
 
 
 # --- Test case 1 & 4 (task spec): valid application role -> allowed;

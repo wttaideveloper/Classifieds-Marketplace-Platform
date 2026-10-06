@@ -204,6 +204,9 @@ def _map_keycloak_role(payload: dict) -> str | None:
         return "admin"
     if rbac_roles & {"tenant_admin", "contributor", "reviewer", "publisher"}:
         return "provider"
+    # Auth labels a customer's RBAC role "customer"; checked last so any staff role above still wins.
+    if rbac_roles & {"customer", "external_user"}:
+        return "customer"
 
     roles: list[str] = []
     realm_access = payload.get("realm_access") or {}
@@ -378,6 +381,27 @@ def _resolve_application_user_id(access_token: str, keycloak_id: str | None) -> 
     return app_user_id
 
 
+def _fill_role_from_profile(user: dict, token: str) -> None:
+    """A genuine Keycloak token with no recognised role claim (typically a user who has not joined a
+    tenant) takes its role from the Auth service's /auth/me profile instead of being left as null —
+    null made Products/Services answer 403. A role present in the JWT always wins and never triggers
+    the extra lookup. If the profile has no usable role either, the role stays null (still denied)."""
+    if user.get("role"):
+        return
+    from app.services.invigorate_auth_client import fetch_application_roles
+
+    roles = fetch_application_roles(token)
+    if not roles:
+        return
+    role = _map_keycloak_role({key: roles.get(key) for key in ("tenant_role", "user_role", "tenant_rbac_roles")})
+    if not role:
+        return
+    user["role"] = role
+    for key in ("tenant_role", "user_role", "tenant_rbac_roles"):
+        if roles.get(key) is not None and user.get(key) is None:
+            user[key] = roles[key]
+
+
 def _build_current_user(token: str) -> dict:
     """Resolve the authenticated identity for an incoming request.
 
@@ -396,6 +420,7 @@ def _build_current_user(token: str) -> dict:
     user = payload_to_user(payload)
     if is_keycloak_issued:
         user["id"] = _resolve_application_user_id(token, user.get("keycloak_id"))
+        _fill_role_from_profile(user, token)
     return user
 
 
@@ -448,6 +473,7 @@ def resolve_chat_user_from_token_or_raise(token: str) -> dict:
         user = payload_to_user(payload)
         if is_keycloak_issued:
             user["id"] = _resolve_application_user_id(token, user.get("keycloak_id"))
+            _fill_role_from_profile(user, token)
         return user
     except HTTPException:
         raise
