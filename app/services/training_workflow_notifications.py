@@ -89,7 +89,7 @@ def _deliver_to_users(db, *, recipients, notification_type, title, message, tena
 
 # --- training approval --------------------------------------------------------------------
 
-def notify_training_approval(training, *, reason: str | None = None) -> None:
+def notify_training_approval(training, *, reason: str | None = None, access_token: str | None = None) -> None:
     """Call after a Training's status has been committed as pending_approval / approved / rejected /
     needs_revision. `training.moderation_history` must already include this transition: its length
     is the idempotency discriminator, so a resubmission (a new history entry) notifies again while a
@@ -99,11 +99,11 @@ def notify_training_approval(training, *, reason: str | None = None) -> None:
     training_notifications._dispatch(
         _deliver_approval,
         training_id=str(training.id), status=training.status, reason=reason,
-        history_index=len(training.moderation_history or []),
+        history_index=len(training.moderation_history or []), access_token=access_token,
     )
 
 
-def _deliver_approval(*, training_id: str, status: str, reason: str | None, history_index: int):
+def _deliver_approval(*, training_id: str, status: str, reason: str | None, history_index: int, access_token: str | None = None):
     from app.db.database import SessionLocal
     from app.models.training_model import Training
     from app.services import event_notification_service as recipients_of
@@ -114,9 +114,9 @@ def _deliver_approval(*, training_id: str, status: str, reason: str | None, hist
         if training is None:
             return None
         if status == "pending_approval":
-            recipients, tenant_id = recipients_of.resolve_platform_admin_user_ids(), None
+            recipients, tenant_id = recipients_of.resolve_platform_admin_user_ids(access_token=access_token), None
         else:
-            recipients, tenant_id = recipients_of.resolve_enterprise_admin_user_ids(db, training)
+            recipients, tenant_id = recipients_of.resolve_enterprise_admin_user_ids(db, training, access_token=access_token)
         title, message = _APPROVAL_TEXT[notification_type]
         return _deliver_to_users(
             db, recipients=recipients, notification_type=notification_type,
@@ -132,18 +132,18 @@ def _deliver_approval(*, training_id: str, status: str, reason: str | None, hist
 
 # --- enrollment confirmed -> Enterprise Admin ---------------------------------------------
 
-def notify_enrollment_confirmed_to_admins(training, enrolment, *, actor_id=None) -> None:
+def notify_enrollment_confirmed_to_admins(training, enrolment, *, actor_id=None, access_token: str | None = None) -> None:
     """Call after an enrollment is saved as `enrolled`: automatic acceptance, payment success,
     waitlist promotion, or an Enterprise Admin's own acceptance (the acting admin is excluded).
     Sent once per enrollment, and only when the training is free or its payment is recorded."""
     training_notifications._dispatch(
         _deliver_enrolled,
         training_id=str(training.id), enrolment_id=str(enrolment.id),
-        actor_id=str(actor_id) if actor_id else None,
+        actor_id=str(actor_id) if actor_id else None, access_token=access_token,
     )
 
 
-def _deliver_enrolled(*, training_id: str, enrolment_id: str, actor_id: str | None):
+def _deliver_enrolled(*, training_id: str, enrolment_id: str, actor_id: str | None, access_token: str | None = None):
     from app.db.database import SessionLocal
     from app.models.training_model import Training, TrainingEnrolment
     from app.services import event_notification_service as recipients_of
@@ -156,7 +156,7 @@ def _deliver_enrolled(*, training_id: str, enrolment_id: str, actor_id: str | No
         if not payment_satisfied(db, training, enrolment.participant_email):
             logger.info("training_enrolled held back for %s: payment not recorded", enrolment_id)
             return None
-        recipients, tenant_id = recipients_of.resolve_enterprise_admin_user_ids(db, training)
+        recipients, tenant_id = recipients_of.resolve_enterprise_admin_user_ids(db, training, access_token=access_token)
         recipients = [uid for uid in recipients if str(uid) != actor_id]
         return _deliver_to_users(
             db, recipients=recipients, notification_type="training_enrolled",

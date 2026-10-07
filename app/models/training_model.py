@@ -166,6 +166,8 @@ class TrainingWaitlist(Base):
     training_id = Column(UUID(as_uuid=True), ForeignKey("trainings.id"), nullable=False, index=True)
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False)
+    # Application user id of the learner who joined; copied onto the enrolment when they are promoted.
+    user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 

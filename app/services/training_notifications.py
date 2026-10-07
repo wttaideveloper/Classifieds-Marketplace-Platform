@@ -298,7 +298,7 @@ def notify_announcement(db, training, entry: dict) -> int:
 
 # --- 2. new training published ------------------------------------------------------------
 
-def _fan_out_new_training(*, training_id, tenant_id, title, message, metadata, exclude_user_id) -> int:
+def _fan_out_new_training(*, training_id, tenant_id, title, message, metadata, exclude_user_id, access_token=None) -> int:
     from app.db.database import SessionLocal
     from app.services.invigorate_auth_client import list_tenant_user_ids
     from app.services.notification_service import create_automatic_notification
@@ -308,7 +308,8 @@ def _fan_out_new_training(*, training_id, tenant_id, title, message, metadata, e
         logger.info("new-training notification skipped for %s: training has no tenant", training_id)
         return 0
     exclude = _as_uuid(exclude_user_id)
-    user_ids = [uid for uid in list_tenant_user_ids(tenant_uuid) if uid != exclude]
+    tenant_users = list_tenant_user_ids(tenant_uuid, access_token=access_token) if access_token else list_tenant_user_ids(tenant_uuid)
+    user_ids = [uid for uid in tenant_users if uid != exclude]
     if not user_ids:
         logger.info("new-training notification for %s: no tenant users resolved (Invigorate internal API configured?)", training_id)
         return 0
@@ -320,14 +321,14 @@ def _fan_out_new_training(*, training_id, tenant_id, title, message, metadata, e
     return len(user_ids)
 
 
-def notify_new_training(training, *, exclude_user_id=None) -> None:
+def notify_new_training(training, *, exclude_user_id=None, access_token=None) -> None:
     when = f" Starts {training.start_date:%d %b %Y}." if getattr(training, "start_date", None) else ""
     _dispatch(
         _fan_out_new_training,
         training_id=str(training.id), tenant_id=training.tenant_id,
         title=f"New Training: {training.title}",
         message=f"{training.title} has just been added.{when} Take a look and enrol.",
-        metadata={"training_id": str(training.id)}, exclude_user_id=exclude_user_id,
+        metadata={"training_id": str(training.id)}, exclude_user_id=exclude_user_id, access_token=access_token,
     )
 
 
