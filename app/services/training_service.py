@@ -264,7 +264,7 @@ def duplicate_training_service(db: Session, tid: UUID):
     clone=Training(**payload); db.add(clone); db.commit(); db.refresh(clone)
     return TrainingResponse.model_validate(map_training_write(clone))
 
-def update_training_status_service(db: Session, tid: UUID, st: str, current_user: dict | None = None, notes: str | None = None):
+def update_training_status_service(db: Session, tid: UUID, st: str, current_user: dict | None = None, notes: str | None = None, access_token: str | None = None):
     obj = get_training_by_id(db, tid, include_deleted=True)
     if not obj:
         raise HTTPException(status_code=404, detail="Training not found")
@@ -331,21 +331,21 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
     if st in ("pending_approval", "approved", "rejected", "needs_revision"):
         try:
             from app.services import training_workflow_notifications
-            training_workflow_notifications.notify_training_approval(obj, reason=notes)
+            training_workflow_notifications.notify_training_approval(obj, reason=notes, access_token=access_token)
         except Exception:
             pass
     if first_publish:  # not on re-publish after an unpublish/suspend — users were already told once
         try:
             from app.services import training_notifications
-            training_notifications.notify_new_training(obj, exclude_user_id=(current_user or {}).get("id"))
+            training_notifications.notify_new_training(obj, exclude_user_id=(current_user or {}).get("id"), access_token=access_token)
         except Exception:
             pass
     return TrainingResponse.model_validate(map_training_write(obj))
 
 
-def restore_training_service(db: Session, tid: UUID, current_user: dict | None = None):
+def restore_training_service(db: Session, tid: UUID, current_user: dict | None = None, access_token: str | None = None):
     """Restore an archived training back to draft (clears is_deleted)."""
-    return update_training_status_service(db, tid, "draft", current_user)
+    return update_training_status_service(db, tid, "draft", current_user, access_token=access_token)
 
 # ---- Assessment / Assignment / Progress / LiveSession services (real implementations) ----
 
@@ -448,7 +448,7 @@ def lesson_progress_percent(completed: int, total: int) -> float:
     return round(completed / total * 100, 2) if total else 0
 
 
-def _promote_waitlist(db: Session, tid: UUID) -> dict | None:
+def _promote_waitlist(db: Session, tid: UUID, access_token: str | None = None) -> dict | None:
     from app.models.training_model import TrainingEnrolment, TrainingWaitlist
     training = _get_training_or_404(db, tid)
     if not training.capacity:
@@ -480,10 +480,14 @@ def _promote_waitlist(db: Session, tid: UUID) -> dict | None:
             expires = _dt.utcnow() + timedelta(days=int(training.access_duration_days))
         except Exception:
             pass
+    from app.services.training_learner_identity import resolve_learner_user_id
     promoted = TrainingEnrolment(
         training_id=tid,
         participant_name=next_wait.participant_name,
         participant_email=next_wait.participant_email,
+        # kept from when they joined the waitlist; an older entry without one is recovered from the same
+        # person's other records
+        user_id=next_wait.user_id or resolve_learner_user_id(db, next_wait, training, access_token, persist=False),
         status=status,
         qr_code=str(_uuid.uuid4())[:12].upper(),
         access_expires_at=expires,
@@ -495,13 +499,13 @@ def _promote_waitlist(db: Session, tid: UUID) -> dict | None:
     if promoted.status == "enrolled":
         try:
             from app.services import training_workflow_notifications
-            training_workflow_notifications.notify_enrollment_confirmed_to_admins(training, promoted)
+            training_workflow_notifications.notify_enrollment_confirmed_to_admins(training, promoted, access_token=access_token)
         except Exception:
             pass
     return {"enrolment_id": str(promoted.id), "participant_email": promoted.participant_email, "status": promoted.status}
 
 
-def join_waitlist_service(db: Session, tid: UUID, payload: dict | None = None, current_user: dict | None = None):
+def join_waitlist_service(db: Session, tid: UUID, payload: dict | None = None, current_user: dict | None = None, access_token: str | None = None):
     from app.models.training_model import TrainingEnrolment, TrainingWaitlist
     _get_training_or_404(db, tid)
     participant_email = (payload or {}).get("participant_email") or (current_user or {}).get("email")
@@ -520,7 +524,9 @@ def join_waitlist_service(db: Session, tid: UUID, payload: dict | None = None, c
     ).first()
     if existing_wait:
         raise HTTPException(status_code=400, detail="Already on the waitlist for this training")
-    w = TrainingWaitlist(training_id=tid, participant_name=participant_name, participant_email=participant_email)
+    from app.services.training_learner_identity import resolve_enrolling_user_id
+    w = TrainingWaitlist(training_id=tid, participant_name=participant_name, participant_email=participant_email,
+                         user_id=resolve_enrolling_user_id(current_user, participant_email, access_token))
     db.add(w)
     db.commit()
     db.refresh(w)
@@ -536,7 +542,7 @@ def join_waitlist_service(db: Session, tid: UUID, payload: dict | None = None, c
     }
 
 
-def leave_waitlist_service(db: Session, tid: UUID, entry_id: UUID, participant_email: str | None = None):
+def leave_waitlist_service(db: Session, tid: UUID, entry_id: UUID, participant_email: str | None = None, access_token: str | None = None):
     from app.models.training_model import TrainingWaitlist
     q = db.query(TrainingWaitlist).filter(TrainingWaitlist.id == entry_id, TrainingWaitlist.training_id == tid)
     if participant_email:
@@ -546,7 +552,7 @@ def leave_waitlist_service(db: Session, tid: UUID, entry_id: UUID, participant_e
         raise HTTPException(status_code=404, detail="Waitlist entry not found")
     db.delete(w)
     db.commit()
-    promoted = _promote_waitlist(db, tid)
+    promoted = _promote_waitlist(db, tid, access_token)
     result = {"message": "Removed from waitlist"}
     if promoted:
         result["waitlist_promoted"] = promoted
@@ -2207,7 +2213,7 @@ def _enrolment_response_context(db: Session, t, tid: UUID, participant_email: st
     }
 
 
-def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_code: str | None = None, current_user: dict | None = None, *, commit: bool = True):
+def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_code: str | None = None, current_user: dict | None = None, *, commit: bool = True, access_token: str | None = None):
     from app.models.training_model import TrainingEnrolment
     from datetime import datetime, timedelta
     t = _get_training_or_404(db, tid)
@@ -2238,7 +2244,7 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             cnt = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id==tid, TrainingEnrolment.status.in_(ENROLMENT_CAPACITY_STATUSES)).count()
             if cnt >= cap:
                 if payload.get("auto_waitlist"):
-                    wl = join_waitlist_service(db, tid, {"participant_email": participant_email, "participant_name": participant_name}, current_user)
+                    wl = join_waitlist_service(db, tid, {"participant_email": participant_email, "participant_name": participant_name}, current_user, access_token)
                     context = _enrolment_response_context(db, t, tid, participant_email, "waitlisted")
                     context.pop("message")  # keep the capacity-specific message below
                     return {"waitlisted": True, "position": wl.get("position"), "id": wl.get("id"), "training_id": str(tid), "message": f"Training at capacity ({cap}) — added to waitlist", **context}
@@ -2255,12 +2261,11 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             expires = datetime.utcnow() + timedelta(days=days)
         except Exception:
             pass
-    # Only a self-enrolment carries the caller's user id — an admin enrolling someone else
-    # must not stamp the admin's id on that learner's enrolment.
-    from app.services.training_notifications import _as_uuid
-    _cu = current_user or {}
-    enrolling_self = str(_cu.get("email") or "").lower() == str(participant_email).lower()
-    e = TrainingEnrolment(training_id=tid, participant_name=participant_name, participant_email=participant_email, user_id=_as_uuid(_cu.get("id")) if enrolling_self else None, group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
+    # The learner's application user id - saved whenever the caller is the person being enrolled, judged on
+    # their verified identity (token claim, then the Auth profile) and not on a bare email-claim match. An
+    # admin enrolling someone else must not get their own id stamped on that learner's enrolment.
+    from app.services.training_learner_identity import resolve_enrolling_user_id
+    e = TrainingEnrolment(training_id=tid, participant_name=participant_name, participant_email=participant_email, user_id=resolve_enrolling_user_id(current_user, participant_email, access_token), group_enrol=payload.get("group_enrol", False), status=status, coupon_code=coupon_code, access_expires_at=expires, qr_code=str(_uuid.uuid4())[:12].upper())
     db.add(e)
     if not commit:
         db.flush()
@@ -2286,7 +2291,7 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             training_notifications.notify_enrolment_confirmed(t, e)
             # automatic acceptance — the Enterprise Admin is told once the enrollment is confirmed
             # (held back for a paid training until its payment is recorded)
-            training_workflow_notifications.notify_enrollment_confirmed_to_admins(t, e)
+            training_workflow_notifications.notify_enrollment_confirmed_to_admins(t, e, access_token=access_token)
     except Exception:
         pass
     for key, value in _enrolment_response_context(db, t, tid, participant_email, status).items():
@@ -2354,7 +2359,7 @@ def list_my_enrolments_service(db: Session, email: str, status_filter: str | Non
     return out
 
 
-def cancel_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, participant_email: str | None = None):
+def cancel_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, participant_email: str | None = None, access_token: str | None = None):
     from app.models.training_model import TrainingEnrolment
     q=db.query(TrainingEnrolment).filter(TrainingEnrolment.id==enrol_id, TrainingEnrolment.training_id==tid)
     if participant_email: q=q.filter(TrainingEnrolment.participant_email==participant_email)
@@ -2364,7 +2369,7 @@ def cancel_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, partic
     e.status = "cancelled"
     db.commit()
     db.refresh(e)
-    promoted = _promote_waitlist(db, tid)
+    promoted = _promote_waitlist(db, tid, access_token)
     try:
         from app.services import training_notifications
         training_notifications.notify_enrolment_cancelled(_get_training_or_404(db, tid), e)
@@ -2375,7 +2380,7 @@ def cancel_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, partic
         result["waitlist_promoted"] = promoted
     return result
 
-def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, action: str, reason: str | None = None, current_user: dict | None = None):
+def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, action: str, reason: str | None = None, current_user: dict | None = None, access_token: str | None = None):
     from app.models.training_model import TrainingEnrolment
     training = _get_training_or_404(db, tid)
     e = db.query(TrainingEnrolment).filter(TrainingEnrolment.id == enrol_id, TrainingEnrolment.training_id == tid).first()
@@ -2401,6 +2406,10 @@ def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, actio
     db.refresh(training)
     try:
         from app.services import training_notifications, training_workflow_notifications
+        from app.services.training_learner_identity import resolve_learner_user_id
+        # An enrolment saved before user ids were recorded has none: recover the learner's application user id
+        # (and keep it on the row) so accepted / rejected reaches their feed, not just their email.
+        resolve_learner_user_id(db, e, training, access_token)
         # Only a real status change notifies: re-approving an enrolled learner or re-rejecting a
         # rejected one is a retry, not a decision. history length identifies this decision.
         decision_index = len(training.moderation_history or [])
@@ -2408,7 +2417,7 @@ def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, actio
             if not already_enrolled:
                 training_notifications.notify_enrollment_accepted(training, e, decision_index=decision_index)
                 training_workflow_notifications.notify_enrollment_confirmed_to_admins(
-                    training, e, actor_id=(current_user or {}).get("id"),
+                    training, e, actor_id=(current_user or {}).get("id"), access_token=access_token,
                 )
         elif not already_rejected:
             training_notifications.notify_enrollment_rejected(training, e, reason, decision_index=decision_index)
@@ -2416,7 +2425,7 @@ def approve_training_enrol_service(db: Session, tid: UUID, enrol_id: UUID, actio
         pass
     return {"id": str(e.id), "status": e.status, "reason": reason}
 
-def create_training_checkout_service(db: Session, tid: UUID, payload):
+def create_training_checkout_service(db: Session, tid: UUID, payload, current_user: dict | None = None, access_token: str | None = None):
     from app.models.training_model import TrainingOrder
     data = payload if isinstance(payload, dict) else payload.model_dump()
     t = _get_training_or_404(db, tid)
@@ -2426,7 +2435,7 @@ def create_training_checkout_service(db: Session, tid: UUID, payload):
         enrol = create_training_enrol_service(db, tid, {
             "participant_name": data.get("participant_name"),
             "participant_email": data.get("participant_email"),
-        }, coupon_code=coupon, commit=False)
+        }, coupon_code=coupon, current_user=current_user, commit=False, access_token=access_token)
         price = t.promo_price if (coupon and t.promo_price) else t.price or "0"
         quantity = data.get("quantity") or 1
         from decimal import Decimal
@@ -2443,7 +2452,7 @@ def create_training_checkout_service(db: Session, tid: UUID, payload):
     if enrol.status == "enrolled":  # the order is committed with a confirmed payment — safe to tell the admin now
         try:
             from app.services import training_workflow_notifications
-            training_workflow_notifications.notify_enrollment_confirmed_to_admins(t, enrol)
+            training_workflow_notifications.notify_enrollment_confirmed_to_admins(t, enrol, access_token=access_token)
         except Exception:
             pass
     return order
@@ -2515,20 +2524,20 @@ def approve_training_refund_service(db: Session, tid: UUID, order_id: UUID, payl
     return {"id": str(order.id), "status": order.status, "payment_status": order.payment_status, "message": message}
 
 
-def publish_training_service(db: Session, tid: UUID, current_user: dict | None = None):
-    return update_training_status_service(db, tid, "published", current_user)
+def publish_training_service(db: Session, tid: UUID, current_user: dict | None = None, access_token: str | None = None):
+    return update_training_status_service(db, tid, "published", current_user, access_token=access_token)
 
 
-def unpublish_training_service(db: Session, tid: UUID, current_user: dict | None = None):
-    return update_training_status_service(db, tid, "unpublished", current_user)
+def unpublish_training_service(db: Session, tid: UUID, current_user: dict | None = None, access_token: str | None = None):
+    return update_training_status_service(db, tid, "unpublished", current_user, access_token=access_token)
 
 
-def suspend_training_service(db: Session, tid: UUID, reason: str | None = None, current_user: dict | None = None):
-    return update_training_status_service(db, tid, "suspended", current_user, notes=reason)
+def suspend_training_service(db: Session, tid: UUID, reason: str | None = None, current_user: dict | None = None, access_token: str | None = None):
+    return update_training_status_service(db, tid, "suspended", current_user, notes=reason, access_token=access_token)
 
 
-def cancel_training_service(db: Session, tid: UUID, reason: str | None = None, current_user: dict | None = None):
-    return update_training_status_service(db, tid, "cancelled", current_user, notes=reason)
+def cancel_training_service(db: Session, tid: UUID, reason: str | None = None, current_user: dict | None = None, access_token: str | None = None):
+    return update_training_status_service(db, tid, "cancelled", current_user, notes=reason, access_token=access_token)
 
 
 def delete_section_service(db: Session, tid: UUID, section_id: str):

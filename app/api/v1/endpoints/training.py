@@ -1,7 +1,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
-from app.core.dependencies import get_current_user, get_optional_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
+from app.core.dependencies import extract_access_token, get_current_user, get_optional_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
 from app.schemas.training_schema import TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse, TrainingModerationHistoryItem
@@ -216,38 +216,38 @@ def duplicate(training_id: UUID = Path(...), db: Session = Depends(get_db), curr
     return duplicate_training_service(db, training_id)
 
 @router.patch("/{training_id}/status", response_model=TrainingResponse, summary="Update training status (generic transition)")
-def update_status(training_id: UUID, payload: TrainingStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+def update_status(request: Request, training_id: UUID, payload: TrainingStatusUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     if payload.status in ("approved", "rejected", "needs_revision") and current_user.get("role") not in ("admin", "super_admin"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Only Super Admin can approve/reject/request-changes")
-    return update_training_status_service(db, training_id, payload.status, current_user, notes=payload.reason)
+    return update_training_status_service(db, training_id, payload.status, current_user, notes=payload.reason, access_token=extract_access_token(request))
 
 
 @router.post("/{training_id}/publish", response_model=TrainingResponse, status_code=200, summary="Publish training")
-def publish_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
-    return publish_training_service(db, training_id, current_user)
+def publish_training(request: Request, training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+    return publish_training_service(db, training_id, current_user, access_token=extract_access_token(request))
 
 
 @router.post("/{training_id}/unpublish", response_model=TrainingResponse, status_code=200, summary="Unpublish training (sets status=unpublished)")
-def unpublish_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
-    return unpublish_training_service(db, training_id, current_user)
+def unpublish_training(request: Request, training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+    return unpublish_training_service(db, training_id, current_user, access_token=extract_access_token(request))
 
 
 @router.post("/{training_id}/suspend", response_model=TrainingResponse, status_code=200, summary="Suspend published training")
-def suspend_training(training_id: UUID, payload: TrainingStatusUpdate | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+def suspend_training(request: Request, training_id: UUID, payload: TrainingStatusUpdate | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     reason = payload.reason if payload else None
-    return suspend_training_service(db, training_id, reason=reason, current_user=current_user)
+    return suspend_training_service(db, training_id, reason=reason, current_user=current_user, access_token=extract_access_token(request))
 
 
 @router.post("/{training_id}/cancel", response_model=TrainingResponse, status_code=200, summary="Cancel training")
-def cancel_training(training_id: UUID, payload: TrainingStatusUpdate | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+def cancel_training(request: Request, training_id: UUID, payload: TrainingStatusUpdate | None = None, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     reason = payload.reason if payload else None
-    return cancel_training_service(db, training_id, reason=reason, current_user=current_user)
+    return cancel_training_service(db, training_id, reason=reason, current_user=current_user, access_token=extract_access_token(request))
 
 
 @router.post("/{training_id}/archive", response_model=TrainingResponse, status_code=200, summary="Archive training")
-def archive_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
-    return update_training_status_service(db, training_id, "archived", current_user)
+def archive_training(request: Request, training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+    return update_training_status_service(db, training_id, "archived", current_user, access_token=extract_access_token(request))
 
 
 @router.post(
@@ -257,8 +257,8 @@ def archive_training(training_id: UUID, db: Session = Depends(get_db), current_u
     summary="Restore archived training to draft",
     description="Transitions archived → draft and clears is_deleted. Equivalent to PATCH status with {\"status\":\"draft\"}.",
 )
-def restore_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
-    return restore_training_service(db, training_id, current_user)
+def restore_training(request: Request, training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+    return restore_training_service(db, training_id, current_user, access_token=extract_access_token(request))
 
 @router.get(
     "/{training_id}/moderation-history",
@@ -432,11 +432,16 @@ def delete_lesson_media(training_id: UUID, section_id: str, lesson_id: str, kind
 
 # Enrol, waitlist, assessments, assignments, progress, live-sessions, announcements
 @router.get("/my/enrolments", summary="Participant dashboard — enrolled/active/completed/cancelled")
-def my_enrolments(status: str | None = Query(None, description="enrolled|pending_approval|cancelled|waitlisted"), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+def my_enrolments(request: Request, status: str | None = Query(None, description="enrolled|pending_approval|cancelled|waitlisted"), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import list_my_enrolments_service
     email = current_user.get("email")
     if not email:
         from fastapi import HTTPException; raise HTTPException(400, "Email not found in token")
+    try:  # attach this learner's application user id to their older enrolments (saved before ids were recorded)
+        from app.services.training_learner_identity import link_caller_enrolments
+        link_caller_enrolments(db, current_user, extract_access_token(request))
+    except Exception:
+        db.rollback()
     return list_my_enrolments_service(db, email, status_filter=status)
 
 @router.get("/my/wishlist", response_model=list[TrainingWishlistItemResponse], summary="My saved/wishlisted trainings")
@@ -444,10 +449,10 @@ def my_wishlist(db: Session = Depends(get_db), current_user: dict = Depends(get_
     return list_training_wishlist_service(db, UUID(str(current_user["id"])))
 
 @router.post("/{training_id}/enrol", status_code=201, response_model=TrainingEnrolmentResponse | TrainingEnrolWaitlistResponse, summary="Enrol in Training")
-def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def enrol(request: Request, training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import create_training_enrol_service
     coupon = payload.get("coupon_code")
-    return create_training_enrol_service(db, training_id, payload, coupon_code=coupon, current_user=current_user)
+    return create_training_enrol_service(db, training_id, payload, coupon_code=coupon, current_user=current_user, access_token=extract_access_token(request))
 
 
 @router.post(
@@ -457,8 +462,8 @@ def enrol(training_id: UUID, payload: dict, db: Session = Depends(get_db), curre
     summary="Enroll in Training (alias of /enrol)",
     description="Identical to POST /{training_id}/enrol — American-spelling alias for frontend clients that call /enroll.",
 )
-def enroll(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return enrol(training_id, payload, db, current_user)
+def enroll(request: Request, training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return enrol(request, training_id, payload, db, current_user)
 
 
 @router.post("/{training_id}/reviews", response_model=TrainingReviewResponse, status_code=201, summary="Rate & review — verified (must be enrolled)")
@@ -538,14 +543,14 @@ def cancel_enrol(request: Request, training_id: UUID, enrol_id: UUID, db: Sessio
     # allow staff to cancel any enrolment — but only within their own tenant's training
     if current_user.get("role") in ["admin","provider","super_admin"]:
         _require_tenant_ownership_if_staff(request, training_id, db, current_user)
-        return cancel_training_enrol_service(db, training_id, enrol_id)
-    return cancel_training_enrol_service(db, training_id, enrol_id, participant_email=email)
+        return cancel_training_enrol_service(db, training_id, enrol_id, access_token=extract_access_token(request))
+    return cancel_training_enrol_service(db, training_id, enrol_id, participant_email=email, access_token=extract_access_token(request))
 
 @router.post("/{training_id}/enrolments/{enrol_id}/approve", summary="Approve/Reject enrolment with optional reason")
-def approve_enrol(training_id: UUID, enrol_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+def approve_enrol(request: Request, training_id: UUID, enrol_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     action = payload.get("action", "approve")
     reason = payload.get("reason")
-    return approve_training_enrol_service(db, training_id, enrol_id, action, reason=reason, current_user=current_user)
+    return approve_training_enrol_service(db, training_id, enrol_id, action, reason=reason, current_user=current_user, access_token=extract_access_token(request))
 
 @router.post("/{training_id}/enrolments/validate-qr", response_model=TrainingValidateQrResponse, summary="Validate an enrolment QR code (read-only scan)")
 def validate_enrolment_qr(training_id: UUID, payload: TrainingValidateQrRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
@@ -573,12 +578,12 @@ def batch_check_in_enrolments(training_id: UUID, payload: TrainingBatchCheckInRe
     return batch_check_in_training_enrolments_service(db, training_id, payload.participants, current_user)
 
 @router.post("/{training_id}/checkout", status_code=201, summary="Checkout — Training")
-def checkout_training(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def checkout_training(request: Request, training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import create_training_checkout_service
     from app.schemas.training_schema import TrainingCheckoutRequest
     # allow dict or typed
     req = TrainingCheckoutRequest(**payload) if isinstance(payload, dict) else payload
-    return create_training_checkout_service(db, training_id, req)
+    return create_training_checkout_service(db, training_id, req, current_user=current_user, access_token=extract_access_token(request))
 
 @router.get("/{training_id}/orders", summary="List Training Orders")
 def list_training_orders(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
@@ -586,9 +591,9 @@ def list_training_orders(training_id: UUID, db: Session = Depends(get_db), curre
     return get_training_orders_service(db, training_id)
 
 @router.post("/{training_id}/waitlist", status_code=201, summary="Join waitlist — dedup + capacity aware")
-def join_waitlist(training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def join_waitlist(request: Request, training_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import join_waitlist_service
-    return join_waitlist_service(db, training_id, payload, current_user)
+    return join_waitlist_service(db, training_id, payload, current_user, access_token=extract_access_token(request))
 
 @router.delete("/{training_id}/waitlist/{entry_id}")
 def leave_waitlist(request: Request, training_id: UUID, entry_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -597,7 +602,7 @@ def leave_waitlist(request: Request, training_id: UUID, entry_id: UUID, db: Sess
     if is_staff:
         _require_tenant_ownership_if_staff(request, training_id, db, current_user)
     email = current_user.get("email") if current_user and not is_staff else None
-    return leave_waitlist_service(db, training_id, entry_id, participant_email=email)
+    return leave_waitlist_service(db, training_id, entry_id, participant_email=email, access_token=extract_access_token(request))
 
 @router.post("/{training_id}/assessments", status_code=201, summary="Create quizzes/tests/assessments/surveys — supports pre-course/module/final/feedback level, pass/attempt/time, publication, randomise")
 def create_assessment(training_id: UUID, payload: AssessmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
@@ -1059,7 +1064,7 @@ def get_training_admin_notes(training_id: UUID, db: Session = Depends(get_db), c
     return get_training_admin_notes_service(db, training_id)
 
 @router.post("/{training_id}/resubmit", response_model=TrainingResponse, summary="Resubmit training after requested changes")
-def resubmit_training(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
+def resubmit_training(request: Request, training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     from app.repository.training_repo import get_training_by_id
     from fastapi import HTTPException
     training = get_training_by_id(db, training_id)
@@ -1067,7 +1072,7 @@ def resubmit_training(training_id: UUID, db: Session = Depends(get_db), current_
         raise HTTPException(status_code=404, detail="Training not found")
     if training.status not in ("needs_revision", "draft", "rejected"):
         raise HTTPException(status_code=400, detail=f"Cannot resubmit training in '{training.status}' status")
-    return update_training_status_service(db, training_id, "pending_approval", current_user)
+    return update_training_status_service(db, training_id, "pending_approval", current_user, access_token=extract_access_token(request))
 
 
 @router.post(

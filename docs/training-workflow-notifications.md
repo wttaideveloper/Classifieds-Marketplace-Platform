@@ -156,6 +156,45 @@ inserts it delivers. If delivery then produces nothing, the row is deleted so a 
 | `training_enrolled` | `training_enrolled:<enrollment_id>` |
 | `training_enrollment_accepted` / `_rejected` | `<type>:<enrollment_id>:<moderation_history length>` |
 
+## The caller's token reaches the identity lookups
+
+Recipients are found through the Invigorate tenant / tenant-user listings. Those calls now carry the **caller's own
+Bearer access token** (`Authorization: Bearer …`, taken from the request's header or session cookie) in addition to the
+internal API key when one is configured; with only a token — no key — the lookup is still made. This covers
+`training_submitted`, `training_approved`, `training_rejected`, `training_changes_requested`, `training_enrolled`
+and the new-training fan-out.
+
+The token is passed from every handler that changes a Training's status or an enrolment — the admin approve / reject /
+request-changes / publish routes for trainings **and** the `/admin/courses/...` aliases, `PATCH /status`, publish,
+unpublish, suspend, cancel, archive, restore, resubmit, enrol, checkout, waitlist join/leave, enrolment cancel and
+enrolment approve/reject — through the status/enrolment services into the background job. It is never logged or stored.
+Whether Invigorate accepts a user token on these listing endpoints is up to Invigorate: if it does not, the lookup
+simply returns nothing (the same as an unset key) and `GET /api/v1/admin/notifications/diagnostics` shows it.
+
+## The learner's user id on every enrolment
+
+`training_enrollment_accepted` / `_rejected` reach a learner's feed only when the enrolment knows their application user id
+(`training_enrolments.user_id`). It is now saved on every path: **direct enrolment, checkout, the waitlist
+(`training_waitlist.user_id`, copied to the enrolment on promotion)**. "The caller is the learner" is decided on their
+verified identity — the token's email claim, then the email in their `/auth/me` profile — not only on an exact claim
+match, so differing case or a token with no email claim still works. Staff enrolling someone else never get their own id
+stamped on that person's row, and a body email that belongs to a different person than the caller is not attributed to
+the caller.
+
+### Rows that have no user id yet
+
+Resolved from sources that do not depend on anything a client sent, never guessed:
+
+1. **At decision time** — when an admin accepts or rejects such an enrolment the server looks for the learner: the same
+   email (case-insensitive) on their other enrolment / waitlist rows that have an id, then the Auth service's member list of
+   the training's tenant, matched on email. A match is saved on the row and the notification is sent. No match = the
+   decision still succeeds and nothing is guessed.
+2. **When the learner next opens `GET /trainings/my/enrolments`** while logged in, every older row carrying *their*
+   verified email (profile email if present, and not marked unverified) is linked to their user id. This is the only way
+   to reach a learner who belongs to no tenant and has no other record.
+3. **In bulk** — `python -m scripts.backfill_training_enrolment_user_ids` (dry run, prints counts) and then `--apply`.
+   Uses the same two server-side sources; learners it cannot resolve are left for step 2.
+
 ## When nothing arrives
 
 Recipients come from the Invigorate tenant-user listing, which needs `INVIGORATE_AUTH_BASE_URL` and
@@ -185,4 +224,4 @@ the Socket.IO Redis manager (`SOCKETIO_REDIS_URL`) to reach the socket server.
 
 ## Deploy
 
-`alembic upgrade b9d4f2a6c8e1` (after `a7c3e91d4b52`) — adds `notification_event_log`.
+`alembic upgrade d8f2b4a9c1e6` — adds `notification_event_log` (`b9d4f2a6c8e1`) and `training_waitlist.user_id` (`d8f2b4a9c1e6`). Then run the backfill script once (dry run first).

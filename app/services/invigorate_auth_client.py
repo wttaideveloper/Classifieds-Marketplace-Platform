@@ -10,13 +10,27 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-def list_tenants() -> list[dict]:
-    """Fetch all tenants from the Invigorate internal API."""
-    if not settings.invigorate_internal_api_configured:
+def _identity_headers(access_token: str | None) -> dict | None:
+    """Credentials for an identity lookup: the internal API key when configured, and the caller's own
+    Bearer token when one is supplied (so a lookup still works where only the token is available).
+    None = nothing to authenticate with, so no request should be made."""
+    if not settings.INVIGORATE_AUTH_BASE_URL.strip():
+        return None
+    headers: dict = {}
+    if settings.INVIGORATE_INTERNAL_API_KEY.strip():
+        headers["X-Internal-Api-Key"] = settings.INVIGORATE_INTERNAL_API_KEY
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    return headers or None
+
+
+def list_tenants(access_token: str | None = None) -> list[dict]:
+    """Fetch all tenants from the Invigorate API (internal key and/or the caller's Bearer token)."""
+    headers = _identity_headers(access_token)
+    if headers is None:
         return []
 
     url = f"{settings.INVIGORATE_AUTH_BASE_URL.rstrip('/')}/api/v1/internal/tenants"
-    headers = {"X-Internal-Api-Key": settings.INVIGORATE_INTERNAL_API_KEY}
     try:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
@@ -91,21 +105,21 @@ def resolve_tenant_ids_from_slugs(slugs: list[str]) -> list[UUID]:
     return resolved
 
 
-def list_tenant_users(tenant_id: UUID) -> list[dict]:
+def list_tenant_users(tenant_id: UUID, access_token: str | None = None) -> list[dict]:
     """Resolve tenant member records via the established internal API.
 
     Keep the complete records here rather than losing their RBAC fields at the
     boundary.  Callers that only need ids should continue to use
     :func:`list_tenant_user_ids` below.
     """
-    if not settings.invigorate_internal_api_configured:
+    headers = _identity_headers(access_token)
+    if headers is None:
         return []
 
     url = (
         f"{settings.INVIGORATE_AUTH_BASE_URL.rstrip('/')}"
         f"/api/v1/internal/tenants/{tenant_id}/users"
     )
-    headers = {"X-Internal-Api-Key": settings.INVIGORATE_INTERNAL_API_KEY}
     try:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
@@ -121,9 +135,9 @@ def list_tenant_users(tenant_id: UUID) -> list[dict]:
     return [item for item in items if isinstance(item, dict)]
 
 
-def list_tenant_user_ids(tenant_id: UUID) -> list[UUID]:
-    """Resolve tenant member ids via Invigorate internal API when configured."""
-    items = list_tenant_users(tenant_id)
+def list_tenant_user_ids(tenant_id: UUID, access_token: str | None = None) -> list[UUID]:
+    """Resolve tenant member ids via the Invigorate API (internal key and/or the caller's token)."""
+    items = list_tenant_users(tenant_id, access_token) if access_token else list_tenant_users(tenant_id)
 
     user_ids: list[UUID] = []
     for item in items:
@@ -284,19 +298,40 @@ def _extract_profile_roles(profile: dict | None) -> dict | None:
     return None
 
 
-def fetch_application_roles(access_token: str) -> dict | None:
-    """Roles the Auth service reports for the caller, cached for a minute per token so a request that
-    needs the fallback does not add a network round trip every time. Failures are not cached."""
-    if not access_token:
-        return None
+def _cached_auth_me_profile(access_token: str) -> dict | None:
+    """The caller's /auth/me profile, cached a minute per token (failures are never cached)."""
     key = hashlib.sha256(access_token.encode()).hexdigest()
     now = time.monotonic()
     hit = _ROLES_CACHE.get(key)
     if hit and hit[0] > now:
         return hit[1]
-    roles = _extract_profile_roles(fetch_auth_me_profile(access_token))
-    if roles:
+    profile = fetch_auth_me_profile(access_token)
+    if isinstance(profile, dict):
         if len(_ROLES_CACHE) >= _ROLES_CACHE_MAX:
             _ROLES_CACHE.pop(min(_ROLES_CACHE, key=lambda k: _ROLES_CACHE[k][0]), None)
-        _ROLES_CACHE[key] = (now + _ROLES_TTL_SECONDS, roles)
-    return roles
+        _ROLES_CACHE[key] = (now + _ROLES_TTL_SECONDS, profile)
+    return profile
+
+
+def fetch_application_roles(access_token: str) -> dict | None:
+    """Roles the Auth service reports for the caller (a request that needs the fallback does not add a
+    network round trip every time)."""
+    if not access_token:
+        return None
+    return _extract_profile_roles(_cached_auth_me_profile(access_token))
+
+
+def fetch_profile_email(access_token: str | None) -> tuple[str | None, bool]:
+    """(email, verified) from the caller's /auth/me profile. The token's own email claim can be missing or
+    differ in case/spelling from what the user typed, the profile is the Auth service's record of it.
+    `verified` is False only when the profile explicitly says emailVerified is false."""
+    if not access_token:
+        return None, False
+    profile = _cached_auth_me_profile(access_token)
+    if not isinstance(profile, dict):
+        return None, False
+    for candidate in [profile] + [profile[k] for k in ("data", "user", "profile") if isinstance(profile.get(k), dict)]:
+        email = candidate.get("email")
+        if isinstance(email, str) and email.strip():
+            return email.strip().lower(), candidate.get("emailVerified", True) is not False
+    return None, False

@@ -101,31 +101,33 @@ def admin_get_training(training_id: UUID, db: Session = Depends(get_db), _admin:
     return get_training_service(db, training_id)
 
 @router.post("/trainings/{training_id}/approve", summary="Admin — Approve Training")
-def approve_training(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_training_status_service(db, training_id, "approved", _admin)
+def approve_training(request: Request, training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return update_training_status_service(db, training_id, "approved", _admin, access_token=extract_access_token(request))
 
 @router.post("/trainings/{training_id}/reject", summary="Admin — Reject Training")
 def reject_training(
+    request: Request,
     training_id: UUID,
     payload: TrainingAdminActionRequest | None = None,
     db: Session = Depends(get_db),
     _admin: dict = Depends(get_current_super_admin),
 ):
     reason = payload.reason if payload else None
-    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason)
+    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason, access_token=extract_access_token(request))
 
 @router.post("/trainings/{training_id}/request-changes", summary="Admin — Request Changes on Training")
 def request_changes_training(
+    request: Request,
     training_id: UUID,
     payload: TrainingAdminActionRequest,
     db: Session = Depends(get_db),
     _admin: dict = Depends(get_current_super_admin),
 ):
-    return update_training_status_service(db, training_id, "needs_revision", _admin, notes=payload.reason)
+    return update_training_status_service(db, training_id, "needs_revision", _admin, notes=payload.reason, access_token=extract_access_token(request))
 
 @router.post("/trainings/{training_id}/publish", summary="Admin — Publish Approved Training")
-def publish_training(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_training_status_service(db, training_id, "published", _admin)
+def publish_training(request: Request, training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return update_training_status_service(db, training_id, "published", _admin, access_token=extract_access_token(request))
 
 # Courses admin queue — alias of the Trainings queue above. Same model, same
 # table, same data; "Course" is just the frontend/product name for a Training.
@@ -138,31 +140,33 @@ def admin_get_course(training_id: UUID, db: Session = Depends(get_db), _admin: d
     return get_training_service(db, training_id)
 
 @router.post("/courses/{training_id}/approve", summary="Admin — Approve Course")
-def approve_course(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_training_status_service(db, training_id, "approved", _admin)
+def approve_course(request: Request, training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return update_training_status_service(db, training_id, "approved", _admin, access_token=extract_access_token(request))
 
 @router.post("/courses/{training_id}/reject", summary="Admin — Reject Course")
 def reject_course(
+    request: Request,
     training_id: UUID,
     payload: TrainingAdminActionRequest | None = None,
     db: Session = Depends(get_db),
     _admin: dict = Depends(get_current_super_admin),
 ):
     reason = payload.reason if payload else None
-    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason)
+    return update_training_status_service(db, training_id, "rejected", _admin, notes=reason, access_token=extract_access_token(request))
 
 @router.post("/courses/{training_id}/request-changes", summary="Admin — Request Changes on Course")
 def request_changes_course(
+    request: Request,
     training_id: UUID,
     payload: TrainingAdminActionRequest,
     db: Session = Depends(get_db),
     _admin: dict = Depends(get_current_super_admin),
 ):
-    return update_training_status_service(db, training_id, "needs_revision", _admin, notes=payload.reason)
+    return update_training_status_service(db, training_id, "needs_revision", _admin, notes=payload.reason, access_token=extract_access_token(request))
 
 @router.post("/courses/{training_id}/publish", summary="Admin — Publish Approved Course")
-def publish_course(training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
-    return update_training_status_service(db, training_id, "published", _admin)
+def publish_course(request: Request, training_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
+    return update_training_status_service(db, training_id, "published", _admin, access_token=extract_access_token(request))
 
 # Programs admin queue
 @router.get("/programs/pending", summary="Admin — Pending Programs Queue")

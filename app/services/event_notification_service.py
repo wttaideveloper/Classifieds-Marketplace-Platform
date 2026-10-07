@@ -64,7 +64,12 @@ def _active(user: dict) -> bool:
     return all(profile_status_is_active(value) for value in _nested_values(user))
 
 
-def resolve_platform_admin_user_ids() -> list[UUID]:
+def _lookup(fn, *args, access_token: str | None = None):
+    """Call an identity lookup, forwarding the caller's Bearer token only when there is one."""
+    return fn(*args, access_token=access_token) if access_token else fn(*args)
+
+
+def resolve_platform_admin_user_ids(access_token: str | None = None) -> list[UUID]:
     """Find active platform super-admin identities from existing tenant users.
 
     The identity service exposes tenant membership through the already-used
@@ -74,7 +79,7 @@ def resolve_platform_admin_user_ids() -> list[UUID]:
     """
     recipients: set[UUID] = set()
     seen_tenants: set[UUID] = set()
-    for tenant in list_tenants():
+    for tenant in _lookup(list_tenants, access_token=access_token):
         if not isinstance(tenant, dict):
             continue
         try:
@@ -84,7 +89,7 @@ def resolve_platform_admin_user_ids() -> list[UUID]:
         if tenant_id in seen_tenants:
             continue
         seen_tenants.add(tenant_id)
-        for user in list_tenant_users(tenant_id):
+        for user in _lookup(list_tenant_users, tenant_id, access_token=access_token):
             user_id = _user_id(user)
             is_platform_admin = any(
                 profile_is_super_admin(value) and profile_status_is_active(value)
@@ -95,7 +100,7 @@ def resolve_platform_admin_user_ids() -> list[UUID]:
     return sorted(recipients, key=str)
 
 
-def resolve_enterprise_admin_user_ids(db: Session, event) -> tuple[list[UUID], UUID | None]:
+def resolve_enterprise_admin_user_ids(db: Session, event, access_token: str | None = None) -> tuple[list[UUID], UUID | None]:
     """Return only owning-tenant Enterprise Admins, never arbitrary members."""
     enterprise = getattr(event, "enterprise", None)
     if enterprise is None and getattr(event, "enterprise_id", None):
@@ -110,7 +115,7 @@ def resolve_enterprise_admin_user_ids(db: Session, event) -> tuple[list[UUID], U
         return [], None
 
     recipients: set[UUID] = set()
-    for user in list_tenant_users(tenant_id):
+    for user in _lookup(list_tenant_users, tenant_id, access_token=access_token):
         user_id = _user_id(user)
         # Invigorate maps tenant_owner to the marketplace's Enterprise Admin
         # role.  Do not include tenant_admin/provider or ordinary members.
