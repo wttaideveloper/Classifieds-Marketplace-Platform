@@ -89,7 +89,7 @@ def request_changes_event(
 @router.post("/events/{event_id}/publish", summary="Admin — Publish Approved Event")
 def publish_event(request: Request, event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):
     _scope_event_admin_action(request, db, event_id, _admin)
-    return update_event_status_service(db, event_id, "published", _admin)
+    return update_event_status_service(db, event_id, "published", _admin, access_token=extract_access_token(request))
 
 # Trainings admin queue (same flow: draft -> pending_approval -> approved -> published)
 @router.get("/trainings/pending", summary="Admin — Pending Trainings Queue")
