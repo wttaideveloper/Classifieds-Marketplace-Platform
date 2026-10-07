@@ -30,7 +30,10 @@ def _extract_items(payload) -> list[dict] | None:
 def _get_items(url: str, headers: dict, *, params: dict | None = None, what: str) -> list[dict] | None:
     """GET a list endpoint. ``None`` on any failure; logs method/url/status only (never headers)."""
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=15)
+        kwargs: dict = {"headers": headers, "timeout": 15}
+        if params:
+            kwargs["params"] = params
+        response = requests.get(url, **kwargs)
         response.raise_for_status()
         payload = response.json()
     except requests.HTTPError as exc:
@@ -51,17 +54,23 @@ def _internal_get(
 ) -> list[dict] | None:
     """Call a documented Identity-API ``/api/v1/internal/*`` endpoint.
 
-    The Identity API documents these as requiring BOTH ``X-Internal-Api-Key`` and the
-    caller's Keycloak Bearer access token. Without a token only the key is sent (the
-    API will reject it; the failure is logged with its status).
+    Credentials are whatever exist: ``X-Internal-Api-Key`` when configured (the documented
+    requirement) and the caller's Keycloak Bearer token when one was supplied (a requirement
+    of the documented ``/internal/*`` APIs). At least one credential is required — without
+    either there is nothing to authenticate with and no request is made. Token-only lookups
+    are legitimate for the member endpoints that take no tenant path.
     """
     base = settings.invigorate_admin_api_base_url
     key = settings.INVIGORATE_INTERNAL_API_KEY.strip()
-    if not base or not key:
+    if not base:
         return None
-    headers = {"X-Internal-Api-Key": key}
+    headers: dict = {}
+    if key:
+        headers["X-Internal-Api-Key"] = key
     if access_token:
         headers["Authorization"] = f"Bearer {access_token}"
+    if not headers:
+        return None
     return _get_items(f"{base}{path}", headers, params=params, what=what)
 
 

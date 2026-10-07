@@ -56,6 +56,11 @@ def _application_user_id(user: dict) -> UUID | None:
     return None
 
 
+# Backward-compatible name kept for the training learner-identity service, which still resolves
+# ids from tenant member records through this module (`members._user_id`). Same rules as above.
+_user_id = _application_user_id
+
+
 def _roles(user: dict) -> set[str]:
     roles: set[str] = set()
     for value in _nested_values(user):
@@ -81,6 +86,13 @@ def _active(user: dict) -> bool:
             if field in value and not profile_status_is_active({"status": value[field]}):
                 return False
     return True
+
+
+def _lookup(fn, *args, access_token: str | None = None):
+    """Call an identity lookup (e.g. ``list_tenant_users``), forwarding the caller's Bearer token when
+    there is one. Identity endpoints take the token only when the caller supplied it, so lookups made
+    before any authentication (system jobs, token-less flows) behave exactly as they always did."""
+    return fn(*args, access_token=access_token) if access_token else fn(*args)
 
 
 def resolve_platform_admin_user_ids(access_token: str | None = None) -> list[UUID]:
