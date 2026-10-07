@@ -682,7 +682,7 @@ def duplicate_event_service(db: Session, event_id: UUID, current_user: dict = No
     return EventResponse.model_validate(map_event_write(clone))
 
 
-def update_event_status_service(db: Session, event_id: UUID, new_status: str, current_user: dict = None, notes: str | None = None):
+def update_event_status_service(db: Session, event_id: UUID, new_status: str, current_user: dict = None, notes: str | None = None, access_token: str | None = None):
     event = get_event_by_id(db, event_id, include_deleted=True)
     if not event or event.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -751,7 +751,10 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
     db.refresh(event)
     if new_status in ("pending_approval", "approved", "rejected", "needs_revision"):
         from app.services.event_notification_service import notify_event_approval_workflow
-        notify_event_approval_workflow(db, event, previous_status=previous, reason=notes)
+        notify_kwargs = {"previous_status": previous, "reason": notes}
+        if access_token:
+            notify_kwargs["access_token"] = access_token
+        notify_event_approval_workflow(db, event, **notify_kwargs)
     if new_status == "cancelled":
         try:
             from app.services.notification_triggers import notify_event_cancelled

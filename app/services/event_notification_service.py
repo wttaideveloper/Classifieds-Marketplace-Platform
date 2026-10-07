@@ -124,17 +124,17 @@ def resolve_enterprise_admin_user_ids(db: Session, event, access_token: str | No
     return sorted(recipients, key=str), tenant_id
 
 
-def notify_event_approval_workflow(db: Session, event, *, previous_status: str, reason: str | None = None):
+def notify_event_approval_workflow(db: Session, event, *, previous_status: str, reason: str | None = None, access_token: str | None = None):
     """Persist and deliver one notification for a successful approval transition."""
     notification_type = _EVENT_NOTIFICATION_TYPES.get(event.status)
     if notification_type is None:
         return None
 
     if event.status == "pending_approval":
-        recipients = resolve_platform_admin_user_ids()
+        recipients = _lookup(resolve_platform_admin_user_ids, access_token=access_token)
         tenant_id = None
     else:
-        recipients, tenant_id = resolve_enterprise_admin_user_ids(db, event)
+        recipients, tenant_id = _lookup(resolve_enterprise_admin_user_ids, db, event, access_token=access_token)
 
     # The status-transition graph is the workflow's idempotency guard: a
     # repeated request cannot re-enter the same target status.  Avoid creating

@@ -491,7 +491,7 @@ def update_status(
     # Tenant ownership (an active Platform Super Admin passes across tenants). Runs before any
     # transition, so a cross-tenant caller can neither change nor probe another tenant's event.
     require_event_owner(db, event_id, current_user, access_token=token, include_deleted=True)
-    return update_event_status_service(db, event_id, payload.status, current_user)
+    return update_event_status_service(db, event_id, payload.status, current_user, access_token=token)
 
 
 @router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Unpublish Event")
@@ -524,7 +524,7 @@ def get_admin_notes(event_id: UUID, db: Session = Depends(get_db), current_user:
 
 
 @router.post("/{event_id}/resubmit", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Resubmit Event After Revision")
-def resubmit_event(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
+def resubmit_event(request: Request, event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     """Resubmit event for approval after Enterprise Admin requested changes (needs_revision -> pending_approval) — testing as Super Admin."""
     from app.repository.event_repo import get_event_by_id
     from fastapi import HTTPException
@@ -533,7 +533,7 @@ def resubmit_event(event_id: UUID, db: Session = Depends(get_db), current_user: 
         raise HTTPException(status_code=404, detail="Event not found")
     if event.status not in ("needs_revision", "draft"):
         raise HTTPException(status_code=400, detail=f"Cannot resubmit event in '{event.status}' status. Must be needs_revision or draft.")
-    return update_event_status_service(db, event_id, "pending_approval", current_user)
+    return update_event_status_service(db, event_id, "pending_approval", current_user, access_token=extract_access_token(request))
 
 
 # ---- Registrations & Waitlist (E7-E10) ----
