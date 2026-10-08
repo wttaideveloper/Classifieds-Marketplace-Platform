@@ -208,6 +208,10 @@ class TrainingProgress(Base):
     sections_completed = Column(JSONB, default=list)
     lessons_completed = Column(JSONB, default=list)
     lesson_positions = Column(JSONB, default=dict)  # {lesson_id: {section_id, position_seconds, duration_seconds, last_accessed_at}} — video/lesson resume tracking
+    # Lessons whose completion was created by marking the learner "attended" (manual roster / QR scan), as opposed to
+    # something the learner did themselves. Only these are undone when the attendance is reversed; a lesson the learner
+    # completed on their own is never in this list. A later independent completion takes the lesson out of it.
+    attendance_completed_lessons = Column(JSONB, default=list)
     overall_percent = Column(String(20), default="0")
     certificate_url = Column(Text)
     started_at = Column(DateTime, default=datetime.utcnow, nullable=False)

@@ -927,7 +927,12 @@ def get_lesson_attendance_roster(training_id: UUID, lesson_id: str, db: Session 
                 "email. status is 'attended'|'absent'|'not_marked' — 'not_marked' clears any "
                 "previously recorded status. Every enrolment_id must belong to this training and "
                 "be an active enrolment, or the whole batch is rejected with 422 (no partial "
-                "writes). Returns the refreshed roster, including who marked each status and when.",
+                "writes). Returns the refreshed roster, including who marked each status and when. "
+                "Marking a learner 'attended' also completes this lesson for them and updates their progress "
+                "totals (is_completed, completed_by_attendance, progress on each participant). 'absent' and "
+                "'not_marked' never complete a lesson; changing attended to either undoes only the completion "
+                "attendance created, never one the learner completed themselves. Repeating 'attended' changes "
+                "nothing. Quiz/exam lessons are completed by submitting the assessment, not by attendance.",
 )
 def batch_mark_lesson_attendance(training_id: UUID, lesson_id: str, payload: LessonAttendanceBatchRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     return batch_mark_lesson_attendance_service(db, training_id, lesson_id, payload.records, current_user)
@@ -942,7 +947,10 @@ def batch_mark_lesson_attendance(training_id: UUID, lesson_id: str, payload: Les
                 "is enrolled in this training and the lesson belongs to it, then marks them "
                 "Attended in the same attendance roster the manual batch-mark endpoint uses. "
                 "Idempotent: re-scanning an already-attended participant returns "
-                "result='already_attended' and creates no duplicate record.",
+                "result='already_attended' and creates no duplicate record. "
+                "The scan also completes the lesson for the learner and updates their progress totals "
+                "(is_completed, completed_by_attendance, progress in the response), exactly like marking "
+                "them 'attended' on the roster.",
 )
 def qr_check_in_lesson_attendance(training_id: UUID, lesson_id: str, payload: LessonQrCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     return qr_check_in_lesson_attendance_service(db, training_id, lesson_id, payload.qr_code, current_user)

@@ -1093,7 +1093,7 @@ def grade_assignment_service(db: Session, tid: UUID, aid: str, submission_id: st
     sub.grade=str(grade); sub.feedback=feedback; db.commit(); db.refresh(sub)
     return {"id": str(sub.id), "grade": sub.grade, "feedback": sub.feedback, "files": [dict(f) for f in (sub.files or [])], "resubmission_allowed": True}
 
-def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None) -> dict:
+def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None, *, attendance_source: bool = False) -> dict:
     """Marks lesson_id complete for participant_email and recomputes section
     completion / overall_percent / mandatory-completion / certificate eligibility.
 
@@ -1133,39 +1133,39 @@ def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant
         if any(l.get("id") == lesson_id for l in section.get("lessons", [])):
             target_section_id = section.get("id")
             break
+    was_completed = lesson_id in lessons
     lessons.add(lesson_id)
     prog.lessons_completed = list(lessons)
+    # Who owns this completion: attendance (a roster tick / QR scan) only when it is the one that created it. A
+    # lesson that was already complete stays the learner's, and when the learner completes a lesson that
+    # attendance had completed, it becomes theirs, so reversing the attendance later no longer undoes it.
+    by_attendance = list(prog.attendance_completed_lessons or [])
+    if attendance_source and not was_completed and lesson_id not in by_attendance:
+        by_attendance.append(lesson_id)
+    elif not attendance_source and lesson_id in by_attendance:
+        by_attendance.remove(lesson_id)
+    prog.attendance_completed_lessons = by_attendance
+    # The lessons are read the way /content reads them (see _completion_curriculum), so what counts as "all done"
+    # here is what the learner sees as 100%.
+    curriculum = _completion_curriculum(t)
+    target_section_id = curriculum["section_of"].get(lesson_id)
     if target_section_id:
-        section_lessons = [
-            l.get("id")
-            for s in t.sections or []
-            if s.get("id") == target_section_id
-            for l in s.get("lessons", [])
-            if l.get("id")
-        ]
+        section_lessons = curriculum["lessons_by_section"].get(target_section_id) or []
         if section_lessons and all(lid in lessons for lid in section_lessons):
             completed_sections.add(target_section_id)
             prog.sections_completed = list(completed_sections)
-    # mandatory check — count mandatory lessons
-    all_lessons=[]
-    mandatory_ids=set()
-    for s in t.sections or []:
-        for l in s.get("lessons",[]):
-            all_lessons.append(l.get("id"))
-            if l.get("is_mandatory") or l.get("completion_rule")=="mandatory":
-                mandatory_ids.add(l.get("id"))
-    # overall + mandatory rule
-    total=len(all_lessons) or 1
-    mandatory_done=len(mandatory_ids.intersection(lessons))
-    mandatory_total=len(mandatory_ids)
-    overall=round(len(lessons)/total*100,2)
+    summary = _completion_summary(curriculum, lessons)
+    total, mandatory_done, mandatory_total, overall = (
+        summary["total_lessons"], summary["mandatory_done"], summary["mandatory_total"], summary["overall_percent"],
+    )
     prog.overall_percent=str(overall)
     prog.last_accessed_at=datetime.utcnow()
-    # completion when 100% or mandatory done
+    # completion when every lesson is done or every mandatory lesson is done
     newly_completed = False
-    if overall==100 or (mandatory_total and mandatory_done==mandatory_total):
+    if summary["complete"]:
         newly_completed = prog.completed_at is None
-        prog.completed_at=datetime.utcnow()
+        if newly_completed:
+            prog.completed_at = datetime.utcnow()
         prog.certificate_url=f"/api/v1/trainings/{tid}/certificate.pdf?participant_email={participant_email}"
     db.commit(); db.refresh(prog)
     if newly_completed:  # first completion only — later lesson saves must not re-send the certificate email
@@ -1178,7 +1178,239 @@ def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant
             )
         except Exception:
             pass
-    return {"overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url}
+    return {"overall_percent": overall, "lessons_done": summary["lessons_done"], "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url}
+
+
+def _completion_curriculum(t) -> dict:
+    """The lessons that count towards completing a training, read the same way GET /content reads them.
+
+    /content normalises the curriculum (a section's lessons may be stored under "lessons" or "items"); completion
+    used to read only the raw "lessons" key, so for a training stored the other way it saw no lessons at all and a
+    learner who finished everything never got their certificate. Falls back to the raw sections when they cannot
+    be normalised."""
+    try:
+        from app.services.training_curriculum import normalize_curriculum
+        sections = normalize_curriculum(
+            t.sections, getattr(t, "assessments", None), getattr(t, "assignments", None)
+        )["sections"]
+    except Exception:
+        sections = [s for s in (t.sections or []) if isinstance(s, dict)]
+    lesson_ids: list[str] = []
+    mandatory_ids: set[str] = set()
+    section_of: dict[str, str] = {}
+    lessons_by_section: dict[str, list[str]] = {}
+    assignment_of: dict[str, str] = {}
+    for section in sections:
+        section_id = section.get("id")
+        for lesson in section.get("lessons") or section.get("items") or []:
+            lesson_id = lesson.get("id")
+            if not lesson_id:
+                continue
+            lesson_id = str(lesson_id)
+            lesson_ids.append(lesson_id)
+            lessons_by_section.setdefault(section_id, []).append(lesson_id)
+            section_of[lesson_id] = section_id
+            if lesson.get("assignment_id"):
+                assignment_of[lesson_id] = str(lesson["assignment_id"])
+            if lesson.get("is_mandatory") or lesson.get("completion_rule") == "mandatory":
+                mandatory_ids.add(lesson_id)
+    return {
+        "lesson_ids": lesson_ids,
+        "mandatory_ids": mandatory_ids,
+        "section_of": section_of,
+        "lessons_by_section": lessons_by_section,
+        "assignment_of": assignment_of,
+    }
+
+
+def issue_earned_certificate(db: Session, tid: UUID, participant_email: str, *, notify: bool = True, dry_run: bool = False) -> bool:
+    """Issue the certificate to a learner who has finished the training but never got one.
+
+    A certificate was only ever issued at the moment a lesson was completed through the normal completion path. A
+    learner whose last lessons were recorded some other way (an older check-in on a venue/live lesson, a count that
+    disagreed with /content, a lesson list stored under "items") showed 100% in /content and still had no
+    certificate. This re-checks the learner's saved progress by the same rules /content shows and issues it.
+    Returns True when a certificate was issued; changes nothing for a learner who has not finished, has no active
+    enrolment, or already has one."""
+    from app.models.training_model import TrainingAssignmentSubmission, TrainingProgress
+
+    prog = db.query(TrainingProgress).filter(
+        TrainingProgress.training_id == tid,
+        TrainingProgress.participant_email == participant_email,
+    ).first()
+    if not prog or prog.certificate_url:
+        return False
+    enrol = _get_enrolment(db, tid, participant_email)
+    if not _is_active_enrolment(enrol):
+        return False
+
+    t = _get_training_or_404(db, tid)
+    curriculum = _completion_curriculum(t)
+    completed = {str(x) for x in (prog.lessons_completed or [])}
+    # /content also counts a lesson as done once its assignment has been submitted.
+    submitted = {
+        str(s.assignment_id)
+        for s in db.query(TrainingAssignmentSubmission).filter(
+            TrainingAssignmentSubmission.training_id == tid,
+            TrainingAssignmentSubmission.participant_email == participant_email,
+        ).all()
+    }
+    completed |= {lesson_id for lesson_id, assignment_id in curriculum["assignment_of"].items() if assignment_id in submitted}
+    summary = _completion_summary(curriculum, completed)
+    if not summary["complete"]:
+        return False
+    if dry_run:
+        return True  # would be issued; nothing written
+
+    from datetime import datetime
+    newly_completed = prog.completed_at is None
+    prog.lessons_completed = sorted(completed | {str(x) for x in (prog.lessons_completed or [])})
+    prog.overall_percent = str(summary["overall_percent"])
+    if newly_completed:
+        prog.completed_at = datetime.utcnow()
+    prog.certificate_url = f"/api/v1/trainings/{tid}/certificate.pdf?participant_email={participant_email}"
+    db.commit()
+    db.refresh(prog)
+    if notify and newly_completed:
+        try:
+            from app.services import training_notifications
+            training_notifications.notify_certificate_ready(
+                t, email=participant_email, name=getattr(enrol, "participant_name", None),
+                user_id=getattr(enrol, "user_id", None), certificate_url=prog.certificate_url,
+            )
+        except Exception:
+            pass
+    return True
+
+
+def _completion_summary(curriculum: dict, completed) -> dict:
+    """Totals for a learner's completed lesson ids. Only ids that are lessons of this training count, so an id
+    left over from a lesson that was removed, or from a check-in on a whole session, cannot push the percentage
+    past 100 and stop the course from ever counting as complete."""
+    lesson_ids = set(curriculum["lesson_ids"])
+    completed = {str(c) for c in (completed or [])}
+    counted = completed & lesson_ids
+    total = len(curriculum["lesson_ids"]) or 1
+    mandatory_ids = curriculum["mandatory_ids"]
+    mandatory_done = len(mandatory_ids & completed)
+    mandatory_total = len(mandatory_ids)
+    overall = round(min(len(counted) / total * 100, 100), 2)
+    return {
+        "total_lessons": total,
+        "lessons_done": len(counted),
+        "mandatory_done": mandatory_done,
+        "mandatory_total": mandatory_total,
+        "overall_percent": overall,
+        "complete": bool(lesson_ids) and (overall >= 100 or (mandatory_total > 0 and mandatory_done == mandatory_total)),
+    }
+
+
+# ---- Attendance -> lesson completion ----
+# Marking a learner "attended" on a lesson (manual roster or QR scan) completes that lesson for them. Only
+# "attended" does: "absent" and "not_marked" never complete anything. Reversing it undoes only the completion that
+# attendance created (progress.attendance_completed_lessons), never one the learner earned themselves.
+# Quizzes/exams are not completed by attendance: they complete by submitting the assessment, which is what
+# /content reads for them, so an attendance tick must not count as a pass.
+
+_NOT_COMPLETED_BY_ATTENDANCE_TYPES = ("exam", "quiz")
+
+
+def _lesson_completes_on_attendance(lesson: dict) -> bool:
+    return (lesson.get("type") or "") not in _NOT_COMPLETED_BY_ATTENDANCE_TYPES
+
+
+def _progress_summary(prog, t) -> dict:
+    summary = _completion_summary(_completion_curriculum(t), prog.lessons_completed if prog else [])
+    return {
+        "overall_percent": summary["overall_percent"],
+        "lessons_done": summary["lessons_done"],
+        "total_lessons": summary["total_lessons"],
+        "mandatory_done": summary["mandatory_done"],
+        "mandatory_total": summary["mandatory_total"],
+        "completed_at": prog.completed_at if prog else None,
+    }
+
+
+def _attendance_completion_views(db: Session, tid: UUID, training, lesson_id: str, enrolments: list) -> dict:
+    """{enrolment id: {is_completed, completed_by_attendance, progress}} for the people on an attendance response."""
+    from app.models.training_model import TrainingProgress
+
+    emails = [e.participant_email for e in enrolments]
+    progress_by_email = {}
+    if emails:
+        progress_by_email = {
+            p.participant_email: p
+            for p in db.query(TrainingProgress).filter(
+                TrainingProgress.training_id == tid, TrainingProgress.participant_email.in_(emails)
+            ).all()
+        }
+    lesson_id = str(lesson_id)
+    views = {}
+    for enrol in enrolments:
+        prog = progress_by_email.get(enrol.participant_email)
+        done = lesson_id in set(prog.lessons_completed or []) if prog else False
+        views[enrol.id] = {
+            "is_completed": done,
+            "completed_by_attendance": done and lesson_id in set(prog.attendance_completed_lessons or []),
+            "progress": _progress_summary(prog, training),
+        }
+    return views
+
+
+def _revoke_attendance_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None) -> bool:
+    """Undo a completion that attendance created and recompute the learner's totals. Returns False and changes
+    nothing when the completion is not attendance's (the learner earned it, or there is none)."""
+    from app.models.training_model import TrainingProgress
+
+    t = t or _get_training_or_404(db, tid)
+    prog = db.query(TrainingProgress).filter(
+        TrainingProgress.training_id == tid,
+        TrainingProgress.participant_email == participant_email,
+    ).first()
+    lesson_id = str(lesson_id)
+    by_attendance = list(prog.attendance_completed_lessons or []) if prog else []
+    if not prog or lesson_id not in by_attendance:
+        return False
+
+    by_attendance.remove(lesson_id)
+    prog.attendance_completed_lessons = by_attendance
+    lessons = set(prog.lessons_completed or [])
+    lessons.discard(lesson_id)
+    prog.lessons_completed = list(lessons)
+
+    curriculum = _completion_curriculum(t)
+    completed_sections = set(prog.sections_completed or [])
+    completed_sections.discard(curriculum["section_of"].get(lesson_id))
+    prog.sections_completed = list(completed_sections)
+
+    summary = _completion_summary(curriculum, lessons)
+    prog.overall_percent = str(summary["overall_percent"])
+    if prog.completed_at and not summary["complete"]:
+        # The course only counted as complete because of this attendance; it no longer is.
+        prog.completed_at = None
+        prog.certificate_url = None
+    db.commit()
+    return True
+
+
+def _sync_attendance_completion(db: Session, tid: UUID, training, lesson: dict, enrol, new_status: str | None, previous_status: str | None) -> None:
+    """Called after an attendance status is saved. attended -> the lesson is complete (idempotent);
+    attended -> anything else -> undo what attendance created. absent / not_marked complete nothing."""
+    from app.models.training_model import TrainingProgress
+
+    if not _lesson_completes_on_attendance(lesson):
+        return
+    lesson_id = str(lesson.get("id"))
+    if new_status == "attended":
+        prog = db.query(TrainingProgress).filter(
+            TrainingProgress.training_id == tid,
+            TrainingProgress.participant_email == enrol.participant_email,
+        ).first()
+        if prog and lesson_id in set(prog.lessons_completed or []):
+            return  # already complete (an earlier attendance, or the learner's own): nothing to change
+        _apply_lesson_completion(db, tid, lesson_id, enrol.participant_email, t=training, attendance_source=True)
+    elif previous_status == "attended":
+        _revoke_attendance_completion(db, tid, lesson_id, enrol.participant_email, t=training)
 
 
 def _mark_lessons_completed_for_reference(db: Session, tid: UUID, participant_email: str, *, key: str, ref_id: str, t=None) -> None:
@@ -1211,6 +1443,9 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
                 break
         if target_lesson:
             break
+    if not target_lesson:
+        # A training whose lessons are stored under "items" (which /content reads) has none under "lessons".
+        _, target_lesson = _find_lesson_any_type(t, lesson_id)
     if not target_lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
     accessible, reason = _lesson_is_accessible(target_lesson, lessons_so_far, enrol, t)
@@ -1307,6 +1542,19 @@ def _record_attendance_for_target(db: Session, tid: UUID, owner, target: dict, e
 
     # Curriculum progress uses the same lesson ID as /content.
     live_lesson_id = str(target["id"]) if embedded else f"live:{target['id']}"
+    curriculum_lesson_ids = (
+        {str(l.get("id")) for s in (owner.sections or []) for l in (s.get("lessons") or [])} if embedded else set()
+    )
+    if live_lesson_id in curriculum_lesson_ids:
+        # A real lesson: complete it through the shared path so the section, overall percent and certificate
+        # eligibility are recomputed too, not just the list of completed lessons.
+        _apply_lesson_completion(db, tid, live_lesson_id, participant_email, t=owner)
+        return {
+            id_field: str(target["id"]),
+            "participant_email": participant_email,
+            "recorded_at": recorded_at,
+            "progress_marked": True,
+        }
     prog = db.query(TrainingProgress).filter(
         TrainingProgress.training_id == tid,
         TrainingProgress.participant_email == participant_email,
@@ -1358,10 +1606,11 @@ def _find_lesson_any_type(training, lesson_id: str):
     return None, None
 
 
-def _lesson_attendance_participant_payload(enrol, record) -> dict:
+def _lesson_attendance_participant_payload(enrol, record, view: dict | None = None) -> dict:
     marked_by = None
     if record and record.marked_by_id:
         marked_by = {"id": str(record.marked_by_id), "name": record.marked_by_name, "email": record.marked_by_email}
+    view = view or {}
     return {
         "enrolment_id": str(enrol.id),
         "participant_name": enrol.participant_name,
@@ -1370,6 +1619,10 @@ def _lesson_attendance_participant_payload(enrol, record) -> dict:
         "status": (record.status if record else None) or "not_marked",
         "marked_by": marked_by,
         "marked_at": record.marked_at if record else None,
+        # The learner's side of the same lesson: attended completes it, so these follow the attendance.
+        "is_completed": view.get("is_completed", False),
+        "completed_by_attendance": view.get("completed_by_attendance", False),
+        "progress": view.get("progress"),
     }
 
 
@@ -1394,13 +1647,14 @@ def get_lesson_attendance_roster_service(db: Session, tid: UUID, lesson_id: str)
         ).all()
     }
 
+    views = _attendance_completion_views(db, tid, training, lesson_id, enrolments)
     return {
         "training_id": str(tid),
         "lesson_id": str(lesson_id),
         "lesson_title": lesson.get("title"),
         "lesson_type": lesson.get("type"),
         "participants": [
-            _lesson_attendance_participant_payload(enrol, records_by_enrolment.get(enrol.id))
+            _lesson_attendance_participant_payload(enrol, records_by_enrolment.get(enrol.id), views.get(enrol.id))
             for enrol in enrolments
         ],
     }
@@ -1452,6 +1706,7 @@ def batch_mark_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str,
 
     now = datetime.utcnow()
     actor_id, actor_uuid, actor_name, actor_email, actor_role = _actor_identity_fields(actor)
+    previous_by_enrolment: dict = {}
 
     for item in records:
         new_status = None if item.status == "not_marked" else item.status
@@ -1462,6 +1717,7 @@ def batch_mark_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str,
             existing_by_enrolment[item.enrolment_id] = record
 
         previous_status = record.status
+        previous_by_enrolment[item.enrolment_id] = previous_status
         record.status = new_status
         record.marked_by_id = actor_uuid if new_status is not None else None
         record.marked_by_name = actor_name if new_status is not None else None
@@ -1484,6 +1740,14 @@ def batch_mark_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str,
         flag_modified(record, "history")
 
     db.commit()
+    # attended completes the lesson for the learner; reversing it undoes only what attendance created.
+    # Re-sending "attended" is safe: an already-complete lesson is left alone.
+    for item in records:
+        _sync_attendance_completion(
+            db, tid, training, lesson, enrolments_by_id[item.enrolment_id],
+            None if item.status == "not_marked" else item.status,
+            previous_by_enrolment.get(item.enrolment_id),
+        )
     return get_lesson_attendance_roster_service(db, tid, lesson_id)
 
 
@@ -1558,8 +1822,12 @@ def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str
     ).first()
 
     if record and record.status == "attended":
+        # A repeat scan writes no new attendance record, but makes sure the lesson is complete (a no-op when it
+        # already is), so an attendance recorded before lessons completed on attendance gets fixed by a re-scan.
+        _sync_attendance_completion(db, tid, training, lesson, enrol, "attended", "attended")
+        views = _attendance_completion_views(db, tid, training, lesson_id, [enrol])
         return {
-            **_lesson_attendance_participant_payload(enrol, record),
+            **_lesson_attendance_participant_payload(enrol, record, views.get(enrol.id)),
             "result": "already_attended",
             "message": f"{enrol.participant_name} is already marked attended for this lesson",
         }
@@ -1594,8 +1862,12 @@ def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str
     db.commit()
     db.refresh(record)
 
+    # Attended completes the lesson for the learner, in the same call as the scan.
+    _sync_attendance_completion(db, tid, training, lesson, enrol, "attended", previous_status)
+    views = _attendance_completion_views(db, tid, training, lesson_id, [enrol])
+
     return {
-        **_lesson_attendance_participant_payload(enrol, record),
+        **_lesson_attendance_participant_payload(enrol, record, views.get(enrol.id)),
         "result": "marked",
         "message": f"{enrol.participant_name} marked attended",
     }
@@ -1604,6 +1876,15 @@ def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str
 def get_certificate_service(db: Session, tid: UUID, participant_email: str):
     from app.models.training_model import TrainingProgress
     prog=db.query(TrainingProgress).filter(TrainingProgress.training_id==tid, TrainingProgress.participant_email==participant_email).first()
+    if prog and not prog.certificate_url:
+        # The learner may have finished (100% in /content) without a certificate ever being issued: issue it now.
+        try:
+            issue_earned_certificate(db, tid, participant_email)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Could not issue the earned certificate for training %s", tid)
+            db.rollback()
+        prog=db.query(TrainingProgress).filter(TrainingProgress.training_id==tid, TrainingProgress.participant_email==participant_email).first()
     if not prog or not prog.certificate_url:
         raise HTTPException(status_code=404, detail="Certificate not yet available — complete mandatory lessons")
     return {"training_id": str(tid), "participant_email": participant_email, "certificate_url": prog.certificate_url, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "overall_percent": prog.overall_percent}
