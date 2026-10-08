@@ -409,6 +409,34 @@ def get_other_participant_ids_for_conversations(
     return result
 
 
+def get_customer_ids_for_conversations(
+    db: Session,
+    conversations: list[Conversation],
+) -> dict[UUID, UUID]:
+    """The customer of each conversation: its earliest customer-role participant, else the creator when
+    the creator is not the assigned provider. One query for the whole page."""
+    if not conversations:
+        return {}
+
+    rows = (
+        db.query(ConversationParticipant.conversation_id, ConversationParticipant.user_id)
+        .filter(
+            ConversationParticipant.conversation_id.in_([c.id for c in conversations]),
+            ConversationParticipant.role == "customer",
+        )
+        .order_by(ConversationParticipant.joined_at.asc())
+        .all()
+    )
+    result: dict[UUID, UUID] = {}
+    for conversation_id, user_id in rows:
+        result.setdefault(conversation_id, user_id)
+
+    for conversation in conversations:
+        if conversation.id not in result and conversation.created_by != conversation.assigned_provider_id:
+            result[conversation.id] = conversation.created_by
+    return result
+
+
 def count_unread_messages(
     db: Session,
     conversation_id: UUID,

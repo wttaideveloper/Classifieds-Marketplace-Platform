@@ -1,57 +1,89 @@
-# Reviews & Ratings — Backend API Guide
+# Reviews & Ratings API
 
-For the **web** and **mobile** frontend developers. Everything below describes what the backend does **today**, taken
-from the code; the last section lists what does *not* exist yet so you don't build against it.
+Base URL: https://chat.wisdomtooth.tech/api/v1
+Swagger: https://chat.wisdomtooth.tech/docs
 
-Base URL: `https://chat.wisdomtooth.tech/api/v1` · Swagger: `/docs`
+This document has three parts: the list of APIs, the details of each API, and a guide for the web and mobile developers. For how the feature is supposed to work for customers, Enterprise Owners and Super Admins, see `reviews-and-ratings-spec.md`.
 
-## 1. At a glance
 
-| Module | Submit / edit | List (public?) | Delete | Moderation | Who may review |
-|---|---|---|---|---|---|
-| **Training** | `POST /trainings/{id}/reviews` | `GET /trainings/{id}/reviews` — public | — | none (visible immediately) | learner with an active enrolment |
-| **Product** | `POST /products/{id}/reviews` | `GET /products/{id}/reviews` — public, approved only | `DELETE …/{review_id}` | `PATCH …/{review_id}/moderate` | any logged-in user |
-| **Service** | `POST /services/{id}/reviews` | `GET /services/{id}/reviews` — public, approved only | `DELETE …/{review_id}` | `PATCH …/{review_id}/moderate` | any logged-in user |
-| **Program** | `POST /programs/{id}/reviews` | `GET /programs/{id}/reviews` — **login required** | — | none | enrolled participant |
-| **Event** | `POST /events/{id}/reviews` | **none** (no public list yet) | — | `PATCH …/{review_id}/moderate` | registered participant |
+## 1. API list
 
-Products and Services behave the same way; Training, Program and Event each differ — read the module you need.
+### Training
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | /trainings/{training_id}/reviews | none | list reviews and average |
+| POST | /trainings/{training_id}/reviews | login, enrolled | add or update own review |
 
-## 2. Conventions (all modules)
+### Product
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | /products/{product_id}/reviews | none | list approved reviews and average |
+| POST | /products/{product_id}/reviews | login | add or update own review |
+| DELETE | /products/{product_id}/reviews/{review_id} | login | delete own review (admin, provider, super admin can delete any) |
+| PATCH | /products/{product_id}/reviews/{review_id}/moderate | Enterprise Admin, Super Admin | approve, reject or reset a review |
 
-- **Auth:** `Authorization: Bearer <access token>` (the web session cookie also works). A public endpoint needs no token.
-- **Rating:** an integer **1–5**. Anything else → `422`. Responses always return it as a number.
-- **Averages:** Training/Program return a number rounded to 2 decimals and `0` when there are no reviews. Product/Service
-  return `null` when there are none — show "No ratings yet", not `0.0`.
-- **Timestamps:** ISO 8601 strings **without** a timezone suffix, e.g. `"2026-10-07T09:15:30.123456"`. They are **UTC** — append
-  `Z` (or parse as UTC) before converting to the viewer's local time.
-- **Ids:** UUID strings.
-- **One review per person per item** (Training, Product, Service): posting again **edits** your review. Both the first post
-  and an edit return **`201`** — don't use the status code to tell them apart.
-- **No pagination, sorting or filters** on any review list: every list returns all reviews at once, newest first (Training,
-  Program, Product, Service). Cap what you render.
-- **Errors:** `{"detail": "message"}`. Validation errors (`422`) are `{"detail": [{"loc": ["body","rating"], "msg": "...", "type": "..."}]}`.
+### Service
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | /services/{service_id}/reviews | none | list approved reviews and average |
+| POST | /services/{service_id}/reviews | login | add or update own review |
+| DELETE | /services/{service_id}/reviews/{review_id} | login | delete own review (admin, provider, super admin can delete any) |
+| PATCH | /services/{service_id}/reviews/{review_id}/moderate | Enterprise Admin, Super Admin | approve, reject or reset a review |
 
-Common status codes: `200/201` ok · `401` not logged in · `403` not allowed (message says why) · `404` item or review not found ·
-`422` invalid body (rating outside 1–5, comment too long).
+### Program
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | /programs/{program_id}/reviews | login | list reviews and average |
+| POST | /programs/{program_id}/reviews | login, enrolled | add a review |
 
----
+### Event
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | /events/{event_id}/reviews | login, registered | add a review (stored as pending) |
+| POST | /events/{event_id}/feedback | login | submit feedback |
+| GET | /events/{event_id}/feedback | event manager | read feedback |
+| PATCH | /events/{event_id}/reviews/{review_id}/moderate | owning Enterprise Admin | approve, reject or reset a review |
 
-## 3. Training reviews
+### Rating summaries that already come with other APIs
+| Path | Fields |
+|---|---|
+| GET /trainings/ | average_rating, reviews_count on each item |
+| GET /trainings/my/wishlist | average_rating, reviews_count on each item |
+| GET /trainings/{id} | average_rating, reviews_count, reviews (latest 50) |
+| GET /trainings/reports/summary | average_rating across the owner's trainings (admin, provider) |
+| GET /events/reports/summary | average_rating for the dashboard (admin, provider) |
+| GET /events/{event_id}/reports?type=feedback | total_feedbacks, total_reviews, average_rating (event manager) |
 
-### Submit or edit — `POST /trainings/{training_id}/reviews`  (login required)
+### Not available yet
+Listing pending reviews for moderation, reading event reviews, "my review", replies, helpful votes, photos, star breakdown, reporting a review, review notifications.
 
+
+## 2. General notes
+
+- Auth header: `Authorization: Bearer <token>`. The web session cookie also works.
+- rating is an integer 1-5, otherwise 422.
+- Timestamps are UTC with no "Z" at the end (example: 2026-10-07T09:15:30.123456).
+- Training, product and service allow one review per user per item. Posting again updates the old one and still returns 201.
+- List endpoints are not paginated. They return everything, newest first.
+- Error body is `{"detail": "..."}`. A 422 has a list in detail: `{"detail": [{"loc": ["body","rating"], "msg": "...", "type": "..."}]}`.
+
+Status codes: 401 not logged in, 403 not allowed, 404 not found, 422 bad input.
+
+
+## 3. API details
+
+### Training
+
+#### POST /trainings/{training_id}/reviews
+Login required. Only learners enrolled in the training can post (enrolment status enrolled / active / completed / approved). Pending, rejected, cancelled and waitlisted get 403 "Verified reviews only — must be enrolled to review".
+
+Request
 ```json
 { "rating": 4, "comment": "Clear and practical." }
 ```
+comment is optional and has no max length on the server. participant_email is no longer needed, the logged in user is used.
 
-| Field | Type | Rules |
-|---|---|---|
-| `rating` | int | required, 1–5 |
-| `comment` | string \| null | optional, no length limit enforced — cap it in the UI (suggest 2000) |
-| `participant_email` | — | **ignore / don't send.** Deprecated: the reviewer is always the logged-in user |
-
-**201** →
+Response 201
 ```json
 {
   "id": "f76b59d5-f457-4caf-abcd-0feed5991806",
@@ -64,68 +96,40 @@ Common status codes: `200/201` ok · `401` not logged in · `403` not allowed (m
   "created_at": "2026-10-07T09:15:30.123456"
 }
 ```
+No moderation for training, the review is public immediately.
 
-Rules
-- Only a learner with an **active enrolment** can review: enrolment status `enrolled` (also `active`, `completed`, `approved`).
-  Pending, rejected, cancelled and waitlisted learners get `403` `"Verified reviews only — must be enrolled to review"`.
-- A token with no email claim gets `403` `"Enrolled participants only"`.
-- The review is **visible immediately** — Trainings have no moderation step.
-- `verified` is always `true` (only enrolled learners can post).
-- `participant_name` is the name on the learner's enrolment; it can be `null`, and for older enrolments it may be the email
-  address. Prefer `participant_name`, fall back to "Learner"; **never show `participant_email`** in the UI (see §8).
+#### GET /trainings/{training_id}/reviews
+Public.
 
-### List — `GET /trainings/{training_id}/reviews`  (public)
-
+Response 200
 ```json
 {
-  "reviews": [
-    {
-      "id": "f76b59d5-f457-4caf-abcd-0feed5991806",
-      "training_id": "94aa1aaa-2222-458a-80b3-f80d37137ec2",
-      "rating": 4,
-      "comment": "Clear and practical.",
-      "participant_email": "learner@example.com",
-      "participant_name": "Asha Rao",
-      "verified": true,
-      "created_at": "2026-10-07T09:15:30.123456"
-    }
-  ],
+  "reviews": [ { same fields as above } ],
   "average_rating": 4.0,
   "count": 1
 }
 ```
+average_rating is 0 when there are no reviews.
 
-### Where Training rating summaries also appear
+Please don't show participant_email in the UI, use participant_name. It can be null, use "Learner" in that case.
 
-| API | Fields |
-|---|---|
-| `GET /trainings/` (each item) | `average_rating`, `reviews_count` |
-| `GET /trainings/{id}` | `average_rating`, `reviews_count`, `reviews[]` — the **latest 50**, each `{id, training_id, participant_email, rating, comment, created_at}` (no `participant_name` / `verified`: call the list endpoint if you need them) |
-| `GET /trainings/my/wishlist` (each item) | `average_rating`, `reviews_count` |
+GET /trainings/{id} also returns a reviews array (latest 50) with id, training_id, participant_email, rating, comment, created_at. It has no participant_name or verified, so use the list endpoint for the reviews screen.
 
-Use the list endpoint for the full review screen; use the summary fields for cards.
 
----
+### Product and Service
 
-## 4. Product reviews  ·  5. Service reviews
+Same for both. Replace `products/{product_id}` with `services/{service_id}`. The only difference is is_verified_purchase: for products it is true if the user has a confirmed order with that product, for services it is always false. Service responses have service_id instead of product_id.
 
-Identical, except for one field: `is_verified_purchase` is computed for Products (the user has a confirmed order containing
-that product) and is **always `false` for Services** (there is no booking record to verify against yet).
+#### POST /products/{product_id}/reviews
+Login required, any user.
 
-Paths: `/products/{product_id}/reviews[/{review_id}]` and `/services/{service_id}/reviews[/{review_id}]`.
-
-### Submit or edit — `POST …/reviews`  (login required)
-
+Request
 ```json
 { "rating": 5, "comment": "Great quality, fast delivery." }
 ```
+comment optional, max 2000 characters.
 
-| Field | Type | Rules |
-|---|---|---|
-| `rating` | int | required, 1–5 |
-| `comment` | string \| null | optional, **max 2000 characters** (`422` above that) |
-
-**201** → the saved review:
+Response 201
 ```json
 {
   "id": "0b6f3c1e-5d1a-4a8e-9a53-0d2f6d4a7c11",
@@ -140,144 +144,215 @@ Paths: `/products/{product_id}/reviews[/{review_id}]` and `/services/{service_id
   "updated_at": "2026-10-07T09:15:30.123456"
 }
 ```
-(Service responses carry `service_id` instead of `product_id`.)
+- a new review is "pending" and is not in the public list until approved
+- editing keeps the current moderation_status
+- reviewer_name falls back to the email if the user has no name, so hide it when it contains "@"
 
-- A **new** review starts as `moderation_status: "pending"` and **does not appear in the public list** until an admin approves
-  it. Show the author "Your review is awaiting approval".
-- **Editing** your review keeps its current `moderation_status` (an approved review stays visible after an edit).
-- `reviewer_name` is the user's display name; if the account has none it falls back to their email — don't render it blindly
-  if it contains `@`.
-- Unknown product/service → `404`. No login → `401`.
+#### GET /products/{product_id}/reviews
+Public. Returns approved reviews only.
 
-### List — `GET …/reviews`  (public, approved only)
-
+Response 200
 ```json
 {
-  "reviews": [ { "id": "…", "product_id": "…", "user_id": "…", "reviewer_name": "Asha Rao", "rating": 5,
-                 "comment": "…", "is_verified_purchase": true, "moderation_status": "approved",
-                 "created_at": "…", "updated_at": "…" } ],
+  "reviews": [ { same fields as above, moderation_status "approved" } ],
   "average_rating": 4.6,
   "total": 12
 }
 ```
-`average_rating` is the mean of **approved** reviews, `null` when there are none; `total` is the number of approved reviews.
+average_rating is null when there are no approved reviews (show "No ratings yet").
 
-### Delete — `DELETE …/reviews/{review_id}`  (login required)
+#### DELETE /products/{product_id}/reviews/{review_id}
+Login required. The author can delete their own review. Admin, provider and super admin can delete any.
+200 `{"message": "Review deleted"}`. Someone else's review as a normal user: 403 "You can only delete your own review".
 
-The review's author, or any admin / provider / super admin. → `200 {"message": "Review deleted"}`.
-Someone else's review as an ordinary user → `403` `"You can only delete your own review"`. Unknown review → `404`.
+#### PATCH /products/{product_id}/reviews/{review_id}/moderate
+Enterprise Admin or Super Admin only. Providers get 403.
 
-### Moderate — `PATCH …/reviews/{review_id}/moderate`  (Enterprise Admin or Super Admin)
-
+Request
 ```json
 { "action": "approved" }
 ```
-`action` is `approved`, `rejected` or `pending`; returns the updated review. Providers are read-only here (`403`
-`"Providers are read-only; Enterprise Admin access required"`). Any other action → `400`.
+action is approved, rejected or pending. Returns the updated review. Any other value is 400.
 
-### "My review" on a product/service page
+#### Things to know
+- There is no endpoint to get "my review". Keep the one returned by POST, or look for your user_id in the public list (only works after approval).
+- There is no endpoint to list pending reviews, so moderate can only be called if you already know the review id.
+- The `rating`, `reviews` and `reviews_count` fields inside product/service/enterprise list and detail responses are not connected to these reviews (rating is always 0). Use the GET reviews endpoint instead.
 
-There is **no "get my review" endpoint**. Two workable options: (a) keep the review returned by your own `POST` and show it
-locally; (b) find it in the public list by `user_id === <your user id>` (`GET /api/v1/auth/session` → `data.id`) — but that only
-finds it once it is **approved**. To edit, call `POST` again with the new text.
 
-### ⚠ Do not use `rating`, `reviews` or `reviews_count` from Product / Service / Enterprise list or detail responses
+### Program
 
-Those responses contain `"rating": 0` (a fixed value) and a `reviews` / `reviews_count` pair read from an older, **separate**
-store that the review endpoints above never write to. A review you just posted will **not** show up there. For real data call
-`GET …/reviews`. (Fixing this is on the backend list in §8.)
+#### POST /programs/{program_id}/reviews
+Login required.
 
----
-
-## 6. Program reviews
-
-### Submit — `POST /programs/{program_id}/reviews`  (login required)
-
+Request
 ```json
 { "rating": 5, "comment": "Life-changing.", "participant_email": "learner@example.com" }
 ```
-| Field | Rules |
-|---|---|
-| `rating` | required, 1–5 |
-| `comment` | optional |
-| `participant_email` | **required** — must be the email of an existing enrolment on this program |
+participant_email is required and must belong to an enrolment on the program, otherwise 400 "Verified reviews only — must be enrolled to review". The server does not check it against the logged in user, so send the user's own email.
 
-**201** → `{ "id", "program_id", "rating", "comment", "participant_email", "verified": true, "created_at" }`.
-Not enrolled → **`400`** `"Verified reviews only — must be enrolled to review"`.
-
-- Send the logged-in user's own email. The server does not check that it matches the login (see §8).
-- **Not an upsert:** every `POST` creates **another** review. Disable the submit button after success; there is no edit.
-
-### List — `GET /programs/{program_id}/reviews`  (**login required**, unlike Training)
-
+Response 201
 ```json
 {
-  "reviews": [ { "id": "…", "rating": 5, "comment": "Life-changing.", "participant_email": "learner@example.com", "created_at": "…" } ],
+  "id": "...", "program_id": "...", "rating": 5, "comment": "Life-changing.",
+  "participant_email": "learner@example.com", "verified": true, "created_at": "..."
+}
+```
+Every POST creates a new review (no update). Disable the button after a successful submit.
+
+#### GET /programs/{program_id}/reviews
+Login required (unlike training).
+
+Response 200
+```json
+{
+  "reviews": [ { "id": "...", "rating": 5, "comment": "...", "participant_email": "...", "created_at": "..." } ],
   "average_rating": 5.0,
   "count": 1
 }
 ```
-List items have no `program_id`, `verified` or reviewer name. No moderation.
+No moderation for program reviews.
 
----
 
-## 7. Event reviews and feedback
+### Event
 
-Events have two separate things stored in the same table:
+Events have feedback and reviews, both stored in the same table.
 
-| | Feedback | Review |
-|---|---|---|
-| Submit | `POST /events/{id}/feedback` (login) | `POST /events/{id}/reviews` (login) |
-| Body | any JSON: `participant_email?`, `form_id?`, `answers?`, `rating?`, `comment?` | `{ "participant_email": "...", "rating": 5, "comment": "..." }` |
-| Read | `GET /events/{id}/feedback` — **event managers only** | **no endpoint** |
-| Moderate | — | `PATCH /events/{id}/reviews/{review_id}/moderate` body `{ "action": "approved" \| "rejected" \| "pending" }` — owning Enterprise Admin |
+#### POST /events/{event_id}/reviews
+Login required.
 
-Review rules: `participant_email` is **required** (`400` otherwise) and must belong to a registration with status `confirmed`
-or `attended` (`403` `"Only registered participants can submit verified reviews"`). New reviews are stored `moderation_status: "pending"`.
-There is no validation of `rating` (send an integer 1–5 yourself) and no duplicate check.
+Request
+```json
+{ "participant_email": "learner@example.com", "rating": 5, "comment": "Loved it" }
+```
+- participant_email is required (400 if missing)
+- must belong to a registration with status confirmed or attended, otherwise 403 "Only registered participants can submit verified reviews"
+- rating is not validated on the server and duplicates are not checked, so validate 1-5 in the app
+- the email is not checked against the logged in user
 
-Saved record returned (`201`):
+Response 201
 ```json
 {
-  "id": "…", "event_id": "…", "participant_email": "learner@example.com", "form_id": null, "answers": null,
-  "rating": "5", "comment": "Loved it", "is_review": true, "moderation_status": "pending", "created_at": "2026-10-07T09:15:30.123456"
+  "id": "...", "event_id": "...", "participant_email": "learner@example.com",
+  "form_id": null, "answers": null, "rating": "5", "comment": "Loved it",
+  "is_review": true, "moderation_status": "pending", "created_at": "2026-10-07T09:15:30.123456"
 }
 ```
-Note `rating` comes back as a **string** here.
+Note rating is a string here.
 
-**Event reviews cannot be displayed to the public yet** — there is no list endpoint and the event detail carries no rating
-summary. Build the submit form if needed, but not a review list, until the backend adds one.
+#### POST /events/{event_id}/feedback
+Login required. Free-form feedback, body can have participant_email, form_id, answers, rating, comment.
 
----
+#### GET /events/{event_id}/feedback
+Event managers only.
 
-## 8. Known gaps (what is *not* there / cautions)
+#### PATCH /events/{event_id}/reviews/{review_id}/moderate
+Owning Enterprise Admin only. A Super Admin is refused at the moment.
 
-Backend items — each is a small change if you need it; ask and we'll schedule.
+Request
+```json
+{ "action": "approved" }
+```
 
-| # | Area | Gap | What to do meanwhile |
-|---|---|---|---|
-| 1 | All | No pagination, sort or filter on review lists | Cap rendering client-side |
-| 2 | Training | The public list returns every reviewer's **email** | Never display `participant_email`; use `participant_name` |
-| 3 | Training | No edit-visibility rules, delete or report; no moderation | Edit = post again |
-| 4 | Product / Service / Enterprise | `rating: 0` and `reviews` / `reviews_count` in list & detail come from an unlinked legacy store | Use `GET …/reviews` |
-| 5 | Product / Service | Editing does not return a review to `pending`; staff delete/moderate is not limited to the item's own tenant | — |
-| 6 | Event | No public list / summary; the email in the body is trusted (any logged-in user can post as any registered email); no rating validation or duplicate check | Send the user's own email; validate 1–5 in the app |
-| 7 | Program | Email in the body is trusted; duplicates allowed; list needs login | Disable resubmit after success |
-| 8 | All | No "my review" endpoint, helpful votes, owner replies, photos, rating distribution, or abuse reports | — |
+There is no endpoint to read event reviews, so there is nothing to display yet. Only the submit form can be built.
 
-## 9. Quick UI recipes
 
-- **Star input:** integers 1–5; send the number, not a string.
-- **After submit (Training / Product / Service):** treat `201` as "saved". Training → refresh the list. Product/Service → show
-  "awaiting approval" if `moderation_status === "pending"`.
-- **Card summary:** Training `average_rating` / `reviews_count` from the list or detail response; Product/Service call
-  `GET …/reviews` (see the warning in §4–5).
-- **Empty state:** Training/Program `count === 0`; Product/Service `total === 0` / `average_rating === null`.
-- **Error copy:** `403` on submit means "you must be enrolled/registered to review"; show the server `detail` text.
+## 4. Guide for frontend developers
 
-## 10. Where this lives in the code
+### 4.1 Both web and mobile
 
-`app/api/v1/endpoints/{training,product,service,program,event}.py` (routes) ·
-`app/services/{training,product,service,program,event}_service.py` (rules) ·
-`app/schemas/{training,product,service,program}_schema.py` (response models) ·
-models `TrainingReview`, `ProductReview`, `ServiceReview`, `ProgramReview`, `EventFeedback`.
+Which API for which screen
+
+| Screen | Call |
+|---|---|
+| Training card (list, wishlist) | average_rating and reviews_count already in the response |
+| Training detail, reviews section | GET /trainings/{id}/reviews |
+| Product or service detail, reviews section | GET /products/{id}/reviews (or services) |
+| Program detail, reviews section | GET /programs/{id}/reviews (signed in users only) |
+| Event detail | no review list yet, submit form only |
+| Product or service card | do not use rating, reviews or reviews_count from the response, they are always empty or 0 |
+
+Rules to apply in every client
+- Send rating as a number, not a string.
+- Limit the comment box to 2000 characters. Training, program and event do not enforce it on the server.
+- Never show an email address. For training use participant_name and fall back to "Learner". For product and service hide reviewer_name when it contains "@".
+- Convert timestamps to local time. Treat the string as UTC: add "Z" before parsing.
+- Show "No ratings yet" when average_rating is null (product, service). For training and program, show the empty state when count is 0.
+- Don't depend on 201 to know if a review is new or edited.
+
+When the user may write a review
+
+| Module | Show the "Write a review" button when |
+|---|---|
+| Training | the user's enrolment_status on the training detail is enrolled (or active / completed / approved) |
+| Product | the user is signed in |
+| Service | the user is signed in |
+| Program | the user is signed in and enrolled in the program |
+| Event | the user is signed in and has a confirmed or attended registration |
+
+After the submit
+- Training: public at once, reload the list.
+- Product and service: if moderation_status is "pending" show "Thanks, your review will appear once it has been approved". Keep the returned review locally so the user can see it and edit it.
+- Program: public at once, disable the button, reload the list.
+- Event: show a thank you message. The review is not visible anywhere.
+
+Error messages to map
+
+| Status | What to show |
+|---|---|
+| 401 | send the user to sign in, then back to the item |
+| 403 on submit | "You need to be enrolled (or registered) to review this". Server text can be shown as is |
+| 404 | "This item is no longer available" |
+| 422 | "Choose 1 to 5 stars" or "Comment is too long" |
+
+Not available yet, so don't design for it: pagination, sorting, filters, "my review", replies, helpful votes, photos, star breakdown.
+
+### 4.2 Web
+
+- Auth: if the app uses the session cookie, send requests with `credentials: "include"`. If it uses the access token, send the Bearer header. Public GET calls need neither.
+- To find the signed in user's id (for matching user_id in a product or service list): GET /api/v1/auth/session, then data.id.
+
+Example: post a review
+```js
+const res = await fetch(`${API}/products/${productId}/reviews`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+  body: JSON.stringify({ rating: 5, comment })
+});
+if (!res.ok) {
+  const err = await res.json();
+  // err.detail is a string, or a list when the status is 422
+}
+const review = await res.json();
+```
+
+Example: read a UTC timestamp
+```js
+const date = new Date(review.created_at + "Z");
+date.toLocaleDateString();
+```
+
+- Render at most 20 to 50 reviews and add a "Show more" button on the client side until the backend has pagination.
+- After a successful POST, re-fetch the list for training and program. For product and service do not re-fetch to find the new review, it is still pending and will not be in the list.
+- Comments can contain line breaks. Render as text, never as HTML.
+
+### 4.3 Mobile
+
+- Auth: Bearer token on every call except the public GETs. If the token has expired (401), refresh it with the normal login flow and retry once.
+- Store the review returned by POST (product and service) in local storage keyed by item id. There is no "my review" call, so this is how the edit screen and the "awaiting approval" label survive an app restart. Clear it if the user signs out.
+- Parse the timestamps as UTC. On Android, `LocalDateTime.parse(value).atOffset(ZoneOffset.UTC)`. On iOS, an ISO8601 formatter with fractional seconds and the time zone set to UTC.
+- The full review list is returned in one response, so use a paged list view on the device and show the first 20 items.
+- Training cards can show the rating straight from the list response. For product and service cards, don't show a rating until the detail screen has loaded the reviews, or leave it out of the card.
+- Disable the submit button while the request is running, and keep the typed text if the request fails.
+- Navigation from push or in-app notifications is not part of reviews yet. There are no review notifications.
+
+### 4.4 Known gaps (backend)
+
+1. No pagination, sorting or filters on any review list.
+2. Training list returns reviewer emails publicly.
+3. No list of pending reviews for product, service and event, so moderation can't be used in practice.
+4. No public list or rating summary for events. Event rating is not validated.
+5. Event and program reviews trust the email sent in the body.
+6. Product and service moderate/delete don't check that the review belongs to the caller's business. Editing does not reset the review to pending.
+7. Product, service and enterprise responses have rating 0 and reviews/reviews_count from an old unlinked store.
+8. Not available: "my review" endpoint, helpful votes, replies, photos, star breakdown, report abuse.
