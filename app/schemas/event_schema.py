@@ -31,7 +31,7 @@ class EventTicketType(BaseModel):
     id: str | None = Field(None, description="Ticket type ID (auto-generated if missing)")
     name: str = Field(..., description="Ticket name e.g. Early Bird, Standard")
     price: str = Field(..., description="Standard price")
-    currency: str | None = Field("INR", description="Currency")
+    currency: str | None = Field(None, description="Optional currency; omitted ticket currency inherits Event.currency")
     capacity: int | None = Field(None, description="Capacity for this ticket type")
     early_bird_price: str | None = Field(None, description="Early-bird price")
     early_bird_until: datetime | None = Field(None, description="Early-bird deadline")
@@ -297,7 +297,6 @@ class EventCreate(BaseModel):
     def validate_pricing(self):
         if self.pricing_type == "free":
             self.price = None
-            self.currency = None
             self.ticket_types = []
         elif self.pricing_type == "paid":
             if not self.price and not self.ticket_types:
@@ -485,7 +484,6 @@ class EventUpdate(BaseModel):
     def validate_pricing(self):
         if getattr(self, "pricing_type", None) == "free":
             self.price = None
-            self.currency = None
             self.ticket_types = []
         elif getattr(self, "pricing_type", None) == "paid":
             # For update, we might only be updating partial fields, so we only validate if they are provided in this payload and cleared incorrectly.

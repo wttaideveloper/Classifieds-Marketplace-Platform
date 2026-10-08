@@ -45,6 +45,7 @@ from app.utils.event_accommodation import (
     plan_accommodation_update,
 )
 from app.utils.event_meals import MealConfigError, meals_for_new_event, plan_meals_update
+from app.utils.event_currency import EventCurrencyConfigError, normalize_child_currencies, normalize_event_currency
 from app.utils.event_modules import (
     EventModuleConfigError,
     is_paid_event,
@@ -54,6 +55,32 @@ from app.utils.event_modules import (
     resolve_event_modules,
     validate_module_overrides,
 )
+
+
+def _raw_service_options(event, field: str) -> list:
+    """Read raw configured options without changing legacy JSON."""
+    configuration = getattr(event, field, None)
+    options = configuration.get("options") if isinstance(configuration, dict) else None
+    return options if isinstance(options, list) else []
+
+
+def _validate_complete_currency_configuration(event, update_data, event_currency: str) -> None:
+    """Validate the complete post-update configuration before any persistence.
+
+    Values supplied in this update win; otherwise the existing stored values are
+    checked.  This makes changing Event.currency atomic and never rewrites child
+    currencies behind an organiser's back.
+    """
+    tickets = update_data.ticket_types if getattr(update_data, "ticket_types", None) is not None else (event.ticket_types or [])
+    meals = update_data.meals.option_dicts() if getattr(update_data, "meals", None) is not None else _raw_service_options(event, "meals")
+    accommodation = (
+        update_data.accommodation.option_dicts()
+        if getattr(update_data, "accommodation", None) is not None
+        else _raw_service_options(event, "accommodation")
+    )
+    normalize_child_currencies(tickets, event_currency, "Ticket")
+    normalize_child_currencies(meals, event_currency, "Meal")
+    normalize_child_currencies(accommodation, event_currency, "Accommodation")
 
 
 def _validate_references(db: Session, enterprise_id: UUID | None, location_id: UUID | None, current_user: dict | None = None):
@@ -296,7 +323,7 @@ def _meals_enabled_flag_matches(meals_in, enabled: bool) -> None:
         )
 
 
-def _meals_for_new_event(event_data, modules) -> dict | None:
+def _meals_for_new_event(event_data, modules, event_currency: str) -> dict | None:
     """The ``meals`` value for a new event (None = nothing configured); 422 when meals are off or the options are invalid."""
     meals_in = getattr(event_data, "meals", None)
     if meals_in is None:
@@ -304,12 +331,13 @@ def _meals_for_new_event(event_data, modules) -> dict | None:
     enabled = bool((modules if isinstance(modules, dict) else legacy_modules(event_data)).get("meals"))
     _meals_enabled_flag_matches(meals_in, enabled)
     try:
-        return meals_for_new_event(meals_in.option_dicts(), enabled=enabled)
-    except MealConfigError as exc:
+        options = normalize_child_currencies(meals_in.option_dicts(), event_currency, "Meal")
+        return meals_for_new_event(options, enabled=enabled)
+    except (MealConfigError, EventCurrencyConfigError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-def _plan_event_meals_update(event, update_data, config_changes: dict) -> dict:
+def _plan_event_meals_update(event, update_data, config_changes: dict, event_currency: str | None) -> dict:
     """The ``meals`` column an update changes (empty when it does not touch meals).
 
     null/omitted = no change, so an unrelated update — or one that only changes modules — keeps the meal options and
@@ -322,8 +350,9 @@ def _plan_event_meals_update(event, update_data, config_changes: dict) -> dict:
     enabled_after = bool(modules_after.get("meals"))
     _meals_enabled_flag_matches(meals_in, enabled_after)
     try:
-        stored = plan_meals_update(event, meals_in.option_dicts(), enabled_after=enabled_after)
-    except MealConfigError as exc:
+        options = normalize_child_currencies(meals_in.option_dicts(), event_currency, "Meal")
+        stored = plan_meals_update(event, options, enabled_after=enabled_after)
+    except (MealConfigError, EventCurrencyConfigError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return {} if stored is None else {"meals": stored}
 
@@ -338,7 +367,7 @@ def _accommodation_enabled_flag_matches(accommodation_in, enabled: bool) -> None
         )
 
 
-def _accommodation_for_new_event(event_data, modules) -> dict | None:
+def _accommodation_for_new_event(event_data, modules, event_currency: str) -> dict | None:
     """The ``accommodation`` value for a new event (None = nothing configured); 422 when accommodation is off or the
     options are invalid."""
     accommodation_in = getattr(event_data, "accommodation", None)
@@ -347,12 +376,13 @@ def _accommodation_for_new_event(event_data, modules) -> dict | None:
     enabled = bool((modules if isinstance(modules, dict) else legacy_modules(event_data)).get("accommodation"))
     _accommodation_enabled_flag_matches(accommodation_in, enabled)
     try:
-        return accommodation_for_new_event(accommodation_in.option_dicts(), enabled=enabled)
-    except AccommodationConfigError as exc:
+        options = normalize_child_currencies(accommodation_in.option_dicts(), event_currency, "Accommodation")
+        return accommodation_for_new_event(options, enabled=enabled)
+    except (AccommodationConfigError, EventCurrencyConfigError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-def _plan_event_accommodation_update(event, update_data, config_changes: dict) -> dict:
+def _plan_event_accommodation_update(event, update_data, config_changes: dict, event_currency: str | None) -> dict:
     """The ``accommodation`` column an update changes (empty when it does not touch accommodation).
 
     null/omitted = no change, so an unrelated update — or one that only changes modules — keeps the options and their
@@ -365,8 +395,9 @@ def _plan_event_accommodation_update(event, update_data, config_changes: dict) -
     enabled_after = bool(modules_after.get("accommodation"))
     _accommodation_enabled_flag_matches(accommodation_in, enabled_after)
     try:
-        stored = plan_accommodation_update(event, accommodation_in.option_dicts(), enabled_after=enabled_after)
-    except AccommodationConfigError as exc:
+        options = normalize_child_currencies(accommodation_in.option_dicts(), event_currency, "Accommodation")
+        stored = plan_accommodation_update(event, options, enabled_after=enabled_after)
+    except (AccommodationConfigError, EventCurrencyConfigError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return {} if stored is None else {"accommodation": stored}
 
@@ -451,6 +482,13 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
     if not event_data.meeting_link:
         event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
     payload = event_data.to_model_data()
+    try:
+        payload["currency"] = normalize_event_currency(payload.get("currency"), required=True)
+        payload["ticket_types"] = normalize_child_currencies(
+            payload.get("ticket_types"), payload["currency"], "Ticket"
+        )
+    except EventCurrencyConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     event_type_record = _resolve_event_type_or_422(db, payload.get("event_type"))
     is_paid = is_paid_event(event_data.pricing_type, event_data.price, event_data._normalize_ticket_types())
     try:
@@ -459,8 +497,8 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
         )
     except EventModuleConfigError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    payload["meals"] = _meals_for_new_event(event_data, payload.get("modules"))
-    payload["accommodation"] = _accommodation_for_new_event(event_data, payload.get("modules"))
+    payload["meals"] = _meals_for_new_event(event_data, payload.get("modules"), payload["currency"])
+    payload["accommodation"] = _accommodation_for_new_event(event_data, payload.get("modules"), payload["currency"])
     payload.update(form_meta)
     _validate_event_media_for_create(db, payload)
     from app.models.event_model import Event
@@ -580,6 +618,28 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
     if getattr(update_data, "status", None) is not None:
         raise HTTPException(status_code=400, detail="Status cannot be changed via PUT. Use PATCH /{event_id}/status.")
 
+    fields = update_data.model_fields_set
+    currency_changed = "currency" in fields
+    configuration_changed = currency_changed or any(
+        getattr(update_data, field, None) is not None for field in ("ticket_types", "meals", "accommodation")
+    )
+    try:
+        event_currency = normalize_event_currency(
+            update_data.currency if currency_changed else getattr(event, "currency", None),
+            required=configuration_changed,
+        )
+        if configuration_changed:
+            _validate_complete_currency_configuration(event, update_data, event_currency)
+            # Canonicalise only the Event code used by the edited configuration;
+            # child JSON is never rewritten merely because the Event code changed.
+            update_data.currency = event_currency
+        if getattr(update_data, "ticket_types", None) is not None:
+            update_data.ticket_types = normalize_child_currencies(
+                update_data.ticket_types, event_currency, "Ticket"
+            )
+    except EventCurrencyConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
     location_id = update_data.location_id if update_data.location_id is not None else event.location_id
     _validate_references(db, event.enterprise_id, location_id, current_user)
     # category validation if provided
@@ -601,8 +661,8 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
     # Configuration (event_type / modules) is planned against the CURRENT event before anything is mutated.
     # It is deliberately kept out of old_vals below: that dict also drives schedule-change notifications.
     config_changes = _plan_event_config_update(db, event, update_data)
-    config_changes.update(_plan_event_meals_update(event, update_data, config_changes))
-    config_changes.update(_plan_event_accommodation_update(event, update_data, config_changes))
+    config_changes.update(_plan_event_meals_update(event, update_data, config_changes, event_currency))
+    config_changes.update(_plan_event_accommodation_update(event, update_data, config_changes, event_currency))
     old_config = {key: getattr(event, key) for key in config_changes}
 
     # capture old values for schedule change detection and audit
@@ -2153,8 +2213,9 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
         # free/fallback ticket does not impose a currency on paid add-ons.
         ticket_subtotal_decimal = Decimal("0.00")
     ticket_currency = (
-        ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
+        ticket.get("currency") or event.currency if isinstance(ticket, dict) else (event.currency or "INR")
     ) or "INR"
+    ticket_currency = str(ticket_currency).strip().upper()
     priced_options = resolve_priced_selections(
         event,
         meal_selections=getattr(payload, "meal_selections", None),
@@ -2323,8 +2384,9 @@ def get_checkout_quote_service(db: Session, event_id: UUID, payload) -> dict:
         raise HTTPException(status_code=404, detail="Ticket type not found")
 
     ticket_currency = (
-        ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
+        ticket.get("currency") or event.currency if isinstance(ticket, dict) else (event.currency or "INR")
     ) or "INR"
+    ticket_currency = str(ticket_currency).strip().upper()
     price = _ticket_effective_price(ticket or {}, event)
     try:
         ticket_subtotal = (Decimal(price) * payload.quantity).quantize(Decimal("0.01"))

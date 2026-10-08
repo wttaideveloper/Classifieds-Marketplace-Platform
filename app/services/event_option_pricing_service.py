@@ -92,7 +92,7 @@ class PricedSelections:
 
 def _option_currency(option: dict, event_currency: str) -> str:
     currency = option.get("currency")
-    return currency if isinstance(currency, str) and currency.strip() else (event_currency or "INR")
+    return (currency if isinstance(currency, str) and currency.strip() else (event_currency or "INR")).strip().upper()
 
 
 def resolve_priced_selections(

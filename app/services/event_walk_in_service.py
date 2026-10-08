@@ -115,7 +115,7 @@ def _amount_due(event, ticket) -> tuple[Decimal, str]:
     if amount is None or amount < 0:
         raise HTTPException(status_code=400, detail="The ticket price is not configured correctly")
     currency = (ticket or {}).get("currency") or event.currency or "INR"
-    return amount, currency
+    return amount, str(currency).strip().upper()
 
 
 def _registration_questions(event) -> list[dict]:
