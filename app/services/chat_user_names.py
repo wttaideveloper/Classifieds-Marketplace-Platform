@@ -8,6 +8,7 @@ shows its own placeholder.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -63,14 +64,12 @@ def extract_display_name(record: dict | None) -> str | None:
 
 
 def _record_user_id(record: dict) -> str | None:
+    """Application user id of an identity record: ``userId`` on member records (their ``id`` /
+    ``membershipId`` is the membership id), ``id`` on flat user records. Never the Keycloak id."""
     for candidate in _nested(record):
-        for field in ("user_id", "id", "keycloak_id"):
-            raw = candidate.get(field)
-            if raw:
-                try:
-                    return str(UUID(str(raw)))
-                except (TypeError, ValueError):
-                    continue
+        user_id = identity.member_application_user_id(candidate)
+        if user_id is not None:
+            return str(user_id)
     return None
 
 
@@ -79,30 +78,58 @@ def _trim(cache: dict) -> None:
         cache.pop(min(cache, key=lambda k: cache[k][0]), None)
 
 
-def _members_by_id(tenant_id: UUID) -> dict[str, str]:
-    key = str(tenant_id)
+def _names_from(records) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for member in records or []:
+        user_id = _record_user_id(member)
+        name = extract_display_name(member)
+        if user_id and name:
+            names[user_id] = name
+    return names
+
+
+def _cached_names(key: str, load) -> dict[str, str]:
     now = time.monotonic()
     hit = _tenant_names.get(key)
     if hit and hit[0] > now:
         return hit[1]
-    names: dict[str, str] = {}
     try:
-        for member in identity.list_tenant_users(tenant_id):
-            user_id = _record_user_id(member)
-            name = extract_display_name(member)
-            if user_id and name:
-                names[user_id] = name
+        names = load()
     except Exception:
-        logger.exception("Could not list tenant members for %s", tenant_id)
+        logger.exception("Could not list members for %s", key.split(":", 1)[0])
+        names = {}
     if names:  # an empty answer is retried on the next request instead of being cached
         _trim(_tenant_names)
         _tenant_names[key] = (now + _TENANT_TTL_SECONDS, names)
     return names
 
 
+def _members_by_id(tenant_id: UUID, access_token: str | None = None) -> dict[str, str]:
+    """Names of one tenant's users via Identity ``GET /internal/tenants/{id}/users``
+    (``X-Internal-Api-Key`` + the caller's Bearer token)."""
+    return _cached_names(
+        f"tenant:{tenant_id}:{bool(access_token)}",
+        lambda: _names_from(identity.list_tenant_users(tenant_id, access_token)),
+    )
+
+
+def _caller_tenant_names(access_token: str) -> dict[str, str]:
+    """Names of the caller's own tenant via ``GET /tenant/members`` (Bearer token only). Used when the
+    conversation carries no tenant or the internal listing yielded nothing; callers only read the ids
+    they asked for, so another tenant's members are never surfaced."""
+    key = "me:" + hashlib.sha256(access_token.encode()).hexdigest()
+    return _cached_names(key, lambda: _names_from(identity.list_tenant_members(access_token)))
+
+
 def _lookup_one(user_id: str) -> str | None:
     try:
-        return extract_display_name(identity.fetch_internal_user_by_id(user_id))
+        record = identity.fetch_internal_user_by_id(user_id)
+        # The lookup endpoint is not part of the documented Identity API and may answer with an
+        # unfiltered list: never use a record that identifies a different user.
+        returned_id = _record_user_id(record)
+        if returned_id is not None and returned_id != user_id:
+            return None
+        return extract_display_name(record)
     except Exception:
         logger.exception("Could not look up user %s", user_id)
         return None
@@ -113,6 +140,7 @@ def resolve_display_names(
     *,
     tenant_ids: Iterable[UUID | None] = (),
     current_user: dict | None = None,
+    access_token: str | None = None,
 ) -> dict[str, str | None]:
     """{user_id (str): name or None}. The caller's own name comes from their token, without a network call."""
     wanted = {str(u) for u in user_ids if u}
@@ -134,7 +162,16 @@ def resolve_display_names(
     for tenant_id in {t for t in tenant_ids if t}:
         if not missing:
             break
-        members = _members_by_id(tenant_id)
+        members = _members_by_id(tenant_id, access_token)
+        for uid in list(missing):
+            if uid in members:
+                result[uid] = members[uid]
+                _trim(_names)
+                _names[uid] = (now + _NAME_TTL_SECONDS, members[uid])
+                missing.discard(uid)
+
+    if missing and access_token:
+        members = _caller_tenant_names(access_token)
         for uid in list(missing):
             if uid in members:
                 result[uid] = members[uid]

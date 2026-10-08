@@ -54,7 +54,9 @@ def _conversation_archive_fields(conversation: Conversation) -> dict:
     }
 
 
-def _customer_names(db: Session, conversations: list[Conversation], current_user: dict | None) -> dict:
+def _customer_names(
+    db: Session, conversations: list[Conversation], current_user: dict | None, access_token: str | None = None
+) -> dict:
     """{conversation id: customer display name or None} for a page of conversations (one DB query plus
     cached identity lookups)."""
     customer_ids = chat_repo.get_customer_ids_for_conversations(db, conversations)
@@ -64,12 +66,14 @@ def _customer_names(db: Session, conversations: list[Conversation], current_user
         customer_ids.values(),
         tenant_ids=[c.tenant_id for c in conversations],
         current_user=current_user,
+        access_token=access_token,
     )
     return {cid: names.get(str(uid)) for cid, uid in customer_ids.items()}
 
 
 def _map_conversation_detail(
-    db: Session, conversation: Conversation, user_id: UUID, current_user: dict | None = None
+    db: Session, conversation: Conversation, user_id: UUID, current_user: dict | None = None,
+    access_token: str | None = None,
 ) -> dict:
     participant = chat_repo.get_participant(db, conversation.id, user_id)
     unread = chat_repo.count_unread_messages(
@@ -90,7 +94,7 @@ def _map_conversation_detail(
         "last_message_at": preview_at,
         "last_message_preview": preview,
         "created_by": conversation.created_by,
-        "customer_name": _customer_names(db, [conversation], current_user).get(conversation.id),
+        "customer_name": _customer_names(db, [conversation], current_user, access_token).get(conversation.id),
         "unread_count": unread,
         "participants": [
             ParticipantResponse.model_validate(p).model_dump()
@@ -186,7 +190,9 @@ def _check_subscription_eligibility(db: Session, user_id: UUID, conversation: Co
         )
 
 
-def create_conversation_service(db: Session, current_user: dict, data: ConversationCreate):
+def create_conversation_service(
+    db: Session, current_user: dict, data: ConversationCreate, access_token: str | None = None
+):
     user_id = _parse_user_id(current_user)
     participant_ids = [p.user_id for p in data.participant_ids]
 
@@ -199,7 +205,7 @@ def create_conversation_service(db: Session, current_user: dict, data: Conversat
     )
     if existing:
         return ConversationResponse.model_validate(
-            _map_conversation_detail(db, existing, user_id, current_user)
+            _map_conversation_detail(db, existing, user_id, current_user, access_token)
         )
 
     provider_id = data.provider_id
@@ -248,7 +254,7 @@ def create_conversation_service(db: Session, current_user: dict, data: Conversat
 
     conversation = chat_repo.get_conversation_by_id(db, conversation.id, with_participants=True)
     return ConversationResponse.model_validate(
-        _map_conversation_detail(db, conversation, user_id, current_user)
+        _map_conversation_detail(db, conversation, user_id, current_user, access_token)
     )
 
 
@@ -260,6 +266,7 @@ def list_conversations_service(
     search: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    access_token: str | None = None,
 ):
     user_id = _parse_user_id(current_user)
     items, total = chat_repo.get_user_conversations(
@@ -272,7 +279,7 @@ def list_conversations_service(
     )
     participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
     unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
-    customer_names = _customer_names(db, items, current_user)
+    customer_names = _customer_names(db, items, current_user, access_token)
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
@@ -300,6 +307,7 @@ def list_provider_conversations_service(
     status_filter: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    access_token: str | None = None,
 ):
     user_id = _parse_user_id(current_user)
     items, total = chat_repo.get_provider_conversations(
@@ -315,7 +323,7 @@ def list_provider_conversations_service(
     )
     participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
     unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
-    customer_names = _customer_names(db, items, current_user)
+    customer_names = _customer_names(db, items, current_user, access_token)
     return ProviderConversationPaginatedResponse(
         items=[
             ProviderConversationListItemResponse.model_validate(
@@ -337,7 +345,9 @@ def list_provider_conversations_service(
     )
 
 
-def get_conversation_service(db: Session, current_user: dict, conversation_id: UUID):
+def get_conversation_service(
+    db: Session, current_user: dict, conversation_id: UUID, access_token: str | None = None
+):
     user_id = _parse_user_id(current_user)
     conversation = chat_repo.get_conversation_by_id(db, conversation_id, with_participants=True)
     if not conversation:
@@ -345,7 +355,7 @@ def get_conversation_service(db: Session, current_user: dict, conversation_id: U
     if not chat_repo.is_participant(db, conversation_id, user_id):
         raise HTTPException(status_code=403, detail="Not authorized to view this conversation")
     return ConversationResponse.model_validate(
-        _map_conversation_detail(db, conversation, user_id, current_user)
+        _map_conversation_detail(db, conversation, user_id, current_user, access_token)
     )
 
 
@@ -419,6 +429,7 @@ def search_conversations_service(
     provider_id: UUID | None = None,
     page: int = 1,
     page_size: int = 20,
+    access_token: str | None = None,
 ):
     user_id = _parse_user_id(current_user)
     items, total = chat_repo.search_conversations(
@@ -431,7 +442,7 @@ def search_conversations_service(
     )
     participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
     unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
-    customer_names = _customer_names(db, items, current_user)
+    customer_names = _customer_names(db, items, current_user, access_token)
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(

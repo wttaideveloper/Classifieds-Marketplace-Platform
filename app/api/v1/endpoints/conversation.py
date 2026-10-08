@@ -1,10 +1,10 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Path, Query, status
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_current_user
+from app.core.dependencies import extract_access_token, get_current_admin, get_current_user
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.chat_schema import (
@@ -42,11 +42,12 @@ logger = logging.getLogger(__name__)
     ),
 )
 def create_conversation(
+    request: Request,
     payload: ConversationCreate = Body(...),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return create_conversation_service(db, current_user, payload)
+    return create_conversation_service(db, current_user, payload, access_token=extract_access_token(request))
 
 
 @router.get(
@@ -59,6 +60,7 @@ def create_conversation(
     ),
 )
 def list_conversations(
+    request: Request,
     status_filter: str | None = Query(
         None,
         alias="status",
@@ -71,7 +73,8 @@ def list_conversations(
     current_user=Depends(get_current_user),
 ):
     return list_conversations_service(
-        db, current_user, status_filter=status_filter, search=search, page=page, page_size=page_size
+        db, current_user, status_filter=status_filter, search=search, page=page, page_size=page_size,
+        access_token=extract_access_token(request),
     )
 
 
@@ -82,6 +85,7 @@ def list_conversations(
     description="List archived conversations for the authenticated user (same as `GET /conversations?status=archived`).",
 )
 def list_archived_conversations(
+    request: Request,
     search: str | None = Query(None, description="Search by subject or last message."),
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
@@ -95,6 +99,7 @@ def list_archived_conversations(
         search=search,
         page=page,
         page_size=page_size,
+        access_token=extract_access_token(request),
     )
 
 
@@ -110,6 +115,7 @@ def list_archived_conversations(
     ),
 )
 def list_provider_conversations(
+    request: Request,
     status_filter: str | None = Query(
         None,
         alias="status",
@@ -121,7 +127,8 @@ def list_provider_conversations(
     current_user=Depends(get_current_user),
 ):
     response = list_provider_conversations_service(
-        db, current_user, status_filter=status_filter, page=page, page_size=page_size
+        db, current_user, status_filter=status_filter, page=page, page_size=page_size,
+        access_token=extract_access_token(request),
     )
     # TEMPORARY DIAGNOSTIC — remove once the GET /conversations/provider
     # empty-result investigation is closed. No tokens/headers/PII: resolved
@@ -157,13 +164,15 @@ def list_provider_conversations(
     ),
 )
 def list_provider_archived_conversations(
+    request: Request,
     page: int = Query(DEFAULT_PAGE, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     return list_provider_conversations_service(
-        db, current_user, status_filter="archived", page=page, page_size=page_size
+        db, current_user, status_filter="archived", page=page, page_size=page_size,
+        access_token=extract_access_token(request),
     )
 
 
@@ -173,6 +182,7 @@ def list_provider_archived_conversations(
     summary="Search Conversations",
 )
 def search_conversations(
+    request: Request,
     q: str = Query(..., min_length=1, description="Search query."),
     provider_id: UUID | None = Query(None),
     page: int = Query(DEFAULT_PAGE, ge=1),
@@ -181,7 +191,8 @@ def search_conversations(
     current_user=Depends(get_current_user),
 ):
     return search_conversations_service(
-        db, current_user, search=q, provider_id=provider_id, page=page, page_size=page_size
+        db, current_user, search=q, provider_id=provider_id, page=page, page_size=page_size,
+        access_token=extract_access_token(request),
     )
 
 
@@ -191,11 +202,12 @@ def search_conversations(
     summary="Get Conversation Details",
 )
 def get_conversation(
+    request: Request,
     conversation_id: UUID = Path(...),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return get_conversation_service(db, current_user, conversation_id)
+    return get_conversation_service(db, current_user, conversation_id, access_token=extract_access_token(request))
 
 
 @router.patch(
