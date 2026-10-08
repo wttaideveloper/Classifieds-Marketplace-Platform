@@ -101,6 +101,8 @@ class ConversationResponse(BaseModel):
         ),
     )
     unread_count: int = 0
+    is_archived: bool = Field(False, description="Whether the authenticated user has archived this conversation (their own state).")
+    archived_at: datetime | None = Field(None, description="When the authenticated user archived it, if they did.")
     participants: list[ParticipantResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -139,8 +141,14 @@ class ConversationListItemResponse(BaseModel):
             "resolved (the client should show its own placeholder). Never an email address."
         ),
     )
-    is_archived: bool = False
-    archived_at: datetime | None = None
+    is_archived: bool = Field(
+        False,
+        description=(
+            "Whether the authenticated user has archived this conversation. Archiving is per person: the "
+            "customer and the provider each have their own state."
+        ),
+    )
+    archived_at: datetime | None = Field(None, description="When the authenticated user archived it, if they did.")
     updated_at: datetime
 
 

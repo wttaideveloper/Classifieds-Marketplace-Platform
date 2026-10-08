@@ -21,6 +21,9 @@ from app.models.product_model import Product, ProductReview
 from app.models.service_model import Service, ServiceReview
 
 
+TENANT = uuid4()  # the business that owns the enterprise, products and services below
+
+
 def _set_identity(app, identity_or_raiser):
     """require_catalog_writer's chain calls get_current_user() as a plain
     function rather than via Depends(...), so overriding get_current_user
@@ -41,7 +44,7 @@ def reviews_app(monkeypatch):
     ent_id, pid, sid = uuid4(), uuid4(), uuid4()
     buyer_id = uuid4()
     with sessions() as db:
-        db.add(Enterprise(id=ent_id, business_short_name="Acme", business_legal_name="Acme Ltd", business_email="a@a.com"))
+        db.add(Enterprise(id=ent_id, tenant_id=TENANT, business_short_name="Acme", business_legal_name="Acme Ltd", business_email="a@a.com"))
         db.add(Product(id=pid, enterprise_id=ent_id, product_name="Yoga Mat", product_category="Fitness", product_price=49.99))
         db.add(Service(id=sid, enterprise_id=ent_id, service_name="Massage", service_category="Wellness", duration=60, service_price=100.0))
         db.commit()
@@ -105,7 +108,7 @@ def test_product_review_moderation_flow(reviews_app):
     review = client.post(f"/api/v1/products/{pid}/reviews", json={"rating": 5}).json()
     review_id = review["id"]
 
-    staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(uuid4())}
+    staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(TENANT)}
     _set_identity(client.app, lambda: staff)
 
     moderated = client.patch(f"/api/v1/products/{pid}/reviews/{review_id}/moderate", json={"action": "approved"})
@@ -143,7 +146,7 @@ def test_product_review_staff_can_delete_others_review(reviews_app):
     sessions, client, user, pid, _ = reviews_app
     review = client.post(f"/api/v1/products/{pid}/reviews", json={"rating": 4}).json()
     app = client.app
-    staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(uuid4())}
+    staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(TENANT)}
     _set_identity(app, lambda: staff)
     ok = client.delete(f"/api/v1/products/{pid}/reviews/{review['id']}")
     assert ok.status_code == 200
@@ -167,7 +170,7 @@ def test_service_review_is_never_verified_and_still_works(reviews_app):
     body = response.json()
     assert body["is_verified_purchase"] is False
 
-    staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(uuid4())}
+    staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(TENANT)}
     _set_identity(client.app, lambda: staff)
     moderated = client.patch(f"/api/v1/services/{sid}/reviews/{body['id']}/moderate", json={"action": "approved"})
     assert moderated.status_code == 200, moderated.text

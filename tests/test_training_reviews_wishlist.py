@@ -133,18 +133,19 @@ def test_list_reviews_resolves_participant_names(monkeypatch):
     dt = __import__("datetime").datetime
     # Two reviews from two participants
     rows = [
-        MagicMock(id=uuid4(), training_id=training_id, rating="5", comment="a", participant_email="real@x.com", created_at=dt(2026, 1, 1)),
-        MagicMock(id=uuid4(), training_id=training_id, rating="4", comment="b", participant_email="noname@x.com", created_at=dt(2026, 1, 2)),
+        MagicMock(id=uuid4(), training_id=training_id, rating="5", comment="a", participant_email="real@x.com", created_at=dt(2026, 1, 2)),  # newest first, as the service lists them
+        MagicMock(id=uuid4(), training_id=training_id, rating="4", comment="b", participant_email="noname@x.com", created_at=dt(2026, 1, 1)),
     ]
     
     # Mocking TrainingEnrolment query returns.
     # We want to simulate:
     # 1. real@x.com has an older enrolment where name=email, but a newer enrolment where name="Real Name"
     # 2. noname@x.com only has an enrolment where name=email (fallback)
+    from types import SimpleNamespace as NS
     enrolment_rows = [
-        ("real@x.com", "Real Name"),          # Newer enrolment for real@x.com
-        ("real@x.com", "real@x.com"),         # Older enrolment for real@x.com
-        ("noname@x.com", "noname@x.com"),     # Enrolment for noname@x.com
+        NS(participant_email="real@x.com", participant_name="Real Name"),       # Newer enrolment for real@x.com
+        NS(participant_email="real@x.com", participant_name="real@x.com"),      # Older enrolment for real@x.com
+        NS(participant_email="noname@x.com", participant_name="noname@x.com"),  # Enrolment for noname@x.com
     ]
 
     db = MagicMock()
@@ -166,14 +167,14 @@ def test_list_reviews_resolves_participant_names(monkeypatch):
     # Review fields should remain unchanged
     assert reviews[0]["rating"] == 5
     assert reviews[0]["comment"] == "a"
-    # participant_email remains the email
-    assert reviews[0]["participant_email"] == "real@x.com"
+    # the public list never carries the reviewer's email
+    assert reviews[0]["participant_email"] is None
     # participant_name returns the actual name, picking the non-email over the email
     assert reviews[0]["participant_name"] == "Real Name"
     
-    assert reviews[1]["participant_email"] == "noname@x.com"
-    # If participant name is unavailable, verify fallback to email
-    assert reviews[1]["participant_name"] == "noname@x.com"
+    assert reviews[1]["participant_email"] is None
+    # An email is never shown as a name: with no real name the field is null
+    assert reviews[1]["participant_name"] is None
 
 
 def test_add_and_remove_wishlist(monkeypatch):

@@ -173,7 +173,7 @@ def test_get_training_service_exposes_new_fields_and_waitlist_reviews(monkeypatc
     assert result.instructor.bio == "10 years experience"
     assert result.waitlist_count == 4
     assert len(result.reviews) == 1
-    assert result.reviews[0]["participant_email"] == "a@x.com"
+    assert "participant_email" not in result.reviews[0]  # no email addresses in the public review list
 
 
 def test_create_training_service_generates_pass_code_and_qr_payload_when_check_in_enabled(monkeypatch):

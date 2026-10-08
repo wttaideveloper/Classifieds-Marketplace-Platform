@@ -76,6 +76,10 @@ class ConversationParticipant(Base):
     role = Column(String(20), default="customer", nullable=False)
     last_read_at = Column(DateTime, nullable=True)
     joined_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # Archiving is per participant: archiving a chat hides it for the person who archived it only. The
+    # customer and the provider each have their own state on the same conversation.
+    is_archived = Column(Boolean, default=False, nullable=False, server_default="false")
+    archived_at = Column(DateTime, nullable=True)
 
     conversation = relationship("Conversation", back_populates="participants")
 
@@ -85,6 +89,7 @@ class ConversationParticipant(Base):
             "user_id",
             name="uq_conversation_participants_conversation_user",
         ),
+        Index("ix_conversation_participants_user_archived", "user_id", "is_archived"),
     )
 
 

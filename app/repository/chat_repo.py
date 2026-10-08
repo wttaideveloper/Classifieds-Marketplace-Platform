@@ -209,10 +209,13 @@ def get_user_conversations(
     )
     query = apply_soft_delete_filter(query, Conversation, False)
 
-    if status:
-        query = query.filter(Conversation.status == status)
+    # Archive state is the caller's own (their participant row), never the other person's.
+    if status == "archived":
+        query = query.filter(ConversationParticipant.is_archived.is_(True))
     else:
-        query = query.filter(Conversation.status != "archived")
+        query = query.filter(ConversationParticipant.is_archived.is_(False))
+        if status:
+            query = query.filter(Conversation.status == status)
     if search:
         query = apply_ilike_search(
             query,
@@ -262,10 +265,23 @@ def get_provider_conversations(
     )
     query = apply_soft_delete_filter(query, Conversation, False)
 
-    if status:
-        query = query.filter(Conversation.status == status)
+    # Archive state is the provider's own. A provider assigned without a participant row has not archived
+    # anything yet (archiving creates the row), so they simply have no archived row.
+    archived_by_provider = (
+        db.query(ConversationParticipant.id)
+        .filter(
+            ConversationParticipant.conversation_id == Conversation.id,
+            ConversationParticipant.user_id == provider_id,
+            ConversationParticipant.is_archived.is_(True),
+        )
+        .exists()
+    )
+    if status == "archived":
+        query = query.filter(archived_by_provider)
     else:
-        query = query.filter(Conversation.status != "archived")
+        query = query.filter(~archived_by_provider)
+        if status:
+            query = query.filter(Conversation.status == status)
 
     query = query.order_by(Conversation.updated_at.desc())
     items, total = paginate_query(query, page, page_size)
@@ -1084,8 +1100,9 @@ def get_admin_dashboard_stats(db: Session) -> dict:
         "closed_conversations": db.query(Conversation).filter(
             Conversation.is_deleted.is_(False), Conversation.status == "closed"
         ).count(),
+        # Archiving is per participant, so this counts the conversations archived by at least one of them.
         "archived_conversations": db.query(Conversation).filter(
-            Conversation.is_deleted.is_(False), Conversation.status == "archived"
+            Conversation.is_deleted.is_(False), _archived_by_anyone()
         ).count(),
         "total_messages_today": db.query(Message).filter(
             Message.created_at >= today_start, Message.is_deleted.is_(False)
@@ -1108,10 +1125,60 @@ def get_admin_conversations(
 ):
     query = db.query(Conversation)
     query = apply_soft_delete_filter(query, Conversation, False)
-    if status:
+    if status == "archived":
+        # Archiving is per participant: "archived" here means archived by at least one of them.
+        query = query.filter(_archived_by_anyone())
+    elif status:
         query = query.filter(Conversation.status == status)
     query = query.order_by(Conversation.updated_at.desc())
     return paginate_query(query, page, page_size)
+
+
+def _archived_by_anyone():
+    """EXISTS clause: at least one participant of the conversation has archived it."""
+    from sqlalchemy import exists
+
+    return exists().where(
+        ConversationParticipant.conversation_id == Conversation.id,
+        ConversationParticipant.is_archived.is_(True),
+    )
+
+
+def get_archived_at_for_conversations(db: Session, conversation_ids: list[UUID]) -> dict[UUID, datetime | None]:
+    """{conversation id: when it was first archived by anyone} for the conversations archived by at least one
+    participant. One query for a page (admin list)."""
+    if not conversation_ids:
+        return {}
+    rows = (
+        db.query(ConversationParticipant.conversation_id, func.min(ConversationParticipant.archived_at))
+        .filter(
+            ConversationParticipant.conversation_id.in_(conversation_ids),
+            ConversationParticipant.is_archived.is_(True),
+        )
+        .group_by(ConversationParticipant.conversation_id)
+        .all()
+    )
+    return {conversation_id: archived_at for conversation_id, archived_at in rows}
+
+
+def set_participant_archived(
+    db: Session,
+    conversation: Conversation,
+    user_id: UUID,
+    archived: bool,
+) -> ConversationParticipant:
+    """Set the archive state of ONE person in a conversation. Nobody else's state and not the conversation's own
+    status or updated_at change. The assigned provider may have no participant row yet (assignment does not
+    create one), so it is created on first use."""
+    participant = get_participant(db, conversation.id, user_id)
+    if participant is None:
+        participant = ConversationParticipant(conversation_id=conversation.id, user_id=user_id, role="provider")
+        db.add(participant)
+    participant.is_archived = archived
+    participant.archived_at = datetime.utcnow() if archived else None
+    db.commit()
+    db.refresh(participant)
+    return participant
 
 
 def export_conversation_messages(db: Session, conversation_id: UUID) -> list[Message]:

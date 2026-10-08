@@ -21,9 +21,9 @@ def test_review_uses_authenticated_identity_and_returns_403(monkeypatch):
     app.dependency_overrides[get_db] = lambda: db
     monkeypatch.setattr(service, "_get_training_or_404", lambda *args: object())
     observed = []
-    def review(db, tid, payload):
+    def review(db, tid, payload, **kwargs):
         observed.append(payload.participant_email)
-        return service.create_training_review_service(db, tid, payload)
+        return service.create_training_review_service(db, tid, payload, **kwargs)
     monkeypatch.setattr(training, "create_training_review_service", review)
     response = TestClient(app).post(f"/api/v1/trainings/{uuid4()}/reviews", json={
         "rating": 5, "participant_email": "someone-else@example.com",
