@@ -14,6 +14,7 @@ from app.repository.product_repo import (
     update_product,
 )
 from app.repository.query_utils import build_pagination_meta
+from app.services import catalog_reviews
 from app.schemas.product_schema import (
     ProductDetailResponse,
     ProductListItemResponse,
@@ -67,6 +68,12 @@ def create_product_service(db: Session, product_data, *, access=None):
     )
 
 
+def _with_review_stats(card: dict, stat: tuple | None) -> dict:
+    """The card's rating and review count come from the approved reviews (0 / 0 when there are none)."""
+    average, count = stat or (None, 0)
+    return {**card, "rating": average or 0, "reviews_count": count}
+
+
 def get_products_service(
     db: Session,
     *,
@@ -92,9 +99,10 @@ def get_products_service(
         page_size=page_size,
         access=access,
     )
+    stats = catalog_reviews.approved_stats(db, "product", [product.id for product in items])
     return ProductPaginatedResponse(
         items=[
-            ProductListItemResponse.model_validate(map_product_list_item(product))
+            ProductListItemResponse.model_validate(_with_review_stats(map_product_list_item(product), stats.get(product.id)))
             for product in items
         ],
         pagination=build_pagination_meta(total, page, page_size),
@@ -141,27 +149,18 @@ def delete_product_service(db: Session, product_id: UUID, *, access=None):
     return delete_product(db, product)
 
 
-def _current_user_identity(current_user: dict) -> tuple[UUID, str | None]:
-    user_id = current_user.get("id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Authenticated user required")
-    try:
-        user_id = UUID(str(user_id))
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=401, detail="Authenticated user required")
-    name = current_user.get("name") or current_user.get("email")
-    return user_id, name
-
-
-def create_product_review_service(db: Session, product_id: UUID, data, current_user: dict):
-    from app.models.cart_model import Order, OrderItem
-    from app.models.product_model import ProductReview
-
+def _product_or_404(db: Session, product_id: UUID):
     product = get_product_by_id(db, product_id)
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    return product
 
-    user_id, reviewer_name = _current_user_identity(current_user)
+
+def create_product_review_service(db: Session, product_id: UUID, data, current_user: dict, *, access_token: str | None = None):
+    from app.models.cart_model import Order, OrderItem
+
+    product = _product_or_404(db, product_id)
+    user_id, _ = catalog_reviews.identity(current_user)
     is_verified = (
         db.query(OrderItem)
         .join(Order, Order.id == OrderItem.order_id)
@@ -169,70 +168,26 @@ def create_product_review_service(db: Session, product_id: UUID, data, current_u
         .first()
         is not None
     )
-
-    existing = db.query(ProductReview).filter(ProductReview.product_id == product_id, ProductReview.user_id == user_id).first()
-    if existing:
-        existing.rating = str(data.rating)
-        existing.comment = data.comment
-        existing.reviewer_name = reviewer_name
-        existing.is_verified_purchase = is_verified
-        db.commit()
-        db.refresh(existing)
-        return existing
-
-    review = ProductReview(
-        product_id=product_id, user_id=user_id, reviewer_name=reviewer_name,
-        rating=str(data.rating), comment=data.comment, is_verified_purchase=is_verified,
+    return catalog_reviews.upsert_review(
+        db, "product", product, data, current_user, is_verified=is_verified, access_token=access_token
     )
-    db.add(review)
-    db.commit()
-    db.refresh(review)
-    return review
 
 
-def list_product_reviews_service(db: Session, product_id: UUID):
-    from app.models.product_model import ProductReview
-
-    product = get_product_by_id(db, product_id)
-    if not product:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-
-    rows = (
-        db.query(ProductReview)
-        .filter(ProductReview.product_id == product_id, ProductReview.moderation_status == "approved")
-        .order_by(ProductReview.created_at.desc())
-        .all()
-    )
-    average = round(sum(int(r.rating) for r in rows) / len(rows), 2) if rows else None
-    return {"reviews": rows, "average_rating": average, "total": len(rows)}
+def list_product_reviews_service(db: Session, product_id: UUID, opts=None):
+    _product_or_404(db, product_id)
+    return catalog_reviews.list_approved(db, "product", product_id, opts)
 
 
-def delete_product_review_service(db: Session, product_id: UUID, review_id: UUID, current_user: dict):
-    from app.models.product_model import ProductReview
-
-    user_id, _ = _current_user_identity(current_user)
-    review = db.query(ProductReview).filter(ProductReview.id == review_id, ProductReview.product_id == product_id).first()
-    if not review:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
-    is_owner = review.user_id == user_id
-    is_staff = str(current_user.get("role") or "").lower() in ("admin", "provider", "super_admin")
-    if not is_owner and not is_staff:
-        raise HTTPException(status_code=403, detail="You can only delete your own review")
-    db.delete(review)
-    db.commit()
-    return {"message": "Review deleted"}
+def get_my_product_review_service(db: Session, product_id: UUID, current_user: dict):
+    _product_or_404(db, product_id)
+    return catalog_reviews.my_review(db, "product", product_id, current_user)
 
 
-def moderate_product_review_service(db: Session, review_id: UUID, action: str):
-    from app.models.product_model import ProductReview
+def delete_product_review_service(db: Session, product_id: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None):
+    product = _product_or_404(db, product_id)
+    return catalog_reviews.delete_review(db, "product", product, review_id, current_user, access_token=access_token)
 
-    allowed = {"approved", "rejected", "pending"}
-    if action not in allowed:
-        raise HTTPException(status_code=400, detail=f"Invalid moderation action. Allowed: {sorted(allowed)}")
-    review = db.query(ProductReview).filter(ProductReview.id == review_id).first()
-    if not review:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
-    review.moderation_status = action
-    db.commit()
-    db.refresh(review)
-    return review
+
+def moderate_product_review_service(db: Session, product_id: UUID, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None):
+    product = _product_or_404(db, product_id)
+    return catalog_reviews.moderate_review(db, "product", product, review_id, action, access, access_token=access_token, actor=actor)

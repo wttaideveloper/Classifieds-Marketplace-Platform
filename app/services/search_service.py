@@ -17,6 +17,7 @@ from app.schemas.enterprise_schema import EnterpriseListItemResponse, Enterprise
 from app.schemas.event_schema import EventListItemResponse, EventPaginatedResponse
 from app.schemas.product_schema import ProductListItemResponse, ProductPaginatedResponse
 from app.schemas.service_schema import ServiceListItemResponse, ServicePaginatedResponse
+from app.services import catalog_reviews
 from app.services.response_mappers import (
     map_enterprise_list_item,
     map_event_list_item,
@@ -130,13 +131,20 @@ def search_products_service(
 
     db_query = db_query.order_by(Product.created_at.desc())
     items, total = paginate_query(db_query, page, page_size)
+    stats = catalog_reviews.approved_stats(db, "product", [item.id for item in items])
     return ProductPaginatedResponse(
         items=[
-            ProductListItemResponse.model_validate(map_product_list_item(item))
+            ProductListItemResponse.model_validate(_with_review_stats(map_product_list_item(item), stats.get(item.id)))
             for item in items
         ],
         pagination=build_pagination_meta(total, page, page_size),
     )
+
+
+def _with_review_stats(card: dict, stat: tuple | None) -> dict:
+    """Rating and review count from the approved reviews (0 / 0 when there are none)."""
+    average, count = stat or (None, 0)
+    return {**card, "rating": average or 0, "reviews_count": count}
 
 
 def search_services_service(
@@ -185,9 +193,10 @@ def search_services_service(
 
     db_query = db_query.order_by(Service.created_at.desc())
     items, total = paginate_query(db_query, page, page_size)
+    stats = catalog_reviews.approved_stats(db, "service", [item.id for item in items])
     return ServicePaginatedResponse(
         items=[
-            ServiceListItemResponse.model_validate(map_service_list_item(item))
+            ServiceListItemResponse.model_validate(_with_review_stats(map_service_list_item(item), stats.get(item.id)))
             for item in items
         ],
         pagination=build_pagination_meta(total, page, page_size),

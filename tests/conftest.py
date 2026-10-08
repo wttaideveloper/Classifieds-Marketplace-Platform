@@ -21,3 +21,13 @@ def client(monkeypatch):
         yield test_client
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_background_review_notifications(monkeypatch):
+    """Review notifications are delivered from a background thread that opens its own database session and looks
+    people up over the network. Tests that exercise a review route must not start it; the tests that care about
+    notifications either record the dispatch or call the delivery functions directly."""
+    from app.services import review_notifications
+
+    monkeypatch.setattr(review_notifications, "_dispatch", lambda fn, *args, **kwargs: None)

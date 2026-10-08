@@ -112,8 +112,10 @@ def upload_attachment_service(
 
     _ensure_participant(db, conversation_id, user_id)
 
-    if conversation.status != "open":
-        raise HTTPException(status_code=400, detail="Cannot upload to a closed or archived conversation")
+    # Same rule as sending a message: archiving is a per-person view setting and does not block uploads
+    # ("archived" is tolerated for chats archived the old way, before the archive migration).
+    if conversation.status not in ("open", "archived"):
+        raise HTTPException(status_code=400, detail="Cannot upload to a closed conversation")
     if conversation.is_read_only:
         raise HTTPException(status_code=400, detail="Conversation is read-only")
 

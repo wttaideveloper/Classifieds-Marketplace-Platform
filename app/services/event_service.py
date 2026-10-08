@@ -30,6 +30,8 @@ from app.repository.event_repo import (
     viewer_owns_event,
 )
 from app.repository.query_utils import build_pagination_meta
+from app.services import review_audit
+from app.services.review_common import ListOptions, apply_list_options, rating_distribution
 from app.schemas.event_schema import (
     EventDetailResponse,
     EventListItemResponse,
@@ -1537,16 +1539,11 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
             "recipient_count": recipient_count, "sent_count": sent_count, "created_at": datetime.utcnow().isoformat(), "title": title, "message": message}
 
 def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_review: bool = False):
-    _get_event_or_404(db, event_id)
-    from app.models.event_aux_models import EventFeedback, EventRegistration
-    # Verified review: only registered participants (confirmed/attended) can submit ratings/reviews — email required
+    """Free-form feedback (a form's answers). A review goes through create_event_review_service."""
     if is_review:
-        email = payload.get("participant_email")
-        if not email:
-            raise HTTPException(status_code=400, detail="participant_email is required for verified reviews")
-        reg = db.query(EventRegistration).filter(EventRegistration.event_id==event_id, EventRegistration.participant_email==email, EventRegistration.status.in_(["confirmed","attended"])).first()
-        if not reg:
-            raise HTTPException(status_code=403, detail="Only registered participants can submit verified reviews")
+        return create_event_review_service(db, event_id, payload, {"email": payload.get("participant_email")})
+    _get_event_or_404(db, event_id)
+    from app.models.event_aux_models import EventFeedback
     fb = EventFeedback(
         event_id=event_id,
         participant_email=payload.get("participant_email"),
@@ -1554,12 +1551,92 @@ def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_revie
         answers=payload.get("answers"),
         rating=payload.get("rating"),
         comment=payload.get("comment"),
-        is_review=is_review,
+        is_review=False,
     )
     db.add(fb)
     db.commit()
     db.refresh(fb)
     return fb
+
+
+def _caller_user_uuid(current_user: dict | None):
+    try:
+        return UUID(str((current_user or {}).get("id")))
+    except (ValueError, TypeError):
+        return None
+
+
+def _own_event_review(db: Session, event_id: UUID, user_id, email: str):
+    """The caller's existing review of the event: by user id, or by email for reviews saved before user_id existed."""
+    from app.models.event_aux_models import EventFeedback
+
+    match = sa.func.lower(EventFeedback.participant_email) == email.lower()
+    if user_id is not None:
+        match = sa.or_(EventFeedback.user_id == user_id, match)
+    return (
+        db.query(EventFeedback)
+        .filter(EventFeedback.event_id == event_id, EventFeedback.is_review.is_(True), match)
+        .order_by(EventFeedback.created_at.asc())
+        .first()
+    )
+
+
+def create_event_review_service(db: Session, event_id: UUID, payload: dict, current_user: dict, *, access_token: str | None = None):
+    """Submit or update the caller's review of an Event.
+
+    The reviewer is the logged-in user: the email in the body is ignored, so nobody can review as someone else.
+    They need a confirmed or attended registration. One review per person: sending it again updates it and keeps its
+    status; a new review is pending until it is approved. Rating is 1 to 5, comment at most 2000 characters.
+    """
+    from app.models.event_aux_models import EventFeedback, EventRegistration
+    from app.services import review_notifications
+    from app.services.review_common import clean_comment, validate_rating
+
+    _get_event_or_404(db, event_id)
+    email = str((current_user or {}).get("email") or "").strip()
+    if not email:
+        raise HTTPException(status_code=403, detail="Only registered participants can submit verified reviews")
+    rating = validate_rating(payload.get("rating"))
+    comment = clean_comment(payload.get("comment"))
+
+    registered = db.query(EventRegistration.id).filter(
+        EventRegistration.event_id == event_id,
+        sa.func.lower(EventRegistration.participant_email) == email.lower(),
+        EventRegistration.status.in_(["confirmed", "attended"]),
+    ).first()
+    if not registered:
+        raise HTTPException(status_code=403, detail="Only registered participants can submit verified reviews")
+
+    user_id = _caller_user_uuid(current_user)
+    existing = _own_event_review(db, event_id, user_id, email)
+    if existing:
+        existing.rating = str(rating)
+        existing.comment = comment
+        if user_id is not None:
+            existing.user_id = user_id
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    review = EventFeedback(
+        event_id=event_id, participant_email=email, user_id=user_id, rating=str(rating), comment=comment,
+        is_review=True, moderation_status="pending",
+    )
+    db.add(review)
+    db.commit()
+    db.refresh(review)
+    review_notifications.notify_review_submitted("event", review.id, access_token=access_token)
+    return review
+
+
+def get_my_event_review_service(db: Session, event_id: UUID, current_user: dict):
+    """The caller's own review of the event (any status), or None."""
+    _get_event_or_404(db, event_id)
+    email = str((current_user or {}).get("email") or "").strip()
+    user_id = _caller_user_uuid(current_user)
+    if not email and user_id is None:
+        return None
+    return _own_event_review(db, event_id, user_id, email)
 
 
 def get_event_feedbacks_service(db: Session, event_id: UUID, is_review: bool = False):
@@ -1569,21 +1646,209 @@ def get_event_feedbacks_service(db: Session, event_id: UUID, is_review: bool = F
     return db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review == is_review).all()
 
 
-def moderate_review_service(db: Session, review_id: UUID, action: str, event_id: UUID | None = None):
+def moderate_review_service(db: Session, review_id: UUID, action: str, event_id: UUID | None = None, *, access_token: str | None = None, actor: dict | None = None):
     from app.models.event_aux_models import EventFeedback
-    allowed = {"approved", "rejected", "pending"}
-    if action not in allowed:
-        raise HTTPException(status_code=400, detail=f"Invalid moderation action. Allowed: {sorted(allowed)}")
-    conditions = [EventFeedback.id == review_id]
+    from app.services import review_notifications
+    from app.services.review_common import validate_action
+
+    validate_action(action)
+    conditions = [EventFeedback.id == review_id, EventFeedback.is_review.is_(True)]
     if event_id is not None:
         # The route already proved ownership of ``event_id``; the review must belong to that event.
         conditions.append(EventFeedback.event_id == event_id)
     fb = db.query(EventFeedback).filter(*conditions).first()
     if not fb:
         raise HTTPException(status_code=404, detail="Review not found")
+    previous = fb.moderation_status
+    if previous != action:
+        event = get_event_by_id(db, fb.event_id, include_deleted=True)
+        review_audit.record(
+            db, module="event", review_id=fb.id, item_id=fb.event_id, item_name=getattr(event, "title", None),
+            tenant_id=event_owner_tenant_id(event) if event else None, from_status=previous, to_status=action,
+            actor=actor, actor_role=(actor or {}).get("role"),
+        )
     fb.moderation_status = action
     db.commit()
+    db.refresh(fb)
+    if previous != action:
+        review_notifications.notify_review_decision("event", fb.id, action, access_token=access_token)
     return fb
+
+
+def delete_event_review_service(db: Session, event_id: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None):
+    """The review's author, or staff (admin / provider) of the business that owns the event, or a Super Admin."""
+    from app.models.event_aux_models import EventFeedback
+    from app.services.review_access import assert_staff_in_tenant
+
+    event = _get_event_or_404(db, event_id)
+    fb = db.query(EventFeedback).filter(
+        EventFeedback.id == review_id, EventFeedback.event_id == event_id, EventFeedback.is_review.is_(True)
+    ).first()
+    if not fb:
+        raise HTTPException(status_code=404, detail="Review not found")
+    user_id = _caller_user_uuid(current_user)
+    email = str((current_user or {}).get("email") or "").strip().lower()
+    is_author = (user_id is not None and fb.user_id == user_id) or (bool(email) and email == (fb.participant_email or "").strip().lower())
+    if not is_author:
+        role = str((current_user or {}).get("role") or "").lower()
+        if role not in ("admin", "provider", "super_admin"):
+            raise HTTPException(status_code=403, detail="You can only delete your own review")
+        owner = event_owner_tenant_id(event)
+        assert_staff_in_tenant(db, current_user, access_token, owner)
+        review_audit.record(
+            db, module="event", review_id=fb.id, item_id=event.id, item_name=event.title, tenant_id=owner,
+            from_status=fb.moderation_status, to_status="deleted", actor=current_user, actor_role=role,
+        )
+    db.delete(fb)
+    db.commit()
+    return {"message": "Review deleted"}
+
+
+_REVIEW_STATUSES = ("pending", "approved", "rejected")
+
+
+def _review_rating(raw) -> int | None:
+    """Reviews store the rating as text and nothing validates it on the way in; only 1-5 counts."""
+    text = str(raw).strip() if raw is not None else ""
+    return int(text) if text.isdigit() and 1 <= int(text) <= 5 else None
+
+
+def _average_rating(ratings: list[int]) -> float | None:
+    return round(sum(ratings) / len(ratings), 2) if ratings else None
+
+
+def _reviewer_names(db: Session, event_id: UUID, reviews: list) -> dict[str, str | None]:
+    """{lower-cased email: name on the attendee's registration}. An email is never used as a name."""
+    from app.models.event_aux_models import EventRegistration
+
+    emails = {(r.participant_email or "").strip().lower() for r in reviews if r.participant_email}
+    if not emails:
+        return {}
+    rows = (
+        db.query(EventRegistration.participant_email, EventRegistration.participant_name)
+        .filter(EventRegistration.event_id == event_id, sa.func.lower(EventRegistration.participant_email).in_(emails))
+        .order_by(EventRegistration.created_at.asc())
+        .all()
+    )
+    names: dict[str, str | None] = {}
+    for email, name in rows:
+        clean = " ".join((name or "").split())
+        names.setdefault((email or "").strip().lower(), clean if clean and "@" not in clean else None)
+    return names
+
+
+def list_public_event_reviews_service(db: Session, event_id: UUID, opts=None):
+    """Approved reviews of a published event, newest first. No email addresses.
+    `opts` (sort / rating / with_comment / paging) only changes which reviews are listed; the average, count
+    and star breakdown cover all approved reviews."""
+    from app.models.event_aux_models import EventFeedback
+
+    event = _get_event_or_404(db, event_id)
+    if event.status != "published":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    rows = (
+        db.query(EventFeedback)
+        .filter(
+            EventFeedback.event_id == event_id,
+            EventFeedback.is_review.is_(True),
+            EventFeedback.moderation_status == "approved",
+        )
+        .order_by(EventFeedback.created_at.desc())
+        .all()
+    )
+    ratings = [rating for rating in (_review_rating(r.rating) for r in rows) if rating is not None]
+    shown, pagination = apply_list_options(
+        rows, opts or ListOptions(),
+        rating_of=lambda r: _review_rating(r.rating), created_of=lambda r: r.created_at, comment_of=lambda r: r.comment,
+    )
+    names = _reviewer_names(db, event_id, shown)
+    return {
+        "reviews": [
+            {
+                "id": r.id,
+                "participant_name": names.get((r.participant_email or "").strip().lower()),
+                "rating": _review_rating(r.rating),
+                "comment": r.comment,
+                "created_at": r.created_at,
+            }
+            for r in shown
+        ],
+        "average_rating": _average_rating(ratings),
+        "count": len(rows),
+        "rating_distribution": rating_distribution(ratings),
+        "pagination": pagination,
+    }
+
+
+def list_event_reviews_for_managers_service(
+    db: Session,
+    event_id: UUID,
+    *,
+    status_filter: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+):
+    """Every review of an event for its managers, whatever its status, newest first, with the counts per status
+    (for Pending / Approved / Rejected tabs). The caller has already proved ownership of the event."""
+    from app.models.event_aux_models import EventFeedback
+
+    _get_event_or_404(db, event_id)
+    if status_filter is not None and status_filter not in _REVIEW_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {list(_REVIEW_STATUSES)}")
+
+    base = db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review.is_(True))
+    counts = {s: 0 for s in _REVIEW_STATUSES}
+    for review_status, n in (
+        db.query(EventFeedback.moderation_status, sa.func.count(EventFeedback.id))
+        .filter(EventFeedback.event_id == event_id, EventFeedback.is_review.is_(True))
+        .group_by(EventFeedback.moderation_status)
+        .all()
+    ):
+        counts[review_status if review_status in counts else "pending"] += n
+
+    query = base
+    if status_filter:
+        # A review saved before the column had a default is pending.
+        query = query.filter(
+            EventFeedback.moderation_status == status_filter
+            if status_filter != "pending"
+            else sa.or_(EventFeedback.moderation_status == "pending", EventFeedback.moderation_status.is_(None))
+        )
+    total = query.count()
+    rows = (
+        query.order_by(EventFeedback.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    names = _reviewer_names(db, event_id, rows)
+    approved = [
+        rating
+        for rating in (
+            _review_rating(r.rating)
+            for r in base.filter(EventFeedback.moderation_status == "approved").all()
+        )
+        if rating is not None
+    ]
+    return {
+        "reviews": [
+            {
+                "id": r.id,
+                "event_id": r.event_id,
+                "participant_name": names.get((r.participant_email or "").strip().lower()),
+                "participant_email": r.participant_email,
+                "rating": _review_rating(r.rating),
+                "comment": r.comment,
+                "moderation_status": r.moderation_status or "pending",
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ],
+        "counts": counts,
+        "average_rating": _average_rating(approved),
+        "pagination": build_pagination_meta(total, page, page_size),
+    }
 
 
 def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
@@ -1611,9 +1876,15 @@ def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
     elif report_type == "feedback":
         feedbacks = db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review.is_(False)).all()
         reviews = db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review.is_(True)).all()
-        ratings = [int(r.rating) for r in reviews if r.rating and str(r.rating).isdigit()]
+        # Only approved reviews count towards the average; pending and rejected ones must not move it.
+        ratings = [
+            rating for rating in (_review_rating(r.rating) for r in reviews if r.moderation_status == "approved")
+            if rating is not None
+        ]
         avg_rating = sum(ratings)/len(ratings) if ratings else None
-        data = {"total_feedbacks": len(feedbacks), "total_reviews": len(reviews), "average_rating": avg_rating,
+        data = {"total_feedbacks": len(feedbacks), "total_reviews": len(reviews),
+                "approved_reviews": sum(1 for r in reviews if r.moderation_status == "approved"),
+                "average_rating": avg_rating,
                 "feedbacks": [{"id": str(f.id), "rating": f.rating, "comment": f.comment} for f in feedbacks[:20]]}
     elif report_type == "revenue":
         # Revenue is what was actually paid (EventOrder), not ticket prices x registrations: that counted
@@ -1703,7 +1974,7 @@ def get_event_summary_service(
         attended_count = db.query(func.count(EventRegistration.id)).filter(EventRegistration.event_id.in_(event_ids), EventRegistration.status == "attended").scalar() or 0
         # rating is String, cast attempt
         try:
-            avg_rating = db.query(func.avg(EventFeedback.rating.cast(sa.Float))).filter(EventFeedback.event_id.in_(event_ids), EventFeedback.is_review.is_(True)).scalar()
+            avg_rating = db.query(func.avg(EventFeedback.rating.cast(sa.Float))).filter(EventFeedback.event_id.in_(event_ids), EventFeedback.is_review.is_(True), EventFeedback.moderation_status == "approved").scalar()
             if avg_rating is not None:
                 avg_rating = float(avg_rating)
         except Exception:

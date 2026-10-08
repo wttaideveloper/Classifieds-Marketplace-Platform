@@ -314,10 +314,18 @@ def test_review_create_and_list_include_participant_name(setup):
     assert create_resp.json()["participant_name"] == "Suresh Inti"
     assert create_resp.json()["participant_email"] == learner["email"]
 
+    # A new review is pending, so it is not public until an Enterprise Admin or Super Admin approves it.
+    assert create_resp.json()["moderation_status"] == "pending"
+    assert client.get(f"/api/v1/trainings/{tid}/reviews").json()["reviews"] == []
+    with sessions() as db:
+        db.query(TrainingReview).filter(TrainingReview.training_id == tid).update({"moderation_status": "approved"})
+        db.commit()
+
     list_resp = client.get(f"/api/v1/trainings/{tid}/reviews")
     assert list_resp.status_code == 200, list_resp.text
     review = list_resp.json()["reviews"][0]
     assert review["participant_name"] == "Suresh Inti"
+    assert review["participant_email"] is None
 
 
 def test_review_list_name_is_null_when_no_matching_enrolment(setup):
@@ -326,7 +334,7 @@ def test_review_list_name_is_null_when_no_matching_enrolment(setup):
     but covers stale/orphaned data) must not 500, just omit the name."""
     sessions, client, admin, learner, tid = setup
     with sessions() as db:
-        db.add(TrainingReview(training_id=tid, participant_email="orphan@example.com", rating="5", comment="x"))
+        db.add(TrainingReview(training_id=tid, participant_email="orphan@example.com", rating="5", comment="x", moderation_status="approved"))
         db.commit()
     resp = client.get(f"/api/v1/trainings/{tid}/reviews")
     assert resp.status_code == 200, resp.text

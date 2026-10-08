@@ -117,10 +117,14 @@ def test_provider_archived_conversations_response_shape_unchanged(db):
     session, engine = db
     provider_id = uuid4()
     conversation = Conversation(
-        id=uuid4(), status="archived", conversation_type="standard",
+        id=uuid4(), status="open", conversation_type="standard",
         created_by=uuid4(), assigned_provider_id=provider_id,
     )
     session.add(conversation)
+    # Archiving is per participant: it is this provider's own participant row that is archived.
+    session.add(ConversationParticipant(
+        conversation_id=conversation.id, user_id=provider_id, role="provider", is_archived=True,
+    ))
     session.commit()
 
     result = chat_service.list_provider_conversations_service(
@@ -129,7 +133,7 @@ def test_provider_archived_conversations_response_shape_unchanged(db):
     )
     payload = result.model_dump(mode="json")
     assert payload["pagination"]["total"] == 1
-    assert payload["items"][0]["status"] == "archived"
+    assert payload["items"][0]["status"] == "open"  # archiving no longer changes the conversation's status
     assert payload["items"][0]["is_archived"] is True
 
 

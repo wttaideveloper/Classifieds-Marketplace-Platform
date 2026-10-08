@@ -59,6 +59,7 @@ _safe_include("app.api.v1.endpoints.blog", prefix="/cms/blogs", tags=["CMS — B
 
 # Search APIs
 _safe_include("app.api.v1.endpoints.search", prefix="/search", tags=["Search"])
+_safe_include("app.api.v1.endpoints.review_admin", prefix="/reviews", tags=["Reviews"])
 
 # Onboarding form templates
 _safe_include(

@@ -3,7 +3,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.common_schema import EntityStatus, PaginatedResponse, CatalogReviewItem
+from app.services.review_common import public_name
+
+from app.schemas.common_schema import EntityStatus, PaginatedResponse, CatalogReviewItem, PaginationMeta
 
 
 class ProductCreate(BaseModel):
@@ -261,8 +263,9 @@ class ProductListItemResponse(ProductResponse):
     )
     rating: float = Field(
         0,
-        description="Computed rating (not yet tracked in database).",
+        description="Mean of the approved review ratings, 0 when there are none (check reviews_count; GET /products/{id}/reviews returns null in that case).",
     )
+    reviews_count: int = Field(0, description="Number of approved reviews.")
     listing_type: str = Field(
         "One-time",
         description="Display listing type, e.g. Subscription or One-time.",
@@ -293,7 +296,7 @@ class ProductDetailResponse(ProductResponse):
     )
     rating: float = Field(
         0,
-        description="Computed rating (not yet tracked in database).",
+        description="Mean of the approved review ratings, 0 when there are none (check reviews_count).",
     )
     stock_count: int | None = Field(
         None,
@@ -309,9 +312,9 @@ class ProductDetailResponse(ProductResponse):
     )
     reviews: list[CatalogReviewItem] = Field(
         default_factory=list,
-        description="Customer reviews for this product.",
+        description="Latest approved reviews of this product (up to 20), newest first.",
     )
-    reviews_count: int = Field(0, description="Total number of reviews for this product.")
+    reviews_count: int = Field(0, description="Number of approved reviews of this product.")
 
 
 class ProductPaginatedResponse(PaginatedResponse[ProductListItemResponse]):
@@ -342,11 +345,18 @@ class ProductReviewResponse(BaseModel):
     def _rating_to_int(cls, value):
         return int(value)
 
+    @field_validator("reviewer_name", mode="after")
+    @classmethod
+    def _hide_email_as_name(cls, value):
+        return public_name(value)
+
 
 class ProductReviewListResponse(BaseModel):
     reviews: list[ProductReviewResponse]
     average_rating: float | None = Field(None, description="Average of approved reviews' ratings; null when there are none")
     total: int = Field(..., description="Count of approved reviews")
+    rating_distribution: dict[str, int] = Field(default_factory=dict, description="Approved reviews per star: {\"5\": n, \"4\": n, ...}")
+    pagination: PaginationMeta | None = Field(None, description="total = reviews after the filters; page/page_size when paging, else everything on one page")
 
 
 class ProductReviewModerateRequest(BaseModel):

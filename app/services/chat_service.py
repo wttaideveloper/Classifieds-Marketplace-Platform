@@ -46,11 +46,13 @@ def _parse_user_id(current_user: dict) -> UUID:
     return UUID(str(current_user["id"]))
 
 
-def _conversation_archive_fields(conversation: Conversation) -> dict:
-    is_archived = conversation.status == "archived"
+def _participant_archive_fields(participant: ConversationParticipant | None) -> dict:
+    """Archive state as the caller sees it: their own participant row, never the other person's. Someone with
+    no participant row (e.g. a provider who was assigned but has never archived) has not archived it."""
+    is_archived = bool(participant and participant.is_archived)
     return {
         "is_archived": is_archived,
-        "archived_at": conversation.archived_at if is_archived else None,
+        "archived_at": participant.archived_at if is_archived else None,
     }
 
 
@@ -96,6 +98,7 @@ def _map_conversation_detail(
         "created_by": conversation.created_by,
         "customer_name": _customer_names(db, [conversation], current_user, access_token).get(conversation.id),
         "unread_count": unread,
+        **_participant_archive_fields(participant),
         "participants": [
             ParticipantResponse.model_validate(p).model_dump()
             for p in conversation.participants
@@ -121,10 +124,13 @@ def _map_conversation_list_item(
     # list_conversations_service etc.) to avoid a get_participant() +
     # count_unread_messages() query per conversation. Falling back to the
     # single-item lookups keeps this safe for any caller that doesn't batch.
+    if participants is not None:
+        participant = participants.get(conversation.id)
+    else:
+        participant = chat_repo.get_participant(db, conversation.id, user_id)
     if unread_counts is not None:
         unread = unread_counts.get(conversation.id, 0)
     else:
-        participant = (participants or {}).get(conversation.id) if participants is not None else chat_repo.get_participant(db, conversation.id, user_id)
         unread = chat_repo.count_unread_messages(
             db, conversation.id, user_id, participant.last_read_at if participant else None
         )
@@ -157,7 +163,7 @@ def _map_conversation_list_item(
         "unread_count": unread,
         "assigned_provider_id": conversation.assigned_provider_id,
         "customer_name": (customer_names or {}).get(conversation.id),
-        **_conversation_archive_fields(conversation),
+        **_participant_archive_fields(participant),
         "updated_at": conversation.updated_at,
     }
     if other_participant_user_id is not None:
@@ -168,7 +174,10 @@ def _map_conversation_list_item(
 def _validate_chat_rules(conversation: Conversation) -> None:
     if conversation.expires_at and conversation.expires_at < datetime.utcnow():
         raise HTTPException(status_code=400, detail="Conversation has expired")
-    if conversation.status != "open":
+    # Archiving is a per-person view setting (conversation_participants.is_archived), not a state of the
+    # conversation, so it never blocks messaging. "archived" is still accepted here for chats archived the old
+    # way (status = 'archived') that the archive migration has not converted yet.
+    if conversation.status not in ("open", "archived"):
         raise HTTPException(
             status_code=400,
             detail=f"Conversation is {conversation.status}. Cannot send messages.",
@@ -400,18 +409,18 @@ def archive_conversation_service(
     conversation = chat_repo.get_conversation_by_id(db, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    if not chat_repo.is_participant(db, conversation_id, user_id):
+    # Only people in the conversation may archive it: a participant, or the provider it is assigned to (the
+    # provider's own inbox lists it, but assignment does not always create a participant row).
+    if not (
+        chat_repo.is_participant(db, conversation_id, user_id)
+        or conversation.assigned_provider_id == user_id
+    ):
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    if archived:
-        conversation.status = "archived"
-        conversation.archived_at = datetime.utcnow()
-    else:
-        conversation.status = "open"
-        conversation.archived_at = None
-
-    conversation = chat_repo.save_conversation(db, conversation)
-    archive_fields = _conversation_archive_fields(conversation)
+    # Archiving is per person: only the caller's own state changes. The conversation's status and updated_at,
+    # and the other participant's state, are left alone.
+    participant = chat_repo.set_participant_archived(db, conversation, user_id, archived)
+    archive_fields = _participant_archive_fields(participant)
     return ConversationArchiveResponse(
         id=conversation.id,
         status=conversation.status,
@@ -845,6 +854,7 @@ def admin_list_conversations_service(
         db, [message.id for message in latest_messages.values()]
     )
 
+    archived_at = chat_repo.get_archived_at_for_conversations(db, [item.id for item in items])
     mapped_items = []
     for item in items:
         latest = latest_messages.get(item.id)
@@ -871,7 +881,9 @@ def admin_list_conversations_service(
                 "last_message": last_message,
                 "unread_count": 0,
                 "assigned_provider_id": item.assigned_provider_id,
-                **_conversation_archive_fields(item),
+                # An admin has no side of the conversation: archived here means archived by someone in it.
+                "is_archived": item.id in archived_at,
+                "archived_at": archived_at.get(item.id),
                 "updated_at": item.updated_at,
             })
         )

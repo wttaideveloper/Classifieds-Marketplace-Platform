@@ -258,7 +258,10 @@ class TrainingReview(Base):
     participant_email = Column(String(255), nullable=False)
     rating = Column(String(20), nullable=False)
     comment = Column(Text)
+    # pending -> approved | rejected. Only approved reviews are public.
+    moderation_status = Column(String(20), default="pending", server_default="pending", nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     __table_args__ = (
         Index("ix_training_reviews_training_email", "training_id", "participant_email", unique=True),

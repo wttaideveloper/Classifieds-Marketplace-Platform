@@ -1,5 +1,6 @@
 from uuid import UUID
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.models.enterprise_model import Enterprise
 from app.models.location_model import EnterpriseLocation
@@ -7,6 +8,18 @@ from app.repository.training_repo import create_training, delete_training, get_t
 from app.repository.query_utils import build_pagination_meta
 from app.schemas.training_schema import TrainingDetailResponse, TrainingListItemResponse, TrainingPaginatedResponse, TrainingResponse
 from app.services.response_mappers import _qr_image_base64, map_training_detail, map_training_list_item, map_training_write
+from app.services import review_audit
+from app.services.review_common import (
+    ListOptions,
+    apply_list_options,
+    average_rating,
+    average_rating as review_average,  # get_training_summary_service has a local named average_rating
+    clean_comment,
+    parse_rating,
+    public_name,
+    rating_distribution,
+    validate_action,
+)
 
 ACTIVE_ENROLMENT_STATUSES = frozenset({"enrolled", "active", "completed", "approved"})
 CHECKIN_ELIGIBLE_STATUSES = frozenset({"enrolled", "active", "approved"})
@@ -123,23 +136,12 @@ def create_training_service(db: Session, data, current_user: dict | None = None)
 def get_trainings_service(db: Session, **kw):
     items, total = get_trainings(db, **kw)
 
-    from app.models.training_model import TrainingReview
-    rating_rows = (
-        db.query(TrainingReview.training_id, TrainingReview.rating)
-        .filter(TrainingReview.training_id.in_([i.id for i in items]))
-        .all()
-        if items else []
-    )
-    ratings_by_training: dict = {}
-    for training_id, rating in rating_rows:
-        ratings_by_training.setdefault(training_id, []).append(int(rating))
+    stats = _approved_review_stats(db, [i.id for i in items])
 
     mapped = []
     for i in items:
         d = map_training_list_item(i)
-        ratings = ratings_by_training.get(i.id, [])
-        d["average_rating"] = round(sum(ratings) / len(ratings), 2) if ratings else 0
-        d["reviews_count"] = len(ratings)
+        d["average_rating"], d["reviews_count"] = stats.get(i.id, (None, 0))
         mapped.append(TrainingListItemResponse.model_validate(d))
 
     return TrainingPaginatedResponse(items=mapped, pagination=build_pagination_meta(total, kw.get("page",1), kw.get("page_size",20)))
@@ -205,17 +207,22 @@ def get_training_service(db: Session, tid: UUID, current_user: dict | None = Non
     detail["available_slots"] = available_slots
 
     from app.models.training_model import TrainingReview, TrainingWaitlist
-    all_reviews = db.query(TrainingReview).filter(TrainingReview.training_id == tid).all()
-    ratings = [int(r.rating) for r in all_reviews]
-    detail["average_rating"] = round(sum(ratings) / len(ratings), 2) if ratings else 0
-    detail["reviews_count"] = len(ratings)
-    recent_reviews = sorted(all_reviews, key=lambda r: r.created_at, reverse=True)[:50]
+    approved = [
+        r for r in db.query(TrainingReview).filter(
+            TrainingReview.training_id == tid, TrainingReview.moderation_status == "approved"
+        ).all()
+        if parse_rating(r.rating) is not None
+    ]
+    detail["average_rating"] = average_rating(parse_rating(r.rating) for r in approved)
+    detail["reviews_count"] = len(approved)
+    recent_reviews = sorted(approved, key=lambda r: r.created_at, reverse=True)[:50]
+    names = _reviewer_names(db, tid, {r.participant_email for r in recent_reviews})
     detail["reviews"] = [
         {
             "id": r.id,
             "training_id": r.training_id,
-            "participant_email": r.participant_email,
-            "rating": r.rating,
+            "participant_name": names.get(r.participant_email),
+            "rating": parse_rating(r.rating),
             "comment": r.comment,
             "created_at": r.created_at,
         }
@@ -2106,9 +2113,13 @@ def get_training_summary_service(db: Session, current_user: dict | None = None, 
             .filter(TrainingEnrolment.training_id.in_(tids), TrainingEnrolment.status == "attended")
             .scalar() or 0
         )
-        ratings = [int(r) for (r,) in db.query(TrainingReview.rating).filter(TrainingReview.training_id.in_(tids)).all() if r and str(r).strip().lstrip("-").isdigit()]
-        if ratings:
-            average_rating = round(sum(ratings) / len(ratings), 2)
+        average_rating_value = review_average(
+            parse_rating(r) for (r,) in db.query(TrainingReview.rating).filter(
+                TrainingReview.training_id.in_(tids), TrainingReview.moderation_status == "approved"
+            ).all()
+        )
+        if average_rating_value is not None:
+            average_rating = average_rating_value
 
     return {
         "total_trainings": total,
@@ -3371,12 +3382,59 @@ def get_moderation_history_service(db: Session, tid: UUID):
     return out
 
 
-# ---- Reviews (verified — must be enrolled) ----
+# ---- Reviews (verified — must be enrolled; moderated: pending -> approved | rejected) ----
 
-def create_training_review_service(db: Session, tid: UUID, data):
+def _approved_review_stats(db: Session, tids: list) -> dict:
+    """{training_id: (average or None, approved count)} for a page of trainings, in one query."""
+    from app.models.training_model import TrainingReview
+
+    if not tids:
+        return {}
+    by_training: dict = {}
+    for training_id, rating in db.query(TrainingReview.training_id, TrainingReview.rating).filter(
+        TrainingReview.training_id.in_(tids), TrainingReview.moderation_status == "approved"
+    ).all():
+        value = parse_rating(rating)
+        if value is not None:
+            by_training.setdefault(training_id, []).append(value)
+    return {tid: (average_rating(ratings), len(ratings)) for tid, ratings in by_training.items()}
+
+
+def _reviewer_names(db: Session, tid: UUID, emails: set) -> dict[str, str]:
+    """{email: name on the learner's enrolment}. An email is never used as a name."""
+    from app.models.training_model import TrainingEnrolment
+
+    emails = {e for e in emails if e}
+    names: dict[str, str] = {}
+    if not emails:
+        return names
+    for enrolment in db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email.in_(emails),
+    ).order_by(TrainingEnrolment.created_at.desc()).all():
+        shown = public_name(enrolment.participant_name)
+        if shown and enrolment.participant_email not in names:
+            names[enrolment.participant_email] = shown
+    return names
+
+
+def _review_dict(r, *, name: str | None, include_email: bool) -> dict:
+    return {
+        "id": str(r.id), "training_id": str(r.training_id), "rating": parse_rating(r.rating),
+        "comment": r.comment, "participant_email": r.participant_email if include_email else None,
+        "participant_name": name, "verified": True,
+        "moderation_status": r.moderation_status or "pending",
+        "created_at": r.created_at.isoformat(),
+        "updated_at": (r.updated_at or r.created_at).isoformat(),
+    }
+
+
+def create_training_review_service(db: Session, tid: UUID, data, *, access_token: str | None = None):
     from app.models.training_model import TrainingEnrolment, TrainingReview
+    from app.services import review_notifications
 
     _get_training_or_404(db, tid)
+    comment = clean_comment(data.comment)
     enrolled = db.query(TrainingEnrolment).filter(
         TrainingEnrolment.training_id == tid,
         TrainingEnrolment.participant_email == data.participant_email,
@@ -3389,49 +3447,139 @@ def create_training_review_service(db: Session, tid: UUID, data):
         TrainingReview.training_id == tid,
         TrainingReview.participant_email == data.participant_email,
     ).first()
+    is_new = existing is None
     if existing:
+        # Editing keeps the status the review already has.
         existing.rating = str(data.rating)
-        existing.comment = data.comment
+        existing.comment = comment
         db.commit()
         db.refresh(existing)
         r = existing
     else:
-        r = TrainingReview(training_id=tid, participant_email=data.participant_email, rating=str(data.rating), comment=data.comment)
+        r = TrainingReview(
+            training_id=tid, participant_email=data.participant_email, rating=str(data.rating),
+            comment=comment, moderation_status="pending",
+        )
         db.add(r)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Two first posts from the same learner at the same moment: update the one that won.
+            db.rollback()
+            r = db.query(TrainingReview).filter(
+                TrainingReview.training_id == tid, TrainingReview.participant_email == data.participant_email
+            ).first()
+            if r is None:
+                raise
+            r.rating = str(data.rating)
+            r.comment = comment
+            db.commit()
+            is_new = False
         db.refresh(r)
 
+    if is_new:
+        review_notifications.notify_review_submitted("training", r.id, access_token=access_token)
+    return _review_dict(r, name=public_name(enrolled.participant_name), include_email=True)
+
+
+def list_training_reviews_service(db: Session, tid: UUID, opts=None):
+    """Public: approved reviews only, no email addresses. `opts` (sort / rating / with_comment / paging) only
+    changes which reviews are listed; the average, count and star breakdown cover all approved reviews."""
+    from app.models.training_model import TrainingReview
+
+    _get_training_or_404(db, tid)
+    rows = [
+        r for r in db.query(TrainingReview).filter(
+            TrainingReview.training_id == tid, TrainingReview.moderation_status == "approved"
+        ).order_by(TrainingReview.created_at.desc()).all()
+        if parse_rating(r.rating) is not None
+    ]
+    ratings = [parse_rating(r.rating) for r in rows]
+    shown, pagination = apply_list_options(
+        rows, opts or ListOptions(),
+        rating_of=lambda r: parse_rating(r.rating), created_of=lambda r: r.created_at, comment_of=lambda r: r.comment,
+    )
+    names = _reviewer_names(db, tid, {r.participant_email for r in shown})
     return {
-        "id": str(r.id), "training_id": str(r.training_id), "rating": int(r.rating),
-        "comment": r.comment, "participant_email": r.participant_email,
-        "participant_name": enrolled.participant_name,
-        "verified": True, "created_at": r.created_at.isoformat(),
+        "reviews": [_review_dict(r, name=names.get(r.participant_email), include_email=False) for r in shown],
+        "average_rating": average_rating(ratings),
+        "count": len(rows),
+        "rating_distribution": rating_distribution(ratings),
+        "pagination": pagination,
     }
 
 
-def list_training_reviews_service(db: Session, tid: UUID):
-    from app.models.training_model import TrainingEnrolment, TrainingReview
+def get_my_training_review_service(db: Session, tid: UUID, current_user: dict):
+    """The caller's own review of this training, whatever its status; None when they have not written one."""
+    from app.models.training_model import TrainingReview
 
     _get_training_or_404(db, tid)
-    rows = db.query(TrainingReview).filter(TrainingReview.training_id == tid).order_by(TrainingReview.created_at.desc()).all()
-    emails = {r.participant_email for r in rows}
-    names_by_email: dict[str, str] = {}
-    if emails:
-        for email, name in db.query(TrainingEnrolment.participant_email, TrainingEnrolment.participant_name).filter(
-            TrainingEnrolment.training_id == tid,
-            TrainingEnrolment.participant_email.in_(emails),
-        ).order_by(TrainingEnrolment.created_at.desc()).all():
-            current = names_by_email.get(email)
-            if not current or current == email:
-                names_by_email[email] = name
-    reviews = [
-        {"id": str(r.id), "training_id": str(r.training_id), "rating": int(r.rating), "comment": r.comment,
-         "participant_email": r.participant_email, "participant_name": names_by_email.get(r.participant_email),
-         "verified": True, "created_at": r.created_at.isoformat()}
-        for r in rows
-    ]
-    avg = round(sum(item["rating"] for item in reviews) / len(reviews), 2) if reviews else 0
-    return {"reviews": reviews, "average_rating": avg, "count": len(reviews)}
+    email = (current_user or {}).get("email")
+    if not email:
+        return None
+    r = db.query(TrainingReview).filter(
+        TrainingReview.training_id == tid, TrainingReview.participant_email == email
+    ).first()
+    if r is None:
+        return None
+    return _review_dict(r, name=_reviewer_names(db, tid, {email}).get(email), include_email=True)
+
+
+def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None):
+    """Approve / reject / reset a review. `access` is the caller's CatalogAccess (Enterprise Admin or Super Admin)."""
+    from app.models.training_model import TrainingReview
+    from app.services import review_notifications
+    from app.services.review_access import assert_can_moderate
+
+    validate_action(action)
+    training = _get_training_or_404(db, tid)
+    assert_can_moderate(
+        access,
+        training.enterprise.tenant_id if training.enterprise else None,
+        training.tenant_id,
+    )
+    r = db.query(TrainingReview).filter(TrainingReview.id == review_id, TrainingReview.training_id == tid).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Review not found")
+    previous = r.moderation_status
+    if previous != action:
+        review_audit.record(
+            db, module="training", review_id=r.id, item_id=training.id, item_name=training.title,
+            tenant_id=(training.enterprise.tenant_id if training.enterprise else None) or training.tenant_id,
+            from_status=previous, to_status=action, actor=actor, actor_role=access.role,
+        )
+    r.moderation_status = action
+    db.commit()
+    db.refresh(r)
+    if previous != action:
+        review_notifications.notify_review_decision("training", r.id, action, access_token=access_token)
+    return _review_dict(r, name=_reviewer_names(db, tid, {r.participant_email}).get(r.participant_email), include_email=True)
+
+
+def delete_training_review_service(db: Session, tid: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None):
+    """The review's author, or staff (admin / provider) of the business that owns the training, or a Super Admin."""
+    from app.models.training_model import TrainingReview
+    from app.services.review_access import assert_staff_in_tenant
+
+    training = _get_training_or_404(db, tid)
+    r = db.query(TrainingReview).filter(TrainingReview.id == review_id, TrainingReview.training_id == tid).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Review not found")
+    email = str((current_user or {}).get("email") or "").strip().lower()
+    if not email or email != (r.participant_email or "").strip().lower():
+        role = str((current_user or {}).get("role") or "").lower()
+        if role not in ("admin", "provider", "super_admin"):
+            raise HTTPException(status_code=403, detail="You can only delete your own review")
+        owners = ((training.enterprise.tenant_id if training.enterprise else None), training.tenant_id)
+        assert_staff_in_tenant(db, current_user, access_token, *owners)
+        review_audit.record(
+            db, module="training", review_id=r.id, item_id=training.id, item_name=training.title,
+            tenant_id=next((t for t in owners if t), None), from_status=r.moderation_status, to_status="deleted",
+            actor=current_user, actor_role=role,
+        )
+    db.delete(r)
+    db.commit()
+    return {"message": "Review deleted"}
 
 
 # ---- Wishlist ----
@@ -3451,11 +3599,11 @@ def add_training_wishlist_service(db: Session, user_id: UUID, tid: UUID):
         db.commit()
         db.refresh(item)
 
-    ratings = [int(r.rating) for r in db.query(TrainingReview).filter(TrainingReview.training_id == tid).all()]
+    average, count = _approved_review_stats(db, [tid]).get(tid, (None, 0))
     return {
         "id": str(item.id), "training_id": str(training.id), "title": training.title,
         "primary_image": training.primary_image, "price": training.price, "currency": training.currency,
-        "average_rating": round(sum(ratings) / len(ratings), 2) if ratings else 0, "reviews_count": len(ratings),
+        "average_rating": average, "reviews_count": count,
         "added_at": item.created_at.isoformat(),
     }
 
@@ -3477,16 +3625,17 @@ def list_training_wishlist_service(db: Session, user_id: UUID):
     from app.models.training_model import TrainingReview, TrainingWishlistItem
 
     rows = db.query(TrainingWishlistItem).filter(TrainingWishlistItem.user_id == user_id).order_by(TrainingWishlistItem.created_at.desc()).all()
+    stats = _approved_review_stats(db, [item.training_id for item in rows])
     items = []
     for item in rows:
         training = get_training_by_id(db, item.training_id, include_deleted=True)
         if not training:
             continue
-        ratings = [int(r.rating) for r in db.query(TrainingReview).filter(TrainingReview.training_id == item.training_id).all()]
+        average, count = stats.get(item.training_id, (None, 0))
         items.append({
             "id": str(item.id), "training_id": str(training.id), "title": training.title,
             "primary_image": training.primary_image, "price": training.price, "currency": training.currency,
-            "average_rating": round(sum(ratings) / len(ratings), 2) if ratings else 0, "reviews_count": len(ratings),
+            "average_rating": average, "reviews_count": count,
             "added_at": item.created_at.isoformat(),
         })
     return items

@@ -241,9 +241,11 @@ def reopen_conversation(
     response_model=ConversationArchiveResponse,
     summary="Archive or Unarchive Conversation",
     description=(
-        "Toggle archive state with `{ \"archived\": true }` to archive or "
-        "`{ \"archived\": false }` to restore to normal lists. "
-        "Messages and history are unchanged."
+        "Archive or unarchive the conversation for the authenticated user only: `{ \"archived\": true }` to "
+        "archive, `{ \"archived\": false }` to restore. The other participant's lists are not affected, "
+        "and the conversation's status, messages and history are unchanged. "
+        "Only a participant (or the assigned provider) may call it; anyone else gets 403. "
+        "`is_archived` in the response and in the list/detail responses is relative to the caller."
     ),
 )
 def archive_conversation(

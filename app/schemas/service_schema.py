@@ -3,7 +3,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.services.review_common import public_name
+
 from app.schemas.common_schema import (
+    PaginationMeta,
     AvailabilityScheduleEntry,
     CatalogReviewItem,
     EntityStatus,
@@ -263,6 +266,11 @@ class ServiceListItemResponse(ServiceResponse):
         None,
         description="Instructor name (alias of instructor_name).",
     )
+    rating: float = Field(
+        0,
+        description="Mean of the approved review ratings, 0 when there are none (check reviews_count).",
+    )
+    reviews_count: int = Field(0, description="Number of approved reviews.")
 
 
 class ServiceDetailResponse(ServiceResponse):
@@ -303,9 +311,13 @@ class ServiceDetailResponse(ServiceResponse):
     )
     reviews: list[CatalogReviewItem] = Field(
         default_factory=list,
-        description="Customer reviews for this service.",
+        description="Latest approved reviews of this service (up to 20), newest first.",
     )
-    reviews_count: int = Field(0, description="Total number of reviews for this service.")
+    rating: float = Field(
+        0,
+        description="Mean of the approved review ratings, 0 when there are none (check reviews_count).",
+    )
+    reviews_count: int = Field(0, description="Number of approved reviews of this service.")
 
 
 class ServicePaginatedResponse(PaginatedResponse[ServiceListItemResponse]):
@@ -336,11 +348,18 @@ class ServiceReviewResponse(BaseModel):
     def _rating_to_int(cls, value):
         return int(value)
 
+    @field_validator("reviewer_name", mode="after")
+    @classmethod
+    def _hide_email_as_name(cls, value):
+        return public_name(value)
+
 
 class ServiceReviewListResponse(BaseModel):
     reviews: list[ServiceReviewResponse]
     average_rating: float | None = Field(None, description="Average of approved reviews' ratings; null when there are none")
     total: int = Field(..., description="Count of approved reviews")
+    rating_distribution: dict[str, int] = Field(default_factory=dict, description="Approved reviews per star: {\"5\": n, \"4\": n, ...}")
+    pagination: PaginationMeta | None = Field(None, description="total = reviews after the filters; page/page_size when paging, else everything on one page")
 
 
 class ServiceReviewModerateRequest(BaseModel):

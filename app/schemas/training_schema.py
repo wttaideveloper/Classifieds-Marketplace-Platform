@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.common_schema import PaginatedResponse
+from app.schemas.common_schema import PaginatedResponse, PaginationMeta
 
 
 TrainingStatus = str  # draft|published|unpublished|archived|cancelled
@@ -532,8 +532,8 @@ class TrainingResponse(BaseModel):
 
 
 class TrainingListItemResponse(TrainingResponse):
-    average_rating: float = Field(0, description="Mean of all review ratings, rounded to 2 decimals.")
-    reviews_count: int = Field(0, description="Total number of reviews.")
+    average_rating: float | None = Field(None, description="Mean of the approved review ratings, rounded to 2 decimals; null when there are none (show \"No ratings yet\").")
+    reviews_count: int = Field(0, description="Number of approved reviews.")
 
 
 class TrainingDetailResponse(TrainingResponse):
@@ -544,10 +544,10 @@ class TrainingDetailResponse(TrainingResponse):
     available_slots: int | None = Field(
         None, description="capacity minus enrolled_count; null when capacity is not set/numeric."
     )
-    average_rating: float = Field(0, description="Mean of all review ratings, rounded to 2 decimals.")
-    reviews_count: int = Field(0, description="Total number of reviews.")
+    average_rating: float | None = Field(None, description="Mean of the approved review ratings, rounded to 2 decimals; null when there are none (show \"No ratings yet\").")
+    reviews_count: int = Field(0, description="Number of approved reviews.")
     waitlist_count: int = Field(0, description="Participants currently on the waitlist.")
-    reviews: list[dict] = Field(default_factory=list, description="Most recent reviews (up to 50), newest first.")
+    reviews: list[dict] = Field(default_factory=list, description="Most recent approved reviews (up to 50), newest first. No email addresses.")
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -1173,7 +1173,7 @@ class TrainingRefundApproveRequest(BaseModel):
 
 class TrainingReviewCreate(BaseModel):
     rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5")
-    comment: str | None = None
+    comment: str | None = Field(None, max_length=2000, description="Optional, at most 2000 characters")
     participant_email: str | None = Field(None, description="Deprecated: identity comes from the authenticated user")
 
 
@@ -1182,16 +1182,24 @@ class TrainingReviewResponse(BaseModel):
     training_id: str
     rating: int
     comment: str | None = None
-    participant_email: str
+    participant_email: str | None = Field(None, description="Only returned to the review's author and to the training's staff; null in the public list")
     participant_name: str | None = Field(None, description="Display name from the participant's enrolment on this training — null if no matching enrolment is found")
     verified: bool = True
+    moderation_status: str = Field("pending", description="pending|approved|rejected. A new review is pending and only approved reviews are in the public list")
     created_at: str
+    updated_at: str | None = None
 
 
 class TrainingReviewListResponse(BaseModel):
     reviews: list[TrainingReviewResponse] = Field(default_factory=list)
-    average_rating: float = 0
-    count: int = 0
+    average_rating: float | None = Field(None, description="Mean of the approved reviews' ratings; null when there are none")
+    count: int = Field(0, description="Number of approved reviews")
+    rating_distribution: dict[str, int] = Field(default_factory=dict, description="Approved reviews per star: {\"5\": n, \"4\": n, ...}")
+    pagination: PaginationMeta | None = Field(None, description="total = reviews after the filters; page/page_size when paging, else everything on one page")
+
+
+class TrainingReviewModerateRequest(BaseModel):
+    action: str = Field(..., description="approved | rejected | pending")
 
 
 # ---- Wishlist ----
@@ -1203,7 +1211,7 @@ class TrainingWishlistItemResponse(BaseModel):
     primary_image: str | None = None
     price: str | None = None
     currency: str | None = None
-    average_rating: float = 0
+    average_rating: float | None = None
     reviews_count: int = 0
     added_at: str
 
