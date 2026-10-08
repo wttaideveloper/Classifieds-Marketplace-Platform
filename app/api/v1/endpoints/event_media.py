@@ -1,5 +1,5 @@
 """Event media upload — primary image, gallery images, videos, documents. See docs/event-media-upload-contract.md."""
-import re
+import logging
 import uuid
 from uuid import UUID
 
@@ -16,8 +16,9 @@ from app.schemas.event_media_schema import EventMediaAssetResponse, EventMediaDe
 from app.services import event_media_service as media
 
 router = APIRouter(tags=["Event Media"])
+logger = logging.getLogger(__name__)
 
-_ASSET_FILE = re.compile(r"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.([A-Za-z0-9]{1,10})$")
+_ASSET_FILE = media.ASSET_FILE_RE
 
 
 def _uploader_scope(db: Session, request: Request, current_user: dict, enterprise_id: UUID | None):
@@ -109,9 +110,18 @@ def get_event_media(
 ):
     match = _ASSET_FILE.match(asset_file)
     if not match:
+        logger.warning("event media 404 %r: not a <uuid>.<ext> name", asset_file)
         raise HTTPException(404, "File not found")
     asset = db.get(EventMedia, uuid.UUID(match.group(1)))
-    if asset is None or asset.ext != match.group(2).lower() or not media.asset_path(asset).is_file():
+    # One answer for the client, but the log says which of the three it was (see scripts/check_event_media.py).
+    if asset is None:
+        logger.warning("event media 404 %s: no event_media record in this database", asset_file)
+        raise HTTPException(404, "File not found")
+    if asset.ext != match.group(2).lower():
+        logger.warning("event media 404 %s: the record was stored as .%s", asset_file, asset.ext)
+        raise HTTPException(404, "File not found")
+    if not media.asset_path(asset).is_file():
+        logger.warning("event media 404 %s: record exists but the file is missing at %s", asset_file, media.asset_path(asset))
         raise HTTPException(404, "File not found")
 
     headers = {"X-Content-Type-Options": "nosniff"}

@@ -690,6 +690,16 @@ class LessonAttendanceMarkedBy(BaseModel):
     email: str | None = None
 
 
+class LessonAttendanceProgress(BaseModel):
+    """The learner's overall course progress, recomputed whenever attendance completes or un-completes a lesson."""
+    overall_percent: float = Field(..., description="Completed lessons / total lessons, 0-100, two decimals")
+    lessons_done: int
+    total_lessons: int
+    mandatory_done: int
+    mandatory_total: int
+    completed_at: datetime | None = Field(None, description="When the learner finished the course; null while they have not")
+
+
 class LessonAttendanceParticipant(BaseModel):
     enrolment_id: str = Field(..., description="TrainingEnrolment id — the identifier used to mark attendance")
     participant_name: str
@@ -698,6 +708,17 @@ class LessonAttendanceParticipant(BaseModel):
     status: LessonAttendanceStatus = Field(..., description="Current attendance status for this lesson")
     marked_by: LessonAttendanceMarkedBy | None = Field(None, description="Who last marked this status — null if never marked")
     marked_at: datetime | None = Field(None, description="When it was last marked — null if never marked")
+    is_completed: bool = Field(
+        False,
+        description="Whether this learner has completed this lesson. Marking them 'attended' completes it; 'absent' and "
+        "'not_marked' never do. It is the same value as is_completed on this lesson in GET /content.",
+    )
+    completed_by_attendance: bool = Field(
+        False,
+        description="true when the completion was created by attendance, so un-marking them undoes it. false when the "
+        "learner completed the lesson themselves (that is never undone by attendance) or it is not complete.",
+    )
+    progress: LessonAttendanceProgress | None = Field(None, description="The learner's course progress totals after this change")
 
 
 class LessonAttendanceRosterResponse(BaseModel):
