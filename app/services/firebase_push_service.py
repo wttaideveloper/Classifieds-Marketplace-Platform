@@ -192,14 +192,51 @@ def _ensure_firebase() -> tuple[bool, str | None, str | None]:
         return False, project_id, message
 
 
+def build_push_message(
+    token: str,
+    *,
+    title: str,
+    body: str,
+    payload_data: dict,
+    conversation_id: str | None = None,
+):
+    """The FCM message for one device.
+
+    ``conversation_id`` is for CHAT MESSAGE pushes only: the same id becomes the Android collapse key and
+    notification tag and the iOS ``thread-id``, so the OS groups a conversation's messages while the app is
+    backgrounded or killed. Other pushes pass nothing and are sent exactly as before.
+    """
+    from firebase_admin import messaging
+
+    if conversation_id:
+        group = str(conversation_id)
+        android = messaging.AndroidConfig(
+            priority="high",
+            collapse_key=group,
+            notification=messaging.AndroidNotification(tag=group),
+        )
+        apns = messaging.APNSConfig(payload=messaging.APNSPayload(aps=messaging.Aps(thread_id=group)))
+    else:
+        android = messaging.AndroidConfig(priority="high")
+        apns = None
+    return messaging.Message(
+        notification=messaging.Notification(title=title, body=body),
+        data=payload_data,
+        token=token,
+        android=android,
+        apns=apns,
+    )
+
+
 def send_push_to_tokens(
     tokens: list[str],
     *,
     title: str,
     body: str,
     data: dict | None = None,
+    conversation_id: str | None = None,
 ) -> PushSendResult:
-    """Send FCM push notifications."""
+    """Send FCM push notifications (``conversation_id``: chat message pushes only, see build_push_message)."""
     ready, project_id, init_error = _ensure_firebase()
     result = PushSendResult(firebase_project_id=project_id, credentials_error=init_error)
 
@@ -231,11 +268,8 @@ def send_push_to_tokens(
     for token in tokens:
         try:
             messaging.send(
-                messaging.Message(
-                    notification=messaging.Notification(title=title, body=body),
-                    data=payload_data,
-                    token=token,
-                    android=messaging.AndroidConfig(priority="high"),
+                build_push_message(
+                    token, title=title, body=body, payload_data=payload_data, conversation_id=conversation_id
                 )
             )
             result.sent_count += 1

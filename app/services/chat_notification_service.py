@@ -98,6 +98,7 @@ def test_push_service(db: Session, current_user: dict, payload: TestPushRequest)
         title=payload.title,
         body=payload.body,
         data=data,
+        conversation_id=str(payload.conversation_id) if payload.conversation_id else None,
     )
 
     if settings.firebase_configured and push_result.sent_count == 0:
@@ -291,6 +292,7 @@ def _dispatch_push_notification(
         title=title,
         body=body,
         data=_chat_message_push_data(conversation_id, message_id),
+        conversation_id=str(conversation_id),
     )
 
 
