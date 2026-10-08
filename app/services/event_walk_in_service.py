@@ -259,7 +259,7 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
     # (see test_the_walk_in_uses_the_same_pricing_service_as_online_registration). Pure validation, no DB access.
     priced_options = resolve_priced_selections(
         event, meal_selections=payload.meal_selections, accommodation_selections=payload.accommodation_selections,
-        ticket_currency=ticket_currency,
+        ticket_currency=ticket_currency if ticket_amount > 0 else None,
     )
     grand_total = (ticket_amount + priced_options.meal_subtotal + priced_options.accommodation_subtotal).quantize(Decimal("0.01"))
     currency = priced_options.currency or ticket_currency

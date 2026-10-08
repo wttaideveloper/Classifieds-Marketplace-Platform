@@ -127,6 +127,15 @@ def is_within_purchase_window(option: Mapping, now: datetime, event_tz) -> bool:
     return True
 
 
+def has_service_period_ended(option: Mapping, now: datetime, event_tz) -> bool:
+    """Whether a new accommodation selection is for a completed stay period."""
+    end = option.get("service_end_at")
+    if not end:
+        return False
+    end_at = resolve_naive_or_aware(datetime.fromisoformat(end), event_tz)
+    return now >= end_at
+
+
 def remaining_capacity(option: Mapping, taken: int) -> int | None:
     capacity = option.get("capacity")
     if capacity is None:
@@ -354,6 +363,14 @@ def validate_accommodation_selections(
     if closed:
         raise AccommodationSelectionError(
             "Accommodation option(s) outside their purchase window: " + ", ".join(known[i]["name"] for i in closed)
+        )
+    service_ended = sorted(
+        selected for selected in seen
+        if selected not in held and has_service_period_ended(known[selected], now, event_tz)
+    )
+    if service_ended:
+        raise AccommodationSelectionError(
+            "Accommodation period has ended: " + ", ".join(known[i]["name"] for i in service_ended)
         )
     return [option["id"] for option in options if option["id"] in seen]
 

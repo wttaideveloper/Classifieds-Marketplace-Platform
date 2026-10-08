@@ -145,6 +145,21 @@ def is_within_purchase_window(option: Mapping, now: datetime, event_tz) -> bool:
     return True
 
 
+def has_service_period_ended(option: Mapping, now: datetime, event_tz) -> bool:
+    """Whether a new selection would be for a service period already over.
+
+    Service start does not prevent advance purchases.  A configured service end
+    does: selling a meal after its service completed has no fulfilment value.
+    Naive values follow the same organizer-local timezone rule as purchase
+    windows, while explicit offsets remain authoritative.
+    """
+    end = option.get("service_end_at")
+    if not end:
+        return False
+    end_at = resolve_naive_or_aware(datetime.fromisoformat(end), event_tz)
+    return now >= end_at
+
+
 def remaining_capacity(option: Mapping, taken: int) -> int | None:
     """None = unlimited. Never negative (a race that overshoots by one still reports 0, not -1)."""
     capacity = option.get("capacity")
@@ -369,6 +384,12 @@ def validate_meal_selections(event: Any, selections: Sequence[str] | None, curre
     )
     if closed:
         raise MealSelectionError("Meal option(s) outside their purchase window: " + ", ".join(known[i]["name"] for i in closed))
+    service_ended = sorted(
+        selected for selected in seen
+        if selected not in held and has_service_period_ended(known[selected], now, event_tz)
+    )
+    if service_ended:
+        raise MealSelectionError("Meal service period has ended: " + ", ".join(known[i]["name"] for i in service_ended))
     return [option["id"] for option in options if option["id"] in seen]
 
 

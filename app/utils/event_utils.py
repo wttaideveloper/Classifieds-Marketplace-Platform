@@ -61,9 +61,12 @@ def validate_registration_window(event, now=None):
     current_utc = _get_utc_now(now)
     event_tz = get_event_timezone(event)
 
-    open_at_utc = _localize_and_convert(getattr(event, "registration_open_at", None), event_tz)
-    close_at_utc = _localize_and_convert(getattr(event, "registration_close_at", None), event_tz)
-    cutoff_utc = _localize_and_convert(getattr(event, "registration_cutoff", None), event_tz)
+    # These fields were historically stored without an offset, but API clients may
+    # legitimately send an ISO timestamp with one.  Preserve explicit offsets and
+    # only localize organizer-entered wall-clock values.
+    open_at_utc = resolve_naive_or_aware(getattr(event, "registration_open_at", None), event_tz)
+    close_at_utc = resolve_naive_or_aware(getattr(event, "registration_close_at", None), event_tz)
+    cutoff_utc = resolve_naive_or_aware(getattr(event, "registration_cutoff", None), event_tz)
 
     if open_at_utc and current_utc <= open_at_utc:
         raise HTTPException(status_code=400, detail=f"Registration not yet open (opens {event.registration_open_at})")
@@ -71,6 +74,13 @@ def validate_registration_window(event, now=None):
         raise HTTPException(status_code=400, detail=f"Registration closed (closed {event.registration_close_at})")
     if cutoff_utc and current_utc >= cutoff_utc:
         raise HTTPException(status_code=400, detail=f"Registration cutoff passed ({event.registration_cutoff})")
+
+    # A published status is not an assertion that the event is still in the
+    # future.  Do this after explicit registration-window messages so existing
+    # organizer controls retain their more specific response, but before any new
+    # registration, quote, checkout, or waitlist mutation can proceed.
+    if get_event_lifecycle_state(event, current_utc) == "finished":
+        raise HTTPException(status_code=400, detail="Event has already ended and registration is closed.")
 
 def is_registration_open(event, now=None) -> bool:
     """
@@ -96,9 +106,9 @@ def get_event_lifecycle_state(event, now=None) -> str | None:
     current_utc = _get_utc_now(now)
     event_tz = get_event_timezone(event)
     
-    start_utc = _localize_and_convert(start_date, event_tz)
+    start_utc = resolve_naive_or_aware(start_date, event_tz)
     end_date = getattr(event, "end_date", None)
-    end_utc = _localize_and_convert(end_date, event_tz) if end_date else start_utc
+    end_utc = resolve_naive_or_aware(end_date, event_tz) if end_date else start_utc
         
     if start_utc is None:
         return None

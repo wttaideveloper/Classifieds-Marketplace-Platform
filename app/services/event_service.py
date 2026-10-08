@@ -988,16 +988,14 @@ def create_registration_service(db: Session, event_id: UUID, payload):
 
     requested_meals = getattr(payload, "meal_selections", None)
     requested_accommodation = getattr(payload, "accommodation_selections", None)
-    resolved_ticket = _resolve_ticket(event, getattr(payload, "ticket_type_id", None))
-    ticket_currency_for_pricing = (
-        resolved_ticket.get("currency", event.currency) if isinstance(resolved_ticket, dict) else (event.currency or "INR")
-    ) or "INR"
     priced_options = resolve_priced_selections(
         event,
         # Only a real list is a selection: a payload object without the field (older callers, mocks) means "none".
         meal_selections=requested_meals if isinstance(requested_meals, list) else None,
         accommodation_selections=requested_accommodation if isinstance(requested_accommodation, list) else None,
-        ticket_currency=ticket_currency_for_pricing,
+        # This endpoint only accepts free tickets.  A free ticket has no
+        # payable currency; paid add-ons establish it instead.
+        ticket_currency=None,
     )
     meal_selections = [line.option_id for line in priced_options.meal_lines] or None
     accommodation_selections = [line.option_id for line in priced_options.accommodation_lines] or None
@@ -1876,14 +1874,21 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
     from app.services.event_option_pricing_service import (
         assert_capacity_available, persist_line_items, resolve_priced_selections,
     )
-    ticket_currency_for_pricing = (
+    price = _ticket_effective_price(ticket or {}, event)
+    try:
+        ticket_subtotal_decimal = (Decimal(price) * payload.quantity).quantize(Decimal("0.01"))
+    except Exception:
+        # Preserve the legacy malformed-price fallback below while ensuring a
+        # free/fallback ticket does not impose a currency on paid add-ons.
+        ticket_subtotal_decimal = Decimal("0.00")
+    ticket_currency = (
         ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
     ) or "INR"
     priced_options = resolve_priced_selections(
         event,
         meal_selections=getattr(payload, "meal_selections", None),
         accommodation_selections=getattr(payload, "accommodation_selections", None),
-        ticket_currency=ticket_currency_for_pricing,
+        ticket_currency=ticket_currency if ticket_subtotal_decimal > 0 else None,
     )
 
     try:
@@ -1944,15 +1949,7 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
                         )
                 except ValueError:
                     pass
-        price = _ticket_effective_price(ticket or {}, event)
-        try:
-            ticket_subtotal_decimal = (Decimal(price) * payload.quantity).quantize(Decimal("0.01"))
-        except Exception:
-            # Same fallback the pre-Phase-2.8 code used for an unparseable price: treat it as free rather than
-            # blocking checkout on a malformed ticket price (a pre-existing data-quality concern, not new here).
-            ticket_subtotal_decimal = Decimal("0.00")
-
-        currency = ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
+        currency = priced_options.currency or ticket_currency
 
         # Phase 2.8: grand total = ticket + meal + accommodation. A free ticket (ticket_subtotal 0) with paid
         # extras still produces a payable order — "free event" is a ticket-price concept, not a total-due one.
@@ -2057,18 +2054,16 @@ def get_checkout_quote_service(db: Session, event_id: UUID, payload) -> dict:
     ticket_currency = (
         ticket.get("currency", event.currency) if isinstance(ticket, dict) else (event.currency or "INR")
     ) or "INR"
-    priced_options = resolve_priced_selections(
-        event, meal_selections=payload.meal_selections, accommodation_selections=payload.accommodation_selections,
-        ticket_currency=ticket_currency,
-    )
-    assert_capacity_available(db, event, priced_options)  # advisory (no lock) — see docstring
-
     price = _ticket_effective_price(ticket or {}, event)
     try:
         ticket_subtotal = (Decimal(price) * payload.quantity).quantize(Decimal("0.01"))
     except Exception:
-        # Same fallback create_event_checkout_service uses for an unparseable ticket price.
         ticket_subtotal = Decimal("0.00")
+    priced_options = resolve_priced_selections(
+        event, meal_selections=payload.meal_selections, accommodation_selections=payload.accommodation_selections,
+        ticket_currency=ticket_currency if ticket_subtotal > 0 else None,
+    )
+    assert_capacity_available(db, event, priced_options)  # advisory (no lock) — see docstring
 
     return compute_totals(ticket_subtotal, priced_options, currency=priced_options.currency or ticket_currency)
 

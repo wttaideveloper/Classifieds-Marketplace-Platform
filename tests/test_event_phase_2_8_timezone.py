@@ -26,8 +26,8 @@ This file covers:
      both meals and accommodation, at a fixed reference "now" — no clock mocking needed.
   2. Backward compatibility: an explicit +05:30 offset and an explicit UTC ("Z") value for the
      SAME wall-clock instant must behave identically to the naive value.
-  3. service_start_at/service_end_at never block purchase, regardless of how far they diverge
-     from the (open) purchase window.
+  3. service_end_at blocks a new selection after fulfilment has completed, while
+     service_start_at still permits advance purchase.
   4. End-to-end HTTP regression (the user-facing report): checkout/quote, checkout, free
      registration, and walk-in all agree that a naive-window option is purchasable right now.
 
@@ -112,10 +112,9 @@ class TestNaiveWindowInterpretedAsEventTimezone:
         event_tz = get_event_timezone(KOLKATA_EVENT)
         assert is_within_purchase_window({}, datetime.now(timezone.utc), event_tz) is True
 
-    def test_service_window_is_never_consulted_for_purchase_availability(self, is_within_purchase_window):
-        """service_start_at/service_end_at are informational/fulfilment-only (Section: purchase
-        window controls purchasing, service window does not) -- a purchase-open option stays
-        purchasable regardless of how far away its service window is."""
+    def test_service_window_does_not_change_the_purchase_window_result(self, is_within_purchase_window):
+        """Purchase-window evaluation remains independent; new-selection service-end
+        enforcement is applied separately by the shared selection validators."""
         option = {
             "purchase_start_at": WINDOW_START_NAIVE, "purchase_end_at": WINDOW_END_NAIVE,
             "service_start_at": "2099-01-01T00:00:00", "service_end_at": "2099-01-02T00:00:00",

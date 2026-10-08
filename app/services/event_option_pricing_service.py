@@ -147,7 +147,13 @@ def resolve_priced_selections(
         for option_id in (validated_accommodation or [])
     ]
 
-    currencies = {line.currency for line in (*meal_lines, *accommodation_lines)}
+    # Currency is an order constraint only for amounts that will actually be
+    # charged.  A free ticket or free add-on has no payable currency and must
+    # not prevent a paid add-on from establishing the order currency.
+    currencies = {
+        line.currency for line in (*meal_lines, *accommodation_lines)
+        if line.unit_price > ZERO
+    }
     if ticket_currency:
         currencies.add(ticket_currency)
     if len(currencies) > 1:
