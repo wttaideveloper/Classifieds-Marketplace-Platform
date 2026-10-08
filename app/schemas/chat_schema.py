@@ -93,6 +93,13 @@ class ConversationResponse(BaseModel):
     last_message_at: datetime | None = None
     last_message_preview: str | None = None
     created_by: UUID
+    customer_name: str | None = Field(
+        None,
+        description=(
+            "Display name of the conversation's customer. null when it cannot be resolved "
+            "(the client should show its own placeholder). Never an email address."
+        ),
+    )
     unread_count: int = 0
     participants: list[ParticipantResponse] = Field(default_factory=list)
     created_at: datetime
@@ -125,6 +132,13 @@ class ConversationListItemResponse(BaseModel):
             "Use with `GET /api/v1/presence/online` for online status."
         ),
     )
+    customer_name: str | None = Field(
+        None,
+        description=(
+            "Display name of the conversation's customer, for the inbox card. null when it cannot be "
+            "resolved (the client should show its own placeholder). Never an email address."
+        ),
+    )
     is_archived: bool = False
     archived_at: datetime | None = None
     updated_at: datetime
@@ -144,6 +158,7 @@ _PROVIDER_CONVERSATION_LIST_ITEM_EXAMPLE = {
     "unread_count": 2,
     "assigned_provider_id": "550e8400-e29b-41d4-a716-446655440020",
     "other_participant_user_id": "550e8400-e29b-41d4-a716-446655440030",
+    "customer_name": "Asha Rao",
     "is_archived": False,
     "archived_at": None,
     "updated_at": "2026-07-09T01:54:35.338Z",

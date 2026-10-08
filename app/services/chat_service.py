@@ -12,6 +12,7 @@ from app.services.chat_notification_service import (
     sync_platform_inbox_read_for_conversation,
 )
 from app.repository.query_utils import build_pagination_meta
+from app.services import chat_user_names
 from app.schemas.chat_schema import (
     ChatEligibilityResponse,
     ChatExportResponse,
@@ -53,7 +54,23 @@ def _conversation_archive_fields(conversation: Conversation) -> dict:
     }
 
 
-def _map_conversation_detail(db: Session, conversation: Conversation, user_id: UUID) -> dict:
+def _customer_names(db: Session, conversations: list[Conversation], current_user: dict | None) -> dict:
+    """{conversation id: customer display name or None} for a page of conversations (one DB query plus
+    cached identity lookups)."""
+    customer_ids = chat_repo.get_customer_ids_for_conversations(db, conversations)
+    if not customer_ids:
+        return {}
+    names = chat_user_names.resolve_display_names(
+        customer_ids.values(),
+        tenant_ids=[c.tenant_id for c in conversations],
+        current_user=current_user,
+    )
+    return {cid: names.get(str(uid)) for cid, uid in customer_ids.items()}
+
+
+def _map_conversation_detail(
+    db: Session, conversation: Conversation, user_id: UUID, current_user: dict | None = None
+) -> dict:
     participant = chat_repo.get_participant(db, conversation.id, user_id)
     unread = chat_repo.count_unread_messages(
         db, conversation.id, user_id, participant.last_read_at if participant else None
@@ -73,6 +90,7 @@ def _map_conversation_detail(db: Session, conversation: Conversation, user_id: U
         "last_message_at": preview_at,
         "last_message_preview": preview,
         "created_by": conversation.created_by,
+        "customer_name": _customer_names(db, [conversation], current_user).get(conversation.id),
         "unread_count": unread,
         "participants": [
             ParticipantResponse.model_validate(p).model_dump()
@@ -93,6 +111,7 @@ def _map_conversation_list_item(
     other_participant_user_id: UUID | None = None,
     participants: dict | None = None,
     unread_counts: dict | None = None,
+    customer_names: dict | None = None,
 ) -> dict:
     # participants/unread_counts are batched per-page by the caller (see
     # list_conversations_service etc.) to avoid a get_participant() +
@@ -133,6 +152,7 @@ def _map_conversation_list_item(
         "last_message": last_message,
         "unread_count": unread,
         "assigned_provider_id": conversation.assigned_provider_id,
+        "customer_name": (customer_names or {}).get(conversation.id),
         **_conversation_archive_fields(conversation),
         "updated_at": conversation.updated_at,
     }
@@ -179,7 +199,7 @@ def create_conversation_service(db: Session, current_user: dict, data: Conversat
     )
     if existing:
         return ConversationResponse.model_validate(
-            _map_conversation_detail(db, existing, user_id)
+            _map_conversation_detail(db, existing, user_id, current_user)
         )
 
     provider_id = data.provider_id
@@ -228,7 +248,7 @@ def create_conversation_service(db: Session, current_user: dict, data: Conversat
 
     conversation = chat_repo.get_conversation_by_id(db, conversation.id, with_participants=True)
     return ConversationResponse.model_validate(
-        _map_conversation_detail(db, conversation, user_id)
+        _map_conversation_detail(db, conversation, user_id, current_user)
     )
 
 
@@ -252,6 +272,7 @@ def list_conversations_service(
     )
     participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
     unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
+    customer_names = _customer_names(db, items, current_user)
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
@@ -263,6 +284,7 @@ def list_conversations_service(
                     last_message_read_by=last_message_read_by,
                     participants=participants,
                     unread_counts=unread_counts,
+                    customer_names=customer_names,
                 )
             )
             for item in items
@@ -293,6 +315,7 @@ def list_provider_conversations_service(
     )
     participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
     unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
+    customer_names = _customer_names(db, items, current_user)
     return ProviderConversationPaginatedResponse(
         items=[
             ProviderConversationListItemResponse.model_validate(
@@ -305,6 +328,7 @@ def list_provider_conversations_service(
                     other_participant_user_id=other_participants.get(item.id),
                     participants=participants,
                     unread_counts=unread_counts,
+                    customer_names=customer_names,
                 )
             )
             for item in items
@@ -321,7 +345,7 @@ def get_conversation_service(db: Session, current_user: dict, conversation_id: U
     if not chat_repo.is_participant(db, conversation_id, user_id):
         raise HTTPException(status_code=403, detail="Not authorized to view this conversation")
     return ConversationResponse.model_validate(
-        _map_conversation_detail(db, conversation, user_id)
+        _map_conversation_detail(db, conversation, user_id, current_user)
     )
 
 
@@ -407,6 +431,7 @@ def search_conversations_service(
     )
     participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
     unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
+    customer_names = _customer_names(db, items, current_user)
     return ConversationPaginatedResponse(
         items=[
             ConversationListItemResponse.model_validate(
@@ -418,6 +443,7 @@ def search_conversations_service(
                     last_message_read_by=last_message_read_by,
                     participants=participants,
                     unread_counts=unread_counts,
+                    customer_names=customer_names,
                 )
             )
             for item in items
