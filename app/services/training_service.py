@@ -1,5 +1,6 @@
 from uuid import UUID
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.models.enterprise_model import Enterprise
 from app.models.location_model import EnterpriseLocation
@@ -7,6 +8,18 @@ from app.repository.training_repo import create_training, delete_training, get_t
 from app.repository.query_utils import build_pagination_meta
 from app.schemas.training_schema import TrainingDetailResponse, TrainingListItemResponse, TrainingPaginatedResponse, TrainingResponse
 from app.services.response_mappers import _qr_image_base64, map_training_detail, map_training_list_item, map_training_write
+from app.services import review_audit
+from app.services.review_common import (
+    ListOptions,
+    apply_list_options,
+    average_rating,
+    average_rating as review_average,  # get_training_summary_service has a local named average_rating
+    clean_comment,
+    parse_rating,
+    public_name,
+    rating_distribution,
+    validate_action,
+)
 
 ACTIVE_ENROLMENT_STATUSES = frozenset({"enrolled", "active", "completed", "approved"})
 CHECKIN_ELIGIBLE_STATUSES = frozenset({"enrolled", "active", "approved"})
@@ -123,23 +136,12 @@ def create_training_service(db: Session, data, current_user: dict | None = None)
 def get_trainings_service(db: Session, **kw):
     items, total = get_trainings(db, **kw)
 
-    from app.models.training_model import TrainingReview
-    rating_rows = (
-        db.query(TrainingReview.training_id, TrainingReview.rating)
-        .filter(TrainingReview.training_id.in_([i.id for i in items]))
-        .all()
-        if items else []
-    )
-    ratings_by_training: dict = {}
-    for training_id, rating in rating_rows:
-        ratings_by_training.setdefault(training_id, []).append(int(rating))
+    stats = _approved_review_stats(db, [i.id for i in items])
 
     mapped = []
     for i in items:
         d = map_training_list_item(i)
-        ratings = ratings_by_training.get(i.id, [])
-        d["average_rating"] = round(sum(ratings) / len(ratings), 2) if ratings else 0
-        d["reviews_count"] = len(ratings)
+        d["average_rating"], d["reviews_count"] = stats.get(i.id, (None, 0))
         mapped.append(TrainingListItemResponse.model_validate(d))
 
     return TrainingPaginatedResponse(items=mapped, pagination=build_pagination_meta(total, kw.get("page",1), kw.get("page_size",20)))
@@ -205,17 +207,22 @@ def get_training_service(db: Session, tid: UUID, current_user: dict | None = Non
     detail["available_slots"] = available_slots
 
     from app.models.training_model import TrainingReview, TrainingWaitlist
-    all_reviews = db.query(TrainingReview).filter(TrainingReview.training_id == tid).all()
-    ratings = [int(r.rating) for r in all_reviews]
-    detail["average_rating"] = round(sum(ratings) / len(ratings), 2) if ratings else 0
-    detail["reviews_count"] = len(ratings)
-    recent_reviews = sorted(all_reviews, key=lambda r: r.created_at, reverse=True)[:50]
+    approved = [
+        r for r in db.query(TrainingReview).filter(
+            TrainingReview.training_id == tid, TrainingReview.moderation_status == "approved"
+        ).all()
+        if parse_rating(r.rating) is not None
+    ]
+    detail["average_rating"] = average_rating(parse_rating(r.rating) for r in approved)
+    detail["reviews_count"] = len(approved)
+    recent_reviews = sorted(approved, key=lambda r: r.created_at, reverse=True)[:50]
+    names = _reviewer_names(db, tid, {r.participant_email for r in recent_reviews})
     detail["reviews"] = [
         {
             "id": r.id,
             "training_id": r.training_id,
-            "participant_email": r.participant_email,
-            "rating": r.rating,
+            "participant_name": names.get(r.participant_email),
+            "rating": parse_rating(r.rating),
             "comment": r.comment,
             "created_at": r.created_at,
         }
@@ -1086,7 +1093,7 @@ def grade_assignment_service(db: Session, tid: UUID, aid: str, submission_id: st
     sub.grade=str(grade); sub.feedback=feedback; db.commit(); db.refresh(sub)
     return {"id": str(sub.id), "grade": sub.grade, "feedback": sub.feedback, "files": [dict(f) for f in (sub.files or [])], "resubmission_allowed": True}
 
-def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None) -> dict:
+def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None, *, attendance_source: bool = False) -> dict:
     """Marks lesson_id complete for participant_email and recomputes section
     completion / overall_percent / mandatory-completion / certificate eligibility.
 
@@ -1126,39 +1133,39 @@ def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant
         if any(l.get("id") == lesson_id for l in section.get("lessons", [])):
             target_section_id = section.get("id")
             break
+    was_completed = lesson_id in lessons
     lessons.add(lesson_id)
     prog.lessons_completed = list(lessons)
+    # Who owns this completion: attendance (a roster tick / QR scan) only when it is the one that created it. A
+    # lesson that was already complete stays the learner's, and when the learner completes a lesson that
+    # attendance had completed, it becomes theirs, so reversing the attendance later no longer undoes it.
+    by_attendance = list(prog.attendance_completed_lessons or [])
+    if attendance_source and not was_completed and lesson_id not in by_attendance:
+        by_attendance.append(lesson_id)
+    elif not attendance_source and lesson_id in by_attendance:
+        by_attendance.remove(lesson_id)
+    prog.attendance_completed_lessons = by_attendance
+    # The lessons are read the way /content reads them (see _completion_curriculum), so what counts as "all done"
+    # here is what the learner sees as 100%.
+    curriculum = _completion_curriculum(t)
+    target_section_id = curriculum["section_of"].get(lesson_id)
     if target_section_id:
-        section_lessons = [
-            l.get("id")
-            for s in t.sections or []
-            if s.get("id") == target_section_id
-            for l in s.get("lessons", [])
-            if l.get("id")
-        ]
+        section_lessons = curriculum["lessons_by_section"].get(target_section_id) or []
         if section_lessons and all(lid in lessons for lid in section_lessons):
             completed_sections.add(target_section_id)
             prog.sections_completed = list(completed_sections)
-    # mandatory check — count mandatory lessons
-    all_lessons=[]
-    mandatory_ids=set()
-    for s in t.sections or []:
-        for l in s.get("lessons",[]):
-            all_lessons.append(l.get("id"))
-            if l.get("is_mandatory") or l.get("completion_rule")=="mandatory":
-                mandatory_ids.add(l.get("id"))
-    # overall + mandatory rule
-    total=len(all_lessons) or 1
-    mandatory_done=len(mandatory_ids.intersection(lessons))
-    mandatory_total=len(mandatory_ids)
-    overall=round(len(lessons)/total*100,2)
+    summary = _completion_summary(curriculum, lessons)
+    total, mandatory_done, mandatory_total, overall = (
+        summary["total_lessons"], summary["mandatory_done"], summary["mandatory_total"], summary["overall_percent"],
+    )
     prog.overall_percent=str(overall)
     prog.last_accessed_at=datetime.utcnow()
-    # completion when 100% or mandatory done
+    # completion when every lesson is done or every mandatory lesson is done
     newly_completed = False
-    if overall==100 or (mandatory_total and mandatory_done==mandatory_total):
+    if summary["complete"]:
         newly_completed = prog.completed_at is None
-        prog.completed_at=datetime.utcnow()
+        if newly_completed:
+            prog.completed_at = datetime.utcnow()
         prog.certificate_url=f"/api/v1/trainings/{tid}/certificate.pdf?participant_email={participant_email}"
     db.commit(); db.refresh(prog)
     if newly_completed:  # first completion only — later lesson saves must not re-send the certificate email
@@ -1171,7 +1178,239 @@ def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant
             )
         except Exception:
             pass
-    return {"overall_percent": overall, "lessons_done": len(lessons), "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url}
+    return {"overall_percent": overall, "lessons_done": summary["lessons_done"], "total_lessons": total, "mandatory_done": mandatory_done, "mandatory_total": mandatory_total, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "certificate_url": prog.certificate_url}
+
+
+def _completion_curriculum(t) -> dict:
+    """The lessons that count towards completing a training, read the same way GET /content reads them.
+
+    /content normalises the curriculum (a section's lessons may be stored under "lessons" or "items"); completion
+    used to read only the raw "lessons" key, so for a training stored the other way it saw no lessons at all and a
+    learner who finished everything never got their certificate. Falls back to the raw sections when they cannot
+    be normalised."""
+    try:
+        from app.services.training_curriculum import normalize_curriculum
+        sections = normalize_curriculum(
+            t.sections, getattr(t, "assessments", None), getattr(t, "assignments", None)
+        )["sections"]
+    except Exception:
+        sections = [s for s in (t.sections or []) if isinstance(s, dict)]
+    lesson_ids: list[str] = []
+    mandatory_ids: set[str] = set()
+    section_of: dict[str, str] = {}
+    lessons_by_section: dict[str, list[str]] = {}
+    assignment_of: dict[str, str] = {}
+    for section in sections:
+        section_id = section.get("id")
+        for lesson in section.get("lessons") or section.get("items") or []:
+            lesson_id = lesson.get("id")
+            if not lesson_id:
+                continue
+            lesson_id = str(lesson_id)
+            lesson_ids.append(lesson_id)
+            lessons_by_section.setdefault(section_id, []).append(lesson_id)
+            section_of[lesson_id] = section_id
+            if lesson.get("assignment_id"):
+                assignment_of[lesson_id] = str(lesson["assignment_id"])
+            if lesson.get("is_mandatory") or lesson.get("completion_rule") == "mandatory":
+                mandatory_ids.add(lesson_id)
+    return {
+        "lesson_ids": lesson_ids,
+        "mandatory_ids": mandatory_ids,
+        "section_of": section_of,
+        "lessons_by_section": lessons_by_section,
+        "assignment_of": assignment_of,
+    }
+
+
+def issue_earned_certificate(db: Session, tid: UUID, participant_email: str, *, notify: bool = True, dry_run: bool = False) -> bool:
+    """Issue the certificate to a learner who has finished the training but never got one.
+
+    A certificate was only ever issued at the moment a lesson was completed through the normal completion path. A
+    learner whose last lessons were recorded some other way (an older check-in on a venue/live lesson, a count that
+    disagreed with /content, a lesson list stored under "items") showed 100% in /content and still had no
+    certificate. This re-checks the learner's saved progress by the same rules /content shows and issues it.
+    Returns True when a certificate was issued; changes nothing for a learner who has not finished, has no active
+    enrolment, or already has one."""
+    from app.models.training_model import TrainingAssignmentSubmission, TrainingProgress
+
+    prog = db.query(TrainingProgress).filter(
+        TrainingProgress.training_id == tid,
+        TrainingProgress.participant_email == participant_email,
+    ).first()
+    if not prog or prog.certificate_url:
+        return False
+    enrol = _get_enrolment(db, tid, participant_email)
+    if not _is_active_enrolment(enrol):
+        return False
+
+    t = _get_training_or_404(db, tid)
+    curriculum = _completion_curriculum(t)
+    completed = {str(x) for x in (prog.lessons_completed or [])}
+    # /content also counts a lesson as done once its assignment has been submitted.
+    submitted = {
+        str(s.assignment_id)
+        for s in db.query(TrainingAssignmentSubmission).filter(
+            TrainingAssignmentSubmission.training_id == tid,
+            TrainingAssignmentSubmission.participant_email == participant_email,
+        ).all()
+    }
+    completed |= {lesson_id for lesson_id, assignment_id in curriculum["assignment_of"].items() if assignment_id in submitted}
+    summary = _completion_summary(curriculum, completed)
+    if not summary["complete"]:
+        return False
+    if dry_run:
+        return True  # would be issued; nothing written
+
+    from datetime import datetime
+    newly_completed = prog.completed_at is None
+    prog.lessons_completed = sorted(completed | {str(x) for x in (prog.lessons_completed or [])})
+    prog.overall_percent = str(summary["overall_percent"])
+    if newly_completed:
+        prog.completed_at = datetime.utcnow()
+    prog.certificate_url = f"/api/v1/trainings/{tid}/certificate.pdf?participant_email={participant_email}"
+    db.commit()
+    db.refresh(prog)
+    if notify and newly_completed:
+        try:
+            from app.services import training_notifications
+            training_notifications.notify_certificate_ready(
+                t, email=participant_email, name=getattr(enrol, "participant_name", None),
+                user_id=getattr(enrol, "user_id", None), certificate_url=prog.certificate_url,
+            )
+        except Exception:
+            pass
+    return True
+
+
+def _completion_summary(curriculum: dict, completed) -> dict:
+    """Totals for a learner's completed lesson ids. Only ids that are lessons of this training count, so an id
+    left over from a lesson that was removed, or from a check-in on a whole session, cannot push the percentage
+    past 100 and stop the course from ever counting as complete."""
+    lesson_ids = set(curriculum["lesson_ids"])
+    completed = {str(c) for c in (completed or [])}
+    counted = completed & lesson_ids
+    total = len(curriculum["lesson_ids"]) or 1
+    mandatory_ids = curriculum["mandatory_ids"]
+    mandatory_done = len(mandatory_ids & completed)
+    mandatory_total = len(mandatory_ids)
+    overall = round(min(len(counted) / total * 100, 100), 2)
+    return {
+        "total_lessons": total,
+        "lessons_done": len(counted),
+        "mandatory_done": mandatory_done,
+        "mandatory_total": mandatory_total,
+        "overall_percent": overall,
+        "complete": bool(lesson_ids) and (overall >= 100 or (mandatory_total > 0 and mandatory_done == mandatory_total)),
+    }
+
+
+# ---- Attendance -> lesson completion ----
+# Marking a learner "attended" on a lesson (manual roster or QR scan) completes that lesson for them. Only
+# "attended" does: "absent" and "not_marked" never complete anything. Reversing it undoes only the completion that
+# attendance created (progress.attendance_completed_lessons), never one the learner earned themselves.
+# Quizzes/exams are not completed by attendance: they complete by submitting the assessment, which is what
+# /content reads for them, so an attendance tick must not count as a pass.
+
+_NOT_COMPLETED_BY_ATTENDANCE_TYPES = ("exam", "quiz")
+
+
+def _lesson_completes_on_attendance(lesson: dict) -> bool:
+    return (lesson.get("type") or "") not in _NOT_COMPLETED_BY_ATTENDANCE_TYPES
+
+
+def _progress_summary(prog, t) -> dict:
+    summary = _completion_summary(_completion_curriculum(t), prog.lessons_completed if prog else [])
+    return {
+        "overall_percent": summary["overall_percent"],
+        "lessons_done": summary["lessons_done"],
+        "total_lessons": summary["total_lessons"],
+        "mandatory_done": summary["mandatory_done"],
+        "mandatory_total": summary["mandatory_total"],
+        "completed_at": prog.completed_at if prog else None,
+    }
+
+
+def _attendance_completion_views(db: Session, tid: UUID, training, lesson_id: str, enrolments: list) -> dict:
+    """{enrolment id: {is_completed, completed_by_attendance, progress}} for the people on an attendance response."""
+    from app.models.training_model import TrainingProgress
+
+    emails = [e.participant_email for e in enrolments]
+    progress_by_email = {}
+    if emails:
+        progress_by_email = {
+            p.participant_email: p
+            for p in db.query(TrainingProgress).filter(
+                TrainingProgress.training_id == tid, TrainingProgress.participant_email.in_(emails)
+            ).all()
+        }
+    lesson_id = str(lesson_id)
+    views = {}
+    for enrol in enrolments:
+        prog = progress_by_email.get(enrol.participant_email)
+        done = lesson_id in set(prog.lessons_completed or []) if prog else False
+        views[enrol.id] = {
+            "is_completed": done,
+            "completed_by_attendance": done and lesson_id in set(prog.attendance_completed_lessons or []),
+            "progress": _progress_summary(prog, training),
+        }
+    return views
+
+
+def _revoke_attendance_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None) -> bool:
+    """Undo a completion that attendance created and recompute the learner's totals. Returns False and changes
+    nothing when the completion is not attendance's (the learner earned it, or there is none)."""
+    from app.models.training_model import TrainingProgress
+
+    t = t or _get_training_or_404(db, tid)
+    prog = db.query(TrainingProgress).filter(
+        TrainingProgress.training_id == tid,
+        TrainingProgress.participant_email == participant_email,
+    ).first()
+    lesson_id = str(lesson_id)
+    by_attendance = list(prog.attendance_completed_lessons or []) if prog else []
+    if not prog or lesson_id not in by_attendance:
+        return False
+
+    by_attendance.remove(lesson_id)
+    prog.attendance_completed_lessons = by_attendance
+    lessons = set(prog.lessons_completed or [])
+    lessons.discard(lesson_id)
+    prog.lessons_completed = list(lessons)
+
+    curriculum = _completion_curriculum(t)
+    completed_sections = set(prog.sections_completed or [])
+    completed_sections.discard(curriculum["section_of"].get(lesson_id))
+    prog.sections_completed = list(completed_sections)
+
+    summary = _completion_summary(curriculum, lessons)
+    prog.overall_percent = str(summary["overall_percent"])
+    if prog.completed_at and not summary["complete"]:
+        # The course only counted as complete because of this attendance; it no longer is.
+        prog.completed_at = None
+        prog.certificate_url = None
+    db.commit()
+    return True
+
+
+def _sync_attendance_completion(db: Session, tid: UUID, training, lesson: dict, enrol, new_status: str | None, previous_status: str | None) -> None:
+    """Called after an attendance status is saved. attended -> the lesson is complete (idempotent);
+    attended -> anything else -> undo what attendance created. absent / not_marked complete nothing."""
+    from app.models.training_model import TrainingProgress
+
+    if not _lesson_completes_on_attendance(lesson):
+        return
+    lesson_id = str(lesson.get("id"))
+    if new_status == "attended":
+        prog = db.query(TrainingProgress).filter(
+            TrainingProgress.training_id == tid,
+            TrainingProgress.participant_email == enrol.participant_email,
+        ).first()
+        if prog and lesson_id in set(prog.lessons_completed or []):
+            return  # already complete (an earlier attendance, or the learner's own): nothing to change
+        _apply_lesson_completion(db, tid, lesson_id, enrol.participant_email, t=training, attendance_source=True)
+    elif previous_status == "attended":
+        _revoke_attendance_completion(db, tid, lesson_id, enrol.participant_email, t=training)
 
 
 def _mark_lessons_completed_for_reference(db: Session, tid: UUID, participant_email: str, *, key: str, ref_id: str, t=None) -> None:
@@ -1204,6 +1443,9 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
                 break
         if target_lesson:
             break
+    if not target_lesson:
+        # A training whose lessons are stored under "items" (which /content reads) has none under "lessons".
+        _, target_lesson = _find_lesson_any_type(t, lesson_id)
     if not target_lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
     accessible, reason = _lesson_is_accessible(target_lesson, lessons_so_far, enrol, t)
@@ -1300,6 +1542,19 @@ def _record_attendance_for_target(db: Session, tid: UUID, owner, target: dict, e
 
     # Curriculum progress uses the same lesson ID as /content.
     live_lesson_id = str(target["id"]) if embedded else f"live:{target['id']}"
+    curriculum_lesson_ids = (
+        {str(l.get("id")) for s in (owner.sections or []) for l in (s.get("lessons") or [])} if embedded else set()
+    )
+    if live_lesson_id in curriculum_lesson_ids:
+        # A real lesson: complete it through the shared path so the section, overall percent and certificate
+        # eligibility are recomputed too, not just the list of completed lessons.
+        _apply_lesson_completion(db, tid, live_lesson_id, participant_email, t=owner)
+        return {
+            id_field: str(target["id"]),
+            "participant_email": participant_email,
+            "recorded_at": recorded_at,
+            "progress_marked": True,
+        }
     prog = db.query(TrainingProgress).filter(
         TrainingProgress.training_id == tid,
         TrainingProgress.participant_email == participant_email,
@@ -1351,10 +1606,11 @@ def _find_lesson_any_type(training, lesson_id: str):
     return None, None
 
 
-def _lesson_attendance_participant_payload(enrol, record) -> dict:
+def _lesson_attendance_participant_payload(enrol, record, view: dict | None = None) -> dict:
     marked_by = None
     if record and record.marked_by_id:
         marked_by = {"id": str(record.marked_by_id), "name": record.marked_by_name, "email": record.marked_by_email}
+    view = view or {}
     return {
         "enrolment_id": str(enrol.id),
         "participant_name": enrol.participant_name,
@@ -1363,6 +1619,10 @@ def _lesson_attendance_participant_payload(enrol, record) -> dict:
         "status": (record.status if record else None) or "not_marked",
         "marked_by": marked_by,
         "marked_at": record.marked_at if record else None,
+        # The learner's side of the same lesson: attended completes it, so these follow the attendance.
+        "is_completed": view.get("is_completed", False),
+        "completed_by_attendance": view.get("completed_by_attendance", False),
+        "progress": view.get("progress"),
     }
 
 
@@ -1387,13 +1647,14 @@ def get_lesson_attendance_roster_service(db: Session, tid: UUID, lesson_id: str)
         ).all()
     }
 
+    views = _attendance_completion_views(db, tid, training, lesson_id, enrolments)
     return {
         "training_id": str(tid),
         "lesson_id": str(lesson_id),
         "lesson_title": lesson.get("title"),
         "lesson_type": lesson.get("type"),
         "participants": [
-            _lesson_attendance_participant_payload(enrol, records_by_enrolment.get(enrol.id))
+            _lesson_attendance_participant_payload(enrol, records_by_enrolment.get(enrol.id), views.get(enrol.id))
             for enrol in enrolments
         ],
     }
@@ -1445,6 +1706,7 @@ def batch_mark_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str,
 
     now = datetime.utcnow()
     actor_id, actor_uuid, actor_name, actor_email, actor_role = _actor_identity_fields(actor)
+    previous_by_enrolment: dict = {}
 
     for item in records:
         new_status = None if item.status == "not_marked" else item.status
@@ -1455,6 +1717,7 @@ def batch_mark_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str,
             existing_by_enrolment[item.enrolment_id] = record
 
         previous_status = record.status
+        previous_by_enrolment[item.enrolment_id] = previous_status
         record.status = new_status
         record.marked_by_id = actor_uuid if new_status is not None else None
         record.marked_by_name = actor_name if new_status is not None else None
@@ -1477,6 +1740,14 @@ def batch_mark_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str,
         flag_modified(record, "history")
 
     db.commit()
+    # attended completes the lesson for the learner; reversing it undoes only what attendance created.
+    # Re-sending "attended" is safe: an already-complete lesson is left alone.
+    for item in records:
+        _sync_attendance_completion(
+            db, tid, training, lesson, enrolments_by_id[item.enrolment_id],
+            None if item.status == "not_marked" else item.status,
+            previous_by_enrolment.get(item.enrolment_id),
+        )
     return get_lesson_attendance_roster_service(db, tid, lesson_id)
 
 
@@ -1551,8 +1822,12 @@ def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str
     ).first()
 
     if record and record.status == "attended":
+        # A repeat scan writes no new attendance record, but makes sure the lesson is complete (a no-op when it
+        # already is), so an attendance recorded before lessons completed on attendance gets fixed by a re-scan.
+        _sync_attendance_completion(db, tid, training, lesson, enrol, "attended", "attended")
+        views = _attendance_completion_views(db, tid, training, lesson_id, [enrol])
         return {
-            **_lesson_attendance_participant_payload(enrol, record),
+            **_lesson_attendance_participant_payload(enrol, record, views.get(enrol.id)),
             "result": "already_attended",
             "message": f"{enrol.participant_name} is already marked attended for this lesson",
         }
@@ -1587,8 +1862,12 @@ def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str
     db.commit()
     db.refresh(record)
 
+    # Attended completes the lesson for the learner, in the same call as the scan.
+    _sync_attendance_completion(db, tid, training, lesson, enrol, "attended", previous_status)
+    views = _attendance_completion_views(db, tid, training, lesson_id, [enrol])
+
     return {
-        **_lesson_attendance_participant_payload(enrol, record),
+        **_lesson_attendance_participant_payload(enrol, record, views.get(enrol.id)),
         "result": "marked",
         "message": f"{enrol.participant_name} marked attended",
     }
@@ -1597,6 +1876,15 @@ def qr_check_in_lesson_attendance_service(db: Session, tid: UUID, lesson_id: str
 def get_certificate_service(db: Session, tid: UUID, participant_email: str):
     from app.models.training_model import TrainingProgress
     prog=db.query(TrainingProgress).filter(TrainingProgress.training_id==tid, TrainingProgress.participant_email==participant_email).first()
+    if prog and not prog.certificate_url:
+        # The learner may have finished (100% in /content) without a certificate ever being issued: issue it now.
+        try:
+            issue_earned_certificate(db, tid, participant_email)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Could not issue the earned certificate for training %s", tid)
+            db.rollback()
+        prog=db.query(TrainingProgress).filter(TrainingProgress.training_id==tid, TrainingProgress.participant_email==participant_email).first()
     if not prog or not prog.certificate_url:
         raise HTTPException(status_code=404, detail="Certificate not yet available — complete mandatory lessons")
     return {"training_id": str(tid), "participant_email": participant_email, "certificate_url": prog.certificate_url, "completed_at": prog.completed_at.isoformat() if prog.completed_at else None, "overall_percent": prog.overall_percent}
@@ -2106,9 +2394,13 @@ def get_training_summary_service(db: Session, current_user: dict | None = None, 
             .filter(TrainingEnrolment.training_id.in_(tids), TrainingEnrolment.status == "attended")
             .scalar() or 0
         )
-        ratings = [int(r) for (r,) in db.query(TrainingReview.rating).filter(TrainingReview.training_id.in_(tids)).all() if r and str(r).strip().lstrip("-").isdigit()]
-        if ratings:
-            average_rating = round(sum(ratings) / len(ratings), 2)
+        average_rating_value = review_average(
+            parse_rating(r) for (r,) in db.query(TrainingReview.rating).filter(
+                TrainingReview.training_id.in_(tids), TrainingReview.moderation_status == "approved"
+            ).all()
+        )
+        if average_rating_value is not None:
+            average_rating = average_rating_value
 
     return {
         "total_trainings": total,
@@ -3371,12 +3663,59 @@ def get_moderation_history_service(db: Session, tid: UUID):
     return out
 
 
-# ---- Reviews (verified — must be enrolled) ----
+# ---- Reviews (verified — must be enrolled; moderated: pending -> approved | rejected) ----
 
-def create_training_review_service(db: Session, tid: UUID, data):
+def _approved_review_stats(db: Session, tids: list) -> dict:
+    """{training_id: (average or None, approved count)} for a page of trainings, in one query."""
+    from app.models.training_model import TrainingReview
+
+    if not tids:
+        return {}
+    by_training: dict = {}
+    for training_id, rating in db.query(TrainingReview.training_id, TrainingReview.rating).filter(
+        TrainingReview.training_id.in_(tids), TrainingReview.moderation_status == "approved"
+    ).all():
+        value = parse_rating(rating)
+        if value is not None:
+            by_training.setdefault(training_id, []).append(value)
+    return {tid: (average_rating(ratings), len(ratings)) for tid, ratings in by_training.items()}
+
+
+def _reviewer_names(db: Session, tid: UUID, emails: set) -> dict[str, str]:
+    """{email: name on the learner's enrolment}. An email is never used as a name."""
+    from app.models.training_model import TrainingEnrolment
+
+    emails = {e for e in emails if e}
+    names: dict[str, str] = {}
+    if not emails:
+        return names
+    for enrolment in db.query(TrainingEnrolment).filter(
+        TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email.in_(emails),
+    ).order_by(TrainingEnrolment.created_at.desc()).all():
+        shown = public_name(enrolment.participant_name)
+        if shown and enrolment.participant_email not in names:
+            names[enrolment.participant_email] = shown
+    return names
+
+
+def _review_dict(r, *, name: str | None, include_email: bool) -> dict:
+    return {
+        "id": str(r.id), "training_id": str(r.training_id), "rating": parse_rating(r.rating),
+        "comment": r.comment, "participant_email": r.participant_email if include_email else None,
+        "participant_name": name, "verified": True,
+        "moderation_status": r.moderation_status or "pending",
+        "created_at": r.created_at.isoformat(),
+        "updated_at": (r.updated_at or r.created_at).isoformat(),
+    }
+
+
+def create_training_review_service(db: Session, tid: UUID, data, *, access_token: str | None = None):
     from app.models.training_model import TrainingEnrolment, TrainingReview
+    from app.services import review_notifications
 
     _get_training_or_404(db, tid)
+    comment = clean_comment(data.comment)
     enrolled = db.query(TrainingEnrolment).filter(
         TrainingEnrolment.training_id == tid,
         TrainingEnrolment.participant_email == data.participant_email,
@@ -3389,49 +3728,139 @@ def create_training_review_service(db: Session, tid: UUID, data):
         TrainingReview.training_id == tid,
         TrainingReview.participant_email == data.participant_email,
     ).first()
+    is_new = existing is None
     if existing:
+        # Editing keeps the status the review already has.
         existing.rating = str(data.rating)
-        existing.comment = data.comment
+        existing.comment = comment
         db.commit()
         db.refresh(existing)
         r = existing
     else:
-        r = TrainingReview(training_id=tid, participant_email=data.participant_email, rating=str(data.rating), comment=data.comment)
+        r = TrainingReview(
+            training_id=tid, participant_email=data.participant_email, rating=str(data.rating),
+            comment=comment, moderation_status="pending",
+        )
         db.add(r)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Two first posts from the same learner at the same moment: update the one that won.
+            db.rollback()
+            r = db.query(TrainingReview).filter(
+                TrainingReview.training_id == tid, TrainingReview.participant_email == data.participant_email
+            ).first()
+            if r is None:
+                raise
+            r.rating = str(data.rating)
+            r.comment = comment
+            db.commit()
+            is_new = False
         db.refresh(r)
 
+    if is_new:
+        review_notifications.notify_review_submitted("training", r.id, access_token=access_token)
+    return _review_dict(r, name=public_name(enrolled.participant_name), include_email=True)
+
+
+def list_training_reviews_service(db: Session, tid: UUID, opts=None):
+    """Public: approved reviews only, no email addresses. `opts` (sort / rating / with_comment / paging) only
+    changes which reviews are listed; the average, count and star breakdown cover all approved reviews."""
+    from app.models.training_model import TrainingReview
+
+    _get_training_or_404(db, tid)
+    rows = [
+        r for r in db.query(TrainingReview).filter(
+            TrainingReview.training_id == tid, TrainingReview.moderation_status == "approved"
+        ).order_by(TrainingReview.created_at.desc()).all()
+        if parse_rating(r.rating) is not None
+    ]
+    ratings = [parse_rating(r.rating) for r in rows]
+    shown, pagination = apply_list_options(
+        rows, opts or ListOptions(),
+        rating_of=lambda r: parse_rating(r.rating), created_of=lambda r: r.created_at, comment_of=lambda r: r.comment,
+    )
+    names = _reviewer_names(db, tid, {r.participant_email for r in shown})
     return {
-        "id": str(r.id), "training_id": str(r.training_id), "rating": int(r.rating),
-        "comment": r.comment, "participant_email": r.participant_email,
-        "participant_name": enrolled.participant_name,
-        "verified": True, "created_at": r.created_at.isoformat(),
+        "reviews": [_review_dict(r, name=names.get(r.participant_email), include_email=False) for r in shown],
+        "average_rating": average_rating(ratings),
+        "count": len(rows),
+        "rating_distribution": rating_distribution(ratings),
+        "pagination": pagination,
     }
 
 
-def list_training_reviews_service(db: Session, tid: UUID):
-    from app.models.training_model import TrainingEnrolment, TrainingReview
+def get_my_training_review_service(db: Session, tid: UUID, current_user: dict):
+    """The caller's own review of this training, whatever its status; None when they have not written one."""
+    from app.models.training_model import TrainingReview
 
     _get_training_or_404(db, tid)
-    rows = db.query(TrainingReview).filter(TrainingReview.training_id == tid).order_by(TrainingReview.created_at.desc()).all()
-    emails = {r.participant_email for r in rows}
-    names_by_email: dict[str, str] = {}
-    if emails:
-        for email, name in db.query(TrainingEnrolment.participant_email, TrainingEnrolment.participant_name).filter(
-            TrainingEnrolment.training_id == tid,
-            TrainingEnrolment.participant_email.in_(emails),
-        ).order_by(TrainingEnrolment.created_at.desc()).all():
-            current = names_by_email.get(email)
-            if not current or current == email:
-                names_by_email[email] = name
-    reviews = [
-        {"id": str(r.id), "training_id": str(r.training_id), "rating": int(r.rating), "comment": r.comment,
-         "participant_email": r.participant_email, "participant_name": names_by_email.get(r.participant_email),
-         "verified": True, "created_at": r.created_at.isoformat()}
-        for r in rows
-    ]
-    avg = round(sum(item["rating"] for item in reviews) / len(reviews), 2) if reviews else 0
-    return {"reviews": reviews, "average_rating": avg, "count": len(reviews)}
+    email = (current_user or {}).get("email")
+    if not email:
+        return None
+    r = db.query(TrainingReview).filter(
+        TrainingReview.training_id == tid, TrainingReview.participant_email == email
+    ).first()
+    if r is None:
+        return None
+    return _review_dict(r, name=_reviewer_names(db, tid, {email}).get(email), include_email=True)
+
+
+def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None):
+    """Approve / reject / reset a review. `access` is the caller's CatalogAccess (Enterprise Admin or Super Admin)."""
+    from app.models.training_model import TrainingReview
+    from app.services import review_notifications
+    from app.services.review_access import assert_can_moderate
+
+    validate_action(action)
+    training = _get_training_or_404(db, tid)
+    assert_can_moderate(
+        access,
+        training.enterprise.tenant_id if training.enterprise else None,
+        training.tenant_id,
+    )
+    r = db.query(TrainingReview).filter(TrainingReview.id == review_id, TrainingReview.training_id == tid).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Review not found")
+    previous = r.moderation_status
+    if previous != action:
+        review_audit.record(
+            db, module="training", review_id=r.id, item_id=training.id, item_name=training.title,
+            tenant_id=(training.enterprise.tenant_id if training.enterprise else None) or training.tenant_id,
+            from_status=previous, to_status=action, actor=actor, actor_role=access.role,
+        )
+    r.moderation_status = action
+    db.commit()
+    db.refresh(r)
+    if previous != action:
+        review_notifications.notify_review_decision("training", r.id, action, access_token=access_token)
+    return _review_dict(r, name=_reviewer_names(db, tid, {r.participant_email}).get(r.participant_email), include_email=True)
+
+
+def delete_training_review_service(db: Session, tid: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None):
+    """The review's author, or staff (admin / provider) of the business that owns the training, or a Super Admin."""
+    from app.models.training_model import TrainingReview
+    from app.services.review_access import assert_staff_in_tenant
+
+    training = _get_training_or_404(db, tid)
+    r = db.query(TrainingReview).filter(TrainingReview.id == review_id, TrainingReview.training_id == tid).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Review not found")
+    email = str((current_user or {}).get("email") or "").strip().lower()
+    if not email or email != (r.participant_email or "").strip().lower():
+        role = str((current_user or {}).get("role") or "").lower()
+        if role not in ("admin", "provider", "super_admin"):
+            raise HTTPException(status_code=403, detail="You can only delete your own review")
+        owners = ((training.enterprise.tenant_id if training.enterprise else None), training.tenant_id)
+        assert_staff_in_tenant(db, current_user, access_token, *owners)
+        review_audit.record(
+            db, module="training", review_id=r.id, item_id=training.id, item_name=training.title,
+            tenant_id=next((t for t in owners if t), None), from_status=r.moderation_status, to_status="deleted",
+            actor=current_user, actor_role=role,
+        )
+    db.delete(r)
+    db.commit()
+    return {"message": "Review deleted"}
 
 
 # ---- Wishlist ----
@@ -3451,11 +3880,11 @@ def add_training_wishlist_service(db: Session, user_id: UUID, tid: UUID):
         db.commit()
         db.refresh(item)
 
-    ratings = [int(r.rating) for r in db.query(TrainingReview).filter(TrainingReview.training_id == tid).all()]
+    average, count = _approved_review_stats(db, [tid]).get(tid, (None, 0))
     return {
         "id": str(item.id), "training_id": str(training.id), "title": training.title,
         "primary_image": training.primary_image, "price": training.price, "currency": training.currency,
-        "average_rating": round(sum(ratings) / len(ratings), 2) if ratings else 0, "reviews_count": len(ratings),
+        "average_rating": average, "reviews_count": count,
         "added_at": item.created_at.isoformat(),
     }
 
@@ -3477,16 +3906,17 @@ def list_training_wishlist_service(db: Session, user_id: UUID):
     from app.models.training_model import TrainingReview, TrainingWishlistItem
 
     rows = db.query(TrainingWishlistItem).filter(TrainingWishlistItem.user_id == user_id).order_by(TrainingWishlistItem.created_at.desc()).all()
+    stats = _approved_review_stats(db, [item.training_id for item in rows])
     items = []
     for item in rows:
         training = get_training_by_id(db, item.training_id, include_deleted=True)
         if not training:
             continue
-        ratings = [int(r.rating) for r in db.query(TrainingReview).filter(TrainingReview.training_id == item.training_id).all()]
+        average, count = stats.get(item.training_id, (None, 0))
         items.append({
             "id": str(item.id), "training_id": str(training.id), "title": training.title,
             "primary_image": training.primary_image, "price": training.price, "currency": training.currency,
-            "average_rating": round(sum(ratings) / len(ratings), 2) if ratings else 0, "reviews_count": len(ratings),
+            "average_rating": average, "reviews_count": count,
             "added_at": item.created_at.isoformat(),
         })
     return items

@@ -26,6 +26,7 @@ from app.repository.event_repo import (
     resolve_caller_tenant_id,
 )
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from app.services.review_common import ListOptions, review_list_params
 from app.schemas.event_management_schema import (
     AttendeePaymentStatus,
     AttendeeSort,
@@ -50,6 +51,7 @@ from app.schemas.event_session_attendance_schema import (
 from app.schemas.event_schema import (
     EventCreate,
     EventDetailResponse,
+    EventFeedbackResponse,
     EventPaginatedResponse,
     EventResponse,
     EventStatusUpdate,
@@ -105,7 +107,9 @@ from app.services.event_service import (
     get_checkout_quote_service,
     create_event_refund_service,
     create_event_service,
+    create_event_review_service,
     create_feedback_service,
+    delete_event_review_service,
     create_registration_service,
     create_template_service,
     create_waitlist_entry_service,
@@ -115,6 +119,7 @@ from app.services.event_service import (
     duplicate_event_service,
     get_event_attendance_service,
     get_event_feedbacks_service,
+    get_my_event_review_service,
     get_event_orders_service,
     get_event_registrations_service,
     get_event_reports_service,
@@ -126,6 +131,8 @@ from app.services.event_service import (
     get_sessions_service,
     list_templates_service,
     moderate_review_service,
+    list_event_reviews_for_managers_service,
+    list_public_event_reviews_service,
     my_registrations_service,
     send_announcement_service,
     uncheck_in_service,
@@ -168,6 +175,8 @@ require_event_admin = _event_manager("admin")
 # Attendee management + dashboard: the owning admin/provider, or an ACTIVE Platform Super Admin. The role gate
 # lets "super_admin" reach ownership; assert_event_access still rejects an inactive one.
 require_event_staff = _event_manager("admin", "provider", "super_admin")
+# Tenant-owner routes a Platform Super Admin may also use (review moderation).
+require_event_admin_or_super = _event_manager("admin", "super_admin")
 
 
 def attendee_filters(
@@ -1065,14 +1074,84 @@ def list_feedback(event_id: UUID, db: Session = Depends(get_db), current_user: d
     return get_event_feedbacks_service(db, event_id, is_review=False)
 
 
-@router.post("/{event_id}/reviews", status_code=status.HTTP_201_CREATED, summary="Submit Review")
-def submit_review(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return create_feedback_service(db, event_id, payload, is_review=True)
+@router.post(
+    "/{event_id}/reviews", response_model=EventFeedbackResponse, status_code=status.HTTP_201_CREATED,
+    summary="Submit or update your review",
+    description=(
+        "The reviewer is the logged-in user (a `participant_email` in the body is ignored), who must have a "
+        "confirmed or attended registration. `rating` is required, 1 to 5; `comment` is optional, at most 2000 "
+        "characters. One review per person: sending it again updates it and keeps its status. A new review is "
+        "`pending` until an Enterprise Admin or Super Admin approves it."
+    ),
+)
+def submit_review(request: Request, event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_event_review_service(db, event_id, payload, current_user, access_token=extract_access_token(request))
 
 
-@router.patch("/{event_id}/reviews/{review_id}/moderate", summary="Moderate Review")
-def moderate_review(event_id: UUID, review_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_event_admin)):
-    return moderate_review_service(db, review_id, payload.get("action", "approved"), event_id=event_id)
+@router.get(
+    "/{event_id}/reviews/me", response_model=EventFeedbackResponse | None,
+    summary="My review of this event (any status), or null",
+)
+def my_review(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return get_my_event_review_service(db, event_id, current_user)
+
+
+@router.get(
+    "/{event_id}/reviews",
+    summary="List Approved Reviews",
+    description=(
+        "Public. Approved reviews of a published event, newest first, with the average rating "
+        "(`null` when there are none, show \"No ratings yet\"). Never includes email addresses. Optional `sort` "
+        "(newest|oldest|highest|lowest), `rating`, `with_comment`, `page` and `page_size` change which reviews are "
+        "listed; the average, `count` and `rating_distribution` always cover all approved reviews."
+    ),
+)
+def list_reviews(event_id: UUID, opts: ListOptions = Depends(review_list_params), db: Session = Depends(get_db)):
+    return list_public_event_reviews_service(db, event_id, opts)
+
+
+@router.get(
+    "/{event_id}/reviews/manage",
+    summary="List Reviews To Moderate",
+    description=(
+        "Event staff (owning Enterprise Admin or provider, or an active Super Admin). Every review of the event whatever its status, "
+        "newest first, with `counts` per status for Pending / Approved / Rejected tabs. "
+        "Filter with `status=pending|approved|rejected`. Use the returned `id` with the moderate endpoint."
+    ),
+)
+def list_reviews_to_moderate(
+    event_id: UUID,
+    status_filter: str | None = Query(None, alias="status", description="pending, approved or rejected."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_staff),
+):
+    return list_event_reviews_for_managers_service(
+        db, event_id, status_filter=status_filter, page=page, page_size=page_size
+    )
+
+
+@router.patch(
+    "/{event_id}/reviews/{review_id}/moderate", summary="Moderate Review",
+    description="Enterprise Admin of the business that owns the event, or an active Super Admin. Providers are read-only.",
+)
+def moderate_review(request: Request, event_id: UUID, review_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_event_admin_or_super)):
+    return moderate_review_service(
+        db, review_id, payload.get("action", "approved"), event_id=event_id,
+        access_token=extract_access_token(request), actor=current_user,
+    )
+
+
+@router.delete(
+    "/{event_id}/reviews/{review_id}", summary="Delete a review",
+    description=(
+        "The review's own author, or staff (admin / provider) of the business that owns the event. A Super Admin may "
+        "delete any review. Deleting someone else's review is recorded in the moderation history."
+    ),
+)
+def delete_review(request: Request, event_id: UUID, review_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return delete_event_review_service(db, event_id, review_id, current_user, access_token=extract_access_token(request))
 
 
 @router.get("/{event_id}/reports", summary="Event Reports")

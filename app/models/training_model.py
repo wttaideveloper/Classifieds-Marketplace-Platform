@@ -208,6 +208,10 @@ class TrainingProgress(Base):
     sections_completed = Column(JSONB, default=list)
     lessons_completed = Column(JSONB, default=list)
     lesson_positions = Column(JSONB, default=dict)  # {lesson_id: {section_id, position_seconds, duration_seconds, last_accessed_at}} — video/lesson resume tracking
+    # Lessons whose completion was created by marking the learner "attended" (manual roster / QR scan), as opposed to
+    # something the learner did themselves. Only these are undone when the attendance is reversed; a lesson the learner
+    # completed on their own is never in this list. A later independent completion takes the lesson out of it.
+    attendance_completed_lessons = Column(JSONB, default=list)
     overall_percent = Column(String(20), default="0")
     certificate_url = Column(Text)
     started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -258,7 +262,10 @@ class TrainingReview(Base):
     participant_email = Column(String(255), nullable=False)
     rating = Column(String(20), nullable=False)
     comment = Column(Text)
+    # pending -> approved | rejected. Only approved reviews are public.
+    moderation_status = Column(String(20), default="pending", server_default="pending", nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     __table_args__ = (
         Index("ix_training_reviews_training_email", "training_id", "participant_email", unique=True),

@@ -180,8 +180,12 @@ def test_pagination_and_no_duplicate_rows_for_multi_participant_conversation(db)
 def test_default_query_excludes_archived_but_status_filter_returns_them(db):
     provider_id = uuid4()
     open_conv = _conversation(assigned_provider_id=provider_id, status="open")
-    archived_conv = _conversation(assigned_provider_id=provider_id, status="archived")
+    # Archiving is per participant: this provider archived it, which marks their own participant row.
+    archived_conv = _conversation(assigned_provider_id=provider_id, status="open")
     db.add_all([open_conv, archived_conv])
+    db.add(ConversationParticipant(
+        conversation_id=archived_conv.id, user_id=provider_id, role="provider", is_archived=True,
+    ))
     db.commit()
 
     items, total = chat_repo.get_provider_conversations(db, provider_id)

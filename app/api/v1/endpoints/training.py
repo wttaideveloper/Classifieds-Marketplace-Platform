@@ -1,21 +1,26 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
+from app.core.catalog_access import require_catalog_writer
+from app.services.review_common import ListOptions, review_list_params
 from app.core.dependencies import extract_access_token, get_current_user, get_optional_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
-from app.schemas.training_schema import TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse, TrainingModerationHistoryItem
+from app.schemas.training_schema import TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse, TrainingModerationHistoryItem, TrainingReviewModerateRequest
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonAttendanceBatchRequest, LessonAttendanceRosterResponse, LessonCreate, LessonProgressSaveRequest, LessonProgressSaveResponse, LessonQrCheckInRequest, LessonQrCheckInResponse, LessonReorderRequest, SectionReorderRequest, TrainingAssignmentResponse, TrainingProgressResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingSummaryResponse, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, batch_mark_lesson_attendance_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_lesson_attendance_roster_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, qr_check_in_lesson_attendance_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, reorder_sections_service, reorder_lessons_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 from app.services.training_service import (
     add_training_wishlist_service,
     create_training_review_service,
+    delete_training_review_service,
     generate_training_notes_pdf_service,
     get_lesson_download_service,
+    get_my_training_review_service,
     list_downloadable_lessons_service,
     list_training_reviews_service,
     list_training_wishlist_service,
+    moderate_training_review_service,
     remove_training_wishlist_service,
 )
 
@@ -466,19 +471,73 @@ def enroll(request: Request, training_id: UUID, payload: dict, db: Session = Dep
     return enrol(request, training_id, payload, db, current_user)
 
 
-@router.post("/{training_id}/reviews", response_model=TrainingReviewResponse, status_code=201, summary="Rate & review — verified (must be enrolled)")
-def create_review(training_id: UUID, payload: TrainingReviewCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+@router.post(
+    "/{training_id}/reviews", response_model=TrainingReviewResponse, status_code=201,
+    summary="Rate & review — verified (must be enrolled)",
+    description=(
+        "One review per learner: sending it again updates it and keeps its status. A new review is saved as "
+        "`pending` and is shown publicly only after an Enterprise Admin or Super Admin approves it. "
+        "`comment` is optional, at most 2000 characters."
+    ),
+)
+def create_review(request: Request, training_id: UUID, payload: TrainingReviewCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from fastapi import HTTPException
     email = current_user.get("email")
     if not email:
         raise HTTPException(403, "Enrolled participants only")
     payload = payload.model_copy(update={"participant_email": email})
-    return create_training_review_service(db, training_id, payload)
+    return create_training_review_service(db, training_id, payload, access_token=_auth_token_from_request(request))
 
 
-@router.get("/{training_id}/reviews", response_model=TrainingReviewListResponse, summary="List reviews with average rating")
-def list_reviews(training_id: UUID, db: Session = Depends(get_db)):
-    return list_training_reviews_service(db, training_id)
+@router.get(
+    "/{training_id}/reviews", response_model=TrainingReviewListResponse, summary="List approved reviews with average rating",
+    description=(
+        "Public. Approved reviews only, newest first, without email addresses. `average_rating` is the mean of the "
+        "approved reviews and is null when there are none (show \"No ratings yet\"). Optional `sort` "
+        "(newest|oldest|highest|lowest), `rating`, `with_comment`, `page` and `page_size` change which reviews are "
+        "listed; the average, `count` and `rating_distribution` always cover all approved reviews."
+    ),
+)
+def list_reviews(training_id: UUID, opts: ListOptions = Depends(review_list_params), db: Session = Depends(get_db)):
+    return list_training_reviews_service(db, training_id, opts)
+
+
+@router.get(
+    "/{training_id}/reviews/me", response_model=TrainingReviewResponse | None,
+    summary="My review of this training (any status), or null",
+)
+def my_review(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return get_my_training_review_service(db, training_id, current_user)
+
+
+@router.patch(
+    "/{training_id}/reviews/{review_id}/moderate", response_model=TrainingReviewResponse,
+    summary="Approve, reject or reset a review",
+    description="Enterprise Admin of the business that owns the training, or a Super Admin. Providers are read-only.",
+)
+def moderate_review(
+    request: Request, training_id: UUID, review_id: UUID, payload: TrainingReviewModerateRequest,
+    db: Session = Depends(get_db), access=Depends(require_catalog_writer), current_user: dict = Depends(get_current_user),
+):
+    return moderate_training_review_service(
+        db, training_id, review_id, payload.action, access, access_token=_auth_token_from_request(request), actor=current_user
+    )
+
+
+@router.delete(
+    "/{training_id}/reviews/{review_id}", summary="Delete a review",
+    description=(
+        "The review's own author, or staff (admin / provider) of the business that owns the training. "
+        "A Super Admin may delete any review. Deleting someone else's review is recorded in the moderation history."
+    ),
+)
+def delete_review(
+    request: Request, training_id: UUID, review_id: UUID,
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return delete_training_review_service(
+        db, training_id, review_id, current_user, access_token=_auth_token_from_request(request)
+    )
 
 
 @router.post("/{training_id}/wishlist", response_model=TrainingWishlistItemResponse, status_code=201, summary="Save training to wishlist")
@@ -868,7 +927,12 @@ def get_lesson_attendance_roster(training_id: UUID, lesson_id: str, db: Session 
                 "email. status is 'attended'|'absent'|'not_marked' — 'not_marked' clears any "
                 "previously recorded status. Every enrolment_id must belong to this training and "
                 "be an active enrolment, or the whole batch is rejected with 422 (no partial "
-                "writes). Returns the refreshed roster, including who marked each status and when.",
+                "writes). Returns the refreshed roster, including who marked each status and when. "
+                "Marking a learner 'attended' also completes this lesson for them and updates their progress "
+                "totals (is_completed, completed_by_attendance, progress on each participant). 'absent' and "
+                "'not_marked' never complete a lesson; changing attended to either undoes only the completion "
+                "attendance created, never one the learner completed themselves. Repeating 'attended' changes "
+                "nothing. Quiz/exam lessons are completed by submitting the assessment, not by attendance.",
 )
 def batch_mark_lesson_attendance(training_id: UUID, lesson_id: str, payload: LessonAttendanceBatchRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     return batch_mark_lesson_attendance_service(db, training_id, lesson_id, payload.records, current_user)
@@ -883,7 +947,10 @@ def batch_mark_lesson_attendance(training_id: UUID, lesson_id: str, payload: Les
                 "is enrolled in this training and the lesson belongs to it, then marks them "
                 "Attended in the same attendance roster the manual batch-mark endpoint uses. "
                 "Idempotent: re-scanning an already-attended participant returns "
-                "result='already_attended' and creates no duplicate record.",
+                "result='already_attended' and creates no duplicate record. "
+                "The scan also completes the lesson for the learner and updates their progress totals "
+                "(is_completed, completed_by_attendance, progress in the response), exactly like marking "
+                "them 'attended' on the roster.",
 )
 def qr_check_in_lesson_attendance(training_id: UUID, lesson_id: str, payload: LessonQrCheckInRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
     return qr_check_in_lesson_attendance_service(db, training_id, lesson_id, payload.qr_code, current_user)

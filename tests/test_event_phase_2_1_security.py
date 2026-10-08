@@ -148,6 +148,7 @@ STAFF_ROUTES = [
     ("POST", "/{e}/announcements", {"message": "phishing"}),
     ("POST", "/{e}/remind", None),
     ("GET", "/{e}/feedback", None),
+    ("GET", "/{e}/reviews/manage", None),
     ("PATCH", "/{e}/reviews/{f}/moderate", {"action": "rejected"}),
     ("GET", "/{e}/reports", None),
     ("GET", "/{e}/registrations/{r}/qr", None),

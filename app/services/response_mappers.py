@@ -6,6 +6,7 @@ from app.models.location_model import EnterpriseLocation
 from app.models.product_model import Product
 from app.models.service_model import Service
 from app.schemas.common_schema import EnterpriseStatusLabel
+from app.services import catalog_reviews
 from app.services.catalog_enrichment import (
     build_delivery_text,
     enrich_enterprise_detail_fields,
@@ -299,14 +300,14 @@ def map_product_detail(product: Product, db: Session | None = None) -> dict:
     if product.enterprise is not None:
         enterprise_name = product.enterprise.business_short_name
 
-    reviews, reviews_count = ([], 0)
+    reviews, reviews_count, rating = ([], 0, None)
     if db is not None:
-        reviews, reviews_count = get_catalog_reviews(db, "product", product.id)
+        reviews, reviews_count, rating = catalog_reviews.catalog_reviews(db, "product", product.id)
 
     return {
         **_product_base_fields(product),
         "enterprise_name": enterprise_name,
-        "rating": 0,
+        "rating": rating or 0,
         "stock_count": product.stock_quantity,
         "listing_type": format_listing_type(getattr(product, "listing_type", None)),
         "delivery_text": build_delivery_text(
@@ -379,14 +380,15 @@ def map_service_detail(service: Service, db: Session | None = None) -> dict:
     if service.enterprise is not None:
         enterprise_name = service.enterprise.business_short_name
 
-    reviews, reviews_count = ([], 0)
+    reviews, reviews_count, rating = ([], 0, None)
     if db is not None:
-        reviews, reviews_count = get_catalog_reviews(db, "service", service.id)
+        reviews, reviews_count, rating = catalog_reviews.catalog_reviews(db, "service", service.id)
 
     base = _service_base_fields(service)
     base.update(
         {
             "enterprise_name": enterprise_name,
+            "rating": rating or 0,
             "type": _service_type_value(service),
             "trainer_name": service.instructor_name,
             "format": service.delivery_format,

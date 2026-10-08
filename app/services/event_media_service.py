@@ -121,6 +121,86 @@ def asset_path(asset: EventMedia) -> Path:
     return media_root() / f"{asset.id}.{asset.ext}"
 
 
+ASSET_FILE_RE = re.compile(
+    r"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.([A-Za-z0-9]{1,10})$"
+)
+
+
+def diagnose_asset_file(db: Session, asset_file: str) -> dict:
+    """Why `GET /events/media/<asset_file>` answers 404 "File not found", or that it should not.
+
+    That one response covers four different problems; this tells them apart:
+      invalid_name          the name is not <uuid>.<ext>
+      no_database_record    there is no event_media row with that id (this database never saw the upload)
+      extension_mismatch    the row exists but was stored with a different extension than the URL asks for
+      file_missing_on_disk  the row exists and matches, but the file is not under UPLOAD_DIR/events
+      ok                    row and file both exist (a 404 then is not from this lookup)
+    Also reports where the file is expected, what is actually on disk for that id, and which Events use it."""
+    out: dict = {"asset_file": asset_file, "verdict": None}
+    root = media_root()
+    out["storage_dir"] = str(root)
+    match = ASSET_FILE_RE.match(asset_file or "")
+    if not match:
+        out["verdict"] = "invalid_name"
+        return out
+    asset_id, url_ext = uuid.UUID(match.group(1)), match.group(2).lower()
+    out["asset_id"], out["url_extension"] = str(asset_id), url_ext
+    out["files_on_disk_for_this_id"] = sorted(p.name for p in root.glob(f"{asset_id}.*"))
+
+    asset = db.get(EventMedia, asset_id)
+    if asset is not None:
+        out["record"] = {
+            "field": asset.field, "extension": asset.ext, "mime_type": asset.mime_type, "size": asset.size,
+            "tenant_id": str(asset.tenant_id), "uploaded_by": asset.uploaded_by,
+            "created_at": asset.created_at.isoformat() if asset.created_at else None,
+            "attached_at": asset.attached_at.isoformat() if asset.attached_at else None,
+            "released_at": asset.released_at.isoformat() if asset.released_at else None,
+        }
+        out["expected_path"] = str(asset_path(asset))
+
+    from app.models.event_model import Event
+
+    out["used_by_events"] = [
+        {"id": str(e.id), "title": e.title, "status": e.status, "deleted": bool(e.is_deleted)}
+        for e in db.query(Event).filter(_reference_filter(asset_id)).limit(10).all()
+    ]
+
+    if asset is None:
+        out["verdict"] = "no_database_record"
+    elif asset.ext != url_ext:
+        out["verdict"] = "extension_mismatch"
+    elif not asset_path(asset).is_file():
+        out["verdict"] = "file_missing_on_disk"
+    else:
+        out["verdict"] = "ok"
+        on_disk = asset_path(asset).stat().st_size
+        out["size_on_disk"] = on_disk
+        if on_disk != asset.size:
+            out["note"] = f"file size on disk ({on_disk}) differs from the recorded size ({asset.size})"
+    return out
+
+
+def scan_event_media(db: Session) -> dict:
+    """Compare every event_media row with the files under UPLOAD_DIR/events."""
+    root = media_root()
+    on_disk = {p.name for p in root.iterdir() if p.is_file()}
+    expected: set[str] = set()
+    missing_attached, missing_pending = [], []
+    for asset in db.query(EventMedia).all():
+        name = f"{asset.id}.{asset.ext}"
+        expected.add(name)
+        if name not in on_disk:
+            (missing_attached if asset.attached_at else missing_pending).append(name)
+    return {
+        "storage_dir": str(root),
+        "records": len(expected),
+        "files_on_disk": len(on_disk),
+        "records_with_missing_file_used_by_an_event": sorted(missing_attached),
+        "records_with_missing_file_never_attached": sorted(missing_pending),
+        "files_on_disk_without_a_record": sorted(on_disk - expected),
+    }
+
+
 def asset_url(asset: EventMedia) -> str:
     return to_https(f"{public_media_base()}/api/v1/events/media/{asset.id}.{asset.ext}")
 
