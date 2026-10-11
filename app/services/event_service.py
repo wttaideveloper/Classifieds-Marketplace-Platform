@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+import uuid as _uuid
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -323,6 +324,28 @@ def _meals_enabled_flag_matches(meals_in, enabled: bool) -> None:
         )
 
 
+def _may_get_default_ticket(db: Session, price, currency, ticket_types, form_version_id) -> bool:
+    """Base Price is purchasable (positive, valid currency, no ticket types) AND enabled in the Event's form."""
+    from app.services.event_form_config_service import core_field_enabled
+    from app.utils.event_default_ticket import base_price_is_purchasable
+
+    return base_price_is_purchasable(price, currency, ticket_types) and core_field_enabled(db, form_version_id, "price")
+
+
+def enable_default_ticket_type(db: Session, event) -> bool:
+    """Explicit opt-in for an existing Event: give it a default ticket id if it is eligible and has none.
+
+    Never runs automatically. Returns True when an id was assigned. An existing id is never replaced.
+    """
+    if event.default_ticket_type_id is not None:
+        return False
+    if not _may_get_default_ticket(db, event.price, event.currency, event.ticket_types, event.form_configuration_version_id):
+        return False
+    event.default_ticket_type_id = _uuid.uuid4()
+    db.commit()
+    return True
+
+
 def _meals_for_new_event(event_data, modules, event_currency: str) -> dict | None:
     """The ``meals`` value for a new event (None = nothing configured); 422 when meals are off or the options are invalid."""
     meals_in = getattr(event_data, "meals", None)
@@ -500,6 +523,11 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
     payload["meals"] = _meals_for_new_event(event_data, payload.get("modules"), payload["currency"])
     payload["accommodation"] = _accommodation_for_new_event(event_data, payload.get("modules"), payload["currency"])
     payload.update(form_meta)
+    if _may_get_default_ticket(
+        db, payload.get("price"), payload.get("currency"), payload.get("ticket_types"),
+        payload.get("form_configuration_version_id"),
+    ):
+        payload["default_ticket_type_id"] = _uuid.uuid4()
     _validate_event_media_for_create(db, payload)
     from app.models.event_model import Event
     created = Event(**payload)
@@ -688,12 +716,20 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
         changes = update_data.to_model_data() if hasattr(update_data, "to_model_data") else update_data.model_dump(exclude_unset=True)
         validate_event_submission(db, event, {**changes, **(extra or {})})
     media_before = _validate_event_media_for_update(db, event, update_data)
+    from app.utils.event_default_ticket import base_price_is_purchasable
+    was_purchasable = base_price_is_purchasable(event.price, event.currency, event.ticket_types)
     updated = update_event(db, event, update_data, commit=False)
     if extra:
         for key, val in extra.items():
             setattr(updated, key, val)
     for key, val in config_changes.items():
         setattr(updated, key, val)  # a new dict for modules, so the JSONB change is always detected
+    # An id is only ever assigned when THIS update makes the Event eligible (e.g. a draft gets its Base Price);
+    # an Event that already was eligible is never silently enabled, and an existing id is never replaced.
+    if updated.default_ticket_type_id is None and not was_purchasable and _may_get_default_ticket(
+        db, updated.price, updated.currency, updated.ticket_types, updated.form_configuration_version_id
+    ):
+        updated.default_ticket_type_id = _uuid.uuid4()
     _log_audit(
         db, event.id, "update",
         {**old_vals, **old_config},
@@ -738,6 +774,13 @@ def duplicate_event_service(db: Session, event_id: UUID, current_user: dict = No
     payload = {c.key: getattr(event, c.key) for c in event.__table__.columns if c.key not in ("id", "created_at", "updated_at")}
     payload["status"] = "draft"
     payload["is_deleted"] = False
+    # The clone is a different Event: it gets its own default ticket id (only if the source offered one).
+    had_default = payload.pop("default_ticket_type_id", None) is not None
+    if had_default and _may_get_default_ticket(
+        db, payload.get("price"), payload.get("currency"), payload.get("ticket_types"),
+        payload.get("form_configuration_version_id"),
+    ):
+        payload["default_ticket_type_id"] = _uuid.uuid4()
     # Deep copy sessions and regenerate ids so cloned event sessions are independent and addressable
     if payload.get("sessions"):
         cloned_sessions = copy.deepcopy(payload["sessions"])
@@ -2145,7 +2188,7 @@ def create_template_service(db: Session, payload: dict, current_user: dict | Non
 
 # ---- Free/Paid: checkout / orders / refund. ----
 
-def _resolve_ticket(event, ticket_type_id: str | None):
+def _resolve_ticket(event, ticket_type_id: str | None, db: Session | None = None):
     if not ticket_type_id:
         # free event or single price
         return {"price": event.price or "0", "currency": event.currency or "INR", "capacity": event.capacity}
@@ -2153,7 +2196,17 @@ def _resolve_ticket(event, ticket_type_id: str | None):
     for t in tickets:
         if isinstance(t, dict) and str(t.get("id")) == str(ticket_type_id):
             return t
-    return None
+    # Base-Price-only Event: the backend-generated default ticket id (built from the CURRENT price/currency).
+    from app.utils.event_default_ticket import default_ticket_for
+
+    ticket = default_ticket_for(event, ticket_type_id)
+    if ticket is not None and db is not None:
+        # Current eligibility also needs Base Price to be enabled in the Event's Event Form version.
+        from app.services.event_form_config_service import core_field_enabled
+
+        if not core_field_enabled(db, event.form_configuration_version_id, "price"):
+            return None
+    return ticket
 
 def _ticket_effective_price(ticket: dict, event) -> str:
     from datetime import datetime
@@ -2196,7 +2249,7 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
     from app.utils.event_utils import validate_registration_window
     validate_registration_window(event)
     
-    ticket = _resolve_ticket(event, payload.ticket_type_id)
+    ticket = _resolve_ticket(event, payload.ticket_type_id, db)
     if payload.ticket_type_id and not ticket:
         raise HTTPException(status_code=404, detail="Ticket type not found")
 
@@ -2379,7 +2432,7 @@ def get_checkout_quote_service(db: Session, event_id: UUID, payload) -> dict:
     from app.utils.event_utils import validate_registration_window
     validate_registration_window(event)
 
-    ticket = _resolve_ticket(event, payload.ticket_type_id)
+    ticket = _resolve_ticket(event, payload.ticket_type_id, db)
     if payload.ticket_type_id and not ticket:
         raise HTTPException(status_code=404, detail="Ticket type not found")
 

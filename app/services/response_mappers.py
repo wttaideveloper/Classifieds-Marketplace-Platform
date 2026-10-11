@@ -18,6 +18,7 @@ from app.services.catalog_enrichment import (
 from app.utils.event_utils import get_event_lifecycle_state
 from app.utils.event_accommodation import resolve_event_accommodation
 from app.utils.event_meals import resolve_event_meals
+from app.utils.event_default_ticket import purchasable_default_ticket_id
 from app.utils.event_modules import resolve_event_modules, resolve_event_type
 
 _WEEKDAY_INDEX = {
@@ -658,6 +659,7 @@ def _event_base_fields(event) -> dict:
         "price": event.price,
         "currency": event.currency,
         "ticket_types": event.ticket_types,
+        "default_ticket_type_id": purchasable_default_ticket_id(event),
         "capacity": event.capacity,
         "min_participants": event.min_participants,
         "max_participants": event.max_participants,

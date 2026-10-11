@@ -97,10 +97,10 @@ def _assert_event_open_for_walk_in(event) -> None:
         raise HTTPException(status_code=400, detail="Walk-in registrations are closed — the event has finished")
 
 
-def _resolve_walk_in_ticket(event, ticket_type_id: str | None, paid: bool):
+def _resolve_walk_in_ticket(event, ticket_type_id: str | None, paid: bool, db=None):
     """The ticket the walk-in buys. Reuses the checkout's lookup; a ticket type must belong to THIS event."""
     if ticket_type_id:
-        ticket = _resolve_ticket(event, ticket_type_id)
+        ticket = _resolve_ticket(event, ticket_type_id, db)
         if ticket is None:
             raise HTTPException(status_code=404, detail="Ticket type not found")
         return ticket
@@ -249,7 +249,7 @@ def create_walk_in_service(db: Session, event_id: UUID, payload, current_user: d
 
     if payload.session_id:
         _validate_session_for_event(event, payload.session_id)  # 400: not one of this event's own sessions
-    ticket = _resolve_walk_in_ticket(event, payload.ticket_type_id, paid)
+    ticket = _resolve_walk_in_ticket(event, payload.ticket_type_id, paid, db)
     answers = _validated_answers(event, payload.custom_fields)
     ticket_amount, ticket_currency = (
         _amount_due(event, ticket) if paid else (Decimal("0.00"), (ticket or {}).get("currency") or event.currency or "INR")

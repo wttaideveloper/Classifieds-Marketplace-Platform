@@ -1094,6 +1094,24 @@ def _validate_custom_value(field_def: dict, value) -> None:
                 raise HTTPException(status_code=400, detail=f"Invalid multi_select value for '{field_def.get('label')}'")
 
 
+def core_field_enabled(db: Session, version_id, core_key: str) -> bool:
+    """Whether an Event Form version has the core field enabled (section and field both on).
+
+    No version = a legacy Event created before form versions, whose form always had the field.
+    A version id that cannot be loaded fails closed.
+    """
+    if not version_id:
+        return True
+    version = db.query(EventFormConfigurationVersion).filter(EventFormConfigurationVersion.id == version_id).first()
+    if version is None:
+        return False
+    sections = normalize_sections(version.sections or [], assign_ids=False)
+    return any(
+        field.get("source") == "core" and field.get("core_key") == core_key
+        for field in _iter_enabled_fields(sections)
+    )
+
+
 def validate_form_required_core_fields(event_data, sections: list[dict]) -> None:
     """Supplement domain validation with configuration-required enabled fields."""
     payload = event_data.to_model_data() if hasattr(event_data, "to_model_data") else event_data.model_dump()

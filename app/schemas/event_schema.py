@@ -568,6 +568,14 @@ class EventResponse(BaseModel):
     price: str | None = None
     currency: str | None = None
     ticket_types: list | None = None
+    default_ticket_type_id: str | None = Field(
+        None,
+        description=(
+            "Backend-generated id to send as ticket_type_id (quote / checkout / walk-in) for a Base-Price-only "
+            "Event. Present only while the Event can sell it (positive price, valid currency, no configured "
+            "ticket types); null otherwise. Never invent one client-side."
+        ),
+    )
     capacity: str | None = None
     min_participants: str | None = None
     max_participants: str | None = None

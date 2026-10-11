@@ -39,6 +39,7 @@ from app.services.event_meal_service import attendee_meal_selections
 from app.services.event_service import _event_is_paid, _to_int
 from app.services.event_session_attendance_service import event_sessions_with_ids, load_attendance_rows, session_states
 from app.utils.event_accommodation import stored_accommodation_options
+from app.utils.event_default_ticket import DEFAULT_TICKET_NAME
 from app.utils.event_meals import stored_options
 from app.utils.event_payments import (
     PAYMENT_FREE,
@@ -225,7 +226,10 @@ def _context(db: Session, event) -> _EventContext:
     return _EventContext(
         event=event,
         paid=_event_is_paid(event),
-        ticket_names={str(t.get("id")): t.get("name") for t in (event.ticket_types or []) if isinstance(t, dict) and t.get("id") is not None},
+        ticket_names={
+            **({str(event.default_ticket_type_id): DEFAULT_TICKET_NAME} if getattr(event, "default_ticket_type_id", None) else {}),
+            **{str(t.get("id")): t.get("name") for t in (event.ticket_types or []) if isinstance(t, dict) and t.get("id") is not None},
+        },
         answer_labels=load_answer_labels(db, event),
         sessions=event_sessions_with_ids(event),
         meal_options=stored_options(event),

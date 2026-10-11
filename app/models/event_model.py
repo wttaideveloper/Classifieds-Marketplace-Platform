@@ -80,6 +80,9 @@ class Event(Base):
     price = Column(String(50))
     currency = Column(String(3), default="INR")
     ticket_types = Column(JSONB, default=list)
+    # Backend-generated id of the Base Price default ticket (see app/utils/event_default_ticket.py). Nullable:
+    # existing Events are never backfilled.
+    default_ticket_type_id = Column(UUID(as_uuid=True), nullable=True)
 
     # Capacity
     capacity = Column(String(50))
