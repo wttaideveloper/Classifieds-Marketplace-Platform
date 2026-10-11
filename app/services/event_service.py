@@ -325,7 +325,10 @@ def _meals_enabled_flag_matches(meals_in, enabled: bool) -> None:
 
 
 def _may_get_default_ticket(db: Session, price, currency, ticket_types, form_version_id) -> bool:
-    """Base Price is purchasable (positive, valid currency, no ticket types) AND enabled in the Event's form."""
+    """Base Price is purchasable (positive, valid currency) AND enabled in the Event's form.
+
+    Configured Ticket Types do not matter: Base Price and Regular/VIP tickets are independent options.
+    """
     from app.services.event_form_config_service import core_field_enabled
     from app.utils.event_default_ticket import base_price_is_purchasable
 
@@ -759,7 +762,7 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
         validate_event_submission(db, event, {**changes, **(extra or {})})
     media_before = _validate_event_media_for_update(db, event, update_data)
     from app.utils.event_default_ticket import base_price_is_purchasable
-    was_purchasable = base_price_is_purchasable(event.price, event.currency, event.ticket_types)
+    was_purchasable = base_price_is_purchasable(event.price, event.currency)
     updated = update_event(db, event, update_data, commit=False)
     if extra:
         for key, val in extra.items():
@@ -2232,24 +2235,22 @@ def create_template_service(db: Session, payload: dict, current_user: dict | Non
 # ---- Free/Paid: checkout / orders / refund. ----
 
 def _resolve_ticket(event, ticket_type_id: str | None, db: Session | None = None):
-    if not ticket_type_id:
-        # free event or single price
-        return {"price": event.price or "0", "currency": event.currency or "INR", "capacity": event.capacity}
-    tickets = event.ticket_types or []
-    for t in tickets:
-        if isinstance(t, dict) and str(t.get("id")) == str(ticket_type_id):
-            return t
-    # Base-Price-only Event: the backend-generated default ticket id (built from the CURRENT price/currency).
-    from app.utils.event_default_ticket import default_ticket_for
+    """The ticket a quote / checkout / walk-in will sell, or None for an unknown, stale or ineligible id.
 
-    ticket = default_ticket_for(event, ticket_type_id)
-    if ticket is not None and db is not None:
+    Thin wrapper over the shared resolver (app.utils.event_default_ticket.resolve_ticket_option): a configured
+    Ticket Type id, the Base Price default-ticket id and "no id" (legacy single price) are told apart there.
+    """
+    from app.utils.event_default_ticket import resolve_ticket_option
+
+    def base_price_enabled() -> bool:
+        if db is None:
+            return True
         # Current eligibility also needs Base Price to be enabled in the Event's Event Form version.
         from app.services.event_form_config_service import core_field_enabled
 
-        if not core_field_enabled(db, event.form_configuration_version_id, "price"):
-            return None
-    return ticket
+        return core_field_enabled(db, event.form_configuration_version_id, "price")
+
+    return resolve_ticket_option(event, ticket_type_id, base_price_enabled).ticket
 
 def _ticket_effective_price(ticket: dict, event) -> str:
     from datetime import datetime

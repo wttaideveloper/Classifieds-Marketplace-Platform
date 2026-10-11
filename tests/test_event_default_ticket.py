@@ -1,5 +1,7 @@
 """Backend-generated default ticket id for Base-Price-only Events.
 
+(Base Price next to configured Regular/VIP tickets is covered in test_event_default_ticket_coexistence.py.)
+
 Runs the real quote / checkout / walk-in / create / update code on in-memory SQLite (no network).
 """
 from datetime import datetime, timedelta
@@ -110,7 +112,6 @@ def test_repeated_reads_and_unrelated_updates_keep_the_id(env):
         {"price": "0"},
         {"price": "abc"},
         {"price": "-5"},
-        {"ticket_types": [{"id": "regular", "name": "Regular", "price": "500"}]},
     ],
 )
 def test_ineligible_events_get_no_id(env, overrides):
@@ -129,14 +130,17 @@ def test_a_draft_gets_its_id_when_an_update_makes_it_eligible_and_never_a_replac
     priced = event_service.update_event_service(env.db, created.id, EventUpdate(price="300", pricing_type="paid"), env.owner)
     assigned = priced.default_ticket_type_id
     assert assigned is not None
-    # becomes ineligible (ticket types added): id hidden, stored value kept
+    # adding a VIP ticket does NOT disturb it: Base Price and configured tickets coexist
     with_tickets = event_service.update_event_service(
         env.db, created.id, EventUpdate(ticket_types=[{"name": "VIP", "price": "900"}]), env.owner)
-    assert with_tickets.default_ticket_type_id is None
+    assert with_tickets.default_ticket_type_id == assigned
+    # becomes ineligible (price removed): id hidden, stored value kept
+    unpriced = event_service.update_event_service(env.db, created.id, EventUpdate(price="0"), env.owner)
+    assert unpriced.default_ticket_type_id is None
     assert str(stored(env, created.id).default_ticket_type_id) == assigned
     # eligible again: the SAME id returns, no replacement is generated
-    cleared = event_service.update_event_service(env.db, created.id, EventUpdate(ticket_types=[]), env.owner)
-    assert cleared.default_ticket_type_id == assigned
+    repriced = event_service.update_event_service(env.db, created.id, EventUpdate(price="300"), env.owner)
+    assert repriced.default_ticket_type_id == assigned
 
 
 def test_existing_events_are_not_backfilled_but_can_be_enabled_explicitly(env):
@@ -261,7 +265,7 @@ def test_invalid_ids_still_404(env, bad):
 def test_the_default_id_stops_working_when_the_event_is_no_longer_eligible(env):
     event = published(env)
     ticket_id = str(event.default_ticket_type_id)
-    event_service.update_event_service(env.db, event.id, EventUpdate(ticket_types=[{"name": "VIP", "price": "900"}]), env.owner)
+    event_service.update_event_service(env.db, event.id, EventUpdate(price="0"), env.owner)
     assert quote(env, stored(env, event.id), ticket_id).status_code == 404
     assert checkout(env, stored(env, event.id), "a@example.com", ticket_id).status_code == 404
 
@@ -270,16 +274,18 @@ def test_configured_tickets_are_unchanged(env):
     event = make_event(
         env.db, env.tenant, env.ent, pricing_type="paid", price="500", currency="INR", capacity="5",
         ticket_types=[{"id": "regular", "name": "Regular", "price": "500"}, {"id": "vip", "name": "VIP", "price": "900", "capacity": 1}],
-        default_ticket_type_id=uuid4(),  # even a stale stored id must not be sellable next to real tickets
+        default_ticket_type_id=uuid4(),  # a stored id is sellable next to real tickets (they are independent options)
     )
     assert quote(env, event, "regular").json()["ticket_subtotal"] == 500.0
     assert quote(env, event, "vip").json()["ticket_subtotal"] == 900.0
     assert checkout(env, event, "a@example.com", "vip").status_code == 201
     assert checkout(env, event, "b@example.com", "vip").status_code == 400   # per-ticket capacity untouched
-    assert quote(env, event, str(event.default_ticket_type_id)).status_code == 404
+    # the default ticket sells at the Base Price, independently of Regular/VIP (which keep their own ids and prices)
+    assert quote(env, event, str(event.default_ticket_type_id)).json()["ticket_subtotal"] == 500.0
+    assert quote(env, event, str(uuid4())).status_code == 404
     shown = client_for(env.db, env.owner).get(f"{API}/{event.id}").json()
-    assert shown["default_ticket_type_id"] is None
-    assert [t["id"] for t in shown["ticket_types"]] == ["regular", "vip"]
+    assert shown["default_ticket_type_id"] == str(event.default_ticket_type_id)
+    assert [t["id"] for t in shown["ticket_types"]] == ["regular", "vip"]   # never written into ticket_types
 
 
 def test_mixed_currency_safeguards_still_apply(env):
