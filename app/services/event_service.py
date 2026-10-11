@@ -569,6 +569,7 @@ def get_events_service(
     page: int = 1,
     page_size: int = 20,
     viewer: EventViewer | None = None,
+    include_registration: bool = True,
 ) -> EventPaginatedResponse:
     # No viewer == anonymous public reader (published events only). Callers that legitimately
     # widen the view (staff of the owning tenant, Platform Super Admin) pass an explicit viewer.
@@ -590,10 +591,33 @@ def get_events_service(
         page=page,
         page_size=page_size,
     )
+    # Management listings (admin queues) pass include_registration=False: the flag is about the caller as an attendee.
+    registered = _registered_event_ids(db, (viewer.user or {}).get("email"), [e.id for e in items]) if include_registration else set()
     return EventPaginatedResponse(
-        items=[EventListItemResponse.model_validate(_redact_event_data(map_event_list_item(e, db), e, viewer)) for e in items],
+        items=[
+            EventListItemResponse.model_validate(
+                {**_redact_event_data(map_event_list_item(e, db), e, viewer), "registration_status": e.id in registered}
+            )
+            for e in items
+        ],
         pagination=build_pagination_meta(total, page, page_size),
     )
+
+
+def _registered_event_ids(db: Session, email: str | None, event_ids: list) -> set:
+    """Ids (of `event_ids`) the caller holds a live registration for, in one query. Same rule as the event
+    detail's `is_registered`: confirmed or attended; cancelled / no_show / never registered do not count."""
+    if not email or not event_ids:
+        return set()
+    from app.models.event_aux_models import EventRegistration
+    rows = db.execute(
+        sa.select(EventRegistration.event_id).where(
+            EventRegistration.event_id.in_(event_ids),
+            EventRegistration.participant_email == email,
+            EventRegistration.status.in_(("confirmed", "attended")),
+        ).distinct()
+    )
+    return {r[0] for r in rows}
 
 
 # Internal review/workflow fields: only the owning tenant (or the platform) may read them.

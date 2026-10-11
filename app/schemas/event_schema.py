@@ -675,7 +675,7 @@ class EventResponse(BaseModel):
 
 
 class EventListItemResponse(EventResponse):
-    pass
+    registration_status: bool = Field(False, description="True while the signed-in caller has a live registration (confirmed or attended) for this event. Always false for an anonymous request. (On the event detail, `registration_status` is the status text.)")
 
 
 class EventDetailResponse(EventResponse):

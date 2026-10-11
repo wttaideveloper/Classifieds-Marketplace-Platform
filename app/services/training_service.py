@@ -3763,9 +3763,11 @@ def create_training_review_service(db: Session, tid: UUID, data, *, access_token
     return _review_dict(r, name=public_name(enrolled.participant_name), include_email=True)
 
 
-def list_training_reviews_service(db: Session, tid: UUID, opts=None):
+def list_training_reviews_service(db: Session, tid: UUID, opts=None, current_user: dict | None = None):
     """Public: approved reviews only, no email addresses. `opts` (sort / rating / with_comment / paging) only
-    changes which reviews are listed; the average, count and star breakdown cover all approved reviews."""
+    changes which reviews are listed; the average, count and star breakdown cover all approved reviews.
+    `my_review` is the signed-in caller's own review in any status (so a pending one does not seem to vanish);
+    it is null for anonymous callers and never part of `reviews`, `count` or the aggregates."""
     from app.models.training_model import TrainingReview
 
     _get_training_or_404(db, tid)
@@ -3787,6 +3789,7 @@ def list_training_reviews_service(db: Session, tid: UUID, opts=None):
         "count": len(rows),
         "rating_distribution": rating_distribution(ratings),
         "pagination": pagination,
+        "my_review": get_my_training_review_service(db, tid, current_user) if current_user else None,
     }
 
 

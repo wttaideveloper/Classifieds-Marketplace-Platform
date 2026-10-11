@@ -4,7 +4,7 @@ A new review is pending and public only once an Enterprise Admin (of the owning 
 it; the average counts approved reviews only and is null when there are none; no email addresses in public output;
 comment <= 2000 characters; one review per learner; editing keeps the status.
 """
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import training as training_routes
 from app.core.catalog_access import get_optional_catalog_user
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_optional_current_user
 from app.db.database import Base, get_db
 from app.models.enterprise_model import Enterprise
 from app.models.training_model import (
@@ -33,6 +33,7 @@ def as_user(client, user):
     """Switch who the next requests are made as (both dependencies the review routes use)."""
     client.app.dependency_overrides[get_current_user] = lambda: user
     client.app.dependency_overrides[get_optional_catalog_user] = lambda: user
+    client.app.dependency_overrides[get_optional_current_user] = lambda: user
 
 
 def staff(role="admin", tenant=TENANT):
@@ -89,6 +90,16 @@ def listing(client, tid, prefix="trainings"):
     return client.get(f"/api/v1/{prefix}/{tid}/reviews").json()
 
 
+def body_id(resp):
+    return resp.json()["id"]
+
+
+def anonymous(client):
+    client.app.dependency_overrides[get_current_user] = lambda: (_ for _ in ()).throw(AssertionError("auth required"))
+    client.app.dependency_overrides[get_optional_catalog_user] = lambda: None
+    client.app.dependency_overrides[get_optional_current_user] = lambda: None
+
+
 def moderate(client, tid, review_id, action, user, prefix="trainings"):
     as_user(client, user)
     resp = client.patch(f"/api/v1/{prefix}/{tid}/reviews/{review_id}/moderate", json={"action": action})
@@ -108,7 +119,10 @@ def test_a_new_review_is_pending_and_not_public(world):
     assert body["moderation_status"] == "pending"
     assert body["participant_name"] == "Asha Rao" and body["verified"] is True
     assert body["participant_email"] == LEARNER["email"]  # the author sees their own
-    assert listing(client, tid) == {
+    body = listing(client, tid)
+    # The author's own pending review is in `my_review` only; the public part of the response is unchanged.
+    assert body.pop("my_review")["id"] == body_id(resp)
+    assert body == {
         "reviews": [], "average_rating": None, "count": 0, "rating_distribution": {"5": 0, "4": 0, "3": 0, "2": 0, "1": 0},
         "pagination": {"total": 0, "page": 1, "page_size": 0, "total_pages": 0},
     }
@@ -128,6 +142,7 @@ def test_after_approval_it_is_public_without_an_email_and_counts(world):
     [item] = body["reviews"]
     assert item["participant_email"] is None and item["participant_name"] == "Asha Rao"
     assert item["moderation_status"] == "approved"
+    anonymous(client)   # the author's own copy (my_review) carries their email; the public one never does
     assert LEARNER["email"] not in client.get(f"/api/v1/trainings/{tid}/reviews").text
 
 
@@ -274,6 +289,92 @@ def test_my_review_is_null_until_written_then_shows_the_status(world):
     assert mine["participant_email"] == LEARNER["email"]
 
 
+# --- the author still sees a pending review in the listing; nobody else does -----------------------
+
+def test_the_author_sees_their_pending_review_as_my_review_and_it_is_not_counted(world):
+    client, sessions, tid = world
+    resp = post(client, tid, rating=4)
+    with sessions() as db:
+        assert db.query(TrainingReview).filter_by(id=UUID(resp.json()["id"])).one().moderation_status == "pending"
+
+    body = listing(client, tid)
+
+    assert body["my_review"]["id"] == resp.json()["id"]            # same id as the POST
+    assert body["my_review"]["moderation_status"] == "pending"
+    assert body["reviews"] == [] and body["count"] == 0 and body["average_rating"] is None
+    assert body["pagination"]["total"] == 0
+
+
+def test_an_unrelated_user_and_the_public_never_see_a_pending_review(world):
+    client, sessions, tid = world
+    post(client, tid)
+    with sessions() as db:
+        db.add(TrainingEnrolment(training_id=tid, participant_name="Ravi", participant_email="ravi@example.com", status="enrolled"))
+        db.commit()
+
+    as_user(client, {"id": str(uuid4()), "role": "customer", "email": "ravi@example.com"})
+    other = listing(client, tid)
+    anonymous(client)
+    public = listing(client, tid)
+
+    for body in (other, public):
+        assert body["my_review"] is None and body["reviews"] == [] and body["count"] == 0
+        assert LEARNER["email"] not in str(body)
+    as_user(client, {"id": str(uuid4()), "role": "customer", "email": "ravi@example.com"})
+    assert client.get(f"/api/v1/trainings/{tid}/reviews/me").json() is None
+
+
+def test_my_review_follows_moderation_and_the_author_sees_a_rejected_one(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+
+    moderate(client, tid, review_id, "rejected", staff())
+    body = listing(client, tid)
+    assert body["my_review"]["moderation_status"] == "rejected" and body["reviews"] == [] and body["count"] == 0
+    anonymous(client)
+    assert listing(client, tid)["my_review"] is None
+
+    as_user(client, LEARNER)
+    moderate(client, tid, review_id, "approved", staff())
+    body = listing(client, tid)
+    assert body["my_review"]["moderation_status"] == "approved"
+    assert [r["id"] for r in body["reviews"]] == [review_id] and body["count"] == 1
+    anonymous(client)
+    public = listing(client, tid)
+    assert [r["id"] for r in public["reviews"]] == [review_id] and public["my_review"] is None
+
+
+def test_ownership_cannot_be_forged_with_a_participant_email(world):
+    client, sessions, tid = world
+    with sessions() as db:
+        db.add(TrainingEnrolment(training_id=tid, participant_name="Ravi", participant_email="ravi@example.com", status="enrolled"))
+        db.commit()
+    ravi = {"id": str(uuid4()), "role": "customer", "email": "ravi@example.com"}
+    as_user(client, ravi)
+
+    resp = client.post(f"/api/v1/trainings/{tid}/reviews", json={"rating": 1, "participant_email": LEARNER["email"]})
+
+    assert resp.json()["participant_email"] == ravi["email"]       # the token's email wins
+    as_user(client, LEARNER)
+    assert listing(client, tid)["my_review"] is None                # nothing was written as the learner
+    with sessions() as db:
+        assert [r.participant_email for r in db.query(TrainingReview).all()] == [ravi["email"]]
+
+
+def test_a_stale_token_on_the_public_listing_is_just_anonymous(world):
+    client, _, tid = world
+    post(client, tid)
+    anonymous(client)
+    assert listing(client, tid)["my_review"] is None
+
+
+def test_course_paths_expose_my_review_the_same_way(world):
+    client, _, tid = world
+    review_id = post(client, tid, prefix="courses").json()["id"]
+    assert listing(client, tid, prefix="courses")["my_review"]["id"] == review_id
+    assert listing(client, tid, prefix="courses")["count"] == 0
+
+
 # --- notifications -------------------------------------------------------------------------------
 
 def test_a_new_review_notifies_the_business_but_an_edit_does_not(world, dispatched):
@@ -367,3 +468,12 @@ def test_the_course_path_accepts_the_same_options(world):
     body = client.get(f"/api/v1/courses/{tid}/reviews", params={"sort": "highest", "page": 1, "page_size": 2}).json()
 
     assert [r["rating"] for r in body["reviews"]] == [5, 4] and body["count"] == 5
+
+
+def test_my_review_and_reviews_me_agree_through_every_status(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+    for action in ("pending", "rejected", "approved"):
+        moderate(client, tid, review_id, action, staff())
+        mine, listed = client.get(f"/api/v1/trainings/{tid}/reviews/me").json(), listing(client, tid)["my_review"]
+        assert mine == listed and mine["id"] == review_id and mine["moderation_status"] == action

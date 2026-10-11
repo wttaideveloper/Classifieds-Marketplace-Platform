@@ -5,6 +5,7 @@ from app.core.dependencies import extract_access_token, get_current_super_admin
 from app.db.database import get_db
 from app.repository.event_repo import build_event_viewer, is_platform_super_admin, require_event_owner
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from app.schemas.event_schema import EventPaginatedResponse
 from app.services.event_service import get_events_service, update_event_status_service
 from app.services.training_service import get_trainings_service, get_training_service, update_training_status_service
 from app.schemas.training_schema import TrainingAdminActionRequest, TrainingDetailResponse
@@ -26,7 +27,11 @@ def _scope_event_admin_action(request: Request, db: Session, event_id: UUID, adm
     if not is_platform_super_admin(admin_user):
         require_event_owner(db, event_id, admin_user, access_token=extract_access_token(request), include_deleted=True)
 
-@router.get("/events/pending", summary="Admin — Pending Events Queue")
+# registration_status is an attendee flag for the public lists; a management queue does not carry it.
+@router.get(
+    "/events/pending", summary="Admin — Pending Events Queue",
+    response_model=EventPaginatedResponse, response_model_exclude={"items": {"__all__": {"registration_status"}}},
+)
 def admin_pending_events(
     request: Request,
     page: int = Query(DEFAULT_PAGE, ge=1),
@@ -38,7 +43,7 @@ def admin_pending_events(
 ):
     # Platform Super Admin sees every tenant's queue; the Enterprise Admin fallback only its own.
     viewer = build_event_viewer(db, _admin, access_token=extract_access_token(request))
-    return get_events_service(db, status_filter="pending_approval", enterprise_id=enterprise_id, category=category, page=page, page_size=page_size, viewer=viewer)
+    return get_events_service(db, status_filter="pending_approval", enterprise_id=enterprise_id, category=category, page=page, page_size=page_size, viewer=viewer, include_registration=False)
 
 @router.post("/events/{event_id}/approve", summary="Admin — Approve Event")
 def approve_event(request: Request, event_id: UUID, db: Session = Depends(get_db), _admin: dict = Depends(get_current_super_admin)):

@@ -218,7 +218,7 @@ def search_events_service(
     viewer=None,
 ) -> EventPaginatedResponse:
     from app.repository.event_repo import EventViewer, event_visibility_filter
-    from app.services.event_service import _redact_event_data
+    from app.services.event_service import _redact_event_data, _registered_event_ids
 
     viewer = viewer or EventViewer()  # no viewer == anonymous public reader (published only)
     db_query = db.query(Event).options(joinedload(Event.enterprise))
@@ -251,8 +251,14 @@ def search_events_service(
 
     db_query = db_query.order_by(Event.created_at.desc())
     items, total = paginate_query(db_query, page, page_size)
+    registered = _registered_event_ids(db, (viewer.user or {}).get("email"), [e.id for e in items])   # one query for the page
     return EventPaginatedResponse(
-        items=[EventListItemResponse.model_validate(_redact_event_data(map_event_list_item(item), item, viewer)) for item in items],
+        items=[
+            EventListItemResponse.model_validate(
+                {**_redact_event_data(map_event_list_item(item), item, viewer), "registration_status": item.id in registered}
+            )
+            for item in items
+        ],
         pagination=build_pagination_meta(total, page, page_size),
     )
 

@@ -495,11 +495,15 @@ def create_review(request: Request, training_id: UUID, payload: TrainingReviewCr
         "Public. Approved reviews only, newest first, without email addresses. `average_rating` is the mean of the "
         "approved reviews and is null when there are none (show \"No ratings yet\"). Optional `sort` "
         "(newest|oldest|highest|lowest), `rating`, `with_comment`, `page` and `page_size` change which reviews are "
-        "listed; the average, `count` and `rating_distribution` always cover all approved reviews."
+        "listed; the average, `count` and `rating_distribution` always cover all approved reviews. A signed-in caller "
+        "also gets `my_review`: their own review in any status (e.g. `pending`), never anyone else's."
     ),
 )
-def list_reviews(training_id: UUID, opts: ListOptions = Depends(review_list_params), db: Session = Depends(get_db)):
-    return list_training_reviews_service(db, training_id, opts)
+def list_reviews(
+    training_id: UUID, opts: ListOptions = Depends(review_list_params), db: Session = Depends(get_db),
+    current_user: dict | None = Depends(get_optional_current_user),
+):
+    return list_training_reviews_service(db, training_id, opts, current_user)
 
 
 @router.get(

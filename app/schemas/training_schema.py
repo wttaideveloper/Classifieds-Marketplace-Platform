@@ -1217,6 +1217,7 @@ class TrainingReviewListResponse(BaseModel):
     count: int = Field(0, description="Number of approved reviews")
     rating_distribution: dict[str, int] = Field(default_factory=dict, description="Approved reviews per star: {\"5\": n, \"4\": n, ...}")
     pagination: PaginationMeta | None = Field(None, description="total = reviews after the filters; page/page_size when paging, else everything on one page")
+    my_review: TrainingReviewResponse | None = Field(None, description="The signed-in caller's own review in any status (check moderation_status: pending|approved|rejected); null when anonymous or they have not reviewed. Not counted in `reviews`, `count` or the aggregates")
 
 
 class TrainingReviewModerateRequest(BaseModel):
