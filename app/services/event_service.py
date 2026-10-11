@@ -637,6 +637,23 @@ def get_event_service(
     return EventDetailResponse.model_validate(_redact_event_data(detail, event, viewer))
 
 
+def _normalize_update_datetimes_to_event_zone(event, update_data) -> None:
+    """Convert any offset-bearing timestamp in an update to event-local wall-clock, once, before it is stored.
+
+    Uses the zone the Event will have AFTER this update (a time_zone sent in the same request wins, else the stored
+    one). Naive values are already event-local and untouched. Stored timestamps are never rewritten: changing only
+    time_zone keeps the existing wall-clock values (they are re-read in the new zone), as documented in
+    docs/event-timezone-contract.md.
+    """
+    from types import SimpleNamespace
+    from app.utils.event_utils import EVENT_DATETIME_FIELDS, get_event_timezone, to_event_local_naive
+
+    tz = get_event_timezone(SimpleNamespace(time_zone=getattr(update_data, "time_zone", None) or event.time_zone))
+    for name in EVENT_DATETIME_FIELDS:
+        if name in update_data.model_fields_set:
+            setattr(update_data, name, to_event_local_naive(getattr(update_data, name), tz))
+
+
 def update_event_service(db: Session, event_id: UUID, update_data, current_user: dict = None):
     event = get_event_by_id(db, event_id, include_deleted=True)
     if not event or event.is_deleted:
@@ -647,6 +664,7 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
         raise HTTPException(status_code=400, detail="Status cannot be changed via PUT. Use PATCH /{event_id}/status.")
 
     fields = update_data.model_fields_set
+    _normalize_update_datetimes_to_event_zone(event, update_data)
     currency_changed = "currency" in fields
     configuration_changed = currency_changed or any(
         getattr(update_data, field, None) is not None for field in ("ticket_types", "meals", "accommodation")
@@ -1425,6 +1443,7 @@ def my_waitlist_service(db: Session, email: str, status: str | None = None):
             "event_title": w.event.title if w.event else None,
             "event_status": w.event.status if w.event else None,
             "event_start_date": w.event.start_date if w.event else None,
+            "event_time_zone": w.event.time_zone if w.event else None,
             "participant_name": w.participant_name,
             "participant_email": w.participant_email,
             "status": w.status,
@@ -3234,6 +3253,8 @@ def my_registrations_service(db: Session, email: str, status_filter: str | None 
             "event_title": ev.title if ev else None,
             "event_status": ev.status if ev else None,
             "event_start": ev.start_date.isoformat() if ev and ev.start_date else None,
+            # event_start is naive wall-clock in this zone (docs/event-timezone-contract.md); clients need it to read it.
+            "event_time_zone": ev.time_zone if ev else None,
             "registration_status": r.status,
             "qr_code": r.qr_code,
             "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None,

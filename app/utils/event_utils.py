@@ -5,6 +5,38 @@ from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
+# Event timestamp contract (see docs/event-timezone-contract.md):
+#   * start_date / end_date / registration_open_at / registration_close_at / registration_cutoff are stored
+#     as NAIVE event-local wall-clock time, interpreted in ``Event.time_zone`` (an IANA key).
+#   * A write that carries an explicit offset / Z is converted ONCE, at the write boundary, to the same
+#     event-local wall-clock (``to_event_local_naive``), so the instant it named is preserved.
+#   * Reads and comparisons resolve wall-clock -> aware UTC (``resolve_naive_or_aware``), never twice.
+DEFAULT_EVENT_TIME_ZONE = "Asia/Kolkata"  # same default as the Event.time_zone column
+EVENT_DATETIME_FIELDS = ("start_date", "end_date", "registration_cutoff", "registration_open_at", "registration_close_at")
+
+
+def is_valid_time_zone(name) -> bool:
+    """True when ``name`` is an IANA key the tz database can resolve (e.g. "America/New_York", "UTC")."""
+    if not isinstance(name, str) or not name.strip():
+        return False
+    try:
+        zoneinfo.ZoneInfo(name.strip())
+        return True
+    except Exception:
+        return False
+
+
+def to_event_local_naive(dt: datetime | None, event_tz) -> datetime | None:
+    """A timezone-aware datetime -> the same instant as naive wall-clock time in ``event_tz``.
+
+    A naive value is already event-local wall-clock and is returned untouched (never re-localized), which is
+    what makes this safe to call on every write.
+    """
+    if dt is None or dt.tzinfo is None:
+        return dt
+    return dt.astimezone(event_tz).replace(tzinfo=None)
+
+
 def _get_utc_now(now=None) -> datetime:
     if now is None:
         return datetime.now(timezone.utc)

@@ -2,12 +2,16 @@ from datetime import datetime, timedelta
 from uuid import UUID
 import hashlib
 
-def _fmt(dt: datetime) -> str:
+def _fmt(dt: datetime, event_tz=None) -> str:
+    """ICS UTC form YYYYMMDDTHHMMSSZ — must be UTC.
+
+    An aware datetime is converted to UTC. A NAIVE one is the organizer's event-local wall-clock time (the Event
+    contract, docs/event-timezone-contract.md), so it is read in ``event_tz`` first; without an ``event_tz`` it is
+    treated as UTC (e.g. DTSTAMP, which is generated server-side in UTC).
+    """
     from datetime import timezone
-    # ICS UTC format YYYYMMDDTHHMMSSZ — must be UTC
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt.strftime("%Y%m%dT%H%M%SZ")
+    from app.utils.event_utils import resolve_naive_or_aware
+    return resolve_naive_or_aware(dt, event_tz or timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 def _escape(text: str | None) -> str:
     if not text: return ""
@@ -15,7 +19,10 @@ def _escape(text: str | None) -> str:
     return text.replace("\\", "\\\\").replace("\r\n", "\\n").replace("\r", "\\n").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
 
 def event_to_ics(event, sessions: list | None = None) -> str:
+    from app.utils.event_utils import get_event_timezone
+
     uid_base = str(event.id)
+    event_tz = get_event_timezone(event)
     now = _fmt(datetime.utcnow())
     lines = [
         "BEGIN:VCALENDAR",
@@ -25,8 +32,13 @@ def event_to_ics(event, sessions: list | None = None) -> str:
         "METHOD:PUBLISH",
     ]
     # Main event
-    dtstart = _fmt(event.start_date) if event.start_date else now
-    dtend = _fmt(event.end_date) if event.end_date else _fmt(datetime.utcnow() + timedelta(hours=1))
+    dtstart = _fmt(event.start_date, event_tz) if event.start_date else now
+    if event.end_date:
+        dtend = _fmt(event.end_date, event_tz)
+    elif event.start_date:
+        dtend = _fmt(event.start_date + timedelta(hours=1), event_tz)
+    else:
+        dtend = _fmt(datetime.utcnow() + timedelta(hours=1))
     summary = _escape(event.title or "Event")
     desc = _escape(event.description or "")
     location = ""
@@ -75,8 +87,8 @@ def event_to_ics(event, sessions: list | None = None) -> str:
                 et_t = _parse_time(et)
                 s_start = datetime.combine(base.date(), st_t) if st_t else base
                 s_end = datetime.combine(base.date(), et_t) if et_t else s_start + timedelta(hours=1)
-                dt_s = _fmt(s_start)
-                dt_e = _fmt(s_end)
+                dt_s = _fmt(s_start, event_tz)
+                dt_e = _fmt(s_end, event_tz)
             else:
                 continue
         except Exception:

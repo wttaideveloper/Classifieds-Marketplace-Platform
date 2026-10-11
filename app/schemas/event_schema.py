@@ -15,6 +15,13 @@ from app.schemas.event_accommodation_schema import (
     reject_duplicate_accommodation_selections,
 )
 from app.schemas.event_meal_schema import EventMeals, EventMealsInput, MAX_SELECTIONS, MealId, reject_duplicate_selections
+from app.utils.event_utils import (
+    DEFAULT_EVENT_TIME_ZONE,
+    EVENT_DATETIME_FIELDS,
+    get_event_timezone,
+    is_valid_time_zone,
+    to_event_local_naive,
+)
 from app.utils.event_modules import EVENT_MODULE_KEYS, EVENT_TYPE_KEY_MAX_LENGTH, EVENT_TYPE_KEY_PATTERN
 
 DeliveryMode = str  # in_person|online|hybrid
@@ -135,6 +142,7 @@ class MyWaitlistResponse(BaseModel):
     event_title: str | None = None
     event_status: str | None = None
     event_start_date: datetime | None = None
+    event_time_zone: str | None = Field(None, description="IANA zone that event_start_date (naive wall-clock) is expressed in")
     participant_name: str
     participant_email: str
     status: str
@@ -292,6 +300,25 @@ class EventCreate(BaseModel):
                     "default or an explicit override); otherwise the request is rejected rather than silently enabling accommodation.",
     )
     status: EventStatus = Field("draft", description="Event status.")
+
+    @field_validator("time_zone", mode="before")
+    @classmethod
+    def validate_time_zone(cls, value):
+        # Omitted / null / blank -> the platform default (explicitly, not via a DB default that null can bypass).
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return DEFAULT_EVENT_TIME_ZONE
+        if not is_valid_time_zone(value):
+            raise ValueError(f"time_zone '{value}' is not a valid IANA time zone (e.g. 'America/New_York').")
+        return value.strip()
+
+    @model_validator(mode="after")
+    def normalize_offset_datetimes_to_event_zone(self):
+        # Naive values are already event-local wall-clock. A value with an explicit offset/Z is converted once,
+        # here, so the stored naive column still means "wall-clock in time_zone" and the instant is preserved.
+        tz = get_event_timezone(self)
+        for name in EVENT_DATETIME_FIELDS:
+            setattr(self, name, to_event_local_naive(getattr(self, name, None), tz))
+        return self
 
     @model_validator(mode="after")
     def validate_pricing(self):
@@ -480,6 +507,16 @@ class EventUpdate(BaseModel):
     )
     status: EventStatus | None = None
 
+    @field_validator("time_zone", mode="before")
+    @classmethod
+    def validate_time_zone(cls, value):
+        # null / blank = "no change" (never stored as NULL); anything else must be a real IANA key.
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        if not is_valid_time_zone(value):
+            raise ValueError(f"time_zone '{value}' is not a valid IANA time zone (e.g. 'America/New_York').")
+        return value.strip()
+
     @model_validator(mode="after")
     def validate_pricing(self):
         if getattr(self, "pricing_type", None) == "free":
@@ -496,6 +533,8 @@ class EventUpdate(BaseModel):
     def to_model_data(self) -> dict:
         data = self.model_dump(exclude_unset=True)
         data.pop("custom_values", None)  # handled by form configuration service
+        if data.get("time_zone") is None:
+            data.pop("time_zone", None)  # null/blank time_zone never overwrites the stored zone
         # Ownership is immutable through update: tenant_id is accepted in the body for
         # backward compatibility but is never applied to the Event.
         data.pop("tenant_id", None)
