@@ -1807,6 +1807,7 @@ def moderate_review_service(db: Session, review_id: UUID, action: str, event_id:
     if not fb:
         raise HTTPException(status_code=404, detail="Review not found")
     previous = fb.moderation_status
+    event = None
     if previous != action:
         event = get_event_by_id(db, fb.event_id, include_deleted=True)
         review_audit.record(
@@ -1819,6 +1820,11 @@ def moderate_review_service(db: Session, review_id: UUID, action: str, event_id:
     db.refresh(fb)
     if previous != action:
         review_notifications.notify_review_decision("event", fb.id, action, access_token=access_token)
+        review_notifications.notify_review_moderated(
+            "event", review_id=fb.id, item_id=fb.event_id, item_name=getattr(event, "title", None),
+            tenant_id=event_owner_tenant_id(event) if event else None, previous_status=previous, new_status=action,
+            actor=actor, actor_role=(actor or {}).get("role"), access_token=access_token,
+        )
     return fb
 
 
@@ -1836,6 +1842,7 @@ def delete_event_review_service(db: Session, event_id: UUID, review_id: UUID, cu
     user_id = _caller_user_uuid(current_user)
     email = str((current_user or {}).get("email") or "").strip().lower()
     is_author = (user_id is not None and fb.user_id == user_id) or (bool(email) and email == (fb.participant_email or "").strip().lower())
+    announce = None  # set when a moderator (not the author) deletes it: the Super Admins are told
     if not is_author:
         role = str((current_user or {}).get("role") or "").lower()
         if role not in ("admin", "provider", "super_admin"):
@@ -1846,8 +1853,16 @@ def delete_event_review_service(db: Session, event_id: UUID, review_id: UUID, cu
             db, module="event", review_id=fb.id, item_id=event.id, item_name=event.title, tenant_id=owner,
             from_status=fb.moderation_status, to_status="deleted", actor=current_user, actor_role=role,
         )
+        announce = dict(
+            review_id=fb.id, item_id=event.id, item_name=event.title, tenant_id=owner,
+            previous_status=fb.moderation_status, actor=current_user, actor_role=role, access_token=access_token,
+        )
     db.delete(fb)
     db.commit()
+    if announce:
+        from app.services import review_notifications
+
+        review_notifications.notify_review_deleted("event", **announce)
     return {"message": "Review deleted"}
 
 

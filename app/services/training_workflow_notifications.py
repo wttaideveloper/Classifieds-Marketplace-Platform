@@ -168,3 +168,83 @@ def _deliver_enrolled(*, training_id: str, enrolment_id: str, actor_id: str | No
             },
             dedupe_key=f"training_enrolled:{enrolment_id}",
         )
+
+
+# --- a learner's question in the training discussion -> the owning Enterprise Admin(s) --------------------
+
+_STAFF_ROLES = ("admin", "provider", "super_admin")
+
+
+def _clean_person_name(value) -> str | None:
+    text = " ".join(str(value).split()) if value else ""
+    return text if text and "@" not in text else None  # an e-mail address is not a display name
+
+
+def _learner_display_name(db, training_id, email, token_name, user_id) -> str | None:
+    """The asker's name: from their login, else the name on their enrolment, else one identity lookup."""
+    name = _clean_person_name(token_name)
+    if name:
+        return name
+    if email:
+        from app.models.training_model import TrainingEnrolment
+
+        enrolment = db.query(TrainingEnrolment).filter(
+            TrainingEnrolment.training_id == training_id, TrainingEnrolment.participant_email == email,
+        ).first()
+        name = _clean_person_name(getattr(enrolment, "participant_name", None))
+        if name:
+            return name
+    if user_id:
+        try:
+            from app.services import chat_user_names
+
+            return chat_user_names.resolve_display_names([user_id]).get(str(user_id))
+        except Exception:
+            logger.exception("could not look up the learner's name")
+    return None
+
+
+def notify_discussion_question(training, entry: dict, *, author: dict | None, access_token: str | None = None) -> None:
+    """Call after a new question has been saved to the training's discussion.
+
+    `training_question_posted` goes to the Enterprise Admin(s) who own the training. A question asked by staff
+    (an admin, provider or Super Admin) is not announced: it is for learners asking. Sent once per question."""
+    if str((author or {}).get("role") or "").lower() in _STAFF_ROLES:
+        return
+    training_notifications._dispatch(
+        _deliver_question, training_id=str(training.id), discussion_id=str(entry.get("id")),
+        author_name=(author or {}).get("name"), author_email=(author or {}).get("email"),
+        author_id=str((author or {}).get("id") or "") or None, access_token=access_token,
+    )
+
+
+def _deliver_question(*, training_id: str, discussion_id: str, author_name, author_email, author_id, access_token=None):
+    from app.db.database import SessionLocal
+    from app.models.training_model import Training
+    from app.services import event_notification_service as recipients_of
+
+    with SessionLocal() as db:
+        training = db.get(Training, UUID(training_id))
+        if training is None:
+            return None
+        entry = next((e for e in (training.discussions or []) if str(e.get("id")) == discussion_id), None)
+        if entry is None:
+            return None
+        recipients, tenant_id = recipients_of.resolve_enterprise_admin_user_ids(db, training, access_token=access_token)
+        # The asker never needs telling about their own question, even if they also administer the business.
+        recipients = [uid for uid in recipients if str(uid) != author_id]
+        learner = _learner_display_name(db, training.id, author_email, author_name, author_id)
+        question = " ".join(str(entry.get("question") or "").split())
+        excerpt = question if len(question) <= 120 else question[:117].rstrip() + "..."
+        return _deliver_to_users(
+            db, recipients=recipients, notification_type="training_question_posted",
+            title="New question in a training discussion",
+            message=f'{learner or "A learner"} asked in "{training.title}": {excerpt}',
+            tenant_id=tenant_id,
+            metadata={
+                "training_id": training_id, "entity_type": "training", "entity_id": training_id,
+                "discussion_id": discussion_id, "training_name": training.title, "learner_name": learner,
+                "learner_id": author_id,
+            },
+            dedupe_key=f"training_question_posted:{discussion_id}",
+        )

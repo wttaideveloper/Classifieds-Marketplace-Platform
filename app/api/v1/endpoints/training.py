@@ -1064,7 +1064,7 @@ def list_discussions(training_id: UUID, db: Session=Depends(get_db), current_use
     return getattr(obj, "discussions", []) or []
 
 @router.post("/{training_id}/discussions", response_model=TrainingDiscussionResponse, status_code=201, summary="Post Q&A")
-def post_discussion(training_id: UUID, payload: TrainingDiscussionCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+def post_discussion(request: Request, training_id: UUID, payload: TrainingDiscussionCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.repository.training_repo import get_training_by_id
     from sqlalchemy.orm.attributes import flag_modified
     import uuid as _uuid
@@ -1081,6 +1081,13 @@ def post_discussion(training_id: UUID, payload: TrainingDiscussionCreate, db: Se
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(obj, "discussions")
     db.commit()
+    # Tell the owning Enterprise Admin(s) about a learner's question (after the save; never able to fail the post).
+    try:
+        from app.services import training_workflow_notifications
+        training_workflow_notifications.notify_discussion_question(obj, entry, author=current_user, access_token=extract_access_token(request))
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("could not queue the discussion-question notification")
     return entry
 
 @router.post("/{training_id}/discussions/{discussion_id}/replies", response_model=TrainingDiscussionResponse, status_code=201, summary="Reply to Q&A / mark answer")

@@ -3837,6 +3837,11 @@ def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, ac
     db.refresh(r)
     if previous != action:
         review_notifications.notify_review_decision("training", r.id, action, access_token=access_token)
+        review_notifications.notify_review_moderated(
+            "training", review_id=r.id, item_id=training.id, item_name=training.title,
+            tenant_id=(training.enterprise.tenant_id if training.enterprise else None) or training.tenant_id,
+            previous_status=previous, new_status=action, actor=actor, actor_role=access.role, access_token=access_token,
+        )
     return _review_dict(r, name=_reviewer_names(db, tid, {r.participant_email}).get(r.participant_email), include_email=True)
 
 
@@ -3850,6 +3855,7 @@ def delete_training_review_service(db: Session, tid: UUID, review_id: UUID, curr
     if not r:
         raise HTTPException(status_code=404, detail="Review not found")
     email = str((current_user or {}).get("email") or "").strip().lower()
+    announce = None  # set when a moderator (not the author) deletes it: the Super Admins are told
     if not email or email != (r.participant_email or "").strip().lower():
         role = str((current_user or {}).get("role") or "").lower()
         if role not in ("admin", "provider", "super_admin"):
@@ -3861,8 +3867,16 @@ def delete_training_review_service(db: Session, tid: UUID, review_id: UUID, curr
             tenant_id=next((t for t in owners if t), None), from_status=r.moderation_status, to_status="deleted",
             actor=current_user, actor_role=role,
         )
+        announce = dict(
+            review_id=r.id, item_id=training.id, item_name=training.title, tenant_id=next((t for t in owners if t), None),
+            previous_status=r.moderation_status, actor=current_user, actor_role=role, access_token=access_token,
+        )
     db.delete(r)
     db.commit()
+    if announce:
+        from app.services import review_notifications
+
+        review_notifications.notify_review_deleted("training", **announce)
     return {"message": "Review deleted"}
 
 

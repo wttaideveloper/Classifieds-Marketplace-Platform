@@ -195,6 +195,13 @@ Resolved from sources that do not depend on anything a client sent, never guesse
 3. **In bulk** — `python -m scripts.backfill_training_enrolment_user_ids` (dry run, prints counts) and then `--apply`.
    Uses the same two server-side sources; learners it cannot resolve are left for step 2.
 
+## A learner's question in the discussion
+
+`POST /api/v1/trainings/{training_id}/discussions` by a learner sends `training_question_posted` to the owning Enterprise Admin(s), once the question is saved. It appears in `GET /api/v1/users/me/notifications` and as the Socket.IO `notification` event.
+
+Metadata: `training_id` (also `entity_id`, `entity_type: "training"`), `discussion_id`, `training_name`, `learner_name`, `learner_id`.
+`learner_name` comes from the learner's login, else the name on their enrolment, else the identity service; it is left out rather than showing an e-mail address. A question posted by an admin, provider or Super Admin is not announced, and the asker never gets their own notice.
+
 ## When nothing arrives
 
 Recipients come from the Invigorate tenant-user listing, which needs `INVIGORATE_AUTH_BASE_URL` and

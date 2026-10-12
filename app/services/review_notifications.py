@@ -88,7 +88,7 @@ def _author_user_id(db, module: str, review, item, access_token: str | None) -> 
     return None
 
 
-def _deliver(db, *, recipients, category, title, message, tenant_id, metadata, dedupe_key):
+def _deliver(db, *, recipients, category, title, message, tenant_id, metadata, dedupe_key, channels=None):
     from app.services.notification_service import create_automatic_notification
 
     if not recipients:
@@ -100,7 +100,7 @@ def _deliver(db, *, recipients, category, title, message, tenant_id, metadata, d
     try:
         return create_automatic_notification(
             db, title=title, message=message, category=category, user_ids=list(recipients),
-            tenant_id=tenant_id, metadata=_routing_metadata(category, metadata), channels=["in_app", "push"],
+            tenant_id=tenant_id, metadata=_routing_metadata(category, metadata), channels=channels or ["in_app", "push"],
         )
     except Exception:
         logger.exception("%s delivery failed; releasing claim %s", category, dedupe_key)
@@ -179,4 +179,119 @@ def _deliver_decision(module: str, review_id: str, new_status: str, access_token
                 "review_id": review_id, "status": new_status,
             },
             dedupe_key=f"{category}:{module}:{review_id}:{version}",
+        )
+
+
+# --- a moderator's action -> the Platform Super Admin(s) -------------------------------------------------
+#
+#   review_moderated -> an Enterprise Admin / provider approved, rejected or moved a review to pending
+#   review_deleted   -> an Enterprise Admin / provider permanently deleted a review
+#
+# Training and event reviews. A Platform Super Admin's own actions are not announced to Super Admins, and nor is an
+# author deleting their own review (that is not moderation). Everything the notification needs is passed in by the
+# caller, because the review of a delete no longer exists once it is committed.
+
+MODERATION_NOTICE_MODULES = ("training", "event")
+_ID_KEY = {"training": "training_id", "event": "event_id"}
+_ROLE_LABEL = {"admin": "Enterprise Admin", "provider": "Provider"}
+_STATUS_VERB = {"approved": "approved", "rejected": "rejected", "pending": "moved to pending"}
+
+
+def _clean_name(value) -> str | None:
+    text = " ".join(str(value).split()) if value else ""
+    return text if text and "@" not in text else None  # an e-mail address is not a name
+
+
+def _actor_name(actor: dict | None) -> str | None:
+    """The acting person's name: from their token, else one lookup in the identity service. Never an e-mail."""
+    name = _clean_name((actor or {}).get("name"))
+    if name or not (actor or {}).get("id"):
+        return name
+    try:
+        from app.services import chat_user_names
+
+        return chat_user_names.resolve_display_names([actor["id"]], current_user=actor).get(str(actor["id"]))
+    except Exception:
+        logger.exception("could not look up the acting moderator's name")
+        return None
+
+
+def notify_review_moderated(
+    module: str, *, review_id, item_id, item_name: str | None, tenant_id, previous_status: str | None,
+    new_status: str, actor: dict | None, actor_role: str | None, access_token: str | None = None,
+) -> None:
+    """Call after a moderator changed a review's status and it was committed. Does nothing for a no-op change, for
+    a Super Admin acting, or for a module other than training / event."""
+    if module not in MODERATION_NOTICE_MODULES or new_status not in _STATUS_VERB or previous_status == new_status:
+        return
+    _safely_notify(
+        "review_moderated", module, review_id=review_id, item_id=item_id, item_name=item_name, tenant_id=tenant_id,
+        previous_status=previous_status, new_status=new_status, actor=actor, actor_role=actor_role,
+        access_token=access_token,
+    )
+
+
+def notify_review_deleted(
+    module: str, *, review_id, item_id, item_name: str | None, tenant_id, previous_status: str | None,
+    actor: dict | None, actor_role: str | None, access_token: str | None = None,
+) -> None:
+    """Call after a moderator (not the author) deleted a review and it was committed."""
+    if module not in MODERATION_NOTICE_MODULES:
+        return
+    _safely_notify(
+        "review_deleted", module, review_id=review_id, item_id=item_id, item_name=item_name, tenant_id=tenant_id,
+        previous_status=previous_status, new_status="deleted", actor=actor, actor_role=actor_role,
+        access_token=access_token,
+    )
+
+
+def _safely_notify(category: str, module: str, **fields) -> None:
+    """Queueing the notice can never fail the moderator's action, which is already committed."""
+    try:
+        _dispatch_platform_notice(category, module, **fields)
+    except Exception:
+        logger.exception("could not queue the %s notification", category)
+
+
+def _dispatch_platform_notice(category: str, module: str, *, actor_role, actor, **fields) -> None:
+    if str(actor_role or "").lower() == "super_admin":
+        return  # the platform's own staff acted; nobody needs telling
+    from datetime import datetime
+
+    # The same change is announced once; a different change to the same review (a later one) gets its own key.
+    fields["stamp"] = datetime.utcnow().isoformat()
+    _dispatch(
+        _deliver_platform_notice, category, module,
+        actor={"id": (actor or {}).get("id"), "name": (actor or {}).get("name"), "role": actor_role}, **fields,
+    )
+
+
+def _deliver_platform_notice(
+    category: str, module: str, *, review_id, item_id, item_name, tenant_id, previous_status, new_status, actor,
+    access_token, stamp,
+):
+    from app.db.database import SessionLocal
+    from app.services import event_notification_service as recipients_of
+
+    with SessionLocal() as db:
+        recipients = recipients_of.resolve_platform_admin_user_ids(access_token)
+        name = _actor_name(actor)
+        role_label = _ROLE_LABEL.get(str(actor.get("role") or "").lower(), "A moderator")
+        who = f"{role_label} {name}" if name else (f"An {role_label}" if role_label != "A moderator" else role_label)
+        shown = f'"{item_name}"' if item_name else f"a {module}"
+        if category == "review_deleted":
+            title, message = "Review deleted", f"{who} deleted a review of {shown}."
+        else:
+            title, message = "Review moderated", f"{who} {_STATUS_VERB[new_status]} a review of {shown}."
+        return _deliver(
+            db, recipients=recipients, category=category, title=title, message=message, tenant_id=None,
+            metadata={
+                _ID_KEY[module]: str(item_id), "entity_type": module, "entity_id": str(item_id),
+                "item_name": item_name, "review_id": str(review_id),
+                "previous_status": previous_status, "new_status": new_status, "action": new_status,
+                "actor_name": name, "actor_id": str(actor["id"]) if actor.get("id") else None,
+                "actor_role": actor.get("role"), "tenant_id": str(tenant_id) if tenant_id else None,
+            },
+            dedupe_key=f"{category}:{module}:{review_id}:{previous_status}>{new_status}:{stamp}",
+            channels=["in_app"],
         )

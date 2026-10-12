@@ -426,7 +426,16 @@ They use the notification feed and the Socket.IO `notification` event that alrea
 | review_approved | the author | a moderator changes the status to approved |
 | review_rejected | the author | a moderator changes the status to rejected |
 
-Putting a review back to pending sends nothing, and neither does setting the status it already has.
+Putting a review back to pending sends nothing to the author, and neither does setting the status it already has.
+
+Platform Super Admins also get a notice when an Enterprise Admin or provider acts on a **training or event** review:
+
+| Category | Sent to | When |
+|---|---|---|
+| review_moderated | the Platform Super Admin(s) | an Enterprise Admin or provider approves, rejects or moves a review to pending |
+| review_deleted | the Platform Super Admin(s) | an Enterprise Admin or provider deletes a review (not the author deleting their own) |
+
+Metadata: `entity_type` (`training` or `event`), `entity_id`, `training_id` or `event_id`, `item_name`, `review_id`, `previous_status`, `new_status` (`approved`, `rejected`, `pending` or `deleted`), `action` (same as `new_status`), `actor_name`, `actor_id` and `actor_role`. Nothing is sent when a Super Admin acts, when the status does not change, or for product and service reviews. `actor_name` is left out when the server cannot find the person's name (an e-mail address is never used).
 
 Every one has `metadata.category` and these fields in `metadata`: `entity_type` (training, product, service or event), `entity_id` (the item), the matching `training_id`, `product_id`, `service_id` or `event_id`, `review_id` and `status`. `review_submitted` also has `rating`.
 
