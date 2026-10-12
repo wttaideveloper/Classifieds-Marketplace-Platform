@@ -48,6 +48,9 @@ NotificationCategory = Literal[
     "review_submitted",
     "review_approved",
     "review_rejected",
+    "training_question_posted",
+    "review_moderated",
+    "review_deleted",
 ]
 
 _TYPE_DOC = (
@@ -67,7 +70,12 @@ _CATEGORY_DOC = (
     "review_submitted (to the owning Enterprise Admins when a new training/product/service/event review is saved), "
     "review_approved | review_rejected (to the review's author). Their metadata has entity_type "
     "(training|product|service|event), entity_id, the matching <module>_id, review_id and status; "
-    "review_submitted adds rating."
+    "review_submitted adds rating. training_question_posted (to the owning Enterprise Admins when a learner "
+    "posts a question in a training discussion): metadata training_id, entity_type, entity_id, discussion_id, "
+    "training_name, learner_name. review_moderated | review_deleted (to the Platform Super Admins when an "
+    "Enterprise Admin or provider changes the status of, or deletes, a training or event review): metadata "
+    "entity_type (training|event), entity_id, the matching training_id|event_id, item_name, review_id, "
+    "previous_status, new_status (approved|rejected|pending|deleted), action, actor_name, actor_id, actor_role."
 )
 DeliveryType = Literal["immediate", "scheduled"]
 NotificationStatus = Literal["draft", "scheduled", "processing", "sent", "failed", "cancelled"]
