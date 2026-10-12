@@ -606,7 +606,12 @@ class EventResponse(BaseModel):
     pricing_type: str | None = Field(None, description="Stored Event pricing type: free|paid")
     price: str | None = None
     currency: str | None = None
-    ticket_types: list | None = None
+    ticket_types: list | None = Field(None, description=(
+        "Configured tickets. On GET /events/{id} each also carries read-only inventory: sold_count, "
+        "remaining_capacity (configured capacity minus sold; null = unlimited), sold_out (configured remaining is 0) "
+        "and available_quantity = min(remaining_capacity, Event seats left) — null only when both are unlimited. "
+        "Advisory only; checkout re-validates."
+    ))
     default_ticket_type_id: str | None = Field(
         None,
         description=(

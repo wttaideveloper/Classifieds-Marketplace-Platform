@@ -15,7 +15,7 @@ from app.api.v1.endpoints import event as event_routes
 from app.core.dependencies import get_current_user, get_optional_current_user
 from app.db.database import Base, get_db
 from app.models.enterprise_model import Enterprise
-from app.models.event_aux_models import EventRegistration
+from app.models.event_aux_models import EventOrder, EventRegistration
 from app.models.event_model import Event
 
 
@@ -23,7 +23,7 @@ from app.models.event_model import Event
 def setup(monkeypatch):
     monkeypatch.setattr(SQLiteTypeCompiler, "visit_JSONB", lambda *a, **kw: "JSON", raising=False)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Event.__table__, EventRegistration.__table__])
+    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Event.__table__, EventRegistration.__table__, EventOrder.__table__])
     sessions = sessionmaker(bind=engine)
     eid = uuid4()
     with sessions() as db:

@@ -650,7 +650,7 @@ def get_event_service(
     # 404 (not 403) for events the reader may not see, so hidden events are indistinguishable from absent ones.
     if not event or not can_view_event(db, event, viewer, access_token=access_token):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    detail = map_event_detail(event)
+    detail = apply_event_inventory(db, event, map_event_detail(event))
     email = (current_user or {}).get("email")
     registration = None
     if email:
@@ -1011,6 +1011,92 @@ def _seats_taken(db: Session, event_id: UUID, ticket_type_id: str | None = None)
     for order in db.query(EventOrder).filter(*order_conditions).all():
         seats += max(_to_int(order.quantity, 1) - 1, 0)
     return seats
+
+
+def _seats_taken_grouped(db: Session, event_id: UUID) -> tuple[int, dict[str, int]]:
+    """``(event_total, {ticket_type_id: seats})`` in two queries. Grouped twin of ``_seats_taken`` for the read-only detail API: it MUST keep the same
+    status filters (parity is asserted in tests/test_event_ticket_inventory.py).
+
+    Registrations without a ticket id (legacy / free sign-ups) count toward the total only. Base-Price (default
+    ticket) seats are keyed by the default ticket id like any other, so they count toward the total and are
+    simply never looked up by configured tickets.
+    """
+    from app.models.event_aux_models import EventOrder, EventRegistration
+
+    by_ticket: dict[str, int] = {}
+    total = 0
+    reg_rows = (
+        db.query(EventRegistration.ticket_type_id, sa.func.count(EventRegistration.id))
+        .filter(
+            EventRegistration.event_id == event_id,
+            EventRegistration.status.in_(_ACTIVE_REGISTRATION_STATUSES),
+        )
+        .group_by(EventRegistration.ticket_type_id)
+        .all()
+    )
+    for ticket_id, count in reg_rows:
+        total += count
+        if ticket_id is not None:
+            by_ticket[str(ticket_id)] = by_ticket.get(str(ticket_id), 0) + count
+    order_rows = (
+        db.query(EventOrder.ticket_type_id, EventOrder.quantity)
+        .filter(EventOrder.event_id == event_id, EventOrder.status == "confirmed", EventOrder.quantity != "1")
+        .all()
+    )
+    for ticket_id, quantity in order_rows:
+        extra = max(_to_int(quantity, 1) - 1, 0)
+        total += extra
+        if ticket_id is not None:
+            by_ticket[str(ticket_id)] = by_ticket.get(str(ticket_id), 0) + extra
+    return total, by_ticket
+
+
+def _capacity_limit(raw) -> int | None:
+    """Configured capacity as checkout reads it: falsy or unparseable means unlimited (None), never zero."""
+    if not raw:
+        return None
+    try:
+        return int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_event_inventory(db: Session, event, detail: dict) -> dict:
+    """Add read-only dynamic inventory to an Event detail payload (mutates ``detail``, never the Event).
+
+    Uses the same seat definition as checkout (``_seats_taken``, via its grouped twin). Advisory only: it reserves nothing, and checkout
+    re-validates under the Event row lock.
+
+    * ``available_seats`` / ``is_full``: event-wide pool (``None`` when the event is unlimited).
+    * per configured ticket: ``capacity`` unchanged, ``sold_count``, ``remaining_capacity`` (configured remaining,
+      ``None`` = unlimited), ``sold_out`` (configured remaining is 0) and ``available_quantity`` — what can actually
+      be bought now, ``min(remaining_capacity, event remaining)``, ``None`` only if both are unlimited.
+    """
+    total, by_ticket = _seats_taken_grouped(db, event.id)
+    event_cap = _capacity_limit(event.capacity)
+    event_remaining = None if event_cap is None else max(0, event_cap - total)
+    if event_remaining is not None:
+        detail["available_seats"] = event_remaining
+        detail["is_full"] = event_remaining <= 0
+
+    tickets = []
+    for ticket in event.ticket_types or []:
+        if not isinstance(ticket, dict):
+            tickets.append(ticket)
+            continue
+        sold = by_ticket.get(str(ticket.get("id")), 0) if ticket.get("id") is not None else 0
+        cap = _capacity_limit(ticket.get("capacity"))
+        remaining = None if cap is None else max(0, cap - sold)
+        limits = [v for v in (remaining, event_remaining) if v is not None]
+        tickets.append({
+            **ticket,
+            "sold_count": sold,
+            "remaining_capacity": remaining,
+            "sold_out": remaining is not None and remaining <= 0,
+            "available_quantity": min(limits) if limits else None,
+        })
+    detail["ticket_types"] = tickets
+    return detail
 
 
 def _authorize_participant_or_staff(
