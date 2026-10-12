@@ -53,6 +53,7 @@ class ReviewAuditItem(BaseModel):
     to_status: str = Field(..., description="approved | rejected | pending, or deleted when a moderator removed the review")
     actor_user_id: UUID | None = Field(None, description="Who did it")
     actor_role: str | None = None
+    actor_name: str | None = Field(None, description="The actor's display name, never an e-mail address; null when the server cannot find one")
     created_at: datetime
 
 

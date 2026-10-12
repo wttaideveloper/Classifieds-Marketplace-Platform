@@ -22,6 +22,7 @@ class ReviewModerationLog(Base):
     to_status = Column(String(20), nullable=False)  # approved | rejected | pending | deleted
     actor_user_id = Column(UUID(as_uuid=True), nullable=True)
     actor_role = Column(String(30), nullable=True)
+    actor_name = Column(String(255), nullable=True)  # display name when it happened; never an e-mail address
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (Index("ix_review_moderation_log_module_created", "module", "created_at"),)

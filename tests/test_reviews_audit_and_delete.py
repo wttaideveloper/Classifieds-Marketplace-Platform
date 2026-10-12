@@ -253,7 +253,7 @@ def test_an_admin_sees_the_history_of_their_own_business_newest_first(world):
     assert body["pagination"]["total"] == 3
     first = body["items"][0]
     assert first["from_status"] == "rejected" and first["actor_role"] == "admin" and first["item_name"] == "Service a"
-    assert set(first) == {"id", "module", "review_id", "item_id", "item_name", "from_status", "to_status", "actor_user_id", "actor_role", "created_at"}
+    assert set(first) == {"id", "module", "review_id", "item_id", "item_name", "from_status", "to_status", "actor_user_id", "actor_role", "actor_name", "created_at"}
 
 
 def test_a_super_admin_sees_every_business_and_another_business_sees_only_its_own(world):

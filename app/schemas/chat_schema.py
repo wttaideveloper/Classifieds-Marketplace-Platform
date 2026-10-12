@@ -7,7 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.common_schema import PaginatedResponse
 
 ConversationStatus = Literal["open", "closed", "archived"]
-ConversationType = Literal["standard", "preview", "booking"]
+ConversationType = Literal["standard", "preview", "booking", "group"]
+# What POST /conversations may create. A group is created with POST /groups (verified providers, consent, audit).
+ConversationCreateType = Literal["standard", "preview", "booking"]
 ParticipantRole = Literal["customer", "provider", "admin"]
 MessageType = Literal["text", "image", "document", "audio", "video", "system"]
 AttachmentType = Literal["image", "document", "audio", "video"]
@@ -63,7 +65,7 @@ class ConversationCreate(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": _CONVERSATION_CREATE_EXAMPLE})
 
     subject: str | None = Field(None, max_length=255, description="Optional conversation subject.")
-    conversation_type: ConversationType = Field(
+    conversation_type: ConversationCreateType = Field(
         "standard",
         description="Chat type: standard, preview (limited free messages), or booking.",
     )
@@ -121,6 +123,7 @@ class ConversationListItemResponse(BaseModel):
     id: UUID
     status: ConversationStatus
     conversation_type: ConversationType
+    group_kind: Literal["care", "program"] | None = Field(None, description="Set for a group (conversation_type = group).")
     subject: str | None = None
     last_message_at: datetime | None = None
     last_message_preview: str | None = None
@@ -238,6 +241,10 @@ class MessageCreate(BaseModel):
     content: str | None = Field(None, description="Message text content.")
     message_type: MessageType = "text"
     attachment_id: UUID | None = Field(None, description="Pre-uploaded attachment ID.")
+    # group chat only (ignored in a 1:1 chat)
+    reply_to_id: UUID | None = Field(None, description="Group chat: quote / reply to this message.")
+    mentions: list[UUID] = Field(default_factory=list, description="Group chat: members tagged with @.")
+    mention_all: bool = Field(False, description="Group chat: @everyone (providers only).")
 
 
 class MessageUpdate(BaseModel):

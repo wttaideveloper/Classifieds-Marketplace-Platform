@@ -111,8 +111,40 @@ class Settings(BaseSettings):
     # read-only like an anonymous visitor; writes still need a real role.
     CATALOG_UNRECOGNIZED_ROLE_READ_ONLY: bool = False
 
+    # --- Group chat (docs/group-chat-api.md). Starting values from the product decisions; all are settings so
+    # they can change without a release. Items marked "confirm" are waiting on legal / compliance.
+    GROUP_MAX_MEMBERS_CARE: int = 15  # confirm
+    GROUP_MAX_MEMBERS_PROGRAM: int = 50  # confirm
+    GROUP_MAX_ADMINS: int = 3
+    GROUP_EDIT_WINDOW_MINUTES: int = 15  # confirm
+    # Only a provider listed as verified (POST /groups/verified-providers) can create or own a group.
+    GROUP_REQUIRE_VERIFIED_PROVIDER: bool = True
+    # Whether patients may post to each other in a program group at all (confirm). When false only providers can
+    # post there, whatever the admins-only switch says.
+    GROUP_PROGRAM_PATIENTS_CAN_POST: bool = True
+    # Reactions: never in a care group; in a program group only these.
+    GROUP_PROGRAM_REACTIONS: str = "👍,❤️,🙏,👏,😊"
+    # Comma-separated words that may not appear in a group name (health conditions). A patient's own name is
+    # always refused as well.
+    GROUP_NAME_BLOCKED_TERMS: str = ""
+    GROUP_EMERGENCY_NUMBER: str = "112"
+    # Days the record is kept after a group closes (confirm with legal). Nothing is ever deleted by the API; this is
+    # the date shown on the group and used by whatever job later purges.
+    GROUP_RETENTION_DAYS: int | None = None
+    GROUP_GRIEVANCE_OFFICER_NAME: str = ""
+    GROUP_GRIEVANCE_OFFICER_EMAIL: str = ""
+    GROUP_GRIEVANCE_OFFICER_PHONE: str = ""
+
     class Config:
         env_file = ".env"
+
+    @property
+    def group_program_reactions(self) -> list[str]:
+        return [e.strip() for e in self.GROUP_PROGRAM_REACTIONS.split(",") if e.strip()]
+
+    @property
+    def group_blocked_name_terms(self) -> list[str]:
+        return [t.strip().lower() for t in self.GROUP_NAME_BLOCKED_TERMS.split(",") if t.strip()]
 
     @property
     def force_https_media_urls(self) -> bool:

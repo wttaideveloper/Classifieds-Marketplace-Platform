@@ -406,13 +406,14 @@ Response 200
     {
       "id": "…", "module": "product", "review_id": "…", "item_id": "…", "item_name": "Yoga Mat Pro",
       "from_status": "pending", "to_status": "approved",
-      "actor_user_id": "…", "actor_role": "admin", "created_at": "…"
+      "actor_user_id": "…", "actor_role": "admin", "actor_name": "Ada Admin", "created_at": "…"
     }
   ],
   "pagination": { "total": 1, "page": 1, "page_size": 20, "total_pages": 1 }
 }
 ```
 - A row is written every time the status really changes, and every time staff delete someone else's review (`to_status: "deleted"`). Setting the status a review already has writes nothing. An author deleting their own review is not written.
+- `actor_name` is the moderator's display name, so the app needs no extra lookup. It is saved when the action happens (so it is who they were at that time). Rows written before this field existed get the person's current name when the history is read. It is `null` when no real name can be found, and it is never an e-mail address.
 - A problem writing the history never stops the moderator's action; it is logged on the server.
 
 
@@ -428,14 +429,18 @@ They use the notification feed and the Socket.IO `notification` event that alrea
 
 Putting a review back to pending sends nothing to the author, and neither does setting the status it already has.
 
-Platform Super Admins also get a notice when an Enterprise Admin or provider acts on a **training or event** review:
+`review_submitted` for a **training or event** review is also sent to the Platform Super Admin(s), as a second copy with the same content. Anyone who is already an owner of the business gets it once. Product and service reviews still go to the Enterprise Admin(s) only. Every `review_submitted` has `learner_name` (the reviewer's display name; left out when only an e-mail address is known) and `item_id` and `item_name`.
+
+Moderation by staff is announced in both directions, for **training and event** reviews:
 
 | Category | Sent to | When |
 |---|---|---|
 | review_moderated | the Platform Super Admin(s) | an Enterprise Admin or provider approves, rejects or moves a review to pending |
 | review_deleted | the Platform Super Admin(s) | an Enterprise Admin or provider deletes a review (not the author deleting their own) |
+| review_moderated | the Enterprise Admin(s) who own the item | a Super Admin approves, rejects or moves a review to pending |
+| review_deleted | the Enterprise Admin(s) who own the item | a Super Admin deletes a review |
 
-Metadata: `entity_type` (`training` or `event`), `entity_id`, `training_id` or `event_id`, `item_name`, `review_id`, `previous_status`, `new_status` (`approved`, `rejected`, `pending` or `deleted`), `action` (same as `new_status`), `actor_name`, `actor_id` and `actor_role`. Nothing is sent when a Super Admin acts, when the status does not change, or for product and service reviews. `actor_name` is left out when the server cannot find the person's name (an e-mail address is never used).
+Metadata: `entity_type` (`training` or `event`), `entity_id` and `item_id` (the same), `training_id` or `event_id`, `item_name`, `review_id`, `previous_status`, `new_status` (`approved`, `rejected`, `pending` or `deleted`), `action` (same as `new_status`), `actor_name`, `actor_id` and `actor_role` (`admin`, `provider` or `super_admin`). A Super Admin's own action never goes to the Super Admins, and the acting person is never told about their own action. Nothing is sent when the status does not change, when an author deletes their own review, or for product and service reviews. `actor_name` is left out when the server cannot find the person's name (an e-mail address is never used).
 
 Every one has `metadata.category` and these fields in `metadata`: `entity_type` (training, product, service or event), `entity_id` (the item), the matching `training_id`, `product_id`, `service_id` or `event_id`, `review_id` and `status`. `review_submitted` also has `rating`.
 

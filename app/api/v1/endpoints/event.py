@@ -1028,6 +1028,23 @@ def get_meeting_link(request: Request, event_id: UUID, db: Session = Depends(get
     return get_meeting_link_service(db, event_id, current_user, access_token=extract_access_token(request))
 
 
+@router.get(
+    "/{event_id}/meeting-links",
+    summary="Saved meeting links for the edit form (owner only)",
+    description=(
+        "The Event's own meeting link and every session's, as saved, in one call. Event Details, the event list and "
+        "their sessions always show `\"protected\"` instead of a URL, for everyone including the owner; this is how the "
+        "Enterprise Admin (or a provider of the owning business, or a Super Admin) reads the real values to fill the edit "
+        "form. Anyone else gets 403, and nothing here is reachable without a login.\n\n"
+        "When saving, send a URL to change a link, `null` or `\"\"` to clear it, and either `\"protected\"` or nothing at all "
+        "to leave it as it is."
+    ),
+)
+def get_meeting_links(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_staff)):
+    from app.services.event_service import get_meeting_links_for_management_service
+    return get_meeting_links_for_management_service(db, event_id)
+
+
 @router.get("/{event_id}/sessions/{session_id}/meeting-link", summary="Get Session Meeting Link (registered only)")
 def get_session_meeting_link(request: Request, event_id: UUID, session_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.event_service import get_session_meeting_link_service
@@ -1052,7 +1069,16 @@ def announce(event_id: UUID, payload: EventAnnouncementCreate, db: Session = Dep
     return send_announcement_service(db, event_id, payload, current_user)
 
 
-@router.post("/{event_id}/remind", status_code=status.HTTP_201_CREATED, summary="Send Event Reminder")
+@router.post(
+    "/{event_id}/remind", status_code=status.HTTP_201_CREATED, summary="Send Event Reminder",
+    description=(
+        "Emails (and notifies in the app) everyone with a confirmed or attended registration: online registrations "
+        "and walk-ins alike. The answer says what really happened: `emailed` is the number of emails the mail server "
+        "accepted, `failed` the ones it did not (with the reason in `failures`), `skipped` the registrations with no "
+        "valid email address, and `by_source` splits the same numbers into `online` and `walk_in`. "
+        "`emailed` cannot say whether the person later found it in their inbox rather than their spam folder."
+    ),
+)
 def remind(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
     from app.repository.event_repo import get_event_by_id
     from fastapi import HTTPException
@@ -1060,8 +1086,17 @@ def remind(event_id: UUID, db: Session = Depends(get_db), current_user: dict = D
     if not ev:
         raise HTTPException(status_code=404, detail="Event not found")
     from app.services.notification_triggers import notify_event_reminder
-    notify_event_reminder(db, ev)
-    return {"message": "Reminders sent", "event_id": str(event_id)}
+    summary = notify_event_reminder(db, ev)
+    if summary["total"] == 0:
+        message = "Nobody is registered for this event yet, so no reminder was sent."
+    elif summary["emailed"] == summary["total"]:
+        message = f"Reminder emailed to all {summary['emailed']} registered people."
+    elif summary["emailed"] == 0:
+        first = summary["failures"][0]["reason"] if summary["failures"] else "unknown reason"
+        message = f"No reminder email could be sent to the {summary['total']} registered people. {first}"
+    else:
+        message = f"Reminder emailed to {summary['emailed']} of {summary['total']} registered people; {summary['failed'] + summary['skipped']} could not be reached."
+    return {"message": message, "event_id": str(event_id), **summary}
 
 
 @router.post("/{event_id}/feedback", status_code=status.HTTP_201_CREATED, summary="Submit Feedback")

@@ -357,19 +357,17 @@ def update_event(db: Session, event, update_data, commit: bool = True):
                 logger.warning("Ignored tenant_id change on Event %s via update", getattr(event, "id", None))
             payload.pop(protected)
 
-    # Preserve meeting links if they are masked as "protected"
-    if "meeting_link" in payload and payload["meeting_link"] == "protected":
+    # Event responses show meeting links as "protected"; an edit form sends that placeholder back. It means
+    # "unchanged", so it must never replace the stored URL.
+    from app.utils.event_meeting_links import is_masked_link, keep_stored_session_links
+
+    if "meeting_link" in payload and is_masked_link(payload["meeting_link"]):
         payload.pop("meeting_link")
 
     if "sessions" in payload and payload["sessions"] is not None:
-        old_sessions = {str(s.get("id")): s for s in (event.sessions or []) if isinstance(s, dict)}
-        for s in payload["sessions"]:
-            if s.get("meeting_link") == "protected":
-                old_s = old_sessions.get(str(s.get("id")))
-                if old_s and "meeting_link" in old_s:
-                    s["meeting_link"] = old_s["meeting_link"]
-                else:
-                    s.pop("meeting_link", None)
+        # The edit replaces the whole list, so a session that says nothing about its link ("protected" or no
+        # meeting_link at all) keeps the stored one. null or "" clears it; a URL replaces it.
+        payload["sessions"] = keep_stored_session_links(payload["sessions"], event.sessions)
 
     for key, value in payload.items():
         setattr(event, key, value)

@@ -188,10 +188,11 @@ def test_repeating_the_same_status_announces_nothing(world, module):
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-def test_a_super_admin_moderating_is_not_announced_to_super_admins(world, module):
+def test_a_super_admin_moderating_tells_the_enterprise_admins_not_the_super_admins(world, module):
     assert moderate(world, module, "approved", user=ROOT).status_code == 200
 
-    assert moderated(world) == []
+    [notice] = moderated(world)
+    assert notice["user_ids"] == ENTERPRISE_ADMINS  # never the Super Admins (see test_review_notifications_both_ways.py)
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
@@ -224,10 +225,11 @@ def test_the_author_deleting_their_own_review_is_not_moderation(world, module):
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-def test_a_super_admin_deleting_is_not_announced(world, module):
+def test_a_super_admin_deleting_tells_the_enterprise_admins_not_the_super_admins(world, module):
     assert delete(world, module, user=ROOT).status_code == 200
 
-    assert world.sent == []
+    [notice] = moderated(world, "review_deleted")
+    assert notice["user_ids"] == ENTERPRISE_ADMINS
 
 
 @pytest.mark.parametrize("module", ["training", "event"])

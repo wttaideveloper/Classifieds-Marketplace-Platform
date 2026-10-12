@@ -1,0 +1,431 @@
+"""Group chat request / response shapes. The contract is explained in docs/group-chat-api.md."""
+from datetime import datetime
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+GroupKind = Literal["care", "program"]
+GroupLinkType = Literal["program", "appointment_series", "care_episode"]
+GroupRole = Literal["owner", "admin", "member"]
+MemberKind = Literal["provider", "patient"]
+MembershipStatus = Literal["invited", "active", "declined", "removed", "left"]
+ReportReason = Literal["harassment", "privacy", "health_information", "spam", "inappropriate", "safety", "other"]
+ReportStatus = Literal["open", "reviewing", "resolved", "dismissed"]
+GroupMessageType = Literal["text", "image", "document", "audio", "video"]
+
+
+# ---------------------------------------------------------------- requests
+
+class GroupInvitee(BaseModel):
+    user_id: UUID
+    display_name: str | None = Field(
+        None, max_length=120,
+        description="The name other patients will see in a program group. The invited person can change it when they accept.",
+    )
+    is_minor: bool = Field(False, description="Under 18: the invitation must be accepted with a parent's or guardian's consent.")
+
+
+class GroupCreate(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {
+        "name": "Yoga batch Oct 2026", "kind": "program", "description": "Class updates and questions",
+        "context_type": "program", "context_id": "550e8400-e29b-41d4-a716-446655440010",
+        "invitees": [{"user_id": "550e8400-e29b-41d4-a716-446655440020"}],
+    }})
+
+    name: str = Field(..., min_length=1, max_length=120, description="Must not contain a patient's name or a health condition.")
+    kind: GroupKind = Field(..., description="care = one patient's care team; program = several patients in one program.")
+    description: str | None = Field(None, max_length=500)
+    avatar_url: str | None = Field(None, max_length=500, description="https URL of the group icon (upload it first, then pass the link).")
+    context_type: GroupLinkType = Field(..., description="Every group follows a program, an appointment series or a care episode.")
+    context_id: UUID
+    invitees: list[GroupInvitee] = Field(default_factory=list)
+    admins_only_posting: bool | None = Field(None, description="Default: on for a program group, off for a care group.")
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("A group needs a name")
+        return value
+
+
+class GroupUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    description: str | None = Field(None, max_length=500)
+    avatar_url: str | None = Field(None, max_length=500)
+
+
+class GroupSettingsUpdate(BaseModel):
+    admins_only_posting: bool = Field(..., description="true: only providers can post (announcements).")
+
+
+class InviteMembers(BaseModel):
+    invitees: list[GroupInvitee] = Field(..., min_length=1)
+
+
+class Guardian(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    relationship: str = Field(..., min_length=1, max_length=80, description="e.g. mother, father, legal guardian")
+
+
+class AcceptInvitation(BaseModel):
+    consent: bool = Field(..., description="Must be true. The person agrees to be added, having read the invitation.")
+    display_name: str | None = Field(None, max_length=120, description="What other patients see in a program group.")
+    guardian: Guardian | None = Field(None, description="Required when the invitation is for someone under 18.")
+
+
+class DeclineInvitation(BaseModel):
+    reason: str | None = Field(None, max_length=255)
+
+
+class RoleChange(BaseModel):
+    role: Literal["admin", "member"]
+    reason: str | None = Field(None, max_length=255, description="Required when demoting an admin.")
+
+
+class TransferOwnership(BaseModel):
+    user_id: UUID = Field(..., description="An active member who is a verified provider.")
+
+
+class ReassignOwner(BaseModel):
+    user_id: UUID
+    reason: str = Field(..., min_length=3, max_length=255)
+
+
+class PostingMute(BaseModel):
+    until: datetime | None = Field(None, description="When the mute ends (UTC). Omit for until an admin unmutes.")
+    reason: str | None = Field(None, max_length=255)
+
+
+class CloseGroup(BaseModel):
+    reason: str | None = Field(None, max_length=255, description="e.g. the program ended.")
+
+
+class ReopenGroup(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=255)
+
+
+class GroupPreferences(BaseModel):
+    muted: bool | None = Field(None, description="Mute notifications for this group (never removes access).")
+    muted_until: datetime | None = None
+    pinned: bool | None = Field(None, description="Pin the group in your own list.")
+
+
+class SendGroupMessage(BaseModel):
+    content: str | None = Field(None, max_length=4000)
+    message_type: GroupMessageType = "text"
+    attachment_id: UUID | None = None
+    reply_to_id: UUID | None = Field(None, description="Quote / reply to a message of this group.")
+    mentions: list[UUID] = Field(default_factory=list, description="Members tagged with @. They are notified directly.")
+    mention_all: bool = Field(False, description="@everyone. Providers only.")
+
+
+class EditGroupMessage(BaseModel):
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
+class HideMessage(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=255)
+
+
+class ReactionBody(BaseModel):
+    emoji: str = Field(..., min_length=1, max_length=16)
+
+
+class ReportCreate(BaseModel):
+    message_id: UUID | None = Field(None, description="Omit to report the group itself.")
+    reason: ReportReason
+    details: str | None = Field(None, max_length=1000)
+
+
+class ReportResolve(BaseModel):
+    status: Literal["reviewing", "resolved", "dismissed"]
+    note: str | None = Field(None, max_length=1000)
+
+
+class LegalHold(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class ShareHistory(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=255, description="The clinical reason, recorded in the audit trail.")
+
+
+class SaveToRecord(BaseModel):
+    patient_user_id: UUID = Field(..., description="The patient whose clinical record the message is saved to.")
+    note: str | None = Field(None, max_length=500)
+
+
+class DataRequestCreate(BaseModel):
+    conversation_id: UUID | None = Field(None, description="Omit for all of your groups.")
+    note: str | None = Field(None, max_length=500)
+
+
+class VerifiedProviderCreate(BaseModel):
+    user_id: UUID
+    registration_number: str | None = Field(None, max_length=80)
+    registration_council: str | None = Field(None, max_length=120)
+    tenant_id: UUID | None = None
+    notes: str | None = Field(None, max_length=500)
+
+
+# ---------------------------------------------------------------- responses
+
+class EmergencyNotice(BaseModel):
+    text: str
+    number: str
+
+
+class GroupLimits(BaseModel):
+    max_members: int
+    max_admins: int
+    edit_window_minutes: int
+
+
+class GroupResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    kind: GroupKind
+    description: str | None = None
+    avatar_url: str | None = None
+    context_type: str | None = None
+    context_id: UUID | None = None
+    tenant_id: UUID | None = None
+    status: Literal["open", "closed"]
+    admins_only_posting: bool
+    created_by: UUID
+    created_at: datetime
+    member_count: int = Field(..., description="Active members: the people who can see this group.")
+    visibility_notice: str = Field(..., description='"N people can see this" - show it on every group.')
+    emergency_notice: EmergencyNotice
+    forwarding_blocked: bool = True
+    screenshots_blocked: bool = Field(True, description="A hint to the app: block screenshots where the phone allows it.")
+    limits: GroupLimits
+    my_role: GroupRole | None = None
+    my_kind: MemberKind | None = None
+    muted: bool = False
+    pinned: bool = False
+    is_archived: bool = False
+    unread_count: int = 0
+    last_message_at: datetime | None = None
+    last_message_preview: str | None = None
+    closed_at: datetime | None = None
+    closed_reason: str | None = None
+    retention_started_at: datetime | None = None
+    retention_until: datetime | None = None
+    legal_hold: bool = False
+
+
+class GroupListResponse(BaseModel):
+    items: list[GroupResponse]
+    total: int
+
+
+class MemberResponse(BaseModel):
+    user_id: UUID
+    name: str | None = Field(None, description="Full name for providers; a display name for patients where privacy applies.")
+    role: GroupRole | None = None
+    kind: MemberKind | None = None
+    status: MembershipStatus
+    is_me: bool = False
+    joined_at: datetime | None = None
+    posting_muted: bool = False
+    posting_muted_until: datetime | None = None
+
+
+class MembersResponse(BaseModel):
+    members: list[MemberResponse]
+    total: int
+
+
+class InvitationResponse(BaseModel):
+    """What a person is shown before they agree to be added. They can read nothing in the group until they accept."""
+    conversation_id: UUID
+    name: str
+    kind: GroupKind
+    description: str | None = None
+    purpose: str
+    invited_by_name: str | None = None
+    provider_names: list[str] = Field(default_factory=list)
+    member_count: int
+    visibility_notice: str
+    what_members_can_see: str
+    emergency_notice: EmergencyNotice
+    requires_guardian_consent: bool = False
+    invited_at: datetime | None = None
+
+
+class InvitationsResponse(BaseModel):
+    items: list[InvitationResponse]
+    total: int
+
+
+class QuotedMessage(BaseModel):
+    id: UUID
+    sender_name: str | None = None
+    preview: str | None = None
+    is_hidden: bool = False
+
+
+class GroupMessageResponse(BaseModel):
+    id: UUID
+    conversation_id: UUID
+    sender_id: UUID
+    sender_name: str | None = None
+    sender_kind: MemberKind | None = None
+    message_type: str
+    content: str | None = None
+    attachment_id: UUID | None = None
+    status: Literal["visible", "retracted", "removed_by_admin"] = "visible"
+    placeholder: str | None = Field(None, description='"Message retracted" / "Message removed by admin" when hidden.')
+    reply_to: QuotedMessage | None = None
+    mentions: list[UUID] = Field(default_factory=list)
+    mentions_all: bool = False
+    mentions_me: bool = False
+    is_edited: bool = False
+    edited_at: datetime | None = None
+    pinned: bool = False
+    reactions: dict[str, int] = Field(default_factory=dict)
+    my_reactions: list[str] = Field(default_factory=list)
+    read_by: list[UUID] | None = Field(None, description="Care groups only. null in a program group.")
+    created_at: datetime
+
+
+class GroupMessagesResponse(BaseModel):
+    items: list[GroupMessageResponse]
+    has_more: bool
+    next_cursor: str | None = None
+    unread_count: int = 0
+    first_unread_message_id: UUID | None = Field(None, description='Put the "new messages" marker above this message.')
+    pinned_count: int = 0
+
+
+class ReadStatusResponse(BaseModel):
+    message_id: UUID
+    seen_by_count: int
+    recipient_count: int
+    label: str = Field(..., description='e.g. "seen by 4 of 6"')
+    seen_by: list[UUID] | None = Field(None, description="Care groups only.")
+
+
+class AuditEntryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    conversation_id: UUID
+    actor_id: UUID | None = None
+    actor_role: str | None = None
+    action: str
+    target_user_id: UUID | None = None
+    message_id: UUID | None = None
+    reason: str | None = None
+    details: dict | None = None
+    created_at: datetime
+
+
+class AuditResponse(BaseModel):
+    items: list[AuditEntryResponse]
+    total: int
+
+
+class ReportResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    conversation_id: UUID
+    message_id: UUID | None = None
+    reporter_id: UUID
+    reason: str
+    details: str | None = None
+    status: ReportStatus
+    resolution_note: str | None = None
+    resolved_by: UUID | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime
+
+
+class ReportsResponse(BaseModel):
+    items: list[ReportResponse]
+    total: int
+
+
+class ConsentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    conversation_id: UUID
+    group_name: str | None = None
+    granted_at: datetime
+    withdrawn_at: datetime | None = None
+    is_minor: bool = False
+    guardian_name: str | None = None
+    guardian_relationship: str | None = None
+    notice: dict | None = None
+
+
+class ConsentsResponse(BaseModel):
+    items: list[ConsentResponse]
+
+
+class DataRequestResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    conversation_id: UUID | None = None
+    request_type: str
+    status: str
+    note: str | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class GrievanceOfficerResponse(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    configured: bool
+
+
+class VerifiedProviderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: UUID
+    tenant_id: UUID | None = None
+    registration_number: str | None = None
+    registration_council: str | None = None
+    status: Literal["verified", "revoked"]
+    verified_by: UUID | None = None
+    verified_at: datetime
+    revoked_at: datetime | None = None
+    notes: str | None = None
+
+
+class ClinicalRecordResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    conversation_id: UUID
+    message_id: UUID
+    patient_user_id: UUID
+    saved_by: UUID
+    sender_id: UUID
+    content_snapshot: str | None = None
+    message_created_at: datetime
+    note: str | None = None
+    created_at: datetime
+
+
+class OriginalMessageResponse(BaseModel):
+    message_id: UUID
+    sender_id: UUID
+    status: str
+    content: str | None = Field(None, description="The text as first written.")
+    versions: list[dict] = Field(default_factory=list, description="Earlier versions, oldest first.")
+    current_content: str | None = Field(None, description="The text now (after any edits), even when the message is hidden.")
+    hidden_by: UUID | None = None
+    hidden_reason: str | None = None
+    hidden_at: datetime | None = None
+    created_at: datetime

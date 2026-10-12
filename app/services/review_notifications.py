@@ -69,6 +69,23 @@ def _load(db, module: str, review_id: UUID):
     return None
 
 
+def _load_item(db, module: str, item_id):
+    """The Training / Event a review belongs to (the review itself may already be deleted)."""
+    try:
+        key = UUID(str(item_id))
+    except (ValueError, TypeError):
+        return None
+    if module == "training":
+        from app.models.training_model import Training
+
+        return db.get(Training, key)
+    if module == "event":
+        from app.models.event_model import Event
+
+        return db.get(Event, key)
+    return None
+
+
 def _author_user_id(db, module: str, review, item, access_token: str | None) -> UUID | None:
     if module in ("product", "service"):
         return review.user_id
@@ -109,11 +126,53 @@ def _deliver(db, *, recipients, category, title, message, tenant_id, metadata, d
         return None
 
 
-# --- a new review -> the business's Enterprise Admin(s) --------------------------------------------------
+# --- a new review -> the business's Enterprise Admin(s), and a copy for the Platform Super Admin(s) ----------
+
+# The Super Admin copy of review_submitted is for these modules only (the same scope as review_moderated).
+SUBMITTED_PLATFORM_COPY_MODULES = ("training", "event")
+
 
 def notify_review_submitted(module: str, review_id, *, access_token: str | None = None) -> None:
     """Call after a NEW review has been committed (an edit of an existing review is not announced)."""
     _dispatch(_deliver_submitted, module, str(review_id), access_token)
+
+
+def _learner_name(db, module: str, review, item) -> str | None:
+    """The reviewer's display name for the notification: the name on their enrolment / registration / review, else
+    one identity lookup by user id. Never an e-mail address; None when there is no real name."""
+    from sqlalchemy import func
+
+    name = None
+    try:
+        if module in ("product", "service"):
+            name = _clean_name(getattr(review, "reviewer_name", None))
+        elif module == "training":
+            from app.models.training_model import TrainingEnrolment
+
+            row = db.query(TrainingEnrolment).filter(
+                TrainingEnrolment.training_id == review.training_id,
+                func.lower(TrainingEnrolment.participant_email) == (review.participant_email or "").strip().lower(),
+            ).first()
+            name = _clean_name(getattr(row, "participant_name", None))
+        elif module == "event":
+            from app.models.event_aux_models import EventRegistration
+
+            row = db.query(EventRegistration).filter(
+                EventRegistration.event_id == review.event_id,
+                func.lower(EventRegistration.participant_email) == (review.participant_email or "").strip().lower(),
+            ).first()
+            name = _clean_name(getattr(row, "participant_name", None))
+    except Exception:
+        logger.exception("could not read the reviewer's name from the records")
+    user_id = getattr(review, "user_id", None)
+    if not name and user_id:
+        try:
+            from app.services import chat_user_names
+
+            name = _clean_name(chat_user_names.resolve_display_names([user_id]).get(str(user_id)))
+        except Exception:
+            logger.exception("could not look up the reviewer's name")
+    return name
 
 
 def _deliver_submitted(module: str, review_id: str, access_token: str | None):
@@ -128,16 +187,26 @@ def _deliver_submitted(module: str, review_id: str, access_token: str | None):
         recipients, tenant_id = recipients_of.resolve_enterprise_admin_user_ids(db, item, access_token=access_token)
         rating = parse_rating(review.rating)
         stars = f"{rating} star" + ("" if rating == 1 else "s") if rating else "A"
-        return _deliver(
-            db, recipients=recipients, category="review_submitted",
-            title="New review", message=f'{stars} review on "{name or "your item"}" is waiting for approval.',
-            tenant_id=tenant_id,
-            metadata={
-                id_key: str(item.id), "entity_type": module, "entity_id": str(item.id),
-                "review_id": review_id, "rating": rating, "status": review.moderation_status,
-            },
-            dedupe_key=f"review_submitted:{module}:{review_id}",
+        title, message = "New review", f'{stars} review on "{name or "your item"}" is waiting for approval.'
+        metadata = {
+            id_key: str(item.id), "entity_type": module, "entity_id": str(item.id), "item_id": str(item.id),
+            "item_name": name, "review_id": review_id, "rating": rating, "status": review.moderation_status,
+            "learner_name": _learner_name(db, module, review, item),
+        }
+        delivered = _deliver(
+            db, recipients=recipients, category="review_submitted", title=title, message=message,
+            tenant_id=tenant_id, metadata=metadata, dedupe_key=f"review_submitted:{module}:{review_id}",
         )
+        if module in SUBMITTED_PLATFORM_COPY_MODULES:
+            # The same notification for the Platform Super Admin(s), once each; anyone already told above
+            # (a Super Admin who is also an owner of the business) is not told twice.
+            told = set(recipients)
+            platform = [uid for uid in recipients_of.resolve_platform_admin_user_ids(access_token) if uid not in told]
+            _deliver(
+                db, recipients=platform, category="review_submitted", title=title, message=message,
+                tenant_id=None, metadata=metadata, dedupe_key=f"review_submitted:{module}:{review_id}:platform",
+            )
+        return delivered
 
 
 # --- a decision -> the author ---------------------------------------------------------------------------
@@ -187,13 +256,15 @@ def _deliver_decision(module: str, review_id: str, new_status: str, access_token
 #   review_moderated -> an Enterprise Admin / provider approved, rejected or moved a review to pending
 #   review_deleted   -> an Enterprise Admin / provider permanently deleted a review
 #
-# Training and event reviews. A Platform Super Admin's own actions are not announced to Super Admins, and nor is an
-# author deleting their own review (that is not moderation). Everything the notification needs is passed in by the
-# caller, because the review of a delete no longer exists once it is committed.
+# Training and event reviews. Who is told depends on who acted:
+#   an Enterprise Admin / provider acted  -> the Platform Super Admin(s)
+#   a Platform Super Admin acted          -> the Enterprise Admin(s) who own the item (never the Super Admin)
+# An author deleting their own review is not moderation and is not announced. Everything the notification needs is
+# passed in by the caller, because the review of a delete no longer exists once it is committed.
 
 MODERATION_NOTICE_MODULES = ("training", "event")
 _ID_KEY = {"training": "training_id", "event": "event_id"}
-_ROLE_LABEL = {"admin": "Enterprise Admin", "provider": "Provider"}
+_ROLE_LABEL = {"admin": "Enterprise Admin", "provider": "Provider", "super_admin": "Super Admin"}
 _STATUS_VERB = {"approved": "approved", "rejected": "rejected", "pending": "moved to pending"}
 
 
@@ -254,8 +325,6 @@ def _safely_notify(category: str, module: str, **fields) -> None:
 
 
 def _dispatch_platform_notice(category: str, module: str, *, actor_role, actor, **fields) -> None:
-    if str(actor_role or "").lower() == "super_admin":
-        return  # the platform's own staff acted; nobody needs telling
     from datetime import datetime
 
     # The same change is announced once; a different change to the same review (a later one) gets its own key.
@@ -274,7 +343,19 @@ def _deliver_platform_notice(
     from app.services import event_notification_service as recipients_of
 
     with SessionLocal() as db:
-        recipients = recipients_of.resolve_platform_admin_user_ids(access_token)
+        by_super_admin = str(actor.get("role") or "").lower() == "super_admin"
+        if by_super_admin:
+            # A Super Admin acted on a business's review: the business's own Enterprise Admin(s) are told.
+            item = _load_item(db, module, item_id)
+            if item is None:
+                return None
+            owners, owner_tenant = recipients_of.resolve_enterprise_admin_user_ids(db, item, access_token=access_token)
+            recipients = [uid for uid in owners if str(uid) != str(actor.get("id"))]
+            notice_tenant = owner_tenant
+        else:
+            # An Enterprise Admin / provider acted: the Platform Super Admin(s) are told.
+            recipients = recipients_of.resolve_platform_admin_user_ids(access_token)
+            notice_tenant = None
         name = _actor_name(actor)
         role_label = _ROLE_LABEL.get(str(actor.get("role") or "").lower(), "A moderator")
         who = f"{role_label} {name}" if name else (f"An {role_label}" if role_label != "A moderator" else role_label)
@@ -284,10 +365,10 @@ def _deliver_platform_notice(
         else:
             title, message = "Review moderated", f"{who} {_STATUS_VERB[new_status]} a review of {shown}."
         return _deliver(
-            db, recipients=recipients, category=category, title=title, message=message, tenant_id=None,
+            db, recipients=recipients, category=category, title=title, message=message, tenant_id=notice_tenant,
             metadata={
                 _ID_KEY[module]: str(item_id), "entity_type": module, "entity_id": str(item_id),
-                "item_name": item_name, "review_id": str(review_id),
+                "item_id": str(item_id), "item_name": item_name, "review_id": str(review_id),
                 "previous_status": previous_status, "new_status": new_status, "action": new_status,
                 "actor_name": name, "actor_id": str(actor["id"]) if actor.get("id") else None,
                 "actor_role": actor.get("role"), "tenant_id": str(tenant_id) if tenant_id else None,

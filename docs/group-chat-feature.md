@@ -1,3 +1,7 @@
+> **Superseded in part.** The healthcare rules (verified providers only, consent before anyone is added, care and program groups,
+> audit trail, retention) changed this design. The API, the data model and the rules that were built are in
+> [group-chat-api.md](group-chat-api.md). Where the two differ, that document is right; this one is kept for the background.
+
 # Group Chat: Feature Document
 
 This document describes the group chat feature for the mobile customer, the group admin (Enterprise Owner or provider) and the Super Admin. It covers what a group is, the rules, the user flows, the fields, the APIs and socket events, and the backend work needed.

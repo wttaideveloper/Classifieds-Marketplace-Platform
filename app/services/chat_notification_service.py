@@ -47,9 +47,10 @@ def remove_device_service(db: Session, current_user: dict, token: str):
     return {"message": "Device token removed successfully"}
 
 
-def _chat_message_push_data(conversation_id: UUID, message_id: UUID | None = None) -> dict[str, str]:
+def _chat_message_push_data(conversation_id: UUID, message_id: UUID | None = None, kind: str = "chat_message") -> dict[str, str]:
+    """`kind` is "chat_message" for a 1:1 chat and "group_message" for a group, so the app opens the right screen."""
     data = {
-        "type": "chat_message",
+        "type": kind,
         "conversationId": str(conversation_id),
     }
     if message_id is not None:
@@ -283,6 +284,7 @@ def _dispatch_push_notification(
     body: str,
     conversation_id: UUID,
     message_id: UUID,
+    kind: str = "chat_message",
 ) -> None:
     tokens = [device.token for device in chat_repo.get_active_device_tokens(db, user_id)]
     if not tokens:
@@ -291,7 +293,7 @@ def _dispatch_push_notification(
         tokens,
         title=title,
         body=body,
-        data=_chat_message_push_data(conversation_id, message_id),
+        data=_chat_message_push_data(conversation_id, message_id, kind),
         conversation_id=str(conversation_id),
     )
 

@@ -47,6 +47,22 @@ def _parse_user_id(current_user: dict) -> UUID:
     return UUID(str(current_user["id"]))
 
 
+def _is_patient(current_user: dict) -> bool:
+    """A customer / patient: their group chats are in the Groups tab (GET /groups), not in this inbox."""
+    return str((current_user or {}).get("role") or "").lower() == "customer"
+
+
+GROUP_USE_MESSAGE = "This is a group chat. Use the /api/v1/groups endpoints for its messages."
+
+
+def _refuse_if_group(db: Session, conversation_id: UUID) -> None:
+    """The generic message endpoints know nothing about a group's hidden messages, history cut-off or privacy rules,
+    so a group's messages are only ever read or changed through /groups."""
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if conversation is not None and conversation.conversation_type == "group":
+        raise HTTPException(status_code=409, detail=GROUP_USE_MESSAGE)
+
+
 def _participant_archive_fields(participant: ConversationParticipant | None) -> dict:
     """Archive state as the caller sees it: their own participant row, never the other person's. Someone with
     no participant row (e.g. a provider who was assigned but has never archived) has not archived it."""
@@ -103,6 +119,7 @@ def _map_conversation_detail(
         "participants": [
             ParticipantResponse.model_validate(p).model_dump()
             for p in conversation.participants
+            if p.membership_status == "active"
         ],
         "created_at": conversation.created_at,
         "updated_at": conversation.updated_at,
@@ -157,6 +174,7 @@ def _map_conversation_list_item(
         "id": conversation.id,
         "status": conversation.status,
         "conversation_type": conversation.conversation_type,
+        "group_kind": conversation.group_kind if conversation.conversation_type == "group" else None,
         "subject": conversation.subject,
         "last_message_at": preview_at,
         "last_message_preview": preview,
@@ -282,7 +300,8 @@ def list_conversations_service(
 ):
     user_id = _parse_user_id(current_user)
     items, total = chat_repo.get_user_conversations(
-        db, user_id, status=status_filter, search=search, page=page, page_size=page_size
+        db, user_id, status=status_filter, search=search, page=page, page_size=page_size,
+        exclude_groups=_is_patient(current_user),
     )
     item_ids = [item.id for item in items]
     latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
@@ -469,7 +488,8 @@ def search_conversations_service(
 ):
     user_id = _parse_user_id(current_user)
     items, total = chat_repo.search_conversations(
-        db, user_id, search=search, provider_id=provider_id, page=page, page_size=page_size
+        db, user_id, search=search, provider_id=provider_id, page=page, page_size=page_size,
+        exclude_groups=_is_patient(current_user),
     )
     item_ids = [item.id for item in items]
     latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
@@ -506,6 +526,10 @@ def send_message_service(db: Session, current_user: dict, data: MessageCreate):
         raise HTTPException(status_code=404, detail="Conversation not found")
     if not chat_repo.is_participant(db, data.conversation_id, user_id):
         raise HTTPException(status_code=403, detail="Not authorized to send messages")
+    if conversation.conversation_type == "group":
+        from app.services import group_chat_messages
+
+        return group_chat_messages.send_via_generic_path(db, current_user, data)
 
     _validate_chat_rules(conversation)
     _check_subscription_eligibility(db, user_id, conversation)
@@ -564,6 +588,7 @@ def get_messages_service(
     limit: int = 50,
 ):
     user_id = _parse_user_id(current_user)
+    _refuse_if_group(db, conversation_id)
     participant = chat_repo.get_participant(db, conversation_id, user_id)
     if participant is None:
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -633,6 +658,7 @@ def get_read_status_service(db: Session, current_user: dict, message_id: UUID):
     message = chat_repo.get_message_by_id(db, message_id)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
+    _refuse_if_group(db, message.conversation_id)
     if not chat_repo.is_participant(db, message.conversation_id, user_id):
         raise HTTPException(status_code=403, detail="Not authorized")
 
@@ -656,6 +682,7 @@ def delete_message_service(db: Session, current_user: dict, message_id: UUID):
     message = chat_repo.get_message_by_id(db, message_id)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
+    _refuse_if_group(db, message.conversation_id)  # a group message is retracted / hidden, never deleted
     if message.sender_id != user_id and current_user.get("role") not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Not authorized to delete this message")
 
@@ -674,6 +701,7 @@ def edit_message_service(db: Session, current_user: dict, message_id: UUID, cont
     message = chat_repo.get_message_by_id(db, message_id)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
+    _refuse_if_group(db, message.conversation_id)  # a group message has a 15-minute window and keeps the original
     if message.sender_id != user_id and current_user.get("role") not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Not authorized to edit this message")
     if message.is_deleted:
@@ -838,6 +866,9 @@ def update_typing_service(
     user_id = _parse_user_id(current_user)
     if not chat_repo.is_participant(db, conversation_id, user_id):
         raise HTTPException(status_code=403, detail="Not authorized")
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if conversation is not None and conversation.conversation_type == "group" and conversation.group_kind != "care":
+        raise HTTPException(status_code=409, detail="Typing indicators are only shown in care groups")
 
     indicator = chat_repo.update_typing_indicator(db, conversation_id, user_id, is_typing)
     return TypingIndicatorResponse(

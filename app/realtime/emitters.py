@@ -100,9 +100,26 @@ async def notify_participants_new_message(
     if not conversation:
         return
 
+    is_group = conversation.conversation_type == "group"
     for participant in conversation.participants:
         participant_id = str(participant.user_id)
-        if participant_id == sender_id:
+        if participant_id == sender_id or participant.membership_status != "active":
+            continue  # only active members are ever told about a message
+
+        if is_group:
+            # A group notification carries no group name, no sender and no text (lock-screen privacy). Members who
+            # muted the group are skipped, except a tagged member of a care group (see group_chat_notify).
+            from app.services.group_chat_common import member_is_muted_now
+
+            tagged = bool(message.get("mentions_all")) or participant_id in [str(x) for x in (message.get("mentions") or [])]
+            if member_is_muted_now(participant) and not (tagged and conversation.group_kind == "care"):
+                continue
+            await emit_notification(participant_id, {
+                "type": "group_message",
+                "conversation_id": str(conversation_id),
+                "title": "New message",
+                "body": "",
+            })
             continue
 
         await emit_notification(participant_id, {
