@@ -153,6 +153,7 @@ STAFF_ROUTES = [
     ("GET", "/{e}/reports", None),
     ("GET", "/{e}/registrations/{r}/qr", None),
     ("GET", "/{e}/meeting-link", None),
+    ("GET", "/{e}/meeting-links", None),
     ("GET", "/{e}/sessions/sess-1/meeting-link", None),
     ("DELETE", "/{e}/registrations/{r}", None),
     ("POST", "/{e}/registrations/{r}/refund", {}),

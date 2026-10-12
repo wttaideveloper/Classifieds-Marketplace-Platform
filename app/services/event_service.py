@@ -40,6 +40,7 @@ from app.schemas.event_schema import (
     EventResponse,
 )
 from app.services.response_mappers import map_event_detail, map_event_list_item, map_event_write
+from app.utils.event_meeting_links import is_masked_link
 from app.utils.event_accommodation import (
     AccommodationConfigError,
     accommodation_for_new_event,
@@ -505,6 +506,8 @@ def create_event_service(db: Session, event_data, current_user: dict | None = No
     _check_category(db, getattr(event_data, "category", None), getattr(event_data, "subcategory", None))
     _validate_event_config_for_create(event_data)
     # auto-create meeting link if needed
+    if is_masked_link(event_data.meeting_link):
+        event_data.meeting_link = None  # the "protected" placeholder is not a URL
     if not event_data.meeting_link:
         event_data.meeting_link = _auto_meeting_link(event_data.delivery_mode, event_data.meeting_provider, None)
     payload = event_data.to_model_data()
@@ -1552,6 +1555,8 @@ def add_session_service(db: Session, event_id: UUID, payload):
     sessions = _with_session_ids(copy.deepcopy(event.sessions or []))
     # model_dump will serialize date as date object; convert to ISO string for JSONB
     data = payload.model_dump()
+    if is_masked_link(data.get("meeting_link")):
+        data["meeting_link"] = None  # the "protected" placeholder is not a URL
     if data.get("session_date"):
         data["session_date"] = str(data["session_date"])
     new = {"id": str(uuid.uuid4()), **data}
@@ -1573,6 +1578,8 @@ def update_session_service(db: Session, event_id: UUID, session_id: str, payload
     for s in sessions:
         if s.get("id") == session_id:
             updates = payload.model_dump(exclude_unset=True)
+            if is_masked_link(updates.get("meeting_link")):
+                updates.pop("meeting_link")  # "protected" means unchanged: keep the stored URL
             if "session_date" in updates and updates["session_date"] is not None:
                 _validate_session_date(event, updates["session_date"])
                 updates["session_date"] = str(updates["session_date"])
@@ -3498,6 +3505,26 @@ def get_meeting_link_service(db: Session, event_id: UUID, current_user: dict, ac
         "meeting_link": ev.meeting_link,
         "meeting_provider": ev.meeting_provider,
         "delivery_mode": ev.delivery_mode,
+    }
+
+
+def get_meeting_links_for_management_service(db: Session, event_id: UUID) -> dict:
+    """Every saved meeting link of an Event in one answer, for the edit form: the Event's link and each session's.
+    The caller has already proved ownership of the Event (require_event_staff). Event responses show "protected"
+    instead; this is the one place the owner reads the stored values together."""
+    ev = _get_event_or_404(db, event_id)
+    return {
+        "event_id": str(event_id),
+        "delivery_mode": ev.delivery_mode,
+        "meeting_provider": ev.meeting_provider,
+        "meeting_link": ev.meeting_link,
+        "sessions": [
+            {
+                "id": s.get("id"), "title": s.get("title"), "session_date": s.get("session_date"),
+                "start_time": s.get("start_time"), "meeting_link": s.get("meeting_link"),
+            }
+            for s in (ev.sessions or []) if isinstance(s, dict)
+        ],
     }
 
 

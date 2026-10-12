@@ -127,7 +127,7 @@ def notify_new_message(
                     data={"conversation_id": str(conversation.id), "message_id": str(message.id), "mentioned": tagged},
                 )
             if prefs.push_enabled:
-                cns._dispatch_push_notification(db, member.user_id, NEW_MESSAGE_TITLE, "", conversation.id, message.id)
+                cns._dispatch_push_notification(db, member.user_id, NEW_MESSAGE_TITLE, "", conversation.id, message.id, kind="group_message")
 
         if recipients:
             notify(

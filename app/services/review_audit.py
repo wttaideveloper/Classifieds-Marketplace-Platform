@@ -29,6 +29,11 @@ def _uuid(value) -> UUID | None:
         return None
 
 
+def _clean_name(value) -> str | None:
+    text = " ".join(str(value).split()) if value else ""
+    return text[:255] if text and "@" not in text else None  # an e-mail address is not a name
+
+
 def record(
     db: Session, *, module: str, review_id, item_id, item_name: str | None, tenant_id,
     from_status: str | None, to_status: str, actor: dict | None = None, actor_role: str | None = None,
@@ -41,6 +46,7 @@ def record(
                 tenant_id=_uuid(tenant_id), from_status=from_status, to_status=to_status,
                 actor_user_id=_uuid((actor or {}).get("id")),
                 actor_role=(actor_role or (actor or {}).get("role") or None),
+                actor_name=_clean_name((actor or {}).get("name")),
             ))
     except Exception:
         logger.exception("could not write the review moderation log (%s %s -> %s)", module, review_id, to_status)
@@ -82,4 +88,31 @@ def list_log(
         query.order_by(ReviewModerationLog.created_at.desc(), ReviewModerationLog.id)
         .offset((page - 1) * page_size).limit(page_size).all()
     )
-    return {"items": rows, "pagination": build_pagination_meta(total, page, page_size)}
+    names = _names_for(rows)
+    items = [
+        {
+            "id": r.id, "module": r.module, "review_id": r.review_id, "item_id": r.item_id, "item_name": r.item_name,
+            "from_status": r.from_status, "to_status": r.to_status, "actor_user_id": r.actor_user_id,
+            "actor_role": r.actor_role,
+            # the name saved when it happened; for older rows, the person's current name
+            "actor_name": _clean_name(r.actor_name) or names.get(str(r.actor_user_id)),
+            "created_at": r.created_at,
+        }
+        for r in rows
+    ]
+    return {"items": items, "pagination": build_pagination_meta(total, page, page_size)}
+
+
+def _names_for(rows) -> dict[str, str | None]:
+    """Current display names of the actors of rows that were logged without a name (one cached identity lookup
+    each). A failing lookup leaves the name empty; it never fails the history."""
+    missing = {r.actor_user_id for r in rows if r.actor_user_id and not _clean_name(r.actor_name)}
+    if not missing:
+        return {}
+    try:
+        from app.services import chat_user_names
+
+        return {k: _clean_name(v) for k, v in chat_user_names.resolve_display_names(missing).items()}
+    except Exception:
+        logger.exception("could not look up the names of the moderators in the review history")
+        return {}

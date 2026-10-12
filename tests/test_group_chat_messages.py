@@ -203,6 +203,7 @@ def test_push_for_a_group_message_is_generic_and_there_is_no_email_or_sms(world,
 
     pushes = [x for x in world.pushes if "tokens" in x]
     assert pushes and pushes[0]["title"] == "New message" and pushes[0]["body"] == ""
+    assert pushes[0]["data"]["type"] == "group_message" and pushes[0]["data"]["conversationId"] == care["id"]  # the app opens the Groups tab
     assert "private" not in str(pushes)
     assert not [x for x in world.pushes if x.get("email") or x.get("sms")]
 

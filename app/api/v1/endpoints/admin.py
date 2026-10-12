@@ -258,6 +258,31 @@ def event_audits(request: Request, event_id: UUID, db: Session = Depends(get_db)
 
 
 @router.get(
+    "/notifications/email-diagnostics",
+    summary="Admin — Can the server send email at all",
+    description=(
+        "Platform Super Admin only. Tries the configured mail server (SMTP_HOST / SMTP_PORT with email_user / "
+        "email_pass) step by step: connect, STARTTLS, sign in, and, when `send_to` is given, send one test email. "
+        "Says which step fails and why. The password is never returned."
+    ),
+)
+def email_diagnostics(
+    send_to: str | None = Query(None, description="Also send a test email to this address"),
+    _admin: dict = Depends(get_current_super_admin),
+):
+    from fastapi import HTTPException
+    from app.services.notification_triggers import check_smtp, looks_like_email
+
+    # get_current_super_admin also admits an Enterprise Admin fallback. This one can make the platform's mail account
+    # send a message to any address, so it is for real Platform Super Admins only.
+    if not is_platform_super_admin(_admin):
+        raise HTTPException(status_code=403, detail="Platform Super Admin only")
+    if send_to is not None and not looks_like_email(send_to):
+        raise HTTPException(status_code=422, detail="send_to must be an email address")
+    return check_smtp(send_to)
+
+
+@router.get(
     "/notifications/diagnostics",
     summary="Admin — Why did (or didn't) a workflow notification reach someone",
     description=(
