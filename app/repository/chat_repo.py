@@ -114,6 +114,7 @@ def get_participants_for_conversations(
         .filter(
             ConversationParticipant.conversation_id.in_(conversation_ids),
             ConversationParticipant.user_id == user_id,
+            ConversationParticipant.membership_status == "active",
         )
         .all()
     )
@@ -201,12 +202,15 @@ def get_user_conversations(
     search: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    exclude_groups: bool = False,
 ):
     query = (
         db.query(Conversation)
         .join(ConversationParticipant)
-        .filter(ConversationParticipant.user_id == user_id)
+        .filter(ConversationParticipant.user_id == user_id, ConversationParticipant.membership_status == "active")
     )
+    if exclude_groups:  # patients see groups in their own Groups tab (GET /groups), providers in one inbox
+        query = query.filter(Conversation.conversation_type != "group")
     query = apply_soft_delete_filter(query, Conversation, False)
 
     # A chat the caller deleted is gone from their inbox (the other person still has it).
@@ -256,6 +260,7 @@ def get_provider_conversations(
             ConversationParticipant.conversation_id == Conversation.id,
             ConversationParticipant.user_id == provider_id,
             ConversationParticipant.role == "provider",
+            ConversationParticipant.membership_status == "active",
         )
         .exists()
     )
@@ -352,6 +357,7 @@ def find_existing_conversation(
         .filter(ConversationParticipant.user_id.in_(all_user_ids))
     )
     query = apply_soft_delete_filter(query, Conversation, False)
+    query = query.filter(Conversation.conversation_type != "group")  # a group is never reused as a 1:1 chat
 
     if context_type and context_id:
         query = query.filter(
@@ -382,11 +388,14 @@ def save_conversation(db: Session, conversation: Conversation) -> Conversation:
 
 
 def is_participant(db: Session, conversation_id: UUID, user_id: UUID) -> bool:
+    """True for an ACTIVE member. A group invitee who has not accepted, and anyone removed or who left, is not a
+    participant: they can read, send and subscribe to nothing. (Every 1:1 participant is active.)"""
     return (
         db.query(ConversationParticipant)
         .filter(
             ConversationParticipant.conversation_id == conversation_id,
             ConversationParticipant.user_id == user_id,
+            ConversationParticipant.membership_status == "active",
         )
         .first()
         is not None
@@ -397,15 +406,16 @@ def get_participant(
     db: Session,
     conversation_id: UUID,
     user_id: UUID,
+    *,
+    include_inactive: bool = False,
 ) -> ConversationParticipant | None:
-    return (
-        db.query(ConversationParticipant)
-        .filter(
-            ConversationParticipant.conversation_id == conversation_id,
-            ConversationParticipant.user_id == user_id,
-        )
-        .first()
+    query = db.query(ConversationParticipant).filter(
+        ConversationParticipant.conversation_id == conversation_id,
+        ConversationParticipant.user_id == user_id,
     )
+    if not include_inactive:
+        query = query.filter(ConversationParticipant.membership_status == "active")
+    return query.first()
 
 
 def get_other_participant_ids_for_conversations(
@@ -425,6 +435,7 @@ def get_other_participant_ids_for_conversations(
         .filter(
             ConversationParticipant.conversation_id.in_(conversation_ids),
             ConversationParticipant.user_id != exclude_user_id,
+            ConversationParticipant.membership_status == "active",
         )
         .all()
     )
@@ -443,6 +454,7 @@ def get_customer_ids_for_conversations(
 ) -> dict[UUID, UUID]:
     """The customer of each conversation: its earliest customer-role participant, else the creator when
     the creator is not the assigned provider. One query for the whole page."""
+    conversations = [c for c in conversations if c.conversation_type != "group"]  # a group has no single customer
     if not conversations:
         return {}
 
@@ -556,6 +568,8 @@ def search_messages(
         .join(ConversationParticipant)
         .filter(
             ConversationParticipant.user_id == user_id,
+            ConversationParticipant.membership_status == "active",
+            Conversation.conversation_type != "group",  # group messages: GET /groups/{id}/search
             Message.is_deleted.is_(False),
             Message.content.ilike(f"%{search.strip()}%"),
             # Messages from before the user deleted the conversation are not searchable by them any more.
@@ -581,12 +595,18 @@ def search_conversations(
     provider_id: UUID | None = None,
     page: int = 1,
     page_size: int = 20,
+    exclude_groups: bool = False,
 ):
     query = (
         db.query(Conversation)
         .join(ConversationParticipant)
-        .filter(ConversationParticipant.user_id == user_id, ConversationParticipant.is_deleted.is_(False))
+        .filter(
+            ConversationParticipant.user_id == user_id, ConversationParticipant.is_deleted.is_(False),
+            ConversationParticipant.membership_status == "active",
+        )
     )
+    if exclude_groups:
+        query = query.filter(Conversation.conversation_type != "group")
     query = apply_soft_delete_filter(query, Conversation, False)
     query = apply_ilike_search(
         query,

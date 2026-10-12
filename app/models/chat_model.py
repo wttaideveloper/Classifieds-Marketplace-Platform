@@ -13,10 +13,15 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
+
+
+# JSON that is plain JSON on SQLite (tests) and JSONB on Postgres.
+PORTABLE_JSON = JSON().with_variant(JSONB(), "postgresql")
 
 
 class Conversation(Base):
@@ -44,6 +49,17 @@ class Conversation(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+    # --- group chat (conversation_type = "group"; see docs/group-chat-api.md). subject is the group name and
+    # context_type / context_id link the group to the program, appointment series or care episode it follows.
+    group_kind = Column(String(20), nullable=True)  # care | program
+    description = Column(String(500), nullable=True)
+    avatar_url = Column(String(500), nullable=True)
+    admins_only_posting = Column(Boolean, default=False, nullable=False, server_default="false")
+    closed_at = Column(DateTime, nullable=True)
+    closed_reason = Column(String(255), nullable=True)
+    retention_started_at = Column(DateTime, nullable=True)  # the retention period starts when the group closes
+    legal_hold = Column(Boolean, default=False, nullable=False, server_default="false")
+    legal_hold_reason = Column(String(500), nullable=True)
 
     participants = relationship(
         "ConversationParticipant",
@@ -85,6 +101,29 @@ class ConversationParticipant(Base):
     # A new message brings the chat back (is_deleted false again) but deleted_at stays as the history cut-off.
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     deleted_at = Column(DateTime, nullable=True)
+    # --- group chat membership. Every 1:1 row is "active"; only an "active" member can read or write.
+    membership_status = Column(String(12), default="active", nullable=False, server_default="active", index=True)
+    # invited | active | declined | removed | left
+    group_role = Column(String(10), nullable=True)  # owner | admin | member
+    member_kind = Column(String(10), nullable=True)  # provider | patient (decides who may admin / post / see names)
+    display_name = Column(String(120), nullable=True)  # what other patients see in a program group
+    is_minor = Column(Boolean, default=False, nullable=False, server_default="false")
+    invited_by = Column(UUID(as_uuid=True), nullable=True)
+    invited_at = Column(DateTime, nullable=True)
+    responded_at = Column(DateTime, nullable=True)
+    left_at = Column(DateTime, nullable=True)
+    removed_by = Column(UUID(as_uuid=True), nullable=True)
+    removed_reason = Column(String(255), nullable=True)
+    history_from = Column(DateTime, nullable=True)  # messages from before this are not theirs to see (set on accept)
+    history_sharing_consent_at = Column(DateTime, nullable=True)  # a patient agreeing earlier history may be shared
+    history_shared_by = Column(UUID(as_uuid=True), nullable=True)
+    muted = Column(Boolean, default=False, nullable=False, server_default="false")  # the member's own mute
+    muted_until = Column(DateTime, nullable=True)
+    pinned = Column(Boolean, default=False, nullable=False, server_default="false")  # pinned in the member's own list
+    posting_muted = Column(Boolean, default=False, nullable=False, server_default="false")  # an admin muted them
+    posting_muted_until = Column(DateTime, nullable=True)
+    posting_muted_by = Column(UUID(as_uuid=True), nullable=True)
+    posting_muted_reason = Column(String(255), nullable=True)
 
     conversation = relationship("Conversation", back_populates="participants")
 
@@ -117,6 +156,18 @@ class Message(Base):
     deleted_at = Column(DateTime, nullable=True)
     is_edited = Column(Boolean, default=False, nullable=False)
     edited_at = Column(DateTime, nullable=True)
+    # --- group chat. Nothing is ever erased: an edit keeps the original in edit_history, a retract / admin hide only
+    # hides the message from the group (hidden_kind) and the original stays in the secure record.
+    reply_to_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    mentions = Column(PORTABLE_JSON, nullable=True)  # [user id, ...] tagged with @
+    mentions_all = Column(Boolean, default=False, nullable=False, server_default="false")
+    edit_history = Column(PORTABLE_JSON, nullable=True)  # [{"content", "edited_at", "edited_by"}, ...] earlier versions
+    hidden_kind = Column(String(12), nullable=True)  # retracted (by the author) | admin
+    hidden_by = Column(UUID(as_uuid=True), nullable=True)
+    hidden_reason = Column(String(255), nullable=True)
+    hidden_at = Column(DateTime, nullable=True)
+    pinned_at = Column(DateTime, nullable=True)
+    pinned_by = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(
         DateTime,

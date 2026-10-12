@@ -70,6 +70,7 @@ _safe_include(
 
 # Chat system
 _safe_include("app.api.v1.endpoints.conversation", prefix="/conversations", tags=["Conversations"])
+_safe_include("app.api.v1.endpoints.group_chat", prefix="/groups", tags=["Group Chat"])
 _safe_include(
     "app.api.v1.endpoints.conversation_messages",
     prefix="/conversations",
