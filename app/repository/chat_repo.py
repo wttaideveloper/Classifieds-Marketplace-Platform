@@ -209,6 +209,8 @@ def get_user_conversations(
     )
     query = apply_soft_delete_filter(query, Conversation, False)
 
+    # A chat the caller deleted is gone from their inbox (the other person still has it).
+    query = query.filter(ConversationParticipant.is_deleted.is_(False))
     # Archive state is the caller's own (their participant row), never the other person's.
     if status == "archived":
         query = query.filter(ConversationParticipant.is_archived.is_(True))
@@ -276,6 +278,16 @@ def get_provider_conversations(
         )
         .exists()
     )
+    deleted_by_provider = (
+        db.query(ConversationParticipant.id)
+        .filter(
+            ConversationParticipant.conversation_id == Conversation.id,
+            ConversationParticipant.user_id == provider_id,
+            ConversationParticipant.is_deleted.is_(True),
+        )
+        .exists()
+    )
+    query = query.filter(~deleted_by_provider)
     if status == "archived":
         query = query.filter(archived_by_provider)
     else:
@@ -486,12 +498,16 @@ def get_conversation_messages(
     *,
     cursor: str | None = None,
     limit: int = 50,
+    since: datetime | None = None,
 ):
     query = (
         db.query(Message)
         .filter(Message.conversation_id == conversation_id)
         .order_by(Message.created_at.desc(), Message.id.desc())
     )
+    if since is not None:
+        # The reader deleted the conversation at this moment: older messages are no longer theirs to see.
+        query = query.filter(Message.created_at > since)
 
     if cursor:
         cursor_dt, cursor_id = _parse_cursor(cursor)
@@ -542,6 +558,8 @@ def search_messages(
             ConversationParticipant.user_id == user_id,
             Message.is_deleted.is_(False),
             Message.content.ilike(f"%{search.strip()}%"),
+            # Messages from before the user deleted the conversation are not searchable by them any more.
+            or_(ConversationParticipant.deleted_at.is_(None), Message.created_at > ConversationParticipant.deleted_at),
         )
     )
     query = apply_soft_delete_filter(query, Conversation, False)
@@ -567,7 +585,7 @@ def search_conversations(
     query = (
         db.query(Conversation)
         .join(ConversationParticipant)
-        .filter(ConversationParticipant.user_id == user_id)
+        .filter(ConversationParticipant.user_id == user_id, ConversationParticipant.is_deleted.is_(False))
     )
     query = apply_soft_delete_filter(query, Conversation, False)
     query = apply_ilike_search(
@@ -1179,6 +1197,43 @@ def set_participant_archived(
     db.commit()
     db.refresh(participant)
     return participant
+
+
+def set_participant_deleted(db: Session, conversation: Conversation, user_id: UUID) -> ConversationParticipant:
+    """Delete the conversation for ONE person. Idempotent: deleting again keeps the first cut-off. It leaves the other
+    participants, the conversation and its messages alone. The person's unread count is cleared (everything so far is
+    treated as read) and their archive flag is reset, so the chat comes back in the normal inbox if it returns.
+    The assigned provider may have no participant row yet, so it is created on first use."""
+    participant = get_participant(db, conversation.id, user_id)
+    if participant is None:
+        participant = ConversationParticipant(conversation_id=conversation.id, user_id=user_id, role="provider")
+        db.add(participant)
+    if not participant.is_deleted:
+        now = datetime.utcnow()
+        participant.is_deleted = True
+        participant.deleted_at = now
+        participant.last_read_at = now
+        participant.is_archived = False
+        participant.archived_at = None
+    db.commit()
+    db.refresh(participant)
+    return participant
+
+
+def restore_deleted_participants(db: Session, conversation_id: UUID, user_ids: list[UUID] | None = None) -> int:
+    """Bring a conversation back into the inbox of everyone who deleted it (or of the given users only), because there
+    is a new message, or because they opened the chat again. Their history cut-off (deleted_at) is kept, so only
+    messages from after the deletion are visible. Returns how many people got it back."""
+    query = db.query(ConversationParticipant).filter(
+        ConversationParticipant.conversation_id == conversation_id,
+        ConversationParticipant.is_deleted.is_(True),
+    )
+    if user_ids is not None:
+        query = query.filter(ConversationParticipant.user_id.in_(user_ids))
+    restored = query.update({ConversationParticipant.is_deleted: False}, synchronize_session=False)
+    if restored:
+        db.commit()
+    return restored
 
 
 def export_conversation_messages(db: Session, conversation_id: UUID) -> list[Message]:

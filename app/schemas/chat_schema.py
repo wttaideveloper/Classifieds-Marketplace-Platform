@@ -208,6 +208,13 @@ class ConversationArchiveResponse(BaseModel):
     updated_at: datetime
 
 
+class ConversationDeleteResponse(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"id": "550e8400-e29b-41d4-a716-446655440000", "deleted": True}})
+
+    id: UUID
+    deleted: bool = Field(True, description="Always true: the conversation is deleted for the authenticated user.")
+
+
 class ConversationStatusUpdateResponse(BaseModel):
     id: UUID
     status: ConversationStatus

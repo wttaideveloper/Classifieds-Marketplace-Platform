@@ -100,8 +100,11 @@ def test_delete_message_service_persists_and_syncs_preview(
 
 
 @patch("app.services.chat_service.chat_repo.get_conversation_messages")
+@patch("app.services.chat_service.chat_repo.get_participant")
 @patch("app.services.chat_service.chat_repo.is_participant")
-def test_get_messages_service_includes_deleted_messages(mock_is_participant, mock_get_messages):
+def test_get_messages_service_includes_deleted_messages(mock_is_participant, mock_get_participant, mock_get_messages):
+    # The reader's own participant row: they have not deleted the conversation (that is a different "deleted").
+    mock_get_participant.return_value = MagicMock(is_deleted=False, deleted_at=None)
     deleted_message = Message(
         id=_MSG_ID,
         conversation_id=_CONV_ID,

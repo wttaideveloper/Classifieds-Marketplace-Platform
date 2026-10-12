@@ -9,6 +9,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import resolve_auth_tenant_id_with_db
+from app.core.config import settings
 from app.core.dependencies import bearer_scheme, get_current_user, get_web_session_cookie_token
 from app.db.database import get_db
 from app.models.enterprise_model import Enterprise
@@ -31,29 +32,42 @@ def get_optional_catalog_user(request: Request, credentials: HTTPAuthorizationCr
     return get_current_user(request, credentials)
 
 
-def get_catalog_access(request: Request, db: Session = Depends(get_db), user=Depends(get_optional_catalog_user)):
-    if user is None:
-        return CatalogAccess("public")
-    if not profile_status_is_active(user):
-        raise HTTPException(403, "Inactive user")
+def resolve_catalog_role(user: dict) -> str | None:
+    """The catalog role (super_admin, admin, provider, customer) an authenticated user maps to, or None when the
+    token/profile carries no application role this policy recognises."""
     role = str(user.get("role") or "").lower()
     tenant_role = str(user.get("tenant_role") or "").lower()
     if role == "super_admin":
-        return CatalogAccess(role)
+        return role
     # Auth maps both tenant_admin and internal_user to provider. Distinguish
     # them here without altering the global role mapping used by other modules.
     if tenant_role == "internal_user" or role == "internal_user":
         role = "provider"
     elif tenant_role in ("tenant_owner", "tenant_admin"):
         role = "admin"
+    return role if role in ("customer", "admin", "provider") else None
+
+
+def get_catalog_access(request: Request, db: Session = Depends(get_db), user=Depends(get_optional_catalog_user)):
+    if user is None:
+        return CatalogAccess("public")
+    if not profile_status_is_active(user):
+        raise HTTPException(403, "Inactive user")
+    role = resolve_catalog_role(user)
+    if role == "super_admin":
+        return CatalogAccess(role)
     if role == "customer":
         return CatalogAccess(role)
-    if role not in ("admin", "provider"):
+    if role is None:
         logger.info(
             "Catalog access denied: unrecognized application role | path=%s user_id=%s "
             "role=%s tenant_role=%s user_role=%s",
             request.url.path, user.get("id"), user.get("role"), user.get("tenant_role"), user.get("user_role"),
         )
+        if settings.CATALOG_UNRECOGNIZED_ROLE_READ_ONLY:
+            # Opt-in: a logged-in user with no recognised role browses exactly what an anonymous visitor
+            # already can (read-only, unscoped). Writes still need a real role (require_catalog_writer).
+            return CatalogAccess("customer")
         raise HTTPException(403, "Catalog access denied")
     authorization = request.headers.get("authorization", "")
     token = authorization.split(" ", 1)[1] if authorization.lower().startswith("bearer ") else get_web_session_cookie_token(request)

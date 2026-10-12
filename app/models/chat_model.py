@@ -80,6 +80,11 @@ class ConversationParticipant(Base):
     # customer and the provider each have their own state on the same conversation.
     is_archived = Column(Boolean, default=False, nullable=False, server_default="false")
     archived_at = Column(DateTime, nullable=True)
+    # "Delete conversation" is also per participant: it removes the chat from this person's inbox and clears their
+    # history (they only ever see messages newer than deleted_at), and leaves the other participant's chat alone.
+    # A new message brings the chat back (is_deleted false again) but deleted_at stays as the history cut-off.
+    is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
+    deleted_at = Column(DateTime, nullable=True)
 
     conversation = relationship("Conversation", back_populates="participants")
 
@@ -90,6 +95,7 @@ class ConversationParticipant(Base):
             name="uq_conversation_participants_conversation_user",
         ),
         Index("ix_conversation_participants_user_archived", "user_id", "is_archived"),
+        Index("ix_conversation_participants_user_deleted", "user_id", "is_deleted"),
     )
 
 

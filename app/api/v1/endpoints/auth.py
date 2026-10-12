@@ -239,3 +239,31 @@ def get_session(request: Request):
         "message": "Session active",
         "data": data,
     }
+
+
+@router.get(
+    "/role-diagnostics",
+    summary="How the API reads my login's role (for Products/Services 403 'Catalog access denied')",
+    description=(
+        "Logged-in users only, about the caller's OWN token. Shows the role claims in the token, what the Auth "
+        "`/auth/me` profile adds when the token has none, the role the API ends up with and what the catalog does "
+        "with it (`catalog_decision`). Role names only: no e-mail, no tokens, nothing about other users.\n\n"
+        "Call it as the account that gets `403 Catalog access denied` and send the JSON to the backend team."
+    ),
+)
+def role_diagnostics(request: Request):
+    from app.core.token_auth import diagnose_role
+
+    token = get_web_session_cookie_token(request)
+    if not token:
+        header = request.headers.get("Authorization") or request.headers.get("authorization") or ""
+        if header.lower().startswith("bearer "):
+            token = header.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        return diagnose_role(token)
+    except HTTPException:
+        raise
+    except Exception as exc:  # a bad/expired token is a 401, never a stack trace
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc

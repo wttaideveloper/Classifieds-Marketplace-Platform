@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     # Rewrite http:// links to https:// in Training API responses and when saving. Unset = on in
     # production, off in development (local servers have no TLS).
     FORCE_HTTPS_MEDIA_URLS: bool | None = None
+    # GET /products and /services answer 403 "Catalog access denied" to a logged-in user whose token and
+    # /auth/me profile carry no role the catalog recognises, while an anonymous visitor can browse the same
+    # list. Off by default (that denial is a deliberate, tested policy). Set true to let such a user browse
+    # read-only like an anonymous visitor; writes still need a real role.
+    CATALOG_UNRECOGNIZED_ROLE_READ_ONLY: bool = False
 
     class Config:
         env_file = ".env"

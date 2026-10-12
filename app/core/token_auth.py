@@ -392,14 +392,78 @@ def _fill_role_from_profile(user: dict, token: str) -> None:
 
     roles = fetch_application_roles(token)
     if not roles:
+        logger.warning(
+            "Role unresolved: the token carries no application role and the /auth/me profile gave no roles "
+            "(lookup failed, Auth unreachable, or the profile has no roles object) | user_id=%s. "
+            "GET /api/v1/auth/role-diagnostics with this login shows which.",
+            user.get("id"),
+        )
         return
     role = _map_keycloak_role({key: roles.get(key) for key in ("tenant_role", "user_role", "tenant_rbac_roles")})
     if not role:
+        logger.warning(
+            "Role unresolved: the /auth/me profile roles are not ones the API recognises | user_id=%s "
+            "tenantRole=%r userRole=%r tenantRbacRoles=%r",
+            user.get("id"), roles.get("tenant_role"), roles.get("user_role"), roles.get("tenant_rbac_roles"),
+        )
         return
     user["role"] = role
     for key in ("tenant_role", "user_role", "tenant_rbac_roles"):
         if roles.get(key) is not None and user.get(key) is None:
             user[key] = roles[key]
+
+
+def diagnose_role(token: str) -> dict:
+    """How the API reads the caller's OWN login: which roles the token carries, what the /auth/me profile adds,
+    the role it ends up with and what the catalog (Products/Services) does with it. Role names only: no e-mail,
+    no tokens, nothing about anyone else. Used by GET /api/v1/auth/role-diagnostics."""
+    from app.core.catalog_access import resolve_catalog_role
+    from app.services import invigorate_auth_client as auth_client
+
+    payload, is_keycloak_issued = _decode_access_token_with_source(token)
+    claims_user = payload_to_user(payload)
+    realm_roles = list((payload.get("realm_access") or {}).get("roles") or [])
+    out: dict = {
+        "token_source": "keycloak" if is_keycloak_issued else "marketplace",
+        "claims": {
+            "role": payload.get("role"),
+            "tenant_role": payload.get("tenant_role"),
+            "user_role": payload.get("user_role"),
+            "tenant_rbac_roles": payload.get("tenant_rbac_roles"),
+            "is_super_admin": _is_super_admin_claim(payload),
+            "realm_roles": realm_roles,
+        },
+        "role_from_claims": claims_user.get("role"),
+    }
+    user = dict(claims_user)
+    if is_keycloak_issued and not user.get("role"):
+        profile = auth_client._cached_auth_me_profile(token)
+        if profile is None:
+            out["profile"] = {"lookup": "failed", "note": "Auth /auth/me did not answer (unreachable, 4xx/5xx or timeout)"}
+        else:
+            profile_roles = auth_client._extract_profile_roles(profile)
+            out["profile"] = {
+                "lookup": "ok",
+                "top_level_keys": sorted(profile.keys()),
+                "roles": profile_roles,
+                "has_roles_object": profile_roles is not None,
+            }
+        _fill_role_from_profile(user, token)
+        out["role_from_profile"] = user.get("role")
+    out["final_role"] = user.get("role")
+    out["tenant_role"] = user.get("tenant_role")
+    out["user_role"] = user.get("user_role")
+    catalog_role = resolve_catalog_role(user)
+    out["catalog_role"] = catalog_role
+    from app.core.config import settings
+
+    if catalog_role:
+        out["catalog_decision"] = f"allowed as {catalog_role}"
+    elif settings.CATALOG_UNRECOGNIZED_ROLE_READ_ONLY:
+        out["catalog_decision"] = "no recognised role: read-only public view (CATALOG_UNRECOGNIZED_ROLE_READ_ONLY is on)"
+    else:
+        out["catalog_decision"] = "DENIED 403 Catalog access denied: no recognised role"
+    return out
 
 
 def _build_current_user(token: str) -> dict:

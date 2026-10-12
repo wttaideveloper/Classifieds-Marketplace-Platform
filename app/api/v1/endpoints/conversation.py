@@ -11,6 +11,7 @@ from app.schemas.chat_schema import (
     ConversationArchiveRequest,
     ConversationArchiveResponse,
     ConversationCreate,
+    ConversationDeleteResponse,
     ConversationPaginatedResponse,
     ConversationResponse,
     ConversationStatusUpdateResponse,
@@ -20,6 +21,7 @@ from app.services.chat_service import (
     archive_conversation_service,
     close_conversation_service,
     create_conversation_service,
+    delete_conversation_service,
     get_conversation_service,
     list_conversations_service,
     list_provider_conversations_service,
@@ -208,6 +210,29 @@ def get_conversation(
     current_user=Depends(get_current_user),
 ):
     return get_conversation_service(db, current_user, conversation_id, access_token=extract_access_token(request))
+
+
+@router.delete(
+    "/{conversation_id}",
+    response_model=ConversationDeleteResponse,
+    summary="Delete Conversation",
+    description=(
+        "Delete the conversation for the authenticated user only (\"delete chat\"). The customer and the provider "
+        "share one conversation, so it is removed from the caller's inbox, archive, search and message history, "
+        "and the other participant keeps their chat untouched.\n\n"
+        "- If the other person sends a new message, or the caller opens the chat again, the conversation comes back "
+        "in the inbox showing only messages from after the deletion.\n"
+        "- Idempotent: deleting a conversation that is already deleted returns the same 200.\n"
+        "- 404 for an unknown conversation; 403 if the caller is not a participant (or the assigned provider).\n"
+        "- After deleting, `GET /conversations/{id}` and its messages answer 404 for the caller."
+    ),
+)
+def delete_conversation(
+    conversation_id: UUID = Path(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return delete_conversation_service(db, current_user, conversation_id)
 
 
 @router.patch(

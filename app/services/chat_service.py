@@ -19,6 +19,7 @@ from app.schemas.chat_schema import (
     ChatDashboardResponse,
     ConversationArchiveResponse,
     ConversationCreate,
+    ConversationDeleteResponse,
     ConversationListItemResponse,
     ConversationPaginatedResponse,
     ConversationResponse,
@@ -213,6 +214,8 @@ def create_conversation_service(
         context_id=data.context_id,
     )
     if existing:
+        # Opening a chat again after deleting it brings it back (empty: only newer messages are shown).
+        chat_repo.restore_deleted_participants(db, existing.id, [user_id])
         return ConversationResponse.model_validate(
             _map_conversation_detail(db, existing, user_id, current_user, access_token)
         )
@@ -361,8 +364,11 @@ def get_conversation_service(
     conversation = chat_repo.get_conversation_by_id(db, conversation_id, with_participants=True)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    if not chat_repo.is_participant(db, conversation_id, user_id):
+    participant = chat_repo.get_participant(db, conversation_id, user_id)
+    if participant is None:
         raise HTTPException(status_code=403, detail="Not authorized to view this conversation")
+    if participant.is_deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")  # the caller deleted it
     return ConversationResponse.model_validate(
         _map_conversation_detail(db, conversation, user_id, current_user, access_token)
     )
@@ -396,6 +402,27 @@ def close_conversation_service(db: Session, current_user: dict, conversation_id:
 
 def reopen_conversation_service(db: Session, current_user: dict, conversation_id: UUID):
     return _update_conversation_status(db, current_user, conversation_id, "open")
+
+
+def delete_conversation_service(db: Session, current_user: dict, conversation_id: UUID) -> ConversationDeleteResponse:
+    """Delete a conversation for the caller only.
+
+    The customer and the provider share one conversation, so deleting it cannot remove it for both: it disappears
+    from the caller's inbox and archive, and their history is cleared, while the other participant, the messages
+    and the admin view are untouched. It comes back (empty, from the new message on) if the other person writes or
+    the caller opens the chat again. Idempotent: deleting again is a 200 with the same body."""
+    user_id = _parse_user_id(current_user)
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not (
+        chat_repo.is_participant(db, conversation_id, user_id)
+        or conversation.assigned_provider_id == user_id
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    chat_repo.set_participant_deleted(db, conversation, user_id)
+    return ConversationDeleteResponse(id=conversation.id, deleted=True)
 
 
 def archive_conversation_service(
@@ -498,6 +525,9 @@ def send_message_service(db: Session, current_user: dict, data: MessageCreate):
         attachment_id=data.attachment_id,
     )
     message = chat_repo.create_message(db, message)
+    # A new message brings the chat back for anyone who deleted it (they see only messages from now on), so an
+    # incoming reply is never lost to a deleted chat. Sending also reopens it for the sender.
+    chat_repo.restore_deleted_participants(db, data.conversation_id)
 
     if data.attachment_id:
         attachment = chat_repo.get_attachment_by_id(db, data.attachment_id)
@@ -534,11 +564,15 @@ def get_messages_service(
     limit: int = 50,
 ):
     user_id = _parse_user_id(current_user)
-    if not chat_repo.is_participant(db, conversation_id, user_id):
+    participant = chat_repo.get_participant(db, conversation_id, user_id)
+    if participant is None:
         raise HTTPException(status_code=403, detail="Not authorized")
+    if participant.is_deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")  # the caller deleted it
 
     items, has_more, next_cursor = chat_repo.get_conversation_messages(
-        db, conversation_id, cursor=cursor, limit=limit
+        db, conversation_id, cursor=cursor, limit=limit,
+        since=participant.deleted_at,  # a chat that came back shows only what was said after the deletion
     )
     return CursorPaginatedResponse(
         items=[MessageResponse.model_validate(_map_message(db, m)) for m in items],
