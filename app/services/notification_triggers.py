@@ -295,7 +295,10 @@ def _safe_notify(
         "notification trigger: %s title=%s email=%s email_sent=%s user_ids=%s",
         category, title, participant_email, email_sent, user_ids,
     )
-    return {"email_attempted": bool(participant_email and "email" in channels), "email_sent": email_sent, "email_error": email_error}
+    return {
+        "email_attempted": bool(participant_email and "email" in channels), "email_sent": email_sent,
+        "email_error": email_error, "account_reached": bool(user_ids),
+    }
 
 
 def notify_registration_confirmation(db: Session, event, reg):
@@ -370,14 +373,73 @@ def _venue_text(venue) -> str | None:
     return str(venue) if venue else None
 
 
+def _empty_bucket() -> dict:
+    return {"total": 0, "emailed": 0, "failed": 0, "skipped": 0}
+
+
+def notify_registrations(
+    db: Session, event, regs: list, *, title: str, body_for, category: str, channels: list[str], metadata: dict | None = None,
+) -> dict:
+    """Notify a list of registrations (online and walk-in alike) and report what really happened.
+
+    Emails, when "email" is among the channels, go out over ONE SMTP connection. A person is "reached" when the mail
+    server accepted their email, or (no email requested / email failed) when the in-app pipeline found their account.
+      {"total", "emailed", "failed", "skipped", "reached", "email_requested", "channels", "smtp_configured",
+       "by_source": {"online": {...}, "walk_in": {...}}, "failures": [{"email", "source", "reason"}]}
+    "emailed" means the mail server accepted it; it cannot know whether the person saw it (spam folder).
+    """
+    email_requested = "email" in channels
+    summary: dict = {
+        "total": 0, "emailed": 0, "failed": 0, "skipped": 0, "reached": 0,
+        "email_requested": email_requested, "channels": list(channels),
+        "by_source": {"online": _empty_bucket(), "walk_in": _empty_bucket()},
+        "failures": [], "smtp_configured": smtp_configured(),
+    }
+    try:
+        email_results: dict = {}
+        if email_requested:
+            sendable = [r for r in regs if looks_like_email((r.participant_email or "").strip())]
+            sent = send_emails_via_smtp([
+                ((r.participant_email or "").strip(), title, body_for(r)) for r in sendable
+            ])
+            email_results = {r.id: result for r, result in zip(sendable, sent)}
+        for r in regs:
+            source = "walk_in" if getattr(r, "registration_source", None) == "walk_in" else "online"
+            bucket = summary["by_source"][source]
+            summary["total"] += 1
+            bucket["total"] += 1
+            email = (r.participant_email or "").strip()
+            if email_requested and r.id not in email_results:
+                summary["skipped"] += 1
+                bucket["skipped"] += 1
+                summary["failures"].append({"email": email or None, "source": source, "reason": "The registration has no valid email address."})
+                continue
+            outcome = _safe_notify(
+                db, title, body_for(r), category, event.tenant_id,
+                {**(metadata or {}), "event_id": str(event.id), "registration_id": str(r.id)},
+                participant_email=email or None, channels=channels,
+                email_result=email_results.get(r.id),
+            ) or {}
+            emailed = bool(outcome.get("email_sent"))
+            if email_requested:
+                if emailed:
+                    summary["emailed"] += 1
+                    bucket["emailed"] += 1
+                else:
+                    summary["failed"] += 1
+                    bucket["failed"] += 1
+                    summary["failures"].append({"email": email, "source": source, "reason": outcome.get("email_error") or "The email could not be sent."})
+            if emailed or outcome.get("account_reached"):
+                summary["reached"] += 1
+    except Exception as e:
+        logger.warning("notifying registrations failed: %s", e)
+        summary["error"] = "Sending stopped part-way; see the server log."
+    return summary
+
+
 def notify_event_reminder(db: Session, event) -> dict:
     """Remind everyone registered for the event (confirmed or attended: online and walk-in registrations alike).
-
-    Returns what actually happened, so the caller can tell the organiser the truth:
-      {"total": n, "emailed": n, "failed": n, "skipped": n, "by_source": {"online": {...}, "walk_in": {...}},
-       "failures": [{"email", "source", "reason"}], "smtp_configured": bool}
-    "emailed" counts emails the mail server accepted; it cannot know whether the person later saw it (spam folder).
-    """
+    Returns what actually happened (see notify_registrations)."""
     title = f"Reminder: {event.title} tomorrow"
     when = f"{event.start_date} ({event.time_zone})" if getattr(event, "time_zone", None) else f"{event.start_date}"
     lines = [f"Reminder: {event.title} starts {when}."]
@@ -388,51 +450,15 @@ def notify_event_reminder(db: Session, event) -> dict:
         lines.append(f"Join online: {event.meeting_link}")
     msg = " ".join(lines)
 
-    summary: dict = {
-        "total": 0, "emailed": 0, "failed": 0, "skipped": 0,
-        "by_source": {"online": {"total": 0, "emailed": 0, "failed": 0, "skipped": 0},
-                      "walk_in": {"total": 0, "emailed": 0, "failed": 0, "skipped": 0}},
-        "failures": [], "smtp_configured": smtp_configured(),
-    }
-    try:
-        from app.models.event_aux_models import EventRegistration
-        regs = db.query(EventRegistration).filter(
-            EventRegistration.event_id == event.id,
-            EventRegistration.status.in_(["confirmed", "attended"]),
-        ).all()
-        sendable = [r for r in regs if looks_like_email((r.participant_email or "").strip())]
-        # One SMTP connection and login for everyone, not one per person.
-        sent = send_emails_via_smtp([
-            ((r.participant_email or "").strip(), title, f"Hi {r.participant_name}, {msg}") for r in sendable
-        ])
-        email_results = {r.id: result for r, result in zip(sendable, sent)}
-        for r in regs:
-            source = "walk_in" if getattr(r, "registration_source", None) == "walk_in" else "online"
-            bucket = summary["by_source"][source]
-            summary["total"] += 1
-            bucket["total"] += 1
-            email = (r.participant_email or "").strip()
-            if r.id not in email_results:
-                summary["skipped"] += 1
-                bucket["skipped"] += 1
-                summary["failures"].append({"email": email or None, "source": source, "reason": "The registration has no valid email address."})
-                continue
-            outcome = _safe_notify(
-                db, title, f"Hi {r.participant_name}, {msg}", "event_reminder", event.tenant_id,
-                {"event_id": str(event.id), "registration_id": str(r.id)},
-                participant_email=email, channels=["in_app", "push", "email", "sms"],
-                email_result=email_results[r.id],
-            ) or {}
-            if outcome.get("email_sent"):
-                summary["emailed"] += 1
-                bucket["emailed"] += 1
-            else:
-                summary["failed"] += 1
-                bucket["failed"] += 1
-                summary["failures"].append({"email": email, "source": source, "reason": outcome.get("email_error") or "The email could not be sent."})
-    except Exception as e:
-        logger.warning("reminder failed: %s", e)
-        summary["error"] = "The reminder stopped part-way; see the server log."
+    from app.models.event_aux_models import EventRegistration
+    regs = db.query(EventRegistration).filter(
+        EventRegistration.event_id == event.id,
+        EventRegistration.status.in_(["confirmed", "attended"]),
+    ).all()
+    summary = notify_registrations(
+        db, event, regs, title=title, body_for=lambda r: f"Hi {r.participant_name}, {msg}",
+        category="event_reminder", channels=["in_app", "push", "email", "sms"],
+    )
     logger.info(
         "event reminder %s: total=%s emailed=%s failed=%s skipped=%s", getattr(event, "id", None),
         summary["total"], summary["emailed"], summary["failed"], summary["skipped"],
