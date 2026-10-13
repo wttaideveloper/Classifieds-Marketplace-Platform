@@ -300,6 +300,19 @@ class ChatSubscription(Base):
     )
 
 
+class UserDisplayName(Base):
+    """The name a person goes by in chat, learned from their own sign-in (the `name` claim of their token) each time
+    they use chat. It lets the other side of a conversation see a real name when the identity service cannot list that
+    person (a customer who is not a member of the provider's tenant). Never an e-mail address."""
+
+    __tablename__ = "user_display_names"
+
+    user_id = Column(UUID(as_uuid=True), primary_key=True)
+    display_name = Column(String(255), nullable=False)
+    source = Column(String(20), nullable=False, default="token")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class UserPresence(Base):
     __tablename__ = "user_presence"
 
