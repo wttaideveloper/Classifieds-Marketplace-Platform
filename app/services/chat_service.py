@@ -74,11 +74,21 @@ def _participant_archive_fields(participant: ConversationParticipant | None) -> 
 
 
 def _customer_names(
-    db: Session, conversations: list[Conversation], current_user: dict | None, access_token: str | None = None
+    db: Session, conversations: list[Conversation], current_user: dict | None, access_token: str | None = None,
+    fallback_ids: dict | None = None,
 ) -> dict:
-    """{conversation id: customer display name or None} for a page of conversations (one DB query plus
-    cached identity lookups)."""
-    customer_ids = chat_repo.get_customer_ids_for_conversations(db, conversations)
+    """{conversation id: customer display name or None} for a page of conversations.
+
+    The customer is the conversation's customer-role participant; where there is none, `fallback_ids` (the other
+    participant, the same id the list returns as other_participant_user_id) is used, so the name always belongs to
+    the person that id points to. Names come from the identity service when it knows them, else from what the person's
+    own sign-in and records gave us (see chat_user_names)."""
+    customer_ids = dict(chat_repo.get_customer_ids_for_conversations(db, conversations))
+    for conversation in conversations:
+        if conversation.id not in customer_ids and conversation.conversation_type != "group":
+            other = (fallback_ids or {}).get(conversation.id)
+            if other is not None:
+                customer_ids[conversation.id] = other
     if not customer_ids:
         return {}
     names = chat_user_names.resolve_display_names(
@@ -86,6 +96,7 @@ def _customer_names(
         tenant_ids=[c.tenant_id for c in conversations],
         current_user=current_user,
         access_token=access_token,
+        db=db,
     )
     return {cid: names.get(str(uid)) for cid, uid in customer_ids.items()}
 
@@ -113,7 +124,10 @@ def _map_conversation_detail(
         "last_message_at": preview_at,
         "last_message_preview": preview,
         "created_by": conversation.created_by,
-        "customer_name": _customer_names(db, [conversation], current_user, access_token).get(conversation.id),
+        "customer_name": _customer_names(
+            db, [conversation], current_user, access_token,
+            fallback_ids=chat_repo.get_other_participant_ids_for_conversations(db, [conversation.id], user_id),
+        ).get(conversation.id),
         "unread_count": unread,
         **_participant_archive_fields(participant),
         "participants": [
@@ -222,6 +236,7 @@ def create_conversation_service(
     db: Session, current_user: dict, data: ConversationCreate, access_token: str | None = None
 ):
     user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
     participant_ids = [p.user_id for p in data.participant_ids]
 
     existing = chat_repo.find_existing_conversation(
@@ -299,6 +314,7 @@ def list_conversations_service(
     access_token: str | None = None,
 ):
     user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
     items, total = chat_repo.get_user_conversations(
         db, user_id, status=status_filter, search=search, page=page, page_size=page_size,
         exclude_groups=_is_patient(current_user),
@@ -341,6 +357,7 @@ def list_provider_conversations_service(
     access_token: str | None = None,
 ):
     user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
     items, total = chat_repo.get_provider_conversations(
         db, user_id, status=status_filter, page=page, page_size=page_size
     )
@@ -354,7 +371,7 @@ def list_provider_conversations_service(
     )
     participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
     unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
-    customer_names = _customer_names(db, items, current_user, access_token)
+    customer_names = _customer_names(db, items, current_user, access_token, fallback_ids=other_participants)
     return ProviderConversationPaginatedResponse(
         items=[
             ProviderConversationListItemResponse.model_validate(
@@ -380,6 +397,7 @@ def get_conversation_service(
     db: Session, current_user: dict, conversation_id: UUID, access_token: str | None = None
 ):
     user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
     conversation = chat_repo.get_conversation_by_id(db, conversation_id, with_participants=True)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -487,6 +505,7 @@ def search_conversations_service(
     access_token: str | None = None,
 ):
     user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
     items, total = chat_repo.search_conversations(
         db, user_id, search=search, provider_id=provider_id, page=page, page_size=page_size,
         exclude_groups=_is_patient(current_user),
@@ -521,6 +540,7 @@ def search_conversations_service(
 
 def send_message_service(db: Session, current_user: dict, data: MessageCreate):
     user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
     conversation = chat_repo.get_conversation_by_id(db, data.conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -588,6 +608,7 @@ def get_messages_service(
     limit: int = 50,
 ):
     user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
     _refuse_if_group(db, conversation_id)
     participant = chat_repo.get_participant(db, conversation_id, user_id)
     if participant is None:

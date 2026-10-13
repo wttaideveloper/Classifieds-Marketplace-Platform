@@ -27,6 +27,8 @@ _LOOKUP_WORKERS = 8
 
 _names: dict[str, tuple[float, str | None]] = {}
 _tenant_names: dict[str, tuple[float, dict[str, str]]] = {}
+# user id -> the name last saved for them, so a name is written once per process and again only when it changes
+_remembered: dict[str, str] = {}
 
 
 def _nested(record: dict | None) -> list[dict]:
@@ -121,6 +123,110 @@ def _caller_tenant_names(access_token: str) -> dict[str, str]:
     return _cached_names(key, lambda: _names_from(identity.list_tenant_members(access_token)))
 
 
+def remember_display_name(db, current_user: dict | None) -> None:
+    """Save the signed-in person's own display name (from their token) so the other side of their conversations can
+    show it. Called when someone uses chat. Writes only when the name is new or changed; never stores an e-mail
+    address; never raises."""
+    uid = str((current_user or {}).get("id") or "")
+    name = _clean((current_user or {}).get("name"))
+    if not uid or not name or _remembered.get(uid) == name:
+        return
+    try:
+        from app.models.chat_model import UserDisplayName
+
+        key = UUID(uid)
+        with db.begin_nested():
+            row = db.get(UserDisplayName, key)
+            if row is None:
+                db.add(UserDisplayName(user_id=key, display_name=name[:255], source="token"))
+            elif row.display_name != name:
+                row.display_name = name[:255]
+        db.commit()
+        _remembered[uid] = name
+    except Exception:
+        logger.debug("could not save the display name of %s", uid, exc_info=True)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _learned_names(db, ids: set[str]) -> dict[str, str]:
+    """Names people gave through their own sign-in (see remember_display_name)."""
+    if not ids:
+        return {}
+    try:
+        from app.models.chat_model import UserDisplayName
+
+        keys = []
+        for i in ids:
+            try:
+                keys.append(UUID(i))
+            except ValueError:
+                continue
+        with db.begin_nested():
+            rows = db.query(UserDisplayName.user_id, UserDisplayName.display_name).filter(UserDisplayName.user_id.in_(keys)).all()
+        return {str(uid): name for uid, name in rows if _clean(name)}
+    except Exception:
+        logger.debug("could not read the saved display names", exc_info=True)
+        return {}
+
+
+def _record_names(db, ids: set[str]) -> dict[str, str]:
+    """Names this system already holds for these user ids, from what the person themself typed: a training
+    enrolment, a delivery address, an order, a review. The first source that has a real name wins."""
+    if not ids:
+        return {}
+    keys = []
+    for i in ids:
+        try:
+            keys.append(UUID(i))
+        except ValueError:
+            continue
+    sources = []
+    try:
+        from app.models.training_model import TrainingEnrolment
+        sources.append((TrainingEnrolment.user_id, TrainingEnrolment.participant_name, TrainingEnrolment.created_at))
+    except Exception:
+        pass
+    try:
+        from app.models.address_model import UserAddress
+        sources.append((UserAddress.user_id, UserAddress.full_name, None))
+    except Exception:
+        pass
+    try:
+        from app.models.cart_model import Order
+        sources.append((Order.user_id, Order.shipping_full_name, Order.created_at))
+    except Exception:
+        pass
+    try:
+        from app.models.product_model import ProductReview
+        sources.append((ProductReview.user_id, ProductReview.reviewer_name, ProductReview.created_at))
+        from app.models.service_model import ServiceReview
+        sources.append((ServiceReview.user_id, ServiceReview.reviewer_name, ServiceReview.created_at))
+    except Exception:
+        pass
+
+    found: dict[str, str] = {}
+    for user_col, name_col, order_col in sources:
+        if len(found) == len(keys):
+            break
+        try:
+            query = db.query(user_col, name_col).filter(user_col.in_(keys), name_col.isnot(None))
+            if order_col is not None:
+                query = query.order_by(order_col.desc())  # the most recent name they gave
+            with db.begin_nested():
+                rows = query.all()
+        except Exception:
+            logger.debug("could not read names from %s", getattr(user_col, "table", user_col), exc_info=True)
+            continue
+        for uid, raw in rows:
+            clean = _clean(raw)
+            if clean:
+                found.setdefault(str(uid), clean)
+    return found
+
+
 def _lookup_one(user_id: str) -> str | None:
     try:
         record = identity.fetch_internal_user_by_id(user_id)
@@ -141,8 +247,13 @@ def resolve_display_names(
     tenant_ids: Iterable[UUID | None] = (),
     current_user: dict | None = None,
     access_token: str | None = None,
+    db=None,
 ) -> dict[str, str | None]:
-    """{user_id (str): name or None}. The caller's own name comes from their token, without a network call."""
+    """{user_id (str): name or None}. The caller's own name comes from their token, without a network call.
+
+    Order: the caller's own token, the cache, the identity service's tenant member lists, then (with `db`) the name
+    the person's own sign-in last gave us and names they typed into this system's own records, and last one
+    identity lookup per person still unresolved. Never an e-mail address."""
     wanted = {str(u) for u in user_ids if u}
     result: dict[str, str | None] = {}
     now = time.monotonic()
@@ -179,6 +290,16 @@ def resolve_display_names(
                 _names[uid] = (now + _NAME_TTL_SECONDS, members[uid])
                 missing.discard(uid)
 
+    if missing and db is not None:
+        for source in (_learned_names, _record_names):
+            for uid, name in source(db, set(missing)).items():
+                result[uid] = name
+                _trim(_names)
+                _names[uid] = (now + _NAME_TTL_SECONDS, name)
+                missing.discard(uid)
+            if not missing:
+                break
+
     if missing:
         ordered = sorted(missing)
         with ThreadPoolExecutor(max_workers=min(_LOOKUP_WORKERS, len(ordered))) as pool:
@@ -193,3 +314,4 @@ def resolve_display_names(
 def clear_cache() -> None:
     _names.clear()
     _tenant_names.clear()
+    _remembered.clear()
