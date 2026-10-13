@@ -37,6 +37,7 @@ NotificationCategory = Literal[
     "training_enrolled",
     "training_enrollment_accepted",
     "training_enrollment_rejected",
+    "training_enrollment_requested",
     "training_enrolment_confirmation",
     "enrolment_cancelled",
     "training_new",
@@ -64,8 +65,10 @@ _CATEGORY_DOC = (
     "type, and the same value is repeated in `metadata.category` so push `data` can be routed. Training "
     "approval/enrollment types: training_submitted (to Platform/Super Admins), training_approved | "
     "training_rejected | training_changes_requested (to the owning Enterprise Admins), training_enrolled "
-    "(to the owning Enterprise Admins), training_enrollment_accepted | training_enrollment_rejected (to the "
-    "learner). Their metadata always has training_id, entity_type=\"training\", entity_id and status; "
+    "(to the owning Enterprise Admins), training_enrollment_requested (to the owning Enterprise Admins the "
+    "moment a learner's enrollment record is created, whatever its status, including pending_approval; metadata "
+    "adds training_name, learner_name, learner_id, source), training_enrollment_accepted | "
+    "training_enrollment_rejected (to the learner). Their metadata always has training_id, entity_type=\"training\", entity_id and status; "
     "enrollment notifications add enrollment_id; rejections add reason when one was given. Review types: "
     "review_submitted (to the owning Enterprise Admins when a new training/product/service/event review is saved; "
     "training and event reviews are also copied to the Platform Super Admins), "

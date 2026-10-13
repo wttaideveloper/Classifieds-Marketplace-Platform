@@ -248,3 +248,54 @@ def _deliver_question(*, training_id: str, discussion_id: str, author_name, auth
             },
             dedupe_key=f"training_question_posted:{discussion_id}",
         )
+
+
+# --- a learner applies to enroll -> the owning Enterprise Admin(s), the moment the record exists -------------
+#
+# training_enrolled (above) is sent once an enrollment is `enrolled` (and, for a paid training, paid). That leaves an
+# application that starts as `pending_approval` unannounced until an admin happens to open the queue.
+# training_enrollment_requested is sent when the enrollment record is CREATED, whatever its status, so the admin hears
+# about it at once. It is a separate category: training_enrolled and everything else is unchanged, so a free
+# training that enrolls straight away produces both ("applied", then "enrolled").
+
+def notify_enrollment_requested(
+    training, enrolment, *, actor_id=None, source: str = "application", access_token: str | None = None,
+) -> None:
+    """Call right after a NEW enrollment record has been committed (direct enrolment, checkout, waitlist promotion).
+    `source` is "application" or "waitlist_promotion". The acting person, if they are one of the admins, is not told."""
+    training_notifications._dispatch(
+        _deliver_requested,
+        training_id=str(training.id), enrolment_id=str(enrolment.id),
+        actor_id=str(actor_id) if actor_id else None, source=source, access_token=access_token,
+    )
+
+
+def _deliver_requested(*, training_id: str, enrolment_id: str, actor_id: str | None, source: str, access_token=None):
+    from app.db.database import SessionLocal
+    from app.models.training_model import Training, TrainingEnrolment
+    from app.services import event_notification_service as recipients_of
+
+    with SessionLocal() as db:
+        training = db.get(Training, UUID(training_id))
+        enrolment = db.get(TrainingEnrolment, UUID(enrolment_id))
+        if training is None or enrolment is None:
+            return None
+        recipients, tenant_id = recipients_of.resolve_enterprise_admin_user_ids(db, training, access_token=access_token)
+        learner_id = str(enrolment.user_id) if enrolment.user_id else None
+        # never the acting person, and never the learner themselves if they also administer the business
+        recipients = [uid for uid in recipients if str(uid) not in (actor_id, learner_id)]
+        learner = _learner_display_name(db, training.id, enrolment.participant_email, enrolment.participant_name, enrolment.user_id)
+        waiting = enrolment.status == "pending_approval"
+        message = f'{learner or "A learner"} applied to enroll in "{training.title}".'
+        if waiting:
+            message += " It is waiting for your approval."
+        return _deliver_to_users(
+            db, recipients=recipients, notification_type="training_enrollment_requested",
+            title="New enrollment application", message=message, tenant_id=tenant_id,
+            metadata={
+                "training_id": training_id, "entity_type": "training", "entity_id": training_id,
+                "enrollment_id": enrolment_id, "status": enrolment.status, "training_name": training.title,
+                "learner_name": learner, "learner_id": learner_id, "source": source,
+            },
+            dedupe_key=f"training_enrollment_requested:{enrolment_id}",
+        )

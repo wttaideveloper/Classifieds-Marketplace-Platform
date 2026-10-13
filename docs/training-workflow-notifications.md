@@ -195,6 +195,15 @@ Resolved from sources that do not depend on anything a client sent, never guesse
 3. **In bulk** — `python -m scripts.backfill_training_enrolment_user_ids` (dry run, prints counts) and then `--apply`.
    Uses the same two server-side sources; learners it cannot resolve are left for step 2.
 
+## A learner applies to enroll
+
+`training_enrollment_requested` goes to the owning Enterprise Admin(s) **when the enrollment record is created**, whatever its status: a plain enrolment, a checkout, or a waitlist promotion. An application that starts as `pending_approval` is announced at once; before this, the admins were told only when an enrollment reached `enrolled`.
+
+It is a separate category. `training_enrolled`, the learner's notices and everything else are unchanged, so a free training that accepts automatically sends two notices to the admins: the application, then "enrolled".
+
+Metadata: `training_id` (also `entity_id`, `entity_type: "training"`), `enrollment_id`, `status` (the enrollment's status when the notice is delivered), `training_name`, `learner_name`, `learner_id`, `source` (`application` or `waitlist_promotion`).
+`learner_name` is the learner's display name (login, then enrolment, then the identity service); it is left out rather than showing an e-mail address. The acting person and the learner themselves are never told, even if they also administer the business. A group application sends one notice. Joining a waitlist does not (no enrollment record exists yet).
+
 ## A learner's question in the discussion
 
 `POST /api/v1/trainings/{training_id}/discussions` by a learner sends `training_question_posted` to the owning Enterprise Admin(s), once the question is saved. It appears in `GET /api/v1/users/me/notifications` and as the Socket.IO `notification` event.
