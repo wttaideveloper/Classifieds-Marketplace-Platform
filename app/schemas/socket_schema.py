@@ -215,7 +215,7 @@ SERVER_EVENTS_CATALOG = [
             "GET /users/me/notifications. Route on `metadata.category` (there is no top-level category). "
             "Categories include training_submitted, training_approved, training_rejected, "
             "training_changes_requested, training_enrolled, training_enrollment_accepted, "
-            "training_enrollment_rejected (see docs/training-workflow-notifications.md), and review_submitted, "
+            "training_enrollment_rejected, training_enrollment_requested (see docs/training-workflow-notifications.md), and review_submitted, "
             "review_approved, review_rejected (metadata: entity_type, entity_id, review_id, status), "
             "training_question_posted (metadata: training_id, discussion_id, training_name, learner_name), and "
             "review_moderated, review_deleted (metadata: entity_type, entity_id, review_id, previous_status, "

@@ -497,7 +497,9 @@ def test_events_appear_in_the_existing_feed_for_super_admin_enterprise_admin_and
         return resp.json()["items"]
 
     assert [i["category"] for i in items(SUPER_ADMIN, "super_admin")] == ["training_submitted"]
-    assert {i["category"] for i in items(OWNER, "admin")} == {"training_approved"}
+    # the owner also hears about the learner's application the moment it is created (see
+    # test_training_enrollment_requested_notification.py); nothing else changed
+    assert {i["category"] for i in items(OWNER, "admin")} == {"training_approved", "training_enrollment_requested"}
     learner_items = items(LEARNER, "customer")
     rejected = next(i for i in learner_items if i["category"] == "training_enrollment_rejected")
     assert rejected["notification_type"] == "automatic" and rejected["is_read"] is False

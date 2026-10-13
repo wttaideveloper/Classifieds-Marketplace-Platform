@@ -509,6 +509,13 @@ def _promote_waitlist(db: Session, tid: UUID, access_token: str | None = None) -
             training_workflow_notifications.notify_enrollment_confirmed_to_admins(training, promoted, access_token=access_token)
         except Exception:
             pass
+    try:  # a new record in the approval queue (or a confirmed seat): the admins are told it exists
+        from app.services import training_workflow_notifications
+        training_workflow_notifications.notify_enrollment_requested(
+            training, promoted, source="waitlist_promotion", access_token=access_token,
+        )
+    except Exception:
+        pass
     return {"enrolment_id": str(promoted.id), "participant_email": promoted.participant_email, "status": promoted.status}
 
 
@@ -2586,6 +2593,13 @@ def create_training_enrol_service(db: Session, tid: UUID, payload: dict, coupon_
             training_workflow_notifications.notify_enrollment_confirmed_to_admins(t, e, access_token=access_token)
     except Exception:
         pass
+    try:  # the application itself, whatever its status: the Enterprise Admins hear about it at once
+        from app.services import training_workflow_notifications
+        training_workflow_notifications.notify_enrollment_requested(
+            t, e, actor_id=(current_user or {}).get("id"), access_token=access_token,
+        )
+    except Exception:
+        pass
     for key, value in _enrolment_response_context(db, t, tid, participant_email, status).items():
         setattr(e, key, value)
     return e
@@ -2747,6 +2761,13 @@ def create_training_checkout_service(db: Session, tid: UUID, payload, current_us
             training_workflow_notifications.notify_enrollment_confirmed_to_admins(t, enrol, access_token=access_token)
         except Exception:
             pass
+    try:  # the application, whatever its status (an approval-required checkout is announced here too)
+        from app.services import training_workflow_notifications
+        training_workflow_notifications.notify_enrollment_requested(
+            t, enrol, actor_id=(current_user or {}).get("id"), access_token=access_token,
+        )
+    except Exception:
+        pass
     return order
 
 
