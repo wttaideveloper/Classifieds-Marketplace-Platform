@@ -1752,9 +1752,8 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
     ).all()
     recipient_count = len(regs)
 
-    # Dispatch notification to each registered participant — honor payload.channels if supplied (non-breaking fallback)
-    from app.services.notification_triggers import _safe_notify
-    # payload may be dict or Pydantic; respect requested channels, default to in_app+email for backward compat
+    # Channels: what the manager asked for. When the request names none, an announcement goes in-app AND by email: a
+    # walk-in attendee usually has no platform account, so email is often the only way to reach them.
     try:
         req_channels = payload.channels if hasattr(payload, "channels") and payload.channels else None
         if not req_channels and isinstance(payload, dict):
@@ -1762,21 +1761,29 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
     except Exception:
         req_channels = None
     effective_channels = req_channels if req_channels else ["in_app", "email"]
-    sent_count = 0
-    for reg in regs:
-        try:
-            _safe_notify(
-                db, title, message, "event_announcement", event.tenant_id,
-                {"event_id": str(event_id), "registration_id": str(reg.id)},
-                participant_email=reg.participant_email,
-                channels=effective_channels,
-            )
-            sent_count += 1
-        except Exception as e:
-            logger.warning("Announcement dispatch failed for %s: %s", reg.participant_email, e)
+    from app.services.notification_triggers import notify_registrations
+    delivery = notify_registrations(
+        db, event, regs, title=title, body_for=lambda reg: message, category="event_announcement",
+        channels=effective_channels,
+    )
+    sent_count = delivery["reached"]
+    if not delivery["email_requested"]:
+        delivery_summary = f"Sent in the app only; no email was requested (channels: {', '.join(effective_channels)})."
+    elif recipient_count == 0:
+        delivery_summary = "Nobody is registered for this event yet."
+    elif delivery["emailed"] == recipient_count:
+        delivery_summary = f"Emailed to all {delivery['emailed']} registered people."
+    elif delivery["emailed"] == 0:
+        first = delivery["failures"][0]["reason"] if delivery["failures"] else "unknown reason"
+        delivery_summary = f"No email could be sent to the {recipient_count} registered people. {first}"
+    else:
+        delivery_summary = f"Emailed {delivery['emailed']} of {recipient_count} registered people; {delivery['failed'] + delivery['skipped']} could not be reached."
 
     return {"id": str(event_id), "event_id": str(event_id), "sent_by": current_user.get("id") if current_user else None,
-            "recipient_count": recipient_count, "sent_count": sent_count, "created_at": datetime.utcnow().isoformat(), "title": title, "message": message}
+            "recipient_count": recipient_count, "sent_count": sent_count, "created_at": datetime.utcnow().isoformat(), "title": title, "message": message,
+            "delivery_summary": delivery_summary, "channels": effective_channels, "email_requested": delivery["email_requested"],
+            "emailed": delivery["emailed"], "failed": delivery["failed"], "skipped": delivery["skipped"],
+            "by_source": delivery["by_source"], "failures": delivery["failures"], "smtp_configured": delivery["smtp_configured"]}
 
 def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_review: bool = False):
     """Free-form feedback (a form's answers). A review goes through create_event_review_service."""

@@ -877,7 +877,11 @@ class EventAnnouncementCreate(BaseModel):
     title: str | None = None
     message: str = Field(..., description="Announcement message")
     recipient_type: str = Field("all", description="all|registered|specific")
-    channels: list[str] = Field(["in_app"], description="in_app|push|email|sms")
+    channels: list[str] | None = Field(
+        None,
+        description="in_app|push|email|sms. Leave it out to send in the app AND by email (walk-in attendees usually "
+                    "have no app account, so email is how they are reached). Only the channels you list are used.",
+    )
     metadata: dict | None = Field(None, description="Additional metadata")
 
 
@@ -886,6 +890,16 @@ class EventAnnouncementResponse(BaseModel):
     event_id: UUID
     sent_by: str | None = None
     recipient_count: int
+    sent_count: int | None = Field(None, description="People reached by at least one channel (an email the mail server accepted, or an app account found)")
+    delivery_summary: str | None = Field(None, description="One sentence saying what really happened")
+    channels: list[str] | None = None
+    email_requested: bool | None = None
+    emailed: int | None = Field(None, description="Emails the mail server accepted")
+    failed: int | None = None
+    skipped: int | None = Field(None, description="Registrations with no valid email address")
+    by_source: dict | None = Field(None, description="The same counts split into online and walk_in")
+    failures: list[dict] | None = Field(None, description="Who was not emailed and why")
+    smtp_configured: bool | None = None
     created_at: str
     title: str | None = None
     message: str
