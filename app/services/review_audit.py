@@ -34,9 +34,27 @@ def _clean_name(value) -> str | None:
     return text[:255] if text and "@" not in text else None  # an e-mail address is not a name
 
 
+def business_name_of(item) -> str | None:
+    """The owning enterprise's short name, for the history."""
+    enterprise = getattr(item, "enterprise", None)
+    return _clean_name(getattr(enterprise, "business_short_name", None)) if enterprise is not None else None
+
+
+def customer_name_of(db: Session, module: str, review, item) -> str | None:
+    """The reviewer's display name for the history (never an e-mail address)."""
+    try:
+        from app.services.review_notifications import _learner_name
+
+        return _clean_name(_learner_name(db, module, review, item))
+    except Exception:
+        logger.exception("could not find the reviewer's name for the moderation history")
+        return None
+
+
 def record(
     db: Session, *, module: str, review_id, item_id, item_name: str | None, tenant_id,
     from_status: str | None, to_status: str, actor: dict | None = None, actor_role: str | None = None,
+    customer_name: str | None = None, business_name: str | None = None,
 ) -> None:
     """Add a history row to the current transaction (the caller commits)."""
     try:
@@ -47,6 +65,7 @@ def record(
                 actor_user_id=_uuid((actor or {}).get("id")),
                 actor_role=(actor_role or (actor or {}).get("role") or None),
                 actor_name=_clean_name((actor or {}).get("name")),
+                customer_name=_clean_name(customer_name), business_name=_clean_name(business_name),
             ))
     except Exception:
         logger.exception("could not write the review moderation log (%s %s -> %s)", module, review_id, to_status)
@@ -96,6 +115,7 @@ def list_log(
             "actor_role": r.actor_role,
             # the name saved when it happened; for older rows, the person's current name
             "actor_name": _clean_name(r.actor_name) or names.get(str(r.actor_user_id)),
+            "customer_name": _clean_name(r.customer_name), "business_name": _clean_name(r.business_name),
             "created_at": r.created_at,
         }
         for r in rows

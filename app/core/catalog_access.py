@@ -92,6 +92,15 @@ def require_catalog_writer(access: CatalogAccess = Depends(get_catalog_access)):
     return access
 
 
+def require_review_moderator(access: CatalogAccess = Depends(get_catalog_access)):
+    """Only a Super Admin changes the status of a review; Enterprise Admins and providers can look but not moderate."""
+    if access.role == "public":
+        raise HTTPException(401, "Not authenticated")
+    if access.role != "super_admin":
+        raise HTTPException(403, "Only a Super Admin can moderate reviews")
+    return access
+
+
 def scope_catalog_query(query, model, access: CatalogAccess | None):
     if access is None or access.role in ("public", "customer", "super_admin"):
         return query

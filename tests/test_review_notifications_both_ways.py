@@ -1,11 +1,11 @@
 """Review notifications in both directions, the moderator's name in the history, and the cross-role claims.
 
-1. A new training / event review -> the owning Enterprise Admin(s) AND the Platform Super Admin(s), with `learner_name`.
-2. A Super Admin moderates / deletes a training or event review -> the owning Enterprise Admin(s)
-   (review_moderated / review_deleted); an Enterprise Admin or provider doing it -> the Super Admin(s), as before.
+1. A new review (any module) -> the owning Enterprise Admin(s) AND the Platform Super Admin(s), with `learner_name`.
+2. A Super Admin moderates / deletes a review -> the owning Enterprise Admin(s) (review_moderated / review_deleted).
+   An Enterprise Admin or provider cannot moderate or delete someone else's review.
 3. GET /reviews/audit returns `actor_name` (never an e-mail address).
-4. Enterprise Admins (own items) and Super Admins (all items) can approve / reject / reset / delete; the public
-   listing and the star numbers change at once; a deletion leaves its history row.
+4. Only Super Admins approve / reject / reset / delete other people's reviews; the public listing and the star
+   numbers change at once; a deletion leaves its history row.
 """
 import logging
 from datetime import datetime
@@ -70,7 +70,8 @@ def test_a_new_review_goes_to_the_enterprise_admins_and_the_super_admins(submitt
     for notice in (owners, platform):
         meta = notice["metadata"]
         assert meta["category"] == "review_submitted" and meta["entity_type"] == module
-        assert meta["review_id"] == str(review.id) and meta["status"] == "pending"
+        assert meta["review_id"] == str(review.id) and meta["status"] == review.moderation_status
+        assert meta["resubmitted"] is False
         assert meta[item_key] == meta["entity_id"] == meta["item_id"] == str(getattr(submitted.ids.a, module))
         assert meta["item_name"] == f"{module.title()} a"
         assert meta["learner_name"] == learner
@@ -86,25 +87,51 @@ def test_no_email_address_appears_in_either_notification(submitted, module):
 
 
 @pytest.mark.parametrize("module", ["product", "service"])
-def test_product_and_service_reviews_still_go_to_the_enterprise_admins_only(submitted, module):
+def test_product_and_service_reviews_go_to_both_too(submitted, module):
     announce(submitted, module)
 
-    [owners] = submitted_notices(submitted)
-    assert owners["user_ids"] == ENTERPRISE_ADMINS
+    owners, platform = submitted_notices(submitted)
+    assert owners["user_ids"] == ENTERPRISE_ADMINS and platform["user_ids"] == SUPER_ADMINS
+    assert owners["metadata"][f"{module}_id"] == str(getattr(submitted.ids.a, module))
 
 
 def test_a_product_reviewer_name_that_is_an_email_is_not_used(submitted):
     announce(submitted, "service")  # the seeded service review was written by "old@example.com"
 
-    [owners] = submitted_notices(submitted)
-    assert "learner_name" not in owners["metadata"] and "@" not in str(owners)
+    for notice in submitted_notices(submitted):
+        assert "learner_name" not in notice["metadata"] and "@" not in str(notice)
 
 
 def test_a_product_reviewers_name_is_included(submitted):
     announce(submitted, "product")
 
-    [owners] = submitted_notices(submitted)
+    owners, _platform = submitted_notices(submitted)
     assert owners["metadata"]["learner_name"] == "Ravi"
+
+
+def test_a_new_review_says_it_was_posted_not_that_it_waits_for_approval(submitted):
+    announce(submitted, "product")
+
+    owners, _ = submitted_notices(submitted)
+    assert "was posted" in owners["message"]
+    assert "waiting for approval" not in owners["message"]
+
+
+def test_a_resubmitted_review_is_announced_as_waiting_and_can_repeat(submitted):
+    review = training_review(submitted)
+    DELIVER_SUBMITTED("training", str(review.id), None, True)
+    first = [n for n in submitted_notices(submitted)]
+    assert [n["title"] for n in first] == ["Review resubmitted", "Review resubmitted"]
+    assert all("waiting for approval" in n["message"] and n["metadata"]["resubmitted"] is True for n in first)
+    assert [n["user_ids"] for n in first] == [ENTERPRISE_ADMINS, SUPER_ADMINS]
+
+    DELIVER_SUBMITTED("training", str(review.id), None, True)   # the same version again: already delivered
+    assert len(submitted_notices(submitted)) == 2
+
+    review.updated_at = datetime(2030, 1, 1)                  # a later resubmission (after another rejection)
+    submitted.db.commit()
+    DELIVER_SUBMITTED("training", str(review.id), None, True)
+    assert len(submitted_notices(submitted)) == 4
 
 
 def test_a_super_admin_who_also_owns_the_business_is_told_once(submitted):
@@ -245,11 +272,10 @@ def test_when_no_owner_can_be_found_the_super_admins_action_still_works(world):
     assert moderated(world) == [] and training_review(world).moderation_status == "approved"
 
 
-def test_an_enterprise_admin_acting_still_tells_the_super_admins(world):
-    moderate(world, "training", "approved", user=staff())
+def test_an_enterprise_admin_cannot_moderate_so_nobody_is_told(world):
+    assert moderate(world, "training", "approved", user=staff()).status_code == 403
 
-    [notice] = moderated(world)
-    assert notice["user_ids"] == SUPER_ADMINS and notice["metadata"]["actor_role"] == "admin"
+    assert moderated(world) == []
 
 
 # =============================================================================================================
@@ -277,10 +303,10 @@ def history(audit_client, user=ROOT, **params):
 
 
 def test_the_history_shows_who_did_it_by_name(world, audit_client):
-    moderate(world, "training", "approved", user=staff(name="Ada Admin"))
+    moderate(world, "training", "approved", user=dict(ROOT, name="Rita Root"))
 
     [row] = history(audit_client)
-    assert row["actor_name"] == "Ada Admin" and row["actor_role"] == "admin" and row["to_status"] == "approved"
+    assert row["actor_name"] == "Rita Root" and row["actor_role"] == "super_admin" and row["to_status"] == "approved"
 
 
 def test_a_super_admins_action_is_named_too(world, audit_client):
@@ -291,7 +317,7 @@ def test_a_super_admins_action_is_named_too(world, audit_client):
 
 
 def test_an_email_is_never_stored_or_returned_as_the_name(world, audit_client):
-    moderate(world, "training", "approved", user=staff(name="ada@example.com"))
+    moderate(world, "training", "approved", user=dict(ROOT, name="ada@example.com"))
 
     [row] = history(audit_client)
     assert row["actor_name"] is None
@@ -324,12 +350,12 @@ def test_a_failing_name_lookup_never_fails_the_history(world, audit_client, monk
 
 
 def test_the_saved_name_wins_over_a_later_lookup(world, audit_client):
-    moderate(world, "training", "approved", user=staff(name="Ada Admin"))
+    moderate(world, "training", "approved", user=dict(ROOT, name="Rita Root"))
     actor_id = world.db.query(ReviewModerationLog).one().actor_user_id
     world.names[str(actor_id)] = "Renamed Person"
 
     [row] = history(audit_client)
-    assert row["actor_name"] == "Ada Admin"  # who it was at the time
+    assert row["actor_name"] == "Rita Root"  # who it was at the time
 
 
 # =============================================================================================================
@@ -343,9 +369,9 @@ def public_listing(world, module):
 
 @pytest.mark.parametrize("module", ["training", "event"])
 @pytest.mark.parametrize("action", ["approved", "rejected", "pending"])
-def test_an_enterprise_admin_can_do_every_status_change_on_their_own_items(world, module, action):
-    moderate(world, module, "rejected", user=staff())  # start from something other than the target
-    assert moderate(world, module, action, user=staff()).status_code == 200
+def test_an_enterprise_admin_cannot_change_a_status_even_on_their_own_items(world, module, action):
+    assert moderate(world, module, action, user=staff()).status_code == 403
+    assert (training_review(world) if module == "training" else event_review(world)).moderation_status == "pending"
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
@@ -364,10 +390,10 @@ def test_an_enterprise_admin_cannot_touch_another_business(world, module):
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-@pytest.mark.parametrize("who", ["admin", "super_admin"])
-def test_both_roles_can_delete(world, module, who):
-    user = staff() if who == "admin" else ROOT
-    assert delete(world, module, user=user).status_code == 200
+@pytest.mark.parametrize("who", ["admin", "provider", "super_admin"])
+def test_only_a_super_admin_can_delete_someone_elses_review(world, module, who):
+    user = ROOT if who == "super_admin" else staff(who)
+    assert delete(world, module, user=user).status_code == (200 if who == "super_admin" else 403)
 
 
 @pytest.mark.parametrize("module", ["training", "event"])

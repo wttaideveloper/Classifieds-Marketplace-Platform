@@ -1,5 +1,5 @@
 from uuid import UUID
-from app.core.catalog_access import get_catalog_access, require_catalog_writer
+from app.core.catalog_access import get_catalog_access, require_catalog_writer, require_review_moderator
 from app.core.dependencies import extract_access_token, get_current_user
 
 from fastapi import APIRouter, Depends, Path, Query, Request, status
@@ -131,9 +131,9 @@ def delete_service(
     status_code=status.HTTP_201_CREATED,
     summary="Submit or update your review",
     description=(
-        "One review per user per service — submitting again updates your existing review and keeps its status. "
-        "A new review is saved as `pending` and is shown publicly only after an Enterprise Admin or Super Admin "
-        "approves it. `comment` is optional, at most 2000 characters. `is_verified_purchase` is always false today: no Service booking/purchase record exists yet."
+        "One review per user per service. A new review is `approved` and public at once. Submitting again edits it and keeps "
+        "its status, except that editing a `rejected` review sends it back to `pending` (a resubmission). "
+        "`comment` is optional, at most 2000 characters. The answer carries `status_label`, `is_public` and `edit_label`. `is_verified_purchase` is always false today: no Service booking/purchase record exists yet."
     ),
 )
 def create_service_review(
@@ -182,8 +182,7 @@ def get_my_service_review(
     "/{service_id}/reviews/{review_id}",
     summary="Delete a review",
     description=(
-        "The review's own author, or staff (admin / provider) of the business that owns the service. "
-        "A Super Admin may delete any review."
+        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review."
     ),
 )
 def delete_service_review(
@@ -202,7 +201,10 @@ def delete_service_review(
     "/{service_id}/reviews/{review_id}/moderate",
     response_model=ServiceReviewResponse,
     summary="Approve, reject, or reset a review's moderation status",
-    description="Enterprise Admin of the business that owns the service, or a Super Admin. Providers are read-only.",
+    description=(
+        "Super Admin only; Enterprise Admins and providers get 403. Allowed moves: approved -> rejected | pending, "
+        "pending -> approved | rejected, rejected -> approved. The same status again does nothing; any other move is 409."
+    ),
 )
 def moderate_service_review(
     request: Request,
@@ -210,7 +212,7 @@ def moderate_service_review(
     service_id: UUID = Path(...),
     review_id: UUID = Path(...),
     db: Session = Depends(get_db),
-    access=Depends(require_catalog_writer),
+    access=Depends(require_review_moderator),
     current_user: dict = Depends(get_current_user),
 ):
     return moderate_service_review_service(

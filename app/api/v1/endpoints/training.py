@@ -1,7 +1,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
-from app.core.catalog_access import require_catalog_writer
+from app.core.catalog_access import require_review_moderator
 from app.services.review_common import ListOptions, review_list_params
 from app.core.dependencies import extract_access_token, get_current_user, get_optional_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
@@ -475,9 +475,11 @@ def enroll(request: Request, training_id: UUID, payload: dict, db: Session = Dep
     "/{training_id}/reviews", response_model=TrainingReviewResponse, status_code=201,
     summary="Rate & review — verified (must be enrolled)",
     description=(
-        "One review per learner: sending it again updates it and keeps its status. A new review is saved as "
-        "`pending` and is shown publicly only after an Enterprise Admin or Super Admin approves it. "
-        "`comment` is optional, at most 2000 characters."
+        "One review per learner. A new review is `approved` and public at once. Sending it again edits it and keeps "
+        "its status (approved stays approved, pending stays pending), except that editing a `rejected` review sends it "
+        "back to `pending` (a resubmission) until a Super Admin decides. `comment` is optional, at most 2000 characters. "
+        "The answer carries `status_label` (Approved | Waiting for Approval | Not Approved), `is_public` and `edit_label` "
+        "(Save Changes | Resubmit Review) for the Ratings & Reviews section."
     ),
 )
 def create_review(request: Request, training_id: UUID, payload: TrainingReviewCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -517,11 +519,15 @@ def my_review(training_id: UUID, db: Session = Depends(get_db), current_user: di
 @router.patch(
     "/{training_id}/reviews/{review_id}/moderate", response_model=TrainingReviewResponse,
     summary="Approve, reject or reset a review",
-    description="Enterprise Admin of the business that owns the training, or a Super Admin. Providers are read-only.",
+    description=(
+        "Super Admin only. Enterprise Admins and providers can look at reviews but get 403. Allowed moves: "
+        "approved -> rejected | pending, pending -> approved | rejected, rejected -> approved. The same status again "
+        "does nothing; any other move is 409. Approving or rejecting notifies the author and the owning Enterprise Admins."
+    ),
 )
 def moderate_review(
     request: Request, training_id: UUID, review_id: UUID, payload: TrainingReviewModerateRequest,
-    db: Session = Depends(get_db), access=Depends(require_catalog_writer), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), access=Depends(require_review_moderator), current_user: dict = Depends(get_current_user),
 ):
     return moderate_training_review_service(
         db, training_id, review_id, payload.action, access, access_token=_auth_token_from_request(request), actor=current_user
@@ -531,8 +537,8 @@ def moderate_review(
 @router.delete(
     "/{training_id}/reviews/{review_id}", summary="Delete a review",
     description=(
-        "The review's own author, or staff (admin / provider) of the business that owns the training. "
-        "A Super Admin may delete any review. Deleting someone else's review is recorded in the moderation history."
+        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. "
+        "A Super Admin deleting someone else's review is recorded in the moderation history."
     ),
 )
 def delete_review(

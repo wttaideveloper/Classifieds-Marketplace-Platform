@@ -1,8 +1,9 @@
 """Training / course reviews follow the common review policy.
 
-A new review is pending and public only once an Enterprise Admin (of the owning business) or a Super Admin approves
-it; the average counts approved reviews only and is null when there are none; no email addresses in public output;
-comment <= 2000 characters; one review per learner; editing keeps the status.
+A new review is approved and public at once; only a Super Admin changes a status afterwards (Enterprise Admins can
+look but not moderate); the average counts approved reviews only and is null when there are none; no email addresses
+in public output; comment <= 2000 characters; one review per learner; editing keeps the status (a rejected review
+goes back to pending).
 """
 from uuid import UUID, uuid4
 
@@ -34,6 +35,9 @@ def as_user(client, user):
     client.app.dependency_overrides[get_current_user] = lambda: user
     client.app.dependency_overrides[get_optional_catalog_user] = lambda: user
     client.app.dependency_overrides[get_optional_current_user] = lambda: user
+
+
+ROOT = {"id": str(uuid4()), "role": "super_admin", "email": "root@example.com"}
 
 
 def staff(role="admin", tenant=TENANT):
@@ -107,35 +111,28 @@ def moderate(client, tid, review_id, action, user, prefix="trainings"):
     return resp
 
 
-# --- a new review is pending ---------------------------------------------------------------------
+# --- a new review is approved --------------------------------------------------------------------
 
-def test_a_new_review_is_pending_and_not_public(world):
+def test_a_new_review_is_approved_and_public_at_once(world):
     client, _, tid = world
 
-    resp = post(client, tid)
+    resp = post(client, tid, rating=4)
 
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["moderation_status"] == "pending"
+    assert body["moderation_status"] == "approved"
+    assert body["status_label"] == "Approved" and body["is_public"] is True and body["edit_label"] == "Save Changes"
     assert body["participant_name"] == "Asha Rao" and body["verified"] is True
     assert body["participant_email"] == LEARNER["email"]  # the author sees their own
     body = listing(client, tid)
-    # The author's own pending review is in `my_review` only; the public part of the response is unchanged.
-    assert body.pop("my_review")["id"] == body_id(resp)
-    assert body == {
-        "reviews": [], "average_rating": None, "count": 0, "rating_distribution": {"5": 0, "4": 0, "3": 0, "2": 0, "1": 0},
-        "pagination": {"total": 0, "page": 1, "page_size": 0, "total_pages": 0},
-    }
+    assert body["count"] == 1 and body["average_rating"] == 4.0
+    assert [r["id"] for r in body["reviews"]] == [body_id(resp)]
 
 
-def test_after_approval_it_is_public_without_an_email_and_counts(world):
+def test_the_public_list_has_no_email_and_counts(world):
     client, _, tid = world
     review_id = post(client, tid, rating=4).json()["id"]
 
-    resp = moderate(client, tid, review_id, "approved", staff())
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["moderation_status"] == "approved"
     body = listing(client, tid)
     assert body["count"] == 1 and body["average_rating"] == 4.0
     assert body["rating_distribution"] == {"5": 0, "4": 1, "3": 0, "2": 0, "1": 0}
@@ -149,26 +146,24 @@ def test_after_approval_it_is_public_without_an_email_and_counts(world):
 def test_reject_and_reset_hide_it_again(world):
     client, _, tid = world
     review_id = post(client, tid).json()["id"]
-    moderate(client, tid, review_id, "approved", staff())
-
-    moderate(client, tid, review_id, "rejected", staff())
+    moderate(client, tid, review_id, "rejected", ROOT)
     assert listing(client, tid)["count"] == 0
-    moderate(client, tid, review_id, "approved", staff())
+    moderate(client, tid, review_id, "approved", ROOT)
     assert listing(client, tid)["count"] == 1
-    moderate(client, tid, review_id, "pending", staff())
+    moderate(client, tid, review_id, "pending", ROOT)
     assert listing(client, tid)["average_rating"] is None
 
 
 def test_the_average_counts_approved_reviews_only(world):
     client, sessions, tid = world
-    first = post(client, tid, rating=5).json()["id"]
-    moderate(client, tid, first, "approved", staff())
+    post(client, tid, rating=5)
     with sessions() as db:
         db.add(TrainingEnrolment(training_id=tid, participant_name="Ravi", participant_email="ravi@example.com", status="enrolled"))
         db.commit()
     as_user(client, {"id": str(uuid4()), "role": "customer", "email": "ravi@example.com"})
-    post(client, tid, rating=1)  # stays pending
+    second = post(client, tid, rating=1).json()["id"]
     as_user(client, LEARNER)
+    moderate(client, tid, second, "pending", ROOT)  # a Super Admin holds it back
 
     body = listing(client, tid)
 
@@ -178,10 +173,11 @@ def test_the_average_counts_approved_reviews_only(world):
 def test_the_training_detail_and_cards_use_approved_reviews_only(world):
     client, _, tid = world
     review_id = post(client, tid, rating=3).json()["id"]
+    moderate(client, tid, review_id, "pending", ROOT)
     detail = client.get(f"/api/v1/trainings/{tid}").json()
     assert detail["average_rating"] is None and detail["reviews_count"] == 0 and detail["reviews"] == []
 
-    moderate(client, tid, review_id, "approved", staff())
+    moderate(client, tid, review_id, "approved", ROOT)
     detail = client.get(f"/api/v1/trainings/{tid}").json()
     assert detail["average_rating"] == 3.0 and detail["reviews_count"] == 1
     assert "participant_email" not in detail["reviews"][0] and detail["reviews"][0]["participant_name"] == "Asha Rao"
@@ -192,7 +188,6 @@ def test_the_training_detail_and_cards_use_approved_reviews_only(world):
 def test_editing_updates_the_same_review_and_keeps_its_status(world):
     client, sessions, tid = world
     review_id = post(client, tid, rating=5, comment="first").json()["id"]
-    moderate(client, tid, review_id, "approved", staff())
 
     again = post(client, tid, rating=2, comment="changed my mind")
 
@@ -239,18 +234,20 @@ def test_providers_the_wrong_business_and_customers_cannot_moderate(world):
     client, _, tid = world
     review_id = post(client, tid).json()["id"]
 
-    for user in (staff("provider"), staff("admin", OTHER_TENANT), LEARNER):
-        assert moderate(client, tid, review_id, "approved", user).status_code == 403, user
-    assert listing(client, tid)["count"] == 0
+    # only a Super Admin moderates: not a provider, not the owning business's Enterprise Admin, not another business's
+    for user in (staff("provider"), staff("admin"), staff("admin", OTHER_TENANT), LEARNER):
+        resp = moderate(client, tid, review_id, "rejected", user)
+        assert resp.status_code == 403, user
+    assert resp.json()["detail"] == "Only a Super Admin can moderate reviews"
+    assert listing(client, tid)["count"] == 1
 
 
 def test_a_super_admin_can_moderate_any_business(world):
     client, _, tid = world
     review_id = post(client, tid).json()["id"]
-    root = {"id": str(uuid4()), "role": "super_admin", "email": "root@example.com"}
 
-    assert moderate(client, tid, review_id, "approved", root).status_code == 200
-    assert listing(client, tid)["count"] == 1
+    assert moderate(client, tid, review_id, "rejected", ROOT).status_code == 200
+    assert listing(client, tid)["count"] == 0
 
 
 def test_moderate_checks_the_review_belongs_to_the_training(world):
@@ -262,18 +259,21 @@ def test_moderate_checks_the_review_belongs_to_the_training(world):
         db.commit()
     review_id = post(client, tid).json()["id"]
 
-    assert moderate(client, other, review_id, "approved", staff()).status_code == 404
-    assert moderate(client, tid, str(uuid4()), "approved", staff()).status_code == 404
-    assert moderate(client, tid, review_id, "published", staff()).status_code == 400
+    assert moderate(client, other, review_id, "approved", ROOT).status_code == 404
+    assert moderate(client, tid, str(uuid4()), "approved", ROOT).status_code == 404
+    assert moderate(client, tid, review_id, "published", ROOT).status_code == 400
+    assert moderate(client, tid, review_id, "rejected", staff()).status_code == 403
 
 
 def test_the_course_paths_are_the_same_reviews(world):
     client, _, tid = world
     review_id = post(client, tid, prefix="courses").json()["id"]
-
-    assert moderate(client, tid, review_id, "approved", staff(), prefix="courses").status_code == 200
     assert listing(client, tid, prefix="trainings")["count"] == 1
     assert listing(client, tid, prefix="courses")["count"] == 1
+
+    assert moderate(client, tid, review_id, "rejected", ROOT, prefix="courses").status_code == 200
+    assert listing(client, tid, prefix="trainings")["count"] == 0
+    assert listing(client, tid, prefix="courses")["count"] == 0
 
 
 # --- my review -----------------------------------------------------------------------------------
@@ -285,7 +285,7 @@ def test_my_review_is_null_until_written_then_shows_the_status(world):
     post(client, tid, rating=4)
     mine = client.get(f"/api/v1/trainings/{tid}/reviews/me").json()
 
-    assert mine["rating"] == 4 and mine["moderation_status"] == "pending"
+    assert mine["rating"] == 4 and mine["moderation_status"] == "approved"
     assert mine["participant_email"] == LEARNER["email"]
 
 
@@ -294,6 +294,7 @@ def test_my_review_is_null_until_written_then_shows_the_status(world):
 def test_the_author_sees_their_pending_review_as_my_review_and_it_is_not_counted(world):
     client, sessions, tid = world
     resp = post(client, tid, rating=4)
+    moderate(client, tid, resp.json()["id"], "pending", ROOT)
     with sessions() as db:
         assert db.query(TrainingReview).filter_by(id=UUID(resp.json()["id"])).one().moderation_status == "pending"
 
@@ -301,13 +302,14 @@ def test_the_author_sees_their_pending_review_as_my_review_and_it_is_not_counted
 
     assert body["my_review"]["id"] == resp.json()["id"]            # same id as the POST
     assert body["my_review"]["moderation_status"] == "pending"
+    assert body["my_review"]["status_label"] == "Waiting for Approval" and body["my_review"]["is_public"] is False
     assert body["reviews"] == [] and body["count"] == 0 and body["average_rating"] is None
     assert body["pagination"]["total"] == 0
 
 
 def test_an_unrelated_user_and_the_public_never_see_a_pending_review(world):
     client, sessions, tid = world
-    post(client, tid)
+    moderate(client, tid, post(client, tid).json()["id"], "pending", ROOT)
     with sessions() as db:
         db.add(TrainingEnrolment(training_id=tid, participant_name="Ravi", participant_email="ravi@example.com", status="enrolled"))
         db.commit()
@@ -328,14 +330,14 @@ def test_my_review_follows_moderation_and_the_author_sees_a_rejected_one(world):
     client, _, tid = world
     review_id = post(client, tid).json()["id"]
 
-    moderate(client, tid, review_id, "rejected", staff())
+    moderate(client, tid, review_id, "rejected", ROOT)
     body = listing(client, tid)
     assert body["my_review"]["moderation_status"] == "rejected" and body["reviews"] == [] and body["count"] == 0
     anonymous(client)
     assert listing(client, tid)["my_review"] is None
 
     as_user(client, LEARNER)
-    moderate(client, tid, review_id, "approved", staff())
+    moderate(client, tid, review_id, "approved", ROOT)
     body = listing(client, tid)
     assert body["my_review"]["moderation_status"] == "approved"
     assert [r["id"] for r in body["reviews"]] == [review_id] and body["count"] == 1
@@ -372,7 +374,7 @@ def test_course_paths_expose_my_review_the_same_way(world):
     client, _, tid = world
     review_id = post(client, tid, prefix="courses").json()["id"]
     assert listing(client, tid, prefix="courses")["my_review"]["id"] == review_id
-    assert listing(client, tid, prefix="courses")["count"] == 0
+    assert listing(client, tid, prefix="courses")["count"] == 1
 
 
 # --- notifications -------------------------------------------------------------------------------
@@ -391,10 +393,10 @@ def test_only_a_real_approve_or_reject_notifies_the_author(world, dispatched):
     review_id = post(client, tid).json()["id"]
     dispatched.clear()
 
-    moderate(client, tid, review_id, "approved", staff())
-    moderate(client, tid, review_id, "approved", staff())   # same status again: nothing new to say
-    moderate(client, tid, review_id, "pending", staff())    # reset: not announced
-    moderate(client, tid, review_id, "rejected", staff())
+    moderate(client, tid, review_id, "pending", ROOT)    # held back: not announced
+    moderate(client, tid, review_id, "approved", ROOT)
+    moderate(client, tid, review_id, "approved", ROOT)   # same status again: nothing new to say
+    moderate(client, tid, review_id, "rejected", ROOT)
 
     # the author is told about real approve / reject decisions only (a moderator action also queues a separate
     # notice for the Super Admins; that is covered in test_review_and_discussion_notifications.py)
@@ -476,6 +478,71 @@ def test_my_review_and_reviews_me_agree_through_every_status(world):
     client, _, tid = world
     review_id = post(client, tid).json()["id"]
     for action in ("pending", "rejected", "approved"):
-        moderate(client, tid, review_id, action, staff())
+        moderate(client, tid, review_id, action, ROOT)
         mine, listed = client.get(f"/api/v1/trainings/{tid}/reviews/me").json(), listing(client, tid)["my_review"]
         assert mine == listed and mine["id"] == review_id and mine["moderation_status"] == action
+
+
+# --- edit, resubmit and the customer's labels -----------------------------------------------------------------
+
+def test_a_pending_review_stays_pending_when_edited(world):
+    client, _, tid = world
+    review_id = post(client, tid, rating=5).json()["id"]
+    moderate(client, tid, review_id, "pending", ROOT)
+
+    edited = post(client, tid, rating=3, comment="updated")
+
+    assert edited.json()["id"] == review_id and edited.json()["moderation_status"] == "pending"
+    assert edited.json()["status_label"] == "Waiting for Approval" and edited.json()["edit_label"] == "Save Changes"
+    assert listing(client, tid)["count"] == 0
+
+
+def test_editing_a_rejected_review_resubmits_it_for_approval(world, dispatched):
+    client, _, tid = world
+    review_id = post(client, tid, rating=2).json()["id"]
+    moderate(client, tid, review_id, "rejected", ROOT)
+    mine = client.get(f"/api/v1/trainings/{tid}/reviews/me").json()
+    assert mine["status_label"] == "Not Approved" and mine["edit_label"] == "Resubmit Review" and mine["is_public"] is False
+    dispatched.clear()
+
+    again = post(client, tid, rating=4, comment="the setup is clearer now")
+
+    assert again.status_code == 201 and again.json()["id"] == review_id
+    assert again.json()["moderation_status"] == "pending" and again.json()["status_label"] == "Waiting for Approval"
+    assert listing(client, tid)["count"] == 0                       # hidden until a Super Admin decides
+    assert [(n, a) for n, a in dispatched if n == "_deliver_submitted"] == [("_deliver_submitted", ("training", review_id, None, True))]
+
+    assert moderate(client, tid, review_id, "approved", ROOT).status_code == 200
+    assert listing(client, tid)["count"] == 1 and listing(client, tid)["average_rating"] == 4.0
+
+
+def test_a_super_admin_can_reject_a_resubmitted_review_and_the_customer_can_resubmit_again(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+    moderate(client, tid, review_id, "rejected", ROOT)
+    post(client, tid, rating=3)                                       # resubmitted -> pending
+
+    assert moderate(client, tid, review_id, "rejected", ROOT).status_code == 200
+    assert post(client, tid, rating=4).json()["moderation_status"] == "pending"
+
+
+def test_a_rejected_review_cannot_be_put_back_to_pending_by_a_super_admin(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+    moderate(client, tid, review_id, "rejected", ROOT)
+
+    resp = moderate(client, tid, review_id, "pending", ROOT)
+
+    assert resp.status_code == 409 and resp.json()["detail"] == "A rejected review can only be moved to approved"
+
+
+def test_the_author_can_delete_their_review_in_any_status_and_it_leaves_the_list(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+    moderate(client, tid, review_id, "rejected", ROOT)
+
+    resp = client.delete(f"/api/v1/trainings/{tid}/reviews/{review_id}")
+
+    assert resp.status_code == 200 and resp.json() == {"message": "Review deleted"}
+    assert client.get(f"/api/v1/trainings/{tid}/reviews/me").json() is None
+    assert post(client, tid, rating=5).json()["moderation_status"] == "approved"   # a fresh review starts approved again

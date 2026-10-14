@@ -1,5 +1,6 @@
-"""The moderation history (GET /reviews/audit) and deleting reviews: authors can delete their own training and event
-reviews, staff can delete reviews of their own business, and every moderator action leaves a history row."""
+"""The moderation history (GET /reviews/audit) and deleting reviews: authors can delete their own reviews, a Super
+Admin can delete any review, Enterprise Admins and providers cannot, and every Super Admin action leaves a history
+row naming the enterprise, the customer, the item and the Super Admin."""
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -80,7 +81,7 @@ def item_of(world, module, tag="a"):
 @pytest.mark.parametrize("module", ["training", "product", "service", "event"])
 def test_every_module_logs_a_moderator_action(world, module):
     rid = review_id(world, module)
-    admin = staff()
+    admin = ROOT
     world.as_user(admin)
     # whatever status the seeded review has, ask for the other one
     current = world.db.get({"training": TrainingReview, "product": ProductReview, "service": ServiceReview, "event": EventFeedback}[module], UUID(rid))
@@ -94,12 +95,16 @@ def test_every_module_logs_a_moderator_action(world, module):
     assert resp.status_code == 200, resp.text
     [row] = history(world, review_id=UUID(rid))
     assert (row.module, row.from_status, row.to_status) == (module, before, target)
-    assert str(row.actor_user_id) == admin["id"] and row.actor_role == "admin"
+    assert str(row.actor_user_id) == admin["id"] and row.actor_role == "super_admin"
     assert row.tenant_id == A and row.item_name.endswith(" a") and str(row.item_id) == item_of(world, module)
+    # the history says which enterprise and whose review it was, as they were named at the time
+    assert row.business_name == "Business A"
+    assert row.customer_name == {"training": "Learner a", "product": "Ravi", "service": None, "event": "e-a"}[module]
 
 
 def test_only_real_changes_are_logged_and_each_change_adds_a_row(world):
     rid = review_id(world, "product")   # seeded as approved
+    world.as_user(ROOT)
     url = f"/api/v1/products/{world.ids.a.product}/reviews/{rid}/moderate"
     for action in ("approved", "pending", "pending", "rejected"):
         world.client.patch(url, json={"action": action})
@@ -111,7 +116,7 @@ def test_only_real_changes_are_logged_and_each_change_adds_a_row(world):
 
 def test_the_queue_route_logs_with_the_acting_user(world):
     rid = review_id(world, "training")
-    admin = staff()
+    admin = ROOT
     world.as_user(admin)
 
     world.client.patch(f"/api/v1/reviews/training/{rid}/moderate", json={"action": "approved"})
@@ -139,6 +144,7 @@ def test_a_problem_writing_the_history_never_blocks_the_moderator(world, monkeyp
 
     monkeypatch.setattr(review_audit, "ReviewModerationLog", Broken)
     rid = review_id(world, "service")   # seeded as rejected
+    world.as_user(ROOT)
 
     resp = world.client.patch(f"/api/v1/services/{world.ids.a.service}/reviews/{rid}/moderate", json={"action": "approved"})
 
@@ -172,17 +178,16 @@ def test_a_stranger_cannot_delete_someone_elses_review(world, module):
     assert resp.status_code == 403 and resp.json()["detail"] == "You can only delete your own review"
 
 
+@pytest.mark.parametrize("role", ["admin", "provider"])
 @pytest.mark.parametrize("module", ["training", "product", "service", "event"])
-def test_staff_of_the_owning_business_can_delete_and_it_is_logged(world, module):
+def test_staff_of_the_owning_business_cannot_delete_someone_elses_review(world, module, role):
     rid = review_id(world, module)
-    provider = staff("provider")
-    world.as_user(provider)
+    world.as_user(staff(role))
 
     resp = world.client.delete(f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}")
 
-    assert resp.status_code == 200, resp.text
-    [row] = history(world, review_id=UUID(rid))
-    assert row.to_status == "deleted" and str(row.actor_user_id) == provider["id"] and row.tenant_id == A
+    assert resp.status_code == 403 and resp.json()["detail"] == "You can only delete your own review"
+    assert history(world, review_id=UUID(rid)) == []
 
 
 @pytest.mark.parametrize("module", ["training", "product", "service", "event"])
@@ -204,7 +209,7 @@ def test_a_super_admin_can_delete_any_review(world, module):
 
     assert resp.status_code == 200
     [row] = history(world, review_id=UUID(rid))
-    assert row.tenant_id == B and row.actor_role == "super_admin"
+    assert row.tenant_id == B and row.actor_role == "super_admin" and row.business_name == "Business B"
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
@@ -230,12 +235,12 @@ def test_an_event_feedback_row_cannot_be_deleted_as_a_review(world):
 
 def make_history(world):
     """Business A: approve a training review, reject an event review, delete a service review. Business B: approve one."""
-    world.as_user(staff())
-    world.client.patch(f"/api/v1/reviews/training/{review_id(world, 'training')}/moderate", json={"action": "approved"})
-    world.client.patch(f"/api/v1/reviews/event/{review_id(world, 'event')}/moderate", json={"action": "rejected"})
-    world.client.delete(f"/api/v1/services/{world.ids.a.service}/reviews/{review_id(world, 'service')}")
+    training, event_, service_ = review_id(world, "training"), review_id(world, "event"), review_id(world, "service")
     rid_b = review_id(world, "training", "b")
-    world.as_user(staff("admin", B))
+    world.as_user(ROOT)
+    world.client.patch(f"/api/v1/reviews/training/{training}/moderate", json={"action": "approved"})
+    world.client.patch(f"/api/v1/reviews/event/{event_}/moderate", json={"action": "rejected"})
+    world.client.delete(f"/api/v1/services/{world.ids.a.service}/reviews/{service_}")
     world.client.patch(f"/api/v1/reviews/training/{rid_b}/moderate", json={"action": "approved"})
 
 
@@ -252,8 +257,13 @@ def test_an_admin_sees_the_history_of_their_own_business_newest_first(world):
     assert [(r["module"], r["to_status"]) for r in body["items"]] == [("service", "deleted"), ("event", "rejected"), ("training", "approved")]
     assert body["pagination"]["total"] == 3
     first = body["items"][0]
-    assert first["from_status"] == "rejected" and first["actor_role"] == "admin" and first["item_name"] == "Service a"
-    assert set(first) == {"id", "module", "review_id", "item_id", "item_name", "from_status", "to_status", "actor_user_id", "actor_role", "actor_name", "created_at"}
+    assert first["from_status"] == "rejected" and first["actor_role"] == "super_admin" and first["item_name"] == "Service a"
+    assert first["business_name"] == "Business A" and first["customer_name"] is None   # its stored name was an email
+    assert body["items"][2]["customer_name"] == "Learner a" and body["items"][2]["business_name"] == "Business A"
+    assert set(first) == {
+        "id", "module", "review_id", "item_id", "item_name", "from_status", "to_status", "actor_user_id", "actor_role",
+        "actor_name", "customer_name", "business_name", "created_at",
+    }
 
 
 def test_a_super_admin_sees_every_business_and_another_business_sees_only_its_own(world):
@@ -297,9 +307,9 @@ def test_the_history_can_be_filtered_by_business(world):
 # --- delete from the queue: DELETE /reviews/{module}/{review_id} ----------------------------------
 
 @pytest.mark.parametrize("module", ["training", "product", "service", "event"])
-def test_staff_can_delete_a_review_given_only_its_module_and_id(world, module):
+def test_a_super_admin_can_delete_a_review_given_only_its_module_and_id(world, module):
     rid = review_id(world, module)
-    admin = staff()
+    admin = ROOT
     world.as_user(admin)
 
     resp = world.client.delete(f"/api/v1/reviews/{module}/{rid}")
@@ -314,7 +324,7 @@ def test_staff_can_delete_a_review_given_only_its_module_and_id(world, module):
 @pytest.mark.parametrize("module", ["training", "product", "service", "event"])
 def test_the_same_delete_rules_apply_from_the_queue(world, module):
     rid = review_id(world, module)
-    for user in (staff("admin", B), {"id": str(uuid4()), "role": "customer", "email": "stranger@example.com"}):
+    for user in (staff("admin", B), staff("admin"), staff("provider"), {"id": str(uuid4()), "role": "customer", "email": "stranger@example.com"}):
         world.as_user(user)
         assert world.client.delete(f"/api/v1/reviews/{module}/{rid}").status_code == 403, user
     assert history(world, review_id=UUID(rid)) == []

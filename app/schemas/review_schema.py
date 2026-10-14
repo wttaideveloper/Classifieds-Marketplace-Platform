@@ -21,6 +21,7 @@ class ReviewQueueItem(BaseModel):
     tenant_id: UUID | None = Field(None, description="The business that owns the item")
     business_name: str | None = Field(None, description="Short name of that business (for the Super Admin's global page)")
     moderation_status: str = Field(..., description="pending | approved | rejected")
+    status_label: str = Field(..., description="Approved | Waiting for Approval | Not Approved (what the customer sees)")
     created_at: datetime
     updated_at: datetime
 
@@ -54,6 +55,8 @@ class ReviewAuditItem(BaseModel):
     actor_user_id: UUID | None = Field(None, description="Who did it")
     actor_role: str | None = None
     actor_name: str | None = Field(None, description="The actor's display name, never an e-mail address; null when the server cannot find one")
+    customer_name: str | None = Field(None, description="Who wrote the review, as they were named when it happened; never an e-mail address. Null on older rows")
+    business_name: str | None = Field(None, description="The enterprise that owns the item, as named when it happened. Null on older rows")
     created_at: datetime
 
 

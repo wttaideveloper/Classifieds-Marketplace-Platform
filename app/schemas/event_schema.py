@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, computed_field, field_validator, model_validator
 
 from app.schemas.common_schema import EventStatus, PaginatedResponse
 from app.schemas.event_form_config_schema import EventCustomValueInput
@@ -978,6 +978,25 @@ class EventFeedbackResponse(BaseModel):
     is_review: bool = False
     moderation_status: str = "pending"
     created_at: datetime | None = None
+
+    @computed_field(description="What the customer sees: Approved | Waiting for Approval | Not Approved")
+    @property
+    def status_label(self) -> str:
+        from app.services.review_common import status_label
+
+        return status_label(self.moderation_status)
+
+    @computed_field(description="True only for an approved review")
+    @property
+    def is_public(self) -> bool:
+        return self.moderation_status == "approved"
+
+    @computed_field(description="The edit form's button: Resubmit Review for a rejected review, else Save Changes")
+    @property
+    def edit_label(self) -> str:
+        from app.services.review_common import edit_label
+
+        return edit_label(self.moderation_status)
 
 
 # --- Batch Check-in ---

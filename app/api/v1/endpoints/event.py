@@ -1115,8 +1115,9 @@ def list_feedback(event_id: UUID, db: Session = Depends(get_db), current_user: d
     description=(
         "The reviewer is the logged-in user (a `participant_email` in the body is ignored), who must have a "
         "confirmed or attended registration. `rating` is required, 1 to 5; `comment` is optional, at most 2000 "
-        "characters. One review per person: sending it again updates it and keeps its status. A new review is "
-        "`pending` until an Enterprise Admin or Super Admin approves it."
+        "characters. One review per person. A new review is `approved` and public at once. Sending it again edits it "
+        "and keeps its status, except that editing a `rejected` review sends it back to `pending` (a resubmission). "
+        "The answer carries `status_label`, `is_public` and `edit_label`."
     ),
 )
 def submit_review(request: Request, event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -1169,7 +1170,10 @@ def list_reviews_to_moderate(
 
 @router.patch(
     "/{event_id}/reviews/{review_id}/moderate", summary="Moderate Review",
-    description="Enterprise Admin of the business that owns the event, or an active Super Admin. Providers are read-only.",
+    description=(
+        "Active Super Admin only; Enterprise Admins and providers get 403. Allowed moves: approved -> rejected | pending, "
+        "pending -> approved | rejected, rejected -> approved. The same status again does nothing; any other move is 409."
+    ),
 )
 def moderate_review(request: Request, event_id: UUID, review_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_event_admin_or_super)):
     return moderate_review_service(
@@ -1181,8 +1185,8 @@ def moderate_review(request: Request, event_id: UUID, review_id: UUID, payload: 
 @router.delete(
     "/{event_id}/reviews/{review_id}", summary="Delete a review",
     description=(
-        "The review's own author, or staff (admin / provider) of the business that owns the event. A Super Admin may "
-        "delete any review. Deleting someone else's review is recorded in the moderation history."
+        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. "
+        "A Super Admin deleting someone else's review is recorded in the moderation history."
     ),
 )
 def delete_review(request: Request, event_id: UUID, review_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

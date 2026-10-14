@@ -182,6 +182,8 @@ def test_rows_carry_names_never_emails_as_names_and_emails_only_where_known(worl
     assert rows["service"]["reviewer_name"] is None  # its stored "name" was an email
     assert rows["product"]["is_verified"] is True and rows["service"]["is_verified"] is False
     assert rows["training"]["rating"] == 5 and isinstance(rows["event"]["rating"], int)
+    assert rows["training"]["status_label"] == "Waiting for Approval" and rows["product"]["status_label"] == "Approved"
+    assert rows["service"]["status_label"] == "Not Approved"
 
 
 # --- moderate by module + id ---------------------------------------------------------------------
@@ -193,9 +195,9 @@ def review_id(world, module, tag="a"):
 
 
 @pytest.mark.parametrize("module", ["training", "course", "product", "service", "event"])
-def test_an_admin_can_approve_a_review_of_every_module(world, module, dispatched):
+def test_a_super_admin_can_approve_a_review_of_every_module(world, module, dispatched):
     rid = review_id(world, "training" if module == "course" else module)
-    world.as_user(staff())
+    world.as_user(ROOT)
 
     resp = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "approved"})
 
@@ -204,6 +206,17 @@ def test_an_admin_can_approve_a_review_of_every_module(world, module, dispatched
     decisions = [a for n, a in dispatched if n == "_deliver_decision"]
     # product's review was already approved in the seed data, so nothing new to announce for it
     assert len(decisions) == (0 if module == "product" else 1)
+
+
+@pytest.mark.parametrize("module", ["training", "product", "service", "event"])
+def test_an_enterprise_admin_can_look_but_not_moderate_even_their_own_items(world, module):
+    rid = review_id(world, module)
+    world.as_user(staff())   # the Enterprise Admin of business A, which owns this review's item
+
+    resp = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "rejected"})
+
+    assert resp.status_code == 403 and resp.json()["detail"] == "Only a Super Admin can moderate reviews"
+    assert queue(world).status_code == 200   # they can still read the queue
 
 
 @pytest.mark.parametrize("module", ["training", "product", "service", "event"])
@@ -219,7 +232,7 @@ def test_another_business_cannot_moderate_it(world, module):
 @pytest.mark.parametrize("module", ["training", "product", "service", "event"])
 def test_providers_and_customers_cannot_moderate_and_a_super_admin_can(world, module):
     rid = review_id(world, module)
-    for user in (staff("provider"), CUSTOMER):
+    for user in (staff("provider"), staff("admin"), CUSTOMER):
         world.as_user(user)
         assert world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "rejected"}).status_code == 403, user
     world.as_user(ROOT)
@@ -228,6 +241,7 @@ def test_providers_and_customers_cannot_moderate_and_a_super_admin_can(world, mo
 
 def test_unknown_review_module_and_action(world):
     rid = review_id(world, "training")
+    world.as_user(ROOT)
     patch = lambda module, rid_, action: world.client.patch(f"/api/v1/reviews/{module}/{rid_}/moderate", json={"action": action})
 
     assert patch("training", uuid4(), "approved").status_code == 404
@@ -238,6 +252,7 @@ def test_unknown_review_module_and_action(world):
 
 
 def test_the_event_feedback_rows_are_not_reviews(world):
+    world.as_user(ROOT)
     row = EventFeedback(event_id=world.ids.a.event, participant_email="x@example.com", is_review=False)
     world.db.add(row)
     world.db.commit()

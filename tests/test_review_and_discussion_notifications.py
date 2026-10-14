@@ -2,9 +2,10 @@
 
 1. A learner posts a question in a training discussion -> the owning Enterprise Admin(s):
    training_question_posted {learner_name, training_name, training_id, discussion_id}.
-2. An Enterprise Admin / provider moderates or deletes a training or event review -> the Platform Super Admin(s):
-   review_moderated (approve / reject / pending) and review_deleted, with entity_type, entity_id, review_id,
-   previous_status, new_status, action and the acting admin's name.
+2. A Super Admin moderates or deletes a review (training, product, service or event) -> the owning Enterprise
+   Admin(s): review_moderated (approve / reject / pending) and review_deleted, with entity_type, entity_id, review_id,
+   previous_status, new_status, action and the acting Super Admin's name. Enterprise Admins and providers cannot
+   moderate or delete someone else's review.
 
 Real routes and real SQLite data; the background thread, the identity lookups and the delivery are stubbed.
 """
@@ -16,13 +17,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.v1.endpoints import event, product, training
+from app.api.v1.endpoints import event, product, service, training
 from app.core.catalog_access import get_optional_catalog_user
 from app.core.dependencies import get_current_user
 from app.db.database import Base, get_db
 from app.models.event_aux_models import EventFeedback
 from app.models.notification_model import NotificationEventLog
 from app.models.product_model import ProductReview
+from app.models.service_model import ServiceReview
 from app.models.review_audit_model import ReviewModerationLog
 from app.models.training_model import Training, TrainingReview
 from app.services import (
@@ -78,6 +80,7 @@ def world(monkeypatch):
     app = FastAPI()
     app.include_router(training.router, prefix="/api/v1/trainings")
     app.include_router(product.router, prefix="/api/v1/products")
+    app.include_router(service.router, prefix="/api/v1/services")
     app.include_router(event.router, prefix="/api/v1/events")
     app.dependency_overrides[get_db] = lambda: db
     client = TestClient(app, raise_server_exceptions=False)
@@ -87,7 +90,7 @@ def world(monkeypatch):
         app.dependency_overrides[get_optional_catalog_user] = lambda: user
         return client
 
-    as_user(staff())
+    as_user(ROOT)   # only a Super Admin moderates
     yield SimpleNamespace(
         client=client, as_user=as_user, db=db, ids=ids, sent=sent, platform_admins=platform_admins,
         tenant_admins=tenant_admins, names=names,
@@ -105,6 +108,16 @@ def training_review(world, tag="a"):
 
 def event_review(world, tag="a"):
     return world.db.query(EventFeedback).filter_by(event_id=getattr(world.ids, tag).event, is_review=True).one()
+
+
+def review_of(world, module):
+    if module == "training":
+        return training_review(world)
+    if module == "event":
+        return event_review(world)
+    model = ProductReview if module == "product" else ServiceReview
+    column = model.product_id if module == "product" else model.service_id
+    return world.db.query(model).filter(column == getattr(world.ids.a, module)).one()
 
 
 def moderate(world, module, action, user=None):
@@ -128,34 +141,39 @@ def delete(world, module, user=None):
 
 
 # =============================================================================================================
-# 2. review moderation / deletion -> Super Admin
+# 2. a Super Admin moderates or deletes a review -> the owning Enterprise Admin(s)
 # =============================================================================================================
+
+ITEM_KEY = {"training": "training_id", "product": "product_id", "service": "service_id", "event": "event_id"}
+LABEL = {"training": "Training a", "product": "Product a", "service": "Service a", "event": "Event a"}
+
 
 @pytest.mark.parametrize("module", ["training", "event"])
 @pytest.mark.parametrize("action,verb", [("approved", "approved"), ("rejected", "rejected")])
-def test_a_status_change_goes_to_the_super_admins_with_the_full_metadata(world, module, action, verb):
-    review_before = training_review(world) if module == "training" else event_review(world)
+def test_a_status_change_tells_the_owning_enterprise_admins_with_the_full_metadata(world, module, action, verb):
+    review_before = review_of(world, module)
     previous, review_id = review_before.moderation_status, str(review_before.id)
+    if previous == action:   # the seed already has it there: ask for the other one
+        action, verb = ("rejected", "rejected") if action == "approved" else ("approved", "approved")
 
     assert moderate(world, module, action).status_code == 200
 
     [notice] = moderated(world)
-    assert notice["user_ids"] == SUPER_ADMINS and notice["channels"] == ["in_app"]
+    assert notice["user_ids"] == ENTERPRISE_ADMINS and notice["channels"] == ["in_app"]   # never the Super Admin
     assert notice["title"] == "Review moderated"
     item_id = str(getattr(world.ids.a, module))
-    item_key = "training_id" if module == "training" else "event_id"
     meta = notice["metadata"]
     assert meta["category"] == "review_moderated"
-    assert meta["entity_type"] == module and meta["entity_id"] == item_id and meta[item_key] == item_id
+    assert meta["entity_type"] == module and meta["entity_id"] == item_id and meta[ITEM_KEY[module]] == item_id
     assert meta["review_id"] == review_id
     assert meta["previous_status"] == previous and meta["new_status"] == action and meta["action"] == action
-    assert meta["actor_name"] == "Ada Admin" and meta["actor_role"] == "admin"
-    assert meta["item_name"] == f"{module.title()} a"
-    assert f'Enterprise Admin Ada Admin {verb} a review of "{module.title()} a"' in notice["message"]
+    assert meta["actor_name"] == "Root" and meta["actor_role"] == "super_admin"
+    assert meta["item_name"] == LABEL[module]
+    assert f'Super Admin Root {verb} a review of "{LABEL[module]}"' in notice["message"]
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-def test_moving_a_review_back_to_pending_is_announced(world, module):
+def test_moving_a_review_to_pending_is_announced(world, module):
     moderate(world, module, "approved")
     world.sent.clear()
 
@@ -169,11 +187,11 @@ def test_moving_a_review_back_to_pending_is_announced(world, module):
 @pytest.mark.parametrize("module", ["training", "event"])
 def test_each_change_is_its_own_notification(world, module):
     moderate(world, module, "approved")
-    moderate(world, module, "rejected")
     moderate(world, module, "pending")
+    moderate(world, module, "rejected")
 
     assert [(n["metadata"]["previous_status"], n["metadata"]["new_status"]) for n in moderated(world)] == [
-        ("pending", "approved"), ("approved", "rejected"), ("rejected", "pending"),
+        ("pending", "approved"), ("approved", "pending"), ("pending", "rejected"),
     ]
 
 
@@ -182,54 +200,53 @@ def test_repeating_the_same_status_announces_nothing(world, module):
     moderate(world, module, "approved")
     world.sent.clear()
 
-    moderate(world, module, "approved")
+    assert moderate(world, module, "approved").status_code == 200
 
     assert moderated(world) == []
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-def test_a_super_admin_moderating_tells_the_enterprise_admins_not_the_super_admins(world, module):
-    assert moderate(world, module, "approved", user=ROOT).status_code == 200
+@pytest.mark.parametrize("role", ["admin", "provider"])
+def test_an_enterprise_admin_or_provider_cannot_moderate_and_nothing_is_announced(world, module, role):
+    assert moderate(world, module, "approved", user=staff(role)).status_code == 403
 
-    [notice] = moderated(world)
-    assert notice["user_ids"] == ENTERPRISE_ADMINS  # never the Super Admins (see test_review_notifications_both_ways.py)
+    assert world.sent == [] and review_of(world, module).moderation_status == "pending"
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-@pytest.mark.parametrize("role,label", [("admin", "Enterprise Admin"), ("provider", "Provider")])
-def test_deleting_a_review_goes_to_the_super_admins(world, module, role, label):
-    review = training_review(world) if module == "training" else event_review(world)
+def test_a_super_admin_deleting_tells_the_enterprise_admins(world, module):
+    review = review_of(world, module)
     previous, review_id = review.moderation_status, str(review.id)
 
-    assert delete(world, module, user=staff(role)).status_code == 200
+    assert delete(world, module).status_code == 200
 
     [notice] = moderated(world, "review_deleted")
-    assert notice["user_ids"] == SUPER_ADMINS and notice["title"] == "Review deleted"
+    assert notice["user_ids"] == ENTERPRISE_ADMINS and notice["title"] == "Review deleted"
     meta = notice["metadata"]
     assert meta["category"] == "review_deleted" and meta["entity_type"] == module
     assert meta["review_id"] == review_id
     assert meta["previous_status"] == previous and meta["new_status"] == "deleted" and meta["action"] == "deleted"
-    assert meta["actor_name"] == "Ada Admin" and meta["actor_role"] == role
-    assert f"{label} Ada Admin deleted a review of" in notice["message"]
+    assert meta["actor_name"] == "Root" and meta["actor_role"] == "super_admin"
+    assert "Super Admin Root deleted a review of" in notice["message"]
     assert moderated(world) == []  # a delete is not also announced as a status change
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-def test_the_author_deleting_their_own_review_is_not_moderation(world, module):
-    review = training_review(world) if module == "training" else event_review(world)
-    author = {"id": str(uuid4()), "role": "customer", "email": review.participant_email, "name": "The Author"}
-
-    assert delete(world, module, user=author).status_code == 200
+@pytest.mark.parametrize("role", ["admin", "provider"])
+def test_an_enterprise_admin_or_provider_cannot_delete_someone_elses_review(world, module, role):
+    assert delete(world, module, user=staff(role)).status_code == 403
 
     assert world.sent == []
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-def test_a_super_admin_deleting_tells_the_enterprise_admins_not_the_super_admins(world, module):
-    assert delete(world, module, user=ROOT).status_code == 200
+def test_the_author_deleting_their_own_review_is_not_moderation(world, module):
+    review = review_of(world, module)
+    author = {"id": str(uuid4()), "role": "customer", "email": review.participant_email, "name": "The Author"}
 
-    [notice] = moderated(world, "review_deleted")
-    assert notice["user_ids"] == ENTERPRISE_ADMINS
+    assert delete(world, module, user=author).status_code == 200
+
+    assert world.sent == []
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
@@ -241,37 +258,42 @@ def test_a_refused_delete_announces_nothing(world, module):
     assert world.sent == []
 
 
-def test_product_reviews_are_not_part_of_this_notification(world):
-    review = world.db.query(ProductReview).filter_by(product_id=world.ids.a.product).one()
+@pytest.mark.parametrize("module", ["product", "service"])
+def test_product_and_service_reviews_are_announced_the_same_way(world, module):
+    kind = "products" if module == "product" else "services"
+    review = review_of(world, module)
+    action = "rejected" if review.moderation_status != "rejected" else "approved"
 
-    resp = world.client.patch(f"/api/v1/products/{world.ids.a.product}/reviews/{review.id}/moderate", json={"action": "approved"})
+    resp = world.client.patch(f"/api/v1/{kind}/{getattr(world.ids.a, module)}/reviews/{review.id}/moderate", json={"action": action})
 
-    assert resp.status_code == 200 and moderated(world) == []
+    assert resp.status_code == 200
+    [notice] = moderated(world)
+    assert notice["user_ids"] == ENTERPRISE_ADMINS and notice["metadata"][ITEM_KEY[module]] == str(getattr(world.ids.a, module))
 
 
 def test_a_token_name_that_is_an_email_is_looked_up_instead(world):
-    admin = staff(name="ada@example.com")
-    world.names[admin["id"]] = "Ada Lovelace"
+    root = dict(ROOT, name="root@example.com")
+    world.names[root["id"]] = "Rita Root"
 
-    moderate(world, "training", "approved", user=admin)
+    moderate(world, "training", "approved", user=root)
 
     [notice] = moderated(world)
-    assert notice["metadata"]["actor_name"] == "Ada Lovelace" and "Ada Lovelace" in notice["message"]
+    assert notice["metadata"]["actor_name"] == "Rita Root" and "Rita Root" in notice["message"]
 
 
 def test_no_name_anywhere_still_notifies_without_inventing_one(world):
-    admin = staff(name=None)
+    root = dict(ROOT, name=None)
 
-    moderate(world, "event", "rejected", user=admin)
+    moderate(world, "event", "rejected", user=root)
 
     [notice] = moderated(world)
     assert "actor_name" not in notice["metadata"]
-    assert notice["message"].startswith("An Enterprise Admin rejected")
+    assert notice["message"].startswith("A Super Admin rejected")
     assert "@" not in notice["message"]
 
 
-def test_no_super_admin_found_sends_nothing_and_does_not_break_the_moderation(world):
-    world.platform_admins["ids"] = []
+def test_no_enterprise_admin_found_sends_nothing_and_does_not_break_the_moderation(world):
+    world.tenant_admins["ids"] = []
 
     resp = moderate(world, "training", "approved")
 
@@ -289,8 +311,8 @@ def test_a_failing_notification_never_breaks_the_moderation_or_the_delete(world,
 
 def test_the_same_change_is_delivered_once_even_if_dispatched_twice(world):
     kwargs = dict(
-        review_id=uuid4(), item_id=uuid4(), item_name="Course", tenant_id=A, previous_status="pending",
-        new_status="approved", actor={"id": str(uuid4()), "name": "Ada", "role": "admin"}, access_token=None,
+        review_id=uuid4(), item_id=world.ids.a.training, item_name="Course", tenant_id=A, previous_status="pending",
+        new_status="approved", actor={"id": str(uuid4()), "name": "Rita", "role": "super_admin"}, access_token=None,
         stamp="2026-10-12T10:00:00",
     )
     rn._deliver_platform_notice("review_moderated", "training", **kwargs)

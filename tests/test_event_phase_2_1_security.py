@@ -864,15 +864,22 @@ class TestReviewModeration:
     def test_review_from_another_event_cannot_be_moderated_through_your_event(self, world):
         mine = make_event(world.db, world.tenant_a, world.ent_a)
         resp = client_for(world.db, world.attacker).patch(f"{API}/{mine.id}/reviews/{world.review.id}/moderate", json={"action": "rejected"})
-        assert resp.status_code == 404
+        assert resp.status_code == 403   # another business's Enterprise Admin is not a Super Admin
+        resp = client_for(world.db, super_admin_user()).patch(f"{API}/{mine.id}/reviews/{world.review.id}/moderate", json={"action": "rejected"})
+        assert resp.status_code == 404   # even a Super Admin cannot reach it through the wrong event
         world.db.expire_all()
         assert world.db.get(EventFeedback, world.review.id).moderation_status == "pending"
 
-    def test_owner_admin_can_moderate_their_own_events_review(self, world):
+    def test_owner_admin_can_look_but_only_a_super_admin_can_moderate(self, world):
         resp = client_for(world.db, world.owner).patch(f"{API}/{world.event.id}/reviews/{world.review.id}/moderate", json={"action": "approved"})
+        assert resp.status_code == 403
+        world.db.expire_all()
+        assert world.db.get(EventFeedback, world.review.id).moderation_status == "pending"
+        resp = client_for(world.db, super_admin_user()).patch(f"{API}/{world.event.id}/reviews/{world.review.id}/moderate", json={"action": "approved"})
         assert resp.status_code == 200
         world.db.expire_all()
         assert world.db.get(EventFeedback, world.review.id).moderation_status == "approved"
+        assert client_for(world.db, world.owner).get(f"{API}/{world.event.id}/reviews/manage").status_code == 200
 
     def test_provider_role_still_cannot_moderate(self, world):
         provider = staff_user(world.tenant_b, "provider")

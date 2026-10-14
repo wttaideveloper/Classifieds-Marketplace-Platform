@@ -1,7 +1,7 @@
 """Product and service reviews: ownership checks, privacy, cards and the other review rules.
 
-Moderating or deleting someone else's review only works for the business that owns the item (or a Super Admin).
-Cards and detail pages show the real approved rating, not the old placeholder 0.
+A new review is approved at once. Only a Super Admin moderates or deletes someone else's review; Enterprise Admins
+and providers can look but not change. Cards and detail pages show the real approved rating, not the old placeholder 0.
 """
 from uuid import uuid4
 
@@ -31,6 +31,9 @@ BUYER = {"id": str(uuid4()), "email": "buyer@example.com", "role": "customer", "
 def as_user(client, user):
     client.app.dependency_overrides[get_current_user] = lambda: user
     client.app.dependency_overrides[get_optional_catalog_user] = lambda: user
+
+
+ROOT = {"id": str(uuid4()), "role": "super_admin", "email": "root@example.com"}
 
 
 def staff(role="admin", tenant=TENANT):
@@ -91,19 +94,22 @@ def act(client, user, method, url, **kw):
 
 
 @pytest.mark.parametrize("kind,item", KINDS)
-def test_only_the_owning_business_or_a_super_admin_can_moderate(world, kind, item):
+def test_only_a_super_admin_can_moderate(world, kind, item):
     client, _, ids = world
     iid = ids[item]
     review_id = post(client, kind, iid).json()["id"]
     url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
 
-    for user in (staff("admin", OTHER), staff("provider"), BUYER):
-        assert act(client, user, "patch", url, json={"action": "approved"}).status_code == 403, user
-    assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 0
+    for user in (staff("admin"), staff("admin", OTHER), staff("provider"), BUYER):
+        denied = act(client, user, "patch", url, json={"action": "rejected"})
+        assert denied.status_code == 403, user
+        assert denied.json()["detail"] == "Only a Super Admin can moderate reviews"
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 1   # nothing changed
 
-    assert act(client, staff("admin"), "patch", url, json={"action": "approved"}).status_code == 200
-    root = {"id": str(uuid4()), "role": "super_admin", "email": "root@example.com"}
-    assert act(client, root, "patch", url, json={"action": "rejected"}).status_code == 200
+    assert act(client, ROOT, "patch", url, json={"action": "rejected"}).status_code == 200
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 0
+    assert act(client, ROOT, "patch", url, json={"action": "approved"}).status_code == 200
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 1
 
 
 @pytest.mark.parametrize("kind,item", KINDS)
@@ -119,21 +125,23 @@ def test_moderate_checks_the_review_is_on_the_item_in_the_url(world, kind, item)
             db.add(Service(id=other_id, enterprise_id=ids["ent"], service_name="Reiki", service_category="Wellness", duration=30, service_price=10.0))
         db.commit()
 
-    wrong = act(client, staff(), "patch", f"/api/v1/{kind}/{other_id}/reviews/{review_id}/moderate", json={"action": "approved"})
+    wrong = act(client, ROOT, "patch", f"/api/v1/{kind}/{other_id}/reviews/{review_id}/moderate", json={"action": "rejected"})
 
     assert wrong.status_code == 404
 
 
 @pytest.mark.parametrize("kind,item", KINDS)
-def test_staff_can_only_delete_reviews_of_their_own_business(world, kind, item):
+def test_staff_cannot_delete_someone_elses_review(world, kind, item):
     client, sessions, ids = world
     iid = ids[item]
     review_id = post(client, kind, iid).json()["id"]
     url = f"/api/v1/{kind}/{iid}/reviews/{review_id}"
 
-    assert act(client, staff("admin", OTHER), "delete", url).status_code == 403
-    assert act(client, staff("provider", OTHER), "delete", url).status_code == 403
-    assert act(client, staff("provider"), "delete", url).status_code == 200
+    for user in (staff("admin", OTHER), staff("provider", OTHER), staff("admin"), staff("provider")):
+        denied = act(client, user, "delete", url)
+        assert denied.status_code == 403, user
+        assert denied.json()["detail"] == "You can only delete your own review"
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 1
 
 
 @pytest.mark.parametrize("kind,item", KINDS)
@@ -141,9 +149,8 @@ def test_a_super_admin_can_delete_any_review(world, kind, item):
     client, _, ids = world
     iid = ids[item]
     review_id = post(client, kind, iid).json()["id"]
-    root = {"id": str(uuid4()), "role": "super_admin", "email": "root@example.com"}
 
-    assert act(client, root, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 200
+    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 200
 
 
 @pytest.mark.parametrize("kind,item", KINDS)
@@ -195,7 +202,8 @@ def test_my_review_is_null_until_written_then_shows_the_status(world, kind, item
     post(client, kind, iid, rating=3)
     mine = client.get(f"/api/v1/{kind}/{iid}/reviews/me").json()
 
-    assert mine["rating"] == 3 and mine["moderation_status"] == "pending"
+    assert mine["rating"] == 3 and mine["moderation_status"] == "approved"
+    assert mine["status_label"] == "Approved" and mine["is_public"] is True and mine["edit_label"] == "Save Changes"
 
 
 @pytest.mark.parametrize("kind,item", KINDS)
@@ -204,12 +212,47 @@ def test_comment_limit_and_edit_keeps_status(world, kind, item):
     iid = ids[item]
     assert post(client, kind, iid, comment="x" * 2001).status_code == 422
     review_id = post(client, kind, iid, comment="x" * 2000).json()["id"]
-    act(client, staff(), "patch", f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate", json={"action": "approved"})
 
     edited = post(client, kind, iid, rating=2, comment="  changed  ")
 
     assert edited.json()["id"] == review_id and edited.json()["comment"] == "changed"
     assert edited.json()["moderation_status"] == "approved"
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_pending_stays_pending_on_edit_and_rejected_goes_back_to_pending(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    review_id = post(client, kind, iid).json()["id"]
+    url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
+
+    act(client, ROOT, "patch", url, json={"action": "pending"})
+    held = post(client, kind, iid, rating=2).json()
+    assert held["moderation_status"] == "pending" and held["status_label"] == "Waiting for Approval"
+    assert held["edit_label"] == "Save Changes"
+
+    act(client, ROOT, "patch", url, json={"action": "rejected"})
+    mine = client.get(f"/api/v1/{kind}/{iid}/reviews/me").json()
+    assert mine["status_label"] == "Not Approved" and mine["edit_label"] == "Resubmit Review"
+    again = post(client, kind, iid, rating=4, comment="better").json()
+    assert again["id"] == review_id and again["moderation_status"] == "pending"
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 0   # hidden until a Super Admin decides
+
+    assert act(client, ROOT, "patch", url, json={"action": "approved"}).status_code == 200
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 1
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_a_super_admin_cannot_move_a_rejected_review_back_to_pending(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    review_id = post(client, kind, iid).json()["id"]
+    url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
+    act(client, ROOT, "patch", url, json={"action": "rejected"})
+
+    resp = act(client, ROOT, "patch", url, json={"action": "pending"})
+
+    assert resp.status_code == 409 and "can only be moved to approved" in resp.json()["detail"]
 
 
 # --- cards and detail pages ----------------------------------------------------------------------
@@ -262,10 +305,25 @@ def test_notifications_on_submit_and_on_decisions_only(world, dispatched, kind, 
     dispatched.clear()
 
     url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
-    for action in ("approved", "approved", "pending", "rejected"):
-        act(client, staff(), "patch", url, json={"action": action})
+    for action in ("pending", "approved", "approved", "rejected"):
+        act(client, ROOT, "patch", url, json={"action": action})
 
-    assert [(n, a[2]) for n, a in dispatched] == [("_deliver_decision", "approved"), ("_deliver_decision", "rejected")]
+    # the author hears about real approve / reject decisions only (held back, and "already there", are silent)
+    assert [(n, a[2]) for n, a in dispatched if n == "_deliver_decision"] == [("_deliver_decision", "approved"), ("_deliver_decision", "rejected")]
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_a_resubmission_is_announced_but_an_ordinary_edit_is_not(world, dispatched, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    review_id = post(client, kind, iid).json()["id"]
+    act(client, ROOT, "patch", f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate", json={"action": "rejected"})
+    dispatched.clear()
+
+    post(client, kind, iid, rating=3)          # rejected -> pending: waits for a Super Admin
+    post(client, kind, iid, rating=4)          # edit of a pending review: silent
+
+    assert [(n, a) for n, a in dispatched if n == "_deliver_submitted"] == [("_deliver_submitted", (item, review_id, None, True))]
 
 
 # --- two first posts at the same moment -----------------------------------------------------------

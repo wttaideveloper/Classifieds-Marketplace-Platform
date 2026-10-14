@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.repository.query_utils import build_pagination_meta
 from app.services.review_access import assert_can_moderate, can_view_all_tenants
-from app.services.review_common import MODERATION_STATUSES, parse_rating, public_name, validate_action
+from app.services.review_common import MODERATION_STATUSES, parse_rating, public_name, status_label, validate_action
 
 _EVERYONE = type("Everyone", (), {"role": "super_admin", "tenant_id": None})()
 
@@ -149,6 +149,7 @@ def _row(module: str, review, item, name_column_value, names: dict) -> dict:
         "rating": parse_rating(review.rating),
         "comment": review.comment,
         "moderation_status": review.moderation_status or "pending",
+        "status_label": status_label(review.moderation_status),
         "created_at": review.created_at,
         "updated_at": getattr(review, "updated_at", None) or review.created_at,
         "tenant_id": (enterprise.tenant_id if enterprise is not None else None) or getattr(item, "tenant_id", None),

@@ -1,47 +1,56 @@
 # Reviews and Ratings: Feature Document
 
-This document explains how reviews and ratings work for the three kinds of users: the mobile customer, the Enterprise Owner and the Super Admin. It lists the features, the flow of each user, the fields and the APIs. The request and response samples are in the API document (`reviews-and-ratings-api.md`).
+Application: Invigorate Health. Modules: Training (courses are the same thing), Event, Product, Service. Users: Customer, Enterprise Admin, Super Admin.
 
-Reviews are available for four things: trainings (courses are the same thing as trainings and use the same data), products, services and events.
-
-Everything here describes the backend as it is now. The last parts list what is still not built.
+This document explains how reviews and ratings work for the three kinds of users, with the features, the flow of each user, the fields and the APIs. The request and response samples are in the API document (`reviews-and-ratings-api.md`). It describes the backend as it is now; the last parts list what is not built.
 
 
-## 1. What changed in this release
+## 1. In short
 
-Before this release, reviews worked differently in each module and some did not work end to end: owners could not find the pending reviews to approve, event reviews could not be read, training reviews went public without approval and showed reviewer emails, and the rating on product and service cards was always 0. All of that is fixed:
-
-- All four modules follow the same rules (section 2).
-- There is one moderation queue for the owner and the Super Admin that lists the pending reviews of every module (`GET /reviews/manage`), and one call to approve or reject any of them.
-- Training and course reviews start as pending and are public only after approval. Reviews that already existed were marked approved, so nothing disappeared.
-- Event reviews can be read (public list, and a list for the owner). The reviewer is the logged-in user, the rating is checked, and there is one review per person.
-- Product and service approve and delete are limited to the business that owns the item.
-- Rating on product, service and training cards comes from the real approved reviews.
-- Every module has "my review", and the public lists have a star breakdown, sorting, a stars filter and paging.
-- Authors can delete their own training and event reviews (as they could for products and services).
-- A moderation history records who approved, rejected, reset or deleted which review (`GET /reviews/audit`).
-- Notifications: the owner is told about a new review, the author about the decision.
-
-Three database migrations are part of the release (section 9).
+- A customer gives 1 to 5 stars and, if they want, a comment. The review is **approved and public at once**. Nobody has to approve it first.
+- The customer can see, edit and delete their own review.
+- Only a **Super Admin** can change the status of a review afterwards: reject it, hold it back as pending, or approve it again. Every such action is written to a moderation history.
+- An **Enterprise Admin** can see the reviews of their own business (Approved, Pending and Rejected tabs) and the moderation history, but cannot change anything.
+- Only approved reviews are public. Pending and rejected reviews are hidden from everyone except their author, the Enterprise Admin of the business, and the Super Admin.
 
 
 ## 2. The rules (same for every module)
 
-1. Every review starts as pending.
-2. The public sees only approved reviews.
-3. The Enterprise Owner of the business that owns the item, or a Super Admin, can approve or reject it. A provider (staff member) can see the reviews but cannot approve or reject.
-4. A business can only moderate reviews of its own items.
-5. A moderator can move a review from any status to any other: pending, approved or rejected.
-6. If the author edits a review, the status stays as it was. So an approved review stays public after an edit. (This is open for decision, see section 11.)
-7. The rating is a whole number from 1 to 5. There are no half stars.
-8. The comment is optional, so a rating without a comment is fine. The comment can be at most 2000 characters.
-9. A person has one review per item. Posting again changes the old review.
-10. The average rating is calculated from approved reviews only. If there are no approved reviews the average is empty (null) and the app shows "No ratings yet". It never shows 0.0.
-11. Nobody sees another person's email address in a public list. Show the name only.
+1. A new review is approved and public straight away.
+2. The public, and every average and star count, uses approved reviews only.
+3. Only a Super Admin can approve, reject or move a review to pending. An Enterprise Admin or a provider gets 403, even for the items of their own business.
+4. What a Super Admin can do to a review in each status:
+
+| Now | Can become |
+|---|---|
+| Approved | Rejected, Pending |
+| Pending | Approved, Rejected |
+| Rejected | Approved |
+
+   Asking for the status a review already has does nothing. Moving a rejected review to pending is refused with 409, because pending is for reviews that are waiting, and a rejected review can only be approved again.
+5. When the author edits a review:
+   - Approved: the changes are saved and public at once. It stays approved. No new approval is needed.
+   - Pending: the changes are saved and it stays pending until a Super Admin decides.
+   - Rejected: the changes are saved and the review becomes **pending** (a resubmission). It stays hidden until a Super Admin approves it.
+6. The author can delete their own review in any status. A Super Admin can delete any review. Nobody else can, including the Enterprise Admin and the providers of the business.
+7. The rating is a whole number from 1 to 5. The comment is optional, at most 2000 characters.
+8. A person has one review per item. Posting again changes the old review.
+9. The average is the mean of the approved reviews. With no approved review it is empty (null) and the app shows "No ratings yet", never 0.0.
+10. Nobody sees another person's email address in a public list. Show the name only.
+
+What the customer sees for each status:
+
+| Status | Label | Public |
+|---|---|---|
+| approved | Approved | yes |
+| pending | Waiting for Approval | no |
+| rejected | Not Approved | no |
+
+The server sends these as `status_label`, together with `is_public` and `edit_label` ("Save Changes", or "Resubmit Review" for a rejected review), so the apps do not have to translate the status themselves.
 
 Who is allowed to write a review:
 
-- Training and course: the learner must be enrolled. Enrolment status enrolled, active, completed or approved is accepted. Learners who are pending, rejected, cancelled or on the waiting list cannot review.
+- Training and course: the learner must be enrolled (status enrolled, active, completed or approved). Learners who are pending, rejected, cancelled or on the waiting list cannot review.
 - Product: any logged in user. If the user has a confirmed order for the product, the review is marked "verified purchase".
 - Service: any logged in user. It is never marked verified, because we have no booking record to check.
 - Event: the logged-in user must have a registration with status confirmed or attended. The email in the request body is ignored, so nobody can review as someone else.
@@ -49,135 +58,102 @@ Who is allowed to write a review:
 Who the reviewer is shown as: the training review shows the name on the enrolment, the event review the name on the registration, the product and service review the account name. When there is no real name the field is empty and the app shows "Learner", "Attendee" or "Customer". An email address is never used as a name.
 
 
-## 3. Mobile customer
+## 3. Customer (mobile and web)
 
-This is the person using the app to buy, enrol or attend. They are called customer here, or learner for trainings.
+The person who buys, enrols or attends. The reviews live in the existing Ratings & Reviews section of the training, event, product or service. There are no extra screens or tabs.
 
 ### What the customer can do
 
-- See the average rating, the number of reviews and the star breakdown of an item.
-- Read the approved reviews of an item.
-- Write a review: choose 1 to 5 stars and, if they want, type a comment.
-- See their own review at any time, with its status (waiting for approval, approved, not approved), and change it.
-- Delete their own review.
-- Sort the reviews of an item (newest, oldest, highest, lowest), show only one star rating or only reviews with a comment, and load them page by page.
-- See a "verified" mark on reviews from real buyers and enrolled learners.
-- Get a notification when their review is approved or rejected.
+- See the average rating, the number of reviews and the star breakdown of an item, and read the approved reviews. Sort them (newest, oldest, highest, lowest), show one star rating or only reviews with a comment, and load them page by page.
+- Write a review: 1 to 5 stars (required) and a comment (optional).
+- See their own review at any time, with its date and its status label.
+- Edit it: an approved review is saved and stays public, a pending review stays pending, a rejected review is resubmitted.
+- Delete it, after confirming.
+- Get a notification when a Super Admin approves or rejects their review.
 
-### Flow: customer reviews a product
+### Flow: write a review
 
-1. The customer opens a product. The app loads the approved reviews and shows the average rating, or "No ratings yet". It also asks for the customer's own review (`GET /products/{id}/reviews/me`). If there is none it shows "Write a review".
-2. The customer taps "Write a review", picks the stars, types a comment if they want, and submits.
-3. The server saves it as pending and returns the saved review.
-4. The app shows "Thanks, your review will appear once it has been approved", and the product page now shows "Your review: awaiting approval" with an Edit button.
-5. When the Enterprise Owner approves it, it appears in the list for everyone and the customer gets a notification "Review approved". If it is rejected they get "Review not approved".
+1. The customer opens the item and the Ratings & Reviews section. The app loads the approved reviews and the customer's own review (`GET .../reviews/me`). If there is none it shows "Write a review".
+2. The customer picks the stars, types a comment if they want, and taps Submit Review.
+3. The server saves it as approved and returns it. The review is in the public list at once.
+4. The section now shows the customer's review with its date and the label "Approved".
 
-If the customer is not logged in, the server answers 401. Send them to login and bring them back to the product. If they never bought the product they can still review it, but it will not have the verified mark.
+### Flow: the Super Admin rejects the review
 
-### Flow: learner reviews a training
+1. The review disappears from the public list and from the average. The customer gets a notification "Review not approved".
+2. In the section the customer sees their review with the label "Not Approved" and an Edit Review button.
+3. The customer edits it and taps Resubmit Review. The status changes to pending, the label is "Waiting for Approval", and the review stays hidden.
+4. The Super Admins and the Enterprise Admins are told that a review was resubmitted.
+5. If the Super Admin approves it, it is public again and the customer gets "Review approved". If it is rejected again, the customer can edit and resubmit again.
 
-1. The learner opens a training they are enrolled in. The training detail already tells the app the learner's enrolment status, so the app shows "Write a review" only when the status allows it.
-2. They choose the stars and comment and submit. The app does not send an email, the server takes the learner from the login.
-3. The server saves the review as pending and returns it. The app shows the "awaiting approval" message.
-4. After approval the review is public and the learner is notified.
+### Flow: the Super Admin holds the review back
 
-If the learner is not enrolled, the server answers 403 with the text "Verified reviews only — must be enrolled to review". Show a friendly line like "Only enrolled learners can review this training".
+The Super Admin moves an approved review to pending for checking. It is hidden, and the customer sees "Waiting for Approval". The customer can still edit it; it stays pending until the Super Admin decides. (There is no notification to the customer for pending, only for approved and rejected.)
 
-### Flow: attendee reviews an event
+### Screens the apps need
 
-1. After the event, the attendee opens it and submits stars and a comment. The app does not send an email either, the server uses the logged-in user and checks that they have a confirmed or attended registration.
-2. The review is saved as pending and the app shows a thank you message.
-3. Once approved, it appears in the event's review list (`GET /events/{id}/reviews`, public) and the attendee is notified.
-
-### Screens the mobile team needs
-
-1. Rating summary: the average with one decimal and the number of reviews in brackets, or "No ratings yet". Optionally the star breakdown as five bars.
-2. Review list: the reviewer's name, stars, comment, date, verified mark. A message like "Be the first to review" when empty. Long comments cut after a few lines with "Read more".
-3. Write a review: star selector, comment box with a 2000 character limit, submit button that is disabled while sending.
-4. My review box with the status and the Edit button.
+1. Rating summary: the average with one decimal and the number of reviews, or "No ratings yet". Optionally the star breakdown as five bars.
+2. Review list: the reviewer's name, stars, comment, date, verified mark. "Be the first to review" when empty.
+3. Write / edit a review: star selector, a comment box with a 2000 character limit, a button that shows `edit_label` and is disabled while sending.
+4. My review box: the review, its date, `status_label`, Edit Review and Delete Review (with a confirmation).
 5. A short message for each error: 401 sign in, 403 you must be enrolled or registered, 404 item not found, 422 choose 1 to 5 stars or comment too long.
 
-Dates come from the server in UTC without a "Z" at the end. Add the "Z" before converting to the phone's local time.
+Dates come from the server in UTC without a "Z" at the end. Add the "Z" before converting to local time.
 
 
-## 4. Enterprise Owner
+## 4. Enterprise Admin
 
-This is the admin of a business. Their staff (providers) can open the same pages but cannot approve or reject.
+The admin of a business. View only.
 
-### What the owner can do
+### What the Enterprise Admin can do
 
-- See the rating of their own trainings, events, products and services (cards, detail pages, the training and event dashboards).
-- Open one queue with the reviews of all their items, any module, with tabs Pending, Approved and Rejected and the number in each tab (`GET /reviews/manage`).
-- Filter the queue by module, item, stars and words in the comment.
-- Approve or reject a review, or put it back to pending (`PATCH /reviews/{module}/{review_id}/moderate`).
-- Delete a review of their own business (every module).
-- See the moderation history of their own business.
-- Get a notification when a new review arrives.
+- See the average rating of their own trainings, events, products and services (cards, detail pages, dashboards).
+- Open the reviews of their business in three ways: from a notification, from one training, event, product or service, or from the Reviews tab of a module.
+- See the reviews under three tabs: Approved (public), Pending (hidden, waiting for a Super Admin) and Rejected (hidden). The tab numbers come from `counts`.
+- See for each review the module, the item, the customer name, the stars, the comment, the date and the status. New reviews and edits to approved reviews show up at once.
+- See the moderation history of their own business: which Super Admin did what, the previous and the new status, and when.
+- Get a notification when a customer posts or resubmits a review, and when a Super Admin moderates or deletes one.
 
-### Decision: where the owner approves reviews
+### What the Enterprise Admin cannot do
 
-The Enterprise Owner approves reviews inside each module, not on a separate page. On the list page of Events, Trainings, Products and Services there is a **Reviews** tab. It shows the reviews received for that module, with the tabs Pending, Approved and Rejected and Accept / Reject buttons. The number of pending reviews is shown on the Reviews tab as a badge. A provider sees the tab without the buttons.
+- Approve, reject, move to pending, edit or delete a review. The server answers 403 "Only a Super Admin can moderate reviews" (or "You can only delete your own review").
+- See the reviews or the history of another business.
+- Providers (staff) have the same view-only access, limited to the products and services assigned to them. They cannot read the moderation history.
 
-The backend serves this without any change:
+### Flow: the Enterprise Admin follows a review
 
-- The tab of a module asks for `GET /reviews/manage?module=event&status=pending` (use `training`, `product` or `service` on the other pages). The answer has `counts`, which gives the numbers for the badge and the three tabs.
-- For one event, `GET /events/{id}/reviews/manage` gives the reviews of just that event.
-- Accept and Reject call `PATCH /reviews/{module}/{review_id}/moderate`, or the module's own moderate call.
-
-A single combined page for the owner is not needed. It stays possible, because `GET /reviews/manage` without `module` returns all modules.
-
-### Flow: owner handles new reviews
-
-1. A notification arrives: "New review: 2 star review on Yoga Mat Pro is waiting for approval".
-2. The owner opens the list page of that module (for example Products) and taps the Reviews tab, then Pending. Each row shows the item name, stars, comment, reviewer name, verified mark and date.
-3. The owner taps Approve or Reject. Approved reviews become public. Rejected reviews stay hidden.
-4. The author gets a notification with the result.
-5. If the owner changes their mind, they can open the Rejected tab and move a review back to pending or approved.
-
-Event owners can also work from the event page: `GET /events/{id}/reviews/manage` lists the reviews of that one event with the same tabs.
-
-### Screens for the owner
-
-1. A Reviews tab on the list page of each module (Events, Trainings, Products, Services), with the sub-tabs Pending, Approved and Rejected (numbers from `counts`), a pending badge on the tab, and filters for item, stars and text.
-2. A row with Accept and Reject buttons. Training and event rows also show the reviewer's email, because the owner may need to follow up. Never show it to the public.
-3. The rating and number of reviews on each item's page in the owner dashboard.
-
-Providers see the same tab but without the Accept and Reject buttons, because the server refuses them. A provider only sees the products and services assigned to them.
+1. A notification arrives: "A 5 star review was posted on Yoga Mat Pro". It carries `review_id`, `entity_type` and `entity_id`.
+2. The admin opens the item or the Reviews tab of the module. The call is `GET /reviews/manage?module=product&status=approved`, and `item_id` narrows it to one item.
+3. If a Super Admin later rejects or holds back the review, it moves to the Rejected or Pending tab, the admin gets a notification, and the change is in the history (`GET /reviews/audit`).
+4. If the customer deletes the review, it is gone from every list.
 
 
 ## 5. Super Admin
 
-This is the platform staff who see all businesses.
+The platform staff, who see all businesses.
 
 ### What the Super Admin can do
 
-- Open the same queue and see the reviews of every business.
-- Approve, reject or reset any review in any module, including events.
-- Delete any review.
-- See the moderation history of every business (`GET /reviews/audit`).
-- See the training average across all businesses on the training report summary.
+- Open the reviews in the same three ways, for every enterprise. The global page is `GET /reviews/manage` without `module`; its business filter is `tenant_id`.
+- See for each review the enterprise name, module, item, customer name, stars, comment, date and status, under the Approved, Pending and Rejected tabs.
+- Reject an approved or pending review. It is hidden from the public and the customer is notified.
+- Move an approved review to pending when it needs checking.
+- Approve a pending or rejected review. It is public again and the customer is notified.
+- Handle reviews that customers edited or resubmitted: an edited approved review is already public and can be moderated if needed, a resubmitted review waits in Pending, an edited pending review stays pending.
+- Delete a review.
+- See the moderation history across all enterprises.
 
-### What is not built for the Super Admin
+### The moderation history
 
-- Handling of complaints (reporting a review) and settings such as switching approval on or off per module.
+Every Super Admin action is recorded with the enterprise name, the module, the item, the customer name, the Super Admin's name, the action, the previous status, the new status and the date and time. The current status of a review is the result of the latest entry. A review can have many entries. Customer edits, resubmissions and deletions by the author are not Super Admin actions and are not in the history.
 
-### Flow: Super Admin removes an abusive review
-
-1. The Super Admin opens the queue, filters by text or by item, and finds the review.
-2. Taps Reject (it disappears from the public) or Delete.
-3. The author is told the review was not approved (not for a delete).
-4. The action is in the moderation history.
+Example (Rahul Mehta's review of the summit): 11:45 Meera Krishnan moved it from Approved to Pending; 14:10 Meera Krishnan approved it, Pending to Approved. Current status: Approved.
 
 ### Screens for the Super Admin
 
-The Super Admin has one global approval page, not a tab per module, because they work across businesses.
-
-1. The pending reviews of all businesses together, with the sub-tabs Pending, Approved and Rejected (numbers from `counts`).
-2. Filters: module, business (`tenant_id`), item, stars and text. Each row shows the business name.
-3. Buttons: Approve, Reject and Delete on each row.
-4. The moderation history (`GET /reviews/audit`): who approved, rejected or deleted which review, and when. It can be shown as a list on the same page, or per review.
-
-Handling complaints (a customer or owner reporting a review) and the settings page (approval on or off per module) are planned for a later release. Until then every module always needs approval.
+1. The global reviews page with the tabs Approved, Pending and Rejected (numbers from `counts`), filters for module, enterprise, item, stars and text, and the enterprise name on each row.
+2. On each row only the buttons the status allows: Approved gives Reject and Move to Pending, Pending gives Approve and Reject, Rejected gives Approve. Delete is always there.
+3. The moderation history, as a list on the same page or per review.
 
 
 ## 6. Fields
@@ -193,7 +169,8 @@ Training and course review (table `training_reviews`)
 | participant_email | taken from the login. Returned only to the author and to staff, never in the public list |
 | participant_name | name on the enrolment, can be empty |
 | verified | always true |
-| moderation_status | pending, approved or rejected. A new review is pending |
+| moderation_status | approved, pending or rejected. A new review is approved |
+| status_label, is_public, edit_label | for the customer's screen, see part 2 |
 | created_at, updated_at | UTC |
 
 Product review (`product_reviews`) and service review (`service_reviews`)
@@ -207,7 +184,8 @@ Product review (`product_reviews`) and service review (`service_reviews`)
 | rating | 1 to 5, required |
 | comment | optional, up to 2000 |
 | is_verified_purchase | true only for products with a confirmed order. Always false for services |
-| moderation_status | pending, approved or rejected. A new review is pending |
+| moderation_status | approved, pending or rejected. A new review is approved |
+| status_label, is_public, edit_label | for the customer's screen |
 | created_at, updated_at | UTC |
 
 Event review (`event_feedback`, rows with `is_review` true)
@@ -218,47 +196,58 @@ Event review (`event_feedback`, rows with `is_review` true)
 | event_id | the event |
 | participant_email | the logged-in user's email, saved when the review is written |
 | user_id | the author, saved when the review is written (empty on older reviews) |
-| rating | saved as text, always a whole number 1 to 5 now |
+| rating | saved as text, always a whole number 1 to 5 |
 | comment | optional, up to 2000 |
 | is_review | true for a review, false for plain feedback |
-| moderation_status | a new review is pending |
+| moderation_status | approved, pending or rejected. A new review is approved |
+| status_label, is_public, edit_label | for the customer's screen |
 | created_at, updated_at | UTC |
+
+Moderation history (`review_moderation_log`, one row per Super Admin action)
+
+| Field | Notes |
+|---|---|
+| module, review_id, item_id, item_name | what was moderated |
+| business_name | the enterprise that owns the item, as named at the time |
+| customer_name | who wrote the review, as named at the time. Empty when only an email is known |
+| from_status, to_status | the previous and the new status. `deleted` when a Super Admin removed the review |
+| actor_user_id, actor_name, actor_role | the Super Admin |
+| created_at | UTC |
 
 
 ## 7. API list
 
 All paths start with `https://chat.wisdomtooth.tech/api/v1`. The samples are in the API document. For trainings, every `/trainings/...` path also works as `/courses/...`.
 
-### For the customer (mobile and web)
+### Customer
 
 | What | Call | Who |
 |---|---|---|
-| Read reviews, average, star breakdown | GET /trainings/{id}/reviews, GET /products/{id}/reviews, GET /services/{id}/reviews, GET /events/{id}/reviews | anyone |
-| Write or edit a review | POST on the same paths | logged in (training: enrolled, event: registered) |
+| Read reviews, average, star breakdown | GET /trainings/{id}/reviews, /products/{id}/reviews, /services/{id}/reviews, /events/{id}/reviews | anyone |
+| Write, edit or resubmit a review | POST on the same paths | logged in (training: enrolled, event: registered) |
 | My review, any status | GET .../reviews/me on the same paths | logged in |
-| Delete own review | DELETE .../reviews/{review_id} on trainings, products, services and events | the author |
-| Sort, filter, page | `sort`, `rating`, `with_comment`, `page`, `page_size` on the public GET lists | anyone |
-| Send event feedback | POST /events/{id}/feedback | logged in |
+| Delete own review | DELETE .../reviews/{review_id} | the author |
+| Sort, filter, page | `sort`, `rating`, `with_comment`, `page`, `page_size` on the public lists | anyone |
 
 Cards already carry the rating: training `average_rating` and `reviews_count`; product and service `rating` and `reviews_count`.
 
-### For the Enterprise Owner
+### Enterprise Admin (view only)
 
 | What | Call | Notes |
 |---|---|---|
-| The queue of reviews (the Reviews tab of a module passes `module`) | GET /reviews/manage | filters: module, status, item_id, rating, q, page, page_size. Providers can read |
-| Approve, reject or reset | PATCH /reviews/{module}/{review_id}/moderate | Enterprise Admin or Super Admin |
-| The same, per module | PATCH /trainings/{id}/reviews/{review_id}/moderate, /products/..., /services/..., /events/... | same rules |
+| Reviews of the business, any module, with the tabs | GET /reviews/manage | filters: module, status, item_id, rating, q, page, page_size. `counts` for the tabs |
 | Reviews of one event | GET /events/{id}/reviews/manage | status, page, page_size |
-| Delete a review | DELETE .../reviews/{review_id} (every module), or DELETE /reviews/{module}/{review_id} from a row of the queue | staff of the owning business |
-| The moderation history | GET /reviews/audit | Enterprise Admin (own business), Super Admin (all). Filters: module, review_id, item_id, action, actor_user_id |
-| Training average | GET /trainings/reports/summary | admin, provider |
-| Event dashboard average | GET /events/reports/summary | admin, provider |
-| Event feedback report | GET /events/{id}/reports?type=feedback | numbers in `data` |
+| The moderation history of the business | GET /reviews/audit | filters: module, review_id, item_id, action, actor_user_id |
+| Training average, event dashboard average, event feedback report | GET /trainings/reports/summary, GET /events/reports/summary, GET /events/{id}/reports?type=feedback | |
 
-### For the Super Admin
+### Super Admin
 
-The same calls, across all businesses, including the history. The global approval page uses `GET /reviews/manage` without `module`; its business filter is the `tenant_id` parameter (each row also carries `tenant_id` and `business_name`). Delete from a row of the queue is `DELETE /reviews/{module}/{review_id}`. The history can be filtered by business with `tenant_id` too.
+| What | Call | Notes |
+|---|---|---|
+| All reviews, all enterprises | GET /reviews/manage | `tenant_id` picks one enterprise |
+| Approve, reject, move to pending | PATCH /reviews/{module}/{review_id}/moderate, or the module's own PATCH .../reviews/{review_id}/moderate | `{"action": "approved" \| "rejected" \| "pending"}` |
+| Delete any review | DELETE /reviews/{module}/{review_id}, or the module's own DELETE | written to the history |
+| The history, all enterprises | GET /reviews/audit | `tenant_id` picks one enterprise |
 
 ### Notifications
 
@@ -266,85 +255,54 @@ They use the notification feed and the socket event we already have.
 
 | Category | Sent to | When |
 |---|---|---|
-| review_submitted | the Enterprise Admin(s) of the owning business | a new review is saved (not on an edit) |
-| review_approved | the author | a moderator approves it |
-| review_rejected | the author | a moderator rejects it |
+| review_submitted | the Enterprise Admin(s) of the owning business, and a copy to the Super Admin(s) | a customer posts a review, or edits a rejected one and resubmits it (`resubmitted: true`) |
+| review_approved | the author | a Super Admin approves the review |
+| review_rejected | the author | a Super Admin rejects the review |
+| review_moderated | the owning Enterprise Admin(s) | a Super Admin approves, rejects or moves a review to pending |
+| review_deleted | the owning Enterprise Admin(s) | a Super Admin deletes a review |
 
-Putting a review back to pending, or setting the status it already has, sends nothing. Each notification has `review_id`, `entity_type`, `entity_id` and `status` so the app can open the right screen.
+Moving a review to pending sends nothing to the author, and neither does setting the status it already has. An ordinary edit sends nothing. Each notification has `review_id`, `entity_type`, `entity_id` and `status` so the app can open the right screen.
 
 
 ## 8. What is not built yet
 
 - Replies from the owner, helpful votes, photos in a review, reporting a review.
-- Settings, for example approval on or off per module, banned words, a time limit for editing.
-- A rating for an Enterprise as a whole.
+- Settings, for example banned words or a time limit for editing.
+- A rating for an Enterprise as a whole (the enterprise `rating` is still read from an old table).
 - Reminders to review after a training or event finishes.
+- Program reviews are not part of this and work as before.
 
 
 ## 9. For the backend team
 
-- Three migrations: `e9a1c3b5d7f2` adds `moderation_status` and `updated_at` to `training_reviews` (all existing rows are set to approved), `f2b4d6a8c0e1` adds `user_id` and `updated_at` to `event_feedback`, and `a3c5e7f9b1d4` creates `review_moderation_log`. Run them before the new code starts.
-- The rules shared by all modules are in `app/services/review_common.py`. Product and service share `app/services/catalog_reviews.py`. The queue is in `app/services/review_admin_service.py` and `app/api/v1/endpoints/review_admin.py`. Who may moderate is in `app/services/review_access.py`. Notifications are in `app/services/review_notifications.py` and the history in `app/services/review_audit.py`.
-- Notification recipients come from the identity service, like the training and event notifications. If the owner is not notified, check `INVIGORATE_INTERNAL_API_KEY` and the diagnostics endpoint `GET /api/v1/admin/notifications/diagnostics`.
-- Program reviews were not changed.
+- Migrations: `e9a1c3b5d7f2` adds `moderation_status` and `updated_at` to `training_reviews` (existing rows are set to approved), `f2b4d6a8c0e1` adds `user_id` and `updated_at` to `event_feedback`, `a3c5e7f9b1d4` creates `review_moderation_log`, `a9c4e1b7d3f2` adds the moderator's name to it and `d4f8a2c6e1b9` adds the customer and enterprise names. Run them before the new code starts.
+- Reviews that are pending at the time of the deploy stay pending until a Super Admin decides. Only reviews written after the deploy start as approved. If you want the old pending reviews published too, approve them from `GET /reviews/manage?status=pending`.
+- The rules shared by all modules are in `app/services/review_common.py`, including the allowed status moves and the labels. Product and service share `app/services/catalog_reviews.py`. The queue is in `app/services/review_admin_service.py` and `app/api/v1/endpoints/review_admin.py`. Who may moderate is in `app/services/review_access.py` and the `require_review_moderator` dependency. Notifications are in `app/services/review_notifications.py` and the history in `app/services/review_audit.py`.
+- Notification recipients come from the identity service, like the training and event notifications. If an admin is not notified, check `INVIGORATE_INTERNAL_API_KEY` and the diagnostics endpoint `GET /api/v1/admin/notifications/diagnostics`.
 
 
-## 10. Problems that were fixed and the ones left
+## 10. Questions for the product owner
 
-Fixed
-
-1. No list of pending product, service and event reviews: the queue now lists them.
-2. No way to read event reviews: public list and owner list added.
-3. Event reviews trusted the email in the request: the reviewer is now the logged-in user, the rating is checked and there is one review per person.
-4. The training review list showed reviewer emails: removed from public output.
-5. Product and service approve and delete did not check the business: they do now, and approve checks the review belongs to the product in the URL.
-6. Product, service and enterprise cards showed `rating` 0 from an old table: product, service and training cards now use the real approved reviews.
-7. The event approve call refused the Super Admin: allowed now.
-8. The event rating was not checked and the report average counted rejected reviews: fixed.
-9. Product and service `reviewer_name` could be an email: never returned as a name now.
-10. Training and course reviews had no approval, no comment limit and an average of 0 instead of null: fixed.
-11. Event comments had no limit: 2000 characters.
-
-Left
-
-1. Editing a review keeps it approved, so content can change after approval (open decision).
-2. Enterprise `rating` and `reviews_count` are still read from an old unconnected table.
-3. A provider is allowed to delete a review of their business.
+1. Deleting: the document lets customers delete their own review but does not say whether a Super Admin may delete someone else's. The backend allows it for the Super Admin only (Enterprise Admins cannot) and records it in the history. Is that right?
+2. Should a Super Admin be able to move a rejected review to pending? The document lists approve as the only way out of Rejected, so the backend refuses it.
+3. How should the reviewer be shown: full name, first name with the first letter of the last name, or hidden?
+4. Can a learner review right after enrolling, or only after some progress? Should an event review need a check-in? A confirmed registration includes people who never came.
+5. What happens to the reviews if a user is deleted or an item is archived?
 
 
-## 11. Questions for the product owner
+## 11. Test checklist
 
-Decided: owners approve inside a Reviews tab on each module's list page; the Super Admin uses one global approval page. Complaints and the settings page come later.
-
-Still open:
-
-1. Should an edited review need approval again?
-2. How should the reviewer be shown: full name, first name with the first letter of the last name, or hidden?
-3. Can a learner review right after enrolling, or only after some progress?
-4. Should providers (staff) be allowed to delete reviews? They can now, inside their own business.
-5. Should an event review need a check-in? A confirmed registration includes people who never came.
-6. What happens to the reviews if a user is deleted or an item is archived?
-7. Is a review with only stars acceptable everywhere?
-8. Will services get a booking record? Until then the verified mark stays off for services.
-
-
-## 12. Test checklist
-
-- A review with a rating of 0, 6 or "five" is refused with 422. A missing event rating is refused too.
-- A comment over 2000 characters is refused with 422 in every module.
-- Posting twice from the same account leaves one review, with the second text and the same status.
-- A learner who is pending, rejected, cancelled or on the waiting list cannot review a training. A user without a registration cannot review an event, even with someone else's email in the body.
-- A new review is not in the public list. After approval it appears and the average changes. After rejection it disappears again.
-- An item with no approved reviews shows "No ratings yet" (average null; product and service cards show 0 with a count of 0).
+- A review with a rating of 0, 6 or "five" is refused with 422. A comment over 2000 characters is refused with 422 in every module.
+- A new review is in the public list at once and counts in the average.
+- Posting twice from the same account leaves one review with the second text. Editing an approved review keeps it approved; editing a pending review keeps it pending; editing a rejected review makes it pending and hidden.
+- A learner who is not enrolled, and a user without a registration, cannot review a training or an event.
+- A Super Admin can reject, hold back and approve (in the allowed moves). A rejected review cannot go to pending (409). The same status again does nothing and is not in the history.
+- An Enterprise Admin and a provider get 403 when they try to approve, reject, move to pending or delete someone else's review, for their own business and for another one.
+- Rejecting or holding back a review removes it from the public list and the average; approving puts it back. An item with no approved reviews shows "No ratings yet".
+- The author can delete their own review in any status; a stranger gets 403.
+- The customer's own review shows `status_label` "Approved", "Waiting for Approval" or "Not Approved".
 - No public list or screen shows an email address.
-- A provider cannot approve or reject (403). An Enterprise Admin can. A Super Admin can too, in every module including events.
-- An Enterprise Admin cannot approve, reject or delete another business's review (403), and a review cannot be approved through another item's URL (404).
-- The queue shows only the caller's business, a Super Admin sees all, and `counts` stay the same when a status filter is used.
-- A Super Admin can pick one business in the queue and in the history (`tenant_id`) and the counts follow it; an Enterprise Admin naming another business gets 403. Every row shows the business name.
-- Delete from a queue row (`DELETE /reviews/{module}/{review_id}`) follows the same rules as the module's own delete and is written to the history.
-- `GET .../reviews/me` is null before writing and shows the status after.
-- Sorting (`highest`, `lowest`, `oldest`), the stars filter and paging change the list but not the average, the count or the star bars.
-- An author can delete their own training, event, product or service review; a stranger gets 403; staff of another business get 403.
-- Every approve, reject, reset and staff delete appears once in `GET /reviews/audit`, with who did it. Setting the same status again adds nothing. An Enterprise Admin sees only their own business; a provider gets 403.
-- The owner gets one notification for a new review and none for an edit. The author gets one for approved or rejected, none for pending, and none when the status does not change.
+- The queue shows only the caller's business, a Super Admin sees all, and `counts` stay the same when a status filter is used. Naming another business as an Enterprise Admin gives 403.
+- Every Super Admin action appears once in `GET /reviews/audit` with the enterprise, item, customer, Super Admin, previous and new status. An Enterprise Admin sees only their own business; a provider gets 403.
+- The Enterprise Admin and the Super Admin get one notification for a new review and one for a resubmission, none for an ordinary edit. The author gets one for approved or rejected, none for pending, none when nothing changes. The owning Enterprise Admins get one for each Super Admin action.
 - Dates show in the user's local time.

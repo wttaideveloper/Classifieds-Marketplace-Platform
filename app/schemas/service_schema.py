@@ -1,9 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
-from app.services.review_common import public_name
+from app.services.review_common import edit_label, is_public, public_name, status_label
 
 from app.schemas.common_schema import (
     PaginationMeta,
@@ -339,9 +339,24 @@ class ServiceReviewResponse(BaseModel):
     rating: int
     comment: str | None = None
     is_verified_purchase: bool = Field(..., description="Always false today — no booking/purchase record exists yet to verify a Service reviewer against")
-    moderation_status: str = Field(..., description="pending|approved|rejected — only approved reviews are shown in the public list")
+    moderation_status: str = Field(..., description="pending|approved|rejected — only approved reviews are shown in the public list. A new review is approved at once")
     created_at: datetime
     updated_at: datetime
+
+    @computed_field(description="What the customer sees: Approved | Waiting for Approval | Not Approved")
+    @property
+    def status_label(self) -> str:
+        return status_label(self.moderation_status)
+
+    @computed_field(description="True only for an approved review (it is the only kind in the public list)")
+    @property
+    def is_public(self) -> bool:
+        return is_public(self.moderation_status)
+
+    @computed_field(description="The edit form's button: Resubmit Review for a rejected review, else Save Changes")
+    @property
+    def edit_label(self) -> str:
+        return edit_label(self.moderation_status)
 
     @field_validator("rating", mode="before")
     @classmethod

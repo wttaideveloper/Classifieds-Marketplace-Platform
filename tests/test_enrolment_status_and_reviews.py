@@ -314,12 +314,8 @@ def test_review_create_and_list_include_participant_name(setup):
     assert create_resp.json()["participant_name"] == "Suresh Inti"
     assert create_resp.json()["participant_email"] == learner["email"]
 
-    # A new review is pending, so it is not public until an Enterprise Admin or Super Admin approves it.
-    assert create_resp.json()["moderation_status"] == "pending"
-    assert client.get(f"/api/v1/trainings/{tid}/reviews").json()["reviews"] == []
-    with sessions() as db:
-        db.query(TrainingReview).filter(TrainingReview.training_id == tid).update({"moderation_status": "approved"})
-        db.commit()
+    # A new review is approved at once, so it is public straight away.
+    assert create_resp.json()["moderation_status"] == "approved"
 
     list_resp = client.get(f"/api/v1/trainings/{tid}/reviews")
     assert list_resp.status_code == 200, list_resp.text
