@@ -63,6 +63,53 @@ def validate_action(action) -> str:
     return action
 
 
+# --- the life of a review ---------------------------------------------------------------------------------
+# A new review is approved and public at once. Only a Super Admin changes a status afterwards. A customer's edit keeps
+# the status, except that editing a rejected review sends it back to pending (a resubmission).
+
+NEW_REVIEW_STATUS = "approved"
+
+# status -> (what the customer sees, is it public)
+STATUS_LABELS = {"approved": "Approved", "pending": "Waiting for Approval", "rejected": "Not Approved"}
+
+# what a Super Admin may do to a review in each status
+ALLOWED_MOVES = {
+    "approved": ("rejected", "pending"),
+    "pending": ("approved", "rejected"),
+    "rejected": ("approved",),
+}
+
+
+def status_label(status: str | None) -> str:
+    return STATUS_LABELS.get(status or "pending", STATUS_LABELS["pending"])
+
+
+def is_public(status: str | None) -> bool:
+    return status == "approved"
+
+
+def edit_label(status: str | None) -> str:
+    """The button the customer sees on the edit form: a rejected review is resubmitted, any other is just saved."""
+    return "Resubmit Review" if status == "rejected" else "Save Changes"
+
+
+def status_after_edit(status: str | None) -> str:
+    """The status of a review after its author edited it."""
+    return "pending" if status == "rejected" else (status or "pending")
+
+
+def check_move(previous: str | None, action: str) -> bool:
+    """Is moving a review from `previous` to `action` a change? False when it is already there (nothing to do).
+    409 when a Super Admin may not make that move (a rejected review can only be approved)."""
+    current = previous if previous in ALLOWED_MOVES else "pending"
+    if current == action:
+        return False
+    if action not in ALLOWED_MOVES[current]:
+        allowed = " or ".join(ALLOWED_MOVES[current])
+        raise HTTPException(status_code=409, detail=f"A {current} review can only be moved to {allowed}")
+    return True
+
+
 def public_name(value) -> str | None:
     """A name that is safe to show to anyone. An email address is never a display name."""
     if not isinstance(value, str):

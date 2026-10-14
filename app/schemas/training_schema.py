@@ -1206,7 +1206,10 @@ class TrainingReviewResponse(BaseModel):
     participant_email: str | None = Field(None, description="Only returned to the review's author and to the training's staff; null in the public list")
     participant_name: str | None = Field(None, description="Display name from the participant's enrolment on this training — null if no matching enrolment is found")
     verified: bool = True
-    moderation_status: str = Field("pending", description="pending|approved|rejected. A new review is pending and only approved reviews are in the public list")
+    moderation_status: str = Field("pending", description="pending|approved|rejected. A new review is approved at once; only approved reviews are in the public list")
+    status_label: str | None = Field(None, description="What the customer sees: Approved | Waiting for Approval | Not Approved")
+    is_public: bool = Field(False, description="True only for an approved review")
+    edit_label: str | None = Field(None, description="The edit form's button: Resubmit Review for a rejected review, else Save Changes")
     created_at: str
     updated_at: str | None = None
 

@@ -201,18 +201,22 @@ def test_manager_list_excludes_plain_feedback(world):
 
 
 def test_moderating_from_the_list_changes_what_the_public_sees(world):
-    """The whole loop: write -> owner finds it in the list -> approves it -> it is public."""
+    """The whole loop: write (public at once) -> owner finds it in the list -> a Super Admin holds it back -> it is
+    hidden -> a Super Admin approves it -> it is public again."""
     client = client_for(world.db, staff_user(uuid4(), "customer"))  # any logged-in user may post; role is irrelevant
     make_registration(world.db, world.event, "asha@example.com")
     client_for(world.db, {"id": str(uuid4()), "role": "customer", "email": "asha@example.com"}).post(
         f"{API}/{world.event.id}/reviews", json={"participant_email": "asha@example.com", "rating": "5", "comment": "Great"}
     )
-    assert public(world).json()["count"] == 0
+    assert public(world).json()["count"] == 1
 
-    [pending] = manage(world, status="pending").json()["reviews"]
-    approve = client_for(world.db, world.owner).patch(
-        f"{API}/{world.event.id}/reviews/{pending['id']}/moderate", json={"action": "approved"}
-    )
+    [review] = manage(world, status="approved").json()["reviews"]
+    url = f"{API}/{world.event.id}/reviews/{review['id']}/moderate"
+    assert client_for(world.db, world.owner).patch(url, json={"action": "pending"}).status_code == 403   # view only
+    root = super_admin_user()   # each client_for() call re-points the shared app at its user, so ask again each time
+    assert client_for(world.db, root).patch(url, json={"action": "pending"}).status_code == 200
+    assert public(world).json()["count"] == 0
+    approve = client_for(world.db, root).patch(url, json={"action": "approved"})
     assert approve.status_code == 200
 
     body = public(world).json()

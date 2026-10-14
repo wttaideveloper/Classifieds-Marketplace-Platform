@@ -14,10 +14,16 @@ from app.services.review_common import (
     apply_list_options,
     average_rating,
     average_rating as review_average,  # get_training_summary_service has a local named average_rating
+    NEW_REVIEW_STATUS,
+    check_move,
     clean_comment,
+    edit_label,
+    is_public,
     parse_rating,
     public_name,
     rating_distribution,
+    status_after_edit,
+    status_label,
     validate_action,
 )
 
@@ -3726,6 +3732,8 @@ def _review_dict(r, *, name: str | None, include_email: bool) -> dict:
         "comment": r.comment, "participant_email": r.participant_email if include_email else None,
         "participant_name": name, "verified": True,
         "moderation_status": r.moderation_status or "pending",
+        "status_label": status_label(r.moderation_status), "is_public": is_public(r.moderation_status),
+        "edit_label": edit_label(r.moderation_status),
         "created_at": r.created_at.isoformat(),
         "updated_at": (r.updated_at or r.created_at).isoformat(),
     }
@@ -3750,17 +3758,20 @@ def create_training_review_service(db: Session, tid: UUID, data, *, access_token
         TrainingReview.participant_email == data.participant_email,
     ).first()
     is_new = existing is None
+    resubmitted = False
     if existing:
-        # Editing keeps the status the review already has.
+        # Editing keeps the status the review already has, except that a rejected review goes back to pending.
+        resubmitted = existing.moderation_status == "rejected"
         existing.rating = str(data.rating)
         existing.comment = comment
+        existing.moderation_status = status_after_edit(existing.moderation_status)
         db.commit()
         db.refresh(existing)
         r = existing
     else:
         r = TrainingReview(
             training_id=tid, participant_email=data.participant_email, rating=str(data.rating),
-            comment=comment, moderation_status="pending",
+            comment=comment, moderation_status=NEW_REVIEW_STATUS,
         )
         db.add(r)
         try:
@@ -3773,14 +3784,16 @@ def create_training_review_service(db: Session, tid: UUID, data, *, access_token
             ).first()
             if r is None:
                 raise
+            resubmitted = r.moderation_status == "rejected"
             r.rating = str(data.rating)
             r.comment = comment
+            r.moderation_status = status_after_edit(r.moderation_status)
             db.commit()
             is_new = False
         db.refresh(r)
 
-    if is_new:
-        review_notifications.notify_review_submitted("training", r.id, access_token=access_token)
+    if is_new or resubmitted:
+        review_notifications.notify_review_submitted("training", r.id, access_token=access_token, resubmitted=resubmitted)
     return _review_dict(r, name=public_name(enrolled.participant_name), include_email=True)
 
 
@@ -3847,16 +3860,19 @@ def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, ac
     if not r:
         raise HTTPException(status_code=404, detail="Review not found")
     previous = r.moderation_status
-    if previous != action:
+    changed = check_move(previous, action)
+    if changed:
         review_audit.record(
             db, module="training", review_id=r.id, item_id=training.id, item_name=training.title,
             tenant_id=(training.enterprise.tenant_id if training.enterprise else None) or training.tenant_id,
             from_status=previous, to_status=action, actor=actor, actor_role=access.role,
+            customer_name=review_audit.customer_name_of(db, "training", r, training),
+            business_name=review_audit.business_name_of(training),
         )
-    r.moderation_status = action
-    db.commit()
-    db.refresh(r)
-    if previous != action:
+        r.moderation_status = action
+        db.commit()
+        db.refresh(r)
+    if changed:
         review_notifications.notify_review_decision("training", r.id, action, access_token=access_token)
         review_notifications.notify_review_moderated(
             "training", review_id=r.id, item_id=training.id, item_name=training.title,
@@ -3876,17 +3892,19 @@ def delete_training_review_service(db: Session, tid: UUID, review_id: UUID, curr
     if not r:
         raise HTTPException(status_code=404, detail="Review not found")
     email = str((current_user or {}).get("email") or "").strip().lower()
-    announce = None  # set when a moderator (not the author) deletes it: the Super Admins are told
+    announce = None  # set when a moderator (not the author) deletes it: the owning Enterprise Admins are told
     if not email or email != (r.participant_email or "").strip().lower():
         role = str((current_user or {}).get("role") or "").lower()
-        if role not in ("admin", "provider", "super_admin"):
+        if role != "super_admin":
             raise HTTPException(status_code=403, detail="You can only delete your own review")
         owners = ((training.enterprise.tenant_id if training.enterprise else None), training.tenant_id)
-        assert_staff_in_tenant(db, current_user, access_token, *owners)
+        assert_staff_in_tenant(db, current_user, access_token, *owners)  # an active Super Admin only
         review_audit.record(
             db, module="training", review_id=r.id, item_id=training.id, item_name=training.title,
             tenant_id=next((t for t in owners if t), None), from_status=r.moderation_status, to_status="deleted",
             actor=current_user, actor_role=role,
+            customer_name=review_audit.customer_name_of(db, "training", r, training),
+            business_name=review_audit.business_name_of(training),
         )
         announce = dict(
             review_id=r.id, item_id=training.id, item_name=training.title, tenant_id=next((t for t in owners if t), None),

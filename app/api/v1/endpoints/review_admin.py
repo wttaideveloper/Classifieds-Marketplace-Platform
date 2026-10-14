@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, Request
 from sqlalchemy.orm import Session
 
-from app.core.catalog_access import get_catalog_access, require_catalog_writer
+from app.core.catalog_access import get_catalog_access, require_review_moderator
 from app.core.dependencies import extract_access_token, get_current_user
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
@@ -49,8 +49,9 @@ def list_reviews_to_moderate(
     response_model=ReviewQueueItem,
     summary="Approve, reject or reset a review (any module)",
     description=(
-        "Same rules as the per-module moderate endpoints: the Enterprise Admin of the business that owns the item, or a "
-        "Super Admin; providers are read-only. Putting a review to `approved` or `rejected` notifies its author."
+        "Same rules as the per-module moderate endpoints: Super Admin only (Enterprise Admins and providers get 403). "
+        "Allowed moves: approved -> rejected | pending, pending -> approved | rejected, rejected -> approved. Putting a "
+        "review to `approved` or `rejected` notifies its author."
     ),
 )
 def moderate_review(
@@ -59,7 +60,7 @@ def moderate_review(
     module: str = Path(..., description="training | course | product | service | event"),
     review_id: UUID = Path(...),
     db: Session = Depends(get_db),
-    access=Depends(require_catalog_writer),
+    access=Depends(require_review_moderator),
     current_user: dict = Depends(get_current_user),
 ):
     return moderate_any_review(
@@ -71,8 +72,8 @@ def moderate_review(
     "/{module}/{review_id}",
     summary="Delete a review (any module)",
     description=(
-        "Same rules as the module's own delete: the review's author, or staff (admin / provider) of the business that owns "
-        "the item, or a Super Admin. Deleting someone else's review is written to the moderation history."
+        "Same rules as the module's own delete: the review's author, or a Super Admin. Deleting someone else's review "
+        "is written to the moderation history."
     ),
 )
 def delete_review(
@@ -90,8 +91,9 @@ def delete_review(
     response_model=ReviewAuditResponse,
     summary="Moderation history",
     description=(
-        "Who approved, rejected, reset or deleted which review, and when, newest first. An Enterprise Admin sees the "
-        "history of their own business; a Super Admin sees every business. Providers are refused. `action` is the new "
+        "Which Super Admin approved, rejected, held back (pending) or deleted which review, and when, newest first, with "
+        "the enterprise, the item, the customer, the previous and the new status. An Enterprise Admin sees the history of "
+        "their own business (view only); a Super Admin sees every business. Providers are refused. `action` is the new "
         "status: approved | rejected | pending | deleted."
     ),
 )

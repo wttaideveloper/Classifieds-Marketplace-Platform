@@ -1,8 +1,10 @@
 """Review notifications, on the existing platform feed and the generic Socket.IO ``notification`` event.
 
-    review_submitted -> the Enterprise Admin(s) of the business that owns the item    (a new review was saved)
-    review_approved  -> the review's author                                           (a moderator approved it)
-    review_rejected  -> the review's author                                           (a moderator rejected it)
+    review_submitted -> the Enterprise Admin(s) of the business that owns the item, and the Super Admin(s)
+                        (a new review was posted, already approved; or a rejected one was edited and resubmitted,
+                        which is pending and waits for a Super Admin)
+    review_approved  -> the review's author                                           (a Super Admin approved it)
+    review_rejected  -> the review's author                                           (a Super Admin rejected it)
 
 Sent after the change is committed, from a background thread, and never able to break the API call that
 triggered it. Each delivery is claimed first with a unique key (notification_idempotency), so a retry cannot send
@@ -70,7 +72,7 @@ def _load(db, module: str, review_id: UUID):
 
 
 def _load_item(db, module: str, item_id):
-    """The Training / Event a review belongs to (the review itself may already be deleted)."""
+    """The Training / Product / Service / Event a review belongs to (the review itself may already be deleted)."""
     try:
         key = UUID(str(item_id))
     except (ValueError, TypeError):
@@ -79,6 +81,14 @@ def _load_item(db, module: str, item_id):
         from app.models.training_model import Training
 
         return db.get(Training, key)
+    if module == "product":
+        from app.models.product_model import Product
+
+        return db.get(Product, key)
+    if module == "service":
+        from app.models.service_model import Service
+
+        return db.get(Service, key)
     if module == "event":
         from app.models.event_model import Event
 
@@ -128,13 +138,14 @@ def _deliver(db, *, recipients, category, title, message, tenant_id, metadata, d
 
 # --- a new review -> the business's Enterprise Admin(s), and a copy for the Platform Super Admin(s) ----------
 
-# The Super Admin copy of review_submitted is for these modules only (the same scope as review_moderated).
-SUBMITTED_PLATFORM_COPY_MODULES = ("training", "event")
+# The Super Admin copy of review_submitted covers every module (a Super Admin moderates all of them).
+SUBMITTED_PLATFORM_COPY_MODULES = ("training", "product", "service", "event")
 
 
-def notify_review_submitted(module: str, review_id, *, access_token: str | None = None) -> None:
-    """Call after a NEW review has been committed (an edit of an existing review is not announced)."""
-    _dispatch(_deliver_submitted, module, str(review_id), access_token)
+def notify_review_submitted(module: str, review_id, *, access_token: str | None = None, resubmitted: bool = False) -> None:
+    """Call after a NEW review has been committed, or after the author edited a rejected one (a resubmission). An
+    ordinary edit of an existing review is not announced."""
+    _dispatch(_deliver_submitted, module, str(review_id), access_token, resubmitted)
 
 
 def _learner_name(db, module: str, review, item) -> str | None:
@@ -175,7 +186,7 @@ def _learner_name(db, module: str, review, item) -> str | None:
     return name
 
 
-def _deliver_submitted(module: str, review_id: str, access_token: str | None):
+def _deliver_submitted(module: str, review_id: str, access_token: str | None, resubmitted: bool = False):
     from app.db.database import SessionLocal
     from app.services import event_notification_service as recipients_of
 
@@ -187,15 +198,24 @@ def _deliver_submitted(module: str, review_id: str, access_token: str | None):
         recipients, tenant_id = recipients_of.resolve_enterprise_admin_user_ids(db, item, access_token=access_token)
         rating = parse_rating(review.rating)
         stars = f"{rating} star" + ("" if rating == 1 else "s") if rating else "A"
-        title, message = "New review", f'{stars} review on "{name or "your item"}" is waiting for approval.'
+        shown = f'"{name or "your item"}"'
+        if resubmitted:
+            title, message = "Review resubmitted", f"{stars} review on {shown} was edited and resubmitted. It is waiting for approval."
+        else:
+            title, message = "New review", f"{stars} review was posted on {shown}."
         metadata = {
             id_key: str(item.id), "entity_type": module, "entity_id": str(item.id), "item_id": str(item.id),
             "item_name": name, "review_id": review_id, "rating": rating, "status": review.moderation_status,
-            "learner_name": _learner_name(db, module, review, item),
+            "learner_name": _learner_name(db, module, review, item), "resubmitted": resubmitted,
         }
+        # A resubmission can happen again after the next rejection, so each one gets its own key.
+        version = ""
+        if resubmitted:
+            stamp = getattr(review, "updated_at", None) or review.created_at
+            version = f":resubmitted:{stamp.isoformat() if stamp else ''}"
         delivered = _deliver(
             db, recipients=recipients, category="review_submitted", title=title, message=message,
-            tenant_id=tenant_id, metadata=metadata, dedupe_key=f"review_submitted:{module}:{review_id}",
+            tenant_id=tenant_id, metadata=metadata, dedupe_key=f"review_submitted:{module}:{review_id}{version}",
         )
         if module in SUBMITTED_PLATFORM_COPY_MODULES:
             # The same notification for the Platform Super Admin(s), once each; anyone already told above
@@ -204,7 +224,7 @@ def _deliver_submitted(module: str, review_id: str, access_token: str | None):
             platform = [uid for uid in recipients_of.resolve_platform_admin_user_ids(access_token) if uid not in told]
             _deliver(
                 db, recipients=platform, category="review_submitted", title=title, message=message,
-                tenant_id=None, metadata=metadata, dedupe_key=f"review_submitted:{module}:{review_id}:platform",
+                tenant_id=None, metadata=metadata, dedupe_key=f"review_submitted:{module}:{review_id}{version}:platform",
             )
         return delivered
 
@@ -256,14 +276,14 @@ def _deliver_decision(module: str, review_id: str, new_status: str, access_token
 #   review_moderated -> an Enterprise Admin / provider approved, rejected or moved a review to pending
 #   review_deleted   -> an Enterprise Admin / provider permanently deleted a review
 #
-# Training and event reviews. Who is told depends on who acted:
-#   an Enterprise Admin / provider acted  -> the Platform Super Admin(s)
-#   a Platform Super Admin acted          -> the Enterprise Admin(s) who own the item (never the Super Admin)
+# All four modules. Only a Super Admin moderates a review now, so the people told are the Enterprise Admin(s) who own
+# the item (never the Super Admin who acted). The branch that told the Super Admins about an Enterprise Admin's action
+# is kept for the day such an action is possible again.
 # An author deleting their own review is not moderation and is not announced. Everything the notification needs is
 # passed in by the caller, because the review of a delete no longer exists once it is committed.
 
-MODERATION_NOTICE_MODULES = ("training", "event")
-_ID_KEY = {"training": "training_id", "event": "event_id"}
+MODERATION_NOTICE_MODULES = ("training", "product", "service", "event")
+_ID_KEY = {"training": "training_id", "product": "product_id", "service": "service_id", "event": "event_id"}
 _ROLE_LABEL = {"admin": "Enterprise Admin", "provider": "Provider", "super_admin": "Super Admin"}
 _STATUS_VERB = {"approved": "approved", "rejected": "rejected", "pending": "moved to pending"}
 
@@ -358,7 +378,8 @@ def _deliver_platform_notice(
             notice_tenant = None
         name = _actor_name(actor)
         role_label = _ROLE_LABEL.get(str(actor.get("role") or "").lower(), "A moderator")
-        who = f"{role_label} {name}" if name else (f"An {role_label}" if role_label != "A moderator" else role_label)
+        article = "An" if role_label[:1] in "AEIOU" else "A"
+        who = f"{role_label} {name}" if name else (role_label if role_label == "A moderator" else f"{article} {role_label}")
         shown = f'"{item_name}"' if item_name else f"a {module}"
         if category == "review_deleted":
             title, message = "Review deleted", f"{who} deleted a review of {shown}."

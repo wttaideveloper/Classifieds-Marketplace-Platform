@@ -1,7 +1,10 @@
-"""Who may moderate a review: the Enterprise Admin of the business that owns the item, or a Super Admin."""
+"""Who may moderate a review: a Super Admin, for every business. Enterprise Admins only look."""
 from __future__ import annotations
 
 from fastapi import HTTPException
+
+
+MODERATE_DENIED = "Only a Super Admin can moderate reviews"
 
 
 def _norm(value) -> str | None:
@@ -9,21 +12,22 @@ def _norm(value) -> str | None:
 
 
 def assert_can_moderate(access, *owner_tenant_ids) -> None:
-    """403 unless `access` (a CatalogAccess) may act on an item owned by these tenants.
-
-    Every owner tenant that is set must be the caller's tenant (an item has its enterprise's tenant and
-    sometimes its own copy of it). At least one must be set: an item with no known owner fails closed.
-    """
+    """403 unless `access` (a CatalogAccess) is a Super Admin. The owner tenants are not needed any more (a Super Admin
+    moderates every business) and are kept in the signature so the callers stay the same."""
     if access is None or access.role == "public":
         raise HTTPException(status_code=401, detail="Not authenticated")
     if access.role == "super_admin":
         return
-    if access.role != "admin":
-        raise HTTPException(status_code=403, detail="Providers are read-only; Enterprise Admin access required")
-    owners = [_norm(t) for t in owner_tenant_ids if t]
-    caller = _norm(access.tenant_id)
-    if not caller or not owners or any(owner != caller for owner in owners):
-        raise HTTPException(status_code=403, detail="Not authorized for this tenant")
+    # Enterprise Admins and providers can look at reviews but not change them.
+    raise HTTPException(status_code=403, detail=MODERATE_DENIED)
+
+
+def assert_super_admin_actor(actor: dict | None) -> None:
+    """403 unless `actor` (the signed-in user) is an active Platform Super Admin."""
+    from app.services.super_admin_identity import profile_status_is_active
+
+    if not actor or str(actor.get("role") or "").lower() != "super_admin" or not profile_status_is_active(actor):
+        raise HTTPException(status_code=403, detail=MODERATE_DENIED)
 
 
 def can_view_all_tenants(access) -> bool:

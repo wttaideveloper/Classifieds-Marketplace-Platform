@@ -1,5 +1,6 @@
 """Product/Service reviews: submit (upsert), verified-purchase detection,
-public list scoped to approved-only, delete, and moderation."""
+public list scoped to approved-only, delete, and moderation (a new review is approved at once; only a Super Admin
+moderates)."""
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,6 +23,7 @@ from app.models.service_model import Service, ServiceReview
 
 
 TENANT = uuid4()  # the business that owns the enterprise, products and services below
+ROOT = {"id": str(uuid4()), "email": "root@example.com", "role": "super_admin"}
 
 
 def _set_identity(app, identity_or_raiser):
@@ -74,9 +76,16 @@ def test_product_review_verified_purchase_and_moderation_gate(reviews_app):
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["is_verified_purchase"] is True
-    assert body["moderation_status"] == "pending"
+    assert body["moderation_status"] == "approved"
 
-    # not yet approved -> hidden from the public list
+    # approved at once -> in the public list
+    listing = client.get(f"/api/v1/products/{pid}/reviews").json()
+    assert listing["total"] == 1
+    assert listing["average_rating"] == 5.0
+
+    # a Super Admin holds it back -> hidden from the public list
+    _set_identity(client.app, lambda: ROOT)
+    client.patch(f"/api/v1/products/{pid}/reviews/{body['id']}/moderate", json={"action": "pending"})
     listing = client.get(f"/api/v1/products/{pid}/reviews").json()
     assert listing["total"] == 0
     assert listing["reviews"] == []
@@ -110,16 +119,17 @@ def test_product_review_moderation_flow(reviews_app):
 
     staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(TENANT)}
     _set_identity(client.app, lambda: staff)
+    denied = client.patch(f"/api/v1/products/{pid}/reviews/{review_id}/moderate", json={"action": "rejected"})
+    assert denied.status_code == 403 and denied.json()["detail"] == "Only a Super Admin can moderate reviews"
 
-    moderated = client.patch(f"/api/v1/products/{pid}/reviews/{review_id}/moderate", json={"action": "approved"})
-    assert moderated.status_code == 200, moderated.text
-    assert moderated.json()["moderation_status"] == "approved"
-
+    _set_identity(client.app, lambda: ROOT)
     listing = client.get(f"/api/v1/products/{pid}/reviews").json()
     assert listing["total"] == 1
     assert listing["average_rating"] == 5.0
 
-    client.patch(f"/api/v1/products/{pid}/reviews/{review_id}/moderate", json={"action": "rejected"})
+    moderated = client.patch(f"/api/v1/products/{pid}/reviews/{review_id}/moderate", json={"action": "rejected"})
+    assert moderated.status_code == 200, moderated.text
+    assert moderated.json()["moderation_status"] == "rejected"
     listing = client.get(f"/api/v1/products/{pid}/reviews").json()
     assert listing["total"] == 0
 
@@ -142,14 +152,16 @@ def test_product_review_delete_owner_vs_stranger(reviews_app):
         assert db.query(ProductReview).filter(ProductReview.id == UUID(review_id)).first() is None
 
 
-def test_product_review_staff_can_delete_others_review(reviews_app):
+def test_product_review_only_a_super_admin_can_delete_others_review(reviews_app):
     sessions, client, user, pid, _ = reviews_app
     review = client.post(f"/api/v1/products/{pid}/reviews", json={"rating": 4}).json()
     app = client.app
     staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(TENANT)}
     _set_identity(app, lambda: staff)
-    ok = client.delete(f"/api/v1/products/{pid}/reviews/{review['id']}")
-    assert ok.status_code == 200
+    assert client.delete(f"/api/v1/products/{pid}/reviews/{review['id']}").status_code == 403
+
+    _set_identity(app, lambda: ROOT)
+    assert client.delete(f"/api/v1/products/{pid}/reviews/{review['id']}").status_code == 200
 
 
 def test_product_review_requires_authentication(reviews_app):
@@ -170,13 +182,15 @@ def test_service_review_is_never_verified_and_still_works(reviews_app):
     body = response.json()
     assert body["is_verified_purchase"] is False
 
-    staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(TENANT)}
-    _set_identity(client.app, lambda: staff)
-    moderated = client.patch(f"/api/v1/services/{sid}/reviews/{body['id']}/moderate", json={"action": "approved"})
-    assert moderated.status_code == 200, moderated.text
+    assert body["moderation_status"] == "approved"
     listing = client.get(f"/api/v1/services/{sid}/reviews").json()
     assert listing["total"] == 1
     assert listing["reviews"][0]["rating"] == 4
+
+    _set_identity(client.app, lambda: ROOT)
+    moderated = client.patch(f"/api/v1/services/{sid}/reviews/{body['id']}/moderate", json={"action": "rejected"})
+    assert moderated.status_code == 200, moderated.text
+    assert client.get(f"/api/v1/services/{sid}/reviews").json()["total"] == 0
 
 
 def test_review_rejects_out_of_range_rating(reviews_app):

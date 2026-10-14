@@ -1,5 +1,5 @@
-"""Event reviews: the reviewer is the logged-in user, one review per person, validated input, moderation by the
-owning Enterprise Admin or a Super Admin, and notifications."""
+"""Event reviews: the reviewer is the logged-in user, one review per person, validated input, a new review is
+approved at once, only a Super Admin moderates, and notifications."""
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -116,7 +116,6 @@ def test_the_comment_limit_is_2000_characters(world):
 
 def test_a_second_post_updates_the_review_and_keeps_its_status(world):
     review_id = write(world, rating=5, comment="first").json()["id"]
-    assert moderate(world, review_id, "approved", staff_user(TENANT, "admin")).status_code == 200
 
     again = write(world, rating=2, comment="second")
 
@@ -154,26 +153,44 @@ def test_my_review_is_null_then_shows_the_status(world):
     write(world, rating=4)
     mine = client.get(url(world, "/me")).json()
 
-    assert mine["rating"] == "4" and mine["moderation_status"] == "pending"
+    assert mine["rating"] == "4" and mine["moderation_status"] == "approved"
+    assert mine["status_label"] == "Approved" and mine["is_public"] is True and mine["edit_label"] == "Save Changes"
     assert client_for(world.db, customer_user("other@example.com")).get(url(world, "/me")).json() is None
 
 
 # --- moderation ----------------------------------------------------------------------------------
 
-def test_the_owning_admin_and_a_super_admin_can_moderate_but_not_providers_or_other_businesses(world):
+def test_only_a_super_admin_can_moderate(world):
     review_id = write(world).json()["id"]
 
-    for user in (staff_user(TENANT, "provider"), staff_user(OTHER, "admin"), world.asha):
-        assert moderate(world, review_id, "approved", user).status_code == 403, user
-    assert moderate(world, review_id, "approved", staff_user(TENANT, "admin")).status_code == 200
+    for user in (staff_user(TENANT, "provider"), staff_user(TENANT, "admin"), staff_user(OTHER, "admin"), world.asha):
+        assert moderate(world, review_id, "rejected", user).status_code == 403, user
     assert moderate(world, review_id, "rejected", super_admin_user()).status_code == 200
-    assert moderate(world, review_id, "bogus", staff_user(TENANT, "admin")).status_code == 400
+    assert moderate(world, review_id, "bogus", super_admin_user()).status_code == 400
+    assert moderate(world, review_id, "pending", super_admin_user()).status_code == 409   # rejected -> approved only
+
+
+def test_editing_a_rejected_review_resubmits_it(world, dispatched):
+    review_id = write(world, rating=3).json()["id"]
+    moderate(world, review_id, "rejected", super_admin_user())
+    mine = client_for(world.db, world.asha).get(url(world, "/me")).json()
+    assert mine["status_label"] == "Not Approved" and mine["edit_label"] == "Resubmit Review"
+    dispatched.clear()
+
+    again = write(world, rating=4, comment="better")
+
+    assert again.json()["id"] == review_id and again.json()["moderation_status"] == "pending"
+    assert again.json()["status_label"] == "Waiting for Approval" and again.json()["is_public"] is False
+    assert client_for(world.db, None).get(url(world)).json()["count"] == 0
+    assert [(n, a) for n, a in dispatched if n == "_deliver_submitted"] == [("_deliver_submitted", ("event", review_id, None, True))]
+    assert moderate(world, review_id, "approved", super_admin_user()).status_code == 200
+    assert client_for(world.db, None).get(url(world)).json()["count"] == 1
 
 
 def test_a_super_admin_can_open_the_staff_list(world):
     write(world)
 
-    resp = client_for(world.db, super_admin_user()).get(url(world, "/manage"), params={"status": "pending"})
+    resp = client_for(world.db, super_admin_user()).get(url(world, "/manage"), params={"status": "approved"})
 
     assert resp.status_code == 200 and len(resp.json()["reviews"]) == 1
 
@@ -183,12 +200,11 @@ def test_a_feedback_row_cannot_be_moderated_as_a_review(world):
     world.db.add(row)
     world.db.commit()
 
-    assert moderate(world, row.id, "approved", staff_user(TENANT, "admin")).status_code == 404
+    assert moderate(world, row.id, "rejected", super_admin_user()).status_code == 404
 
 
 def test_the_public_list_shows_the_star_breakdown(world):
-    review_id = write(world, rating=4).json()["id"]
-    moderate(world, review_id, "approved", staff_user(TENANT, "admin"))
+    write(world, rating=4)
 
     body = client_for(world.db, None).get(url(world)).json()
 
@@ -203,9 +219,9 @@ def test_notified_on_submit_and_on_real_decisions_only(world, dispatched):
     assert [(n, a[0]) for n, a in dispatched] == [("_deliver_submitted", "event")]
     dispatched.clear()
 
-    admin = staff_user(TENANT, "admin")
-    for action in ("approved", "approved", "pending", "rejected"):
-        moderate(world, review_id, action, admin)
+    root = super_admin_user()
+    for action in ("pending", "approved", "approved", "rejected"):
+        moderate(world, review_id, action, root)
 
     # the author is told about real approve / reject decisions only (a moderator action also queues a separate
     # notice for the Super Admins; that is covered in test_review_and_discussion_notifications.py)
@@ -215,20 +231,20 @@ def test_notified_on_submit_and_on_real_decisions_only(world, dispatched):
 # --- the feedback report -------------------------------------------------------------------------
 
 def test_the_feedback_report_averages_approved_reviews_only(world):
-    admin = staff_user(TENANT, "admin")
+    admin, root = staff_user(TENANT, "admin"), super_admin_user()
     review_id = write(world, rating=4).json()["id"]
 
     def report():
         return client_for(world.db, admin).get(f"{API}/{world.event.id}/reports", params={"type": "feedback"}).json()["data"]
 
-    pending = report()
-    assert pending["total_reviews"] == 1 and pending["approved_reviews"] == 0 and pending["average_rating"] is None
-
-    moderate(world, review_id, "approved", admin)
     approved = report()
-    assert approved["approved_reviews"] == 1 and approved["average_rating"] == 4.0
+    assert approved["total_reviews"] == 1 and approved["approved_reviews"] == 1 and approved["average_rating"] == 4.0
 
-    moderate(world, review_id, "rejected", admin)
+    moderate(world, review_id, "pending", root)
+    pending = report()
+    assert pending["approved_reviews"] == 0 and pending["average_rating"] is None
+
+    moderate(world, review_id, "rejected", root)
     assert report()["average_rating"] is None
 
 

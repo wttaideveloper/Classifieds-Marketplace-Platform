@@ -32,7 +32,7 @@ from app.repository.event_repo import (
 )
 from app.repository.query_utils import build_pagination_meta
 from app.services import review_audit
-from app.services.review_common import ListOptions, apply_list_options, rating_distribution
+from app.services.review_common import ListOptions, apply_list_options, rating_distribution, status_label
 from app.schemas.event_schema import (
     EventDetailResponse,
     EventListItemResponse,
@@ -1746,12 +1746,13 @@ def create_event_review_service(db: Session, event_id: UUID, payload: dict, curr
     """Submit or update the caller's review of an Event.
 
     The reviewer is the logged-in user: the email in the body is ignored, so nobody can review as someone else.
-    They need a confirmed or attended registration. One review per person: sending it again updates it and keeps its
-    status; a new review is pending until it is approved. Rating is 1 to 5, comment at most 2000 characters.
+    They need a confirmed or attended registration. One review per person: a new review is approved and public at
+    once; sending it again updates it and keeps its status, except that a rejected review goes back to pending.
+    Rating is 1 to 5, comment at most 2000 characters.
     """
     from app.models.event_aux_models import EventFeedback, EventRegistration
     from app.services import review_notifications
-    from app.services.review_common import clean_comment, validate_rating
+    from app.services.review_common import NEW_REVIEW_STATUS, clean_comment, status_after_edit, validate_rating
 
     _get_event_or_404(db, event_id)
     email = str((current_user or {}).get("email") or "").strip()
@@ -1771,17 +1772,21 @@ def create_event_review_service(db: Session, event_id: UUID, payload: dict, curr
     user_id = _caller_user_uuid(current_user)
     existing = _own_event_review(db, event_id, user_id, email)
     if existing:
+        resubmitted = existing.moderation_status == "rejected"
         existing.rating = str(rating)
         existing.comment = comment
+        existing.moderation_status = status_after_edit(existing.moderation_status)
         if user_id is not None:
             existing.user_id = user_id
         db.commit()
         db.refresh(existing)
+        if resubmitted:
+            review_notifications.notify_review_submitted("event", existing.id, access_token=access_token, resubmitted=True)
         return existing
 
     review = EventFeedback(
         event_id=event_id, participant_email=email, user_id=user_id, rating=str(rating), comment=comment,
-        is_review=True, moderation_status="pending",
+        is_review=True, moderation_status=NEW_REVIEW_STATUS,
     )
     db.add(review)
     db.commit()
@@ -1810,9 +1815,11 @@ def get_event_feedbacks_service(db: Session, event_id: UUID, is_review: bool = F
 def moderate_review_service(db: Session, review_id: UUID, action: str, event_id: UUID | None = None, *, access_token: str | None = None, actor: dict | None = None):
     from app.models.event_aux_models import EventFeedback
     from app.services import review_notifications
-    from app.services.review_common import validate_action
+    from app.services.review_access import assert_super_admin_actor
+    from app.services.review_common import check_move, validate_action
 
     validate_action(action)
+    assert_super_admin_actor(actor)  # only a Super Admin moderates
     conditions = [EventFeedback.id == review_id, EventFeedback.is_review.is_(True)]
     if event_id is not None:
         # The route already proved ownership of ``event_id``; the review must belong to that event.
@@ -1822,17 +1829,20 @@ def moderate_review_service(db: Session, review_id: UUID, action: str, event_id:
         raise HTTPException(status_code=404, detail="Review not found")
     previous = fb.moderation_status
     event = None
-    if previous != action:
+    changed = check_move(previous, action)
+    if changed:
         event = get_event_by_id(db, fb.event_id, include_deleted=True)
         review_audit.record(
             db, module="event", review_id=fb.id, item_id=fb.event_id, item_name=getattr(event, "title", None),
             tenant_id=event_owner_tenant_id(event) if event else None, from_status=previous, to_status=action,
             actor=actor, actor_role=(actor or {}).get("role"),
+            customer_name=review_audit.customer_name_of(db, "event", fb, event) if event else None,
+            business_name=review_audit.business_name_of(event) if event else None,
         )
-    fb.moderation_status = action
-    db.commit()
-    db.refresh(fb)
-    if previous != action:
+        fb.moderation_status = action
+        db.commit()
+        db.refresh(fb)
+    if changed:
         review_notifications.notify_review_decision("event", fb.id, action, access_token=access_token)
         review_notifications.notify_review_moderated(
             "event", review_id=fb.id, item_id=fb.event_id, item_name=getattr(event, "title", None),
@@ -1843,7 +1853,7 @@ def moderate_review_service(db: Session, review_id: UUID, action: str, event_id:
 
 
 def delete_event_review_service(db: Session, event_id: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None):
-    """The review's author, or staff (admin / provider) of the business that owns the event, or a Super Admin."""
+    """The review's author, or a Super Admin."""
     from app.models.event_aux_models import EventFeedback
     from app.services.review_access import assert_staff_in_tenant
 
@@ -1856,16 +1866,18 @@ def delete_event_review_service(db: Session, event_id: UUID, review_id: UUID, cu
     user_id = _caller_user_uuid(current_user)
     email = str((current_user or {}).get("email") or "").strip().lower()
     is_author = (user_id is not None and fb.user_id == user_id) or (bool(email) and email == (fb.participant_email or "").strip().lower())
-    announce = None  # set when a moderator (not the author) deletes it: the Super Admins are told
+    announce = None  # set when a moderator (not the author) deletes it: the owning Enterprise Admins are told
     if not is_author:
         role = str((current_user or {}).get("role") or "").lower()
-        if role not in ("admin", "provider", "super_admin"):
+        if role != "super_admin":
             raise HTTPException(status_code=403, detail="You can only delete your own review")
         owner = event_owner_tenant_id(event)
-        assert_staff_in_tenant(db, current_user, access_token, owner)
+        assert_staff_in_tenant(db, current_user, access_token, owner)  # an active Super Admin only
         review_audit.record(
             db, module="event", review_id=fb.id, item_id=event.id, item_name=event.title, tenant_id=owner,
             from_status=fb.moderation_status, to_status="deleted", actor=current_user, actor_role=role,
+            customer_name=review_audit.customer_name_of(db, "event", fb, event),
+            business_name=review_audit.business_name_of(event),
         )
         announce = dict(
             review_id=fb.id, item_id=event.id, item_name=event.title, tenant_id=owner,
@@ -2017,6 +2029,7 @@ def list_event_reviews_for_managers_service(
                 "rating": _review_rating(r.rating),
                 "comment": r.comment,
                 "moderation_status": r.moderation_status or "pending",
+                "status_label": status_label(r.moderation_status),
                 "created_at": r.created_at,
             }
             for r in rows
