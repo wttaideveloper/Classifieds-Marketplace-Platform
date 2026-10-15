@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     GROUP_MAX_MEMBERS_CARE: int = 15  # confirm
     GROUP_MAX_MEMBERS_PROGRAM: int = 50  # confirm
     GROUP_MAX_ADMINS: int = 3
+    # Training groups: a Provider may create / manage a group for a training only when they are its assigned instructor
+    # (Training.instructor_id). Set to false to let every verified Provider of the clinic use every training of the
+    # clinic. Enterprise Admins always can, for the trainings of their own clinic.
+    GROUP_PROVIDER_REQUIRES_TRAINING_ASSIGNMENT: bool = True
     GROUP_EDIT_WINDOW_MINUTES: int = 15  # confirm
     # Only a provider listed as verified (POST /groups/verified-providers) can create or own a group.
     GROUP_REQUIRE_VERIFIED_PROVIDER: bool = True

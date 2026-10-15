@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import extract_access_token, get_current_user
 from app.db.database import get_db
 from app.schemas.group_chat_schema import (
+    InviteEnrolled, InviteEnrolledResponse, TrainingLearnersResponse, TrainingProvidersResponse, TrainingsForGroupsResponse,
     AcceptInvitation, AuditResponse, CloseGroup, ClinicalRecordResponse, ConsentsResponse, DataRequestCreate,
     DataRequestResponse, DeclineInvitation, EditGroupMessage, GrievanceOfficerResponse, GroupCreate, GroupListResponse,
     GroupMessageResponse, GroupMessagesResponse, GroupPreferences, GroupResponse, GroupSettingsUpdate, GroupUpdate,
@@ -22,6 +23,7 @@ from app.schemas.group_chat_schema import (
 from app.services import group_chat_compliance as compliance
 from app.services import group_chat_messages as messages
 from app.services import group_chat_service as service
+from app.services import group_chat_training as training_service
 
 router = APIRouter(tags=["Group Chat"])
 
@@ -57,6 +59,68 @@ def list_groups(
     db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
 ):
     return service.list_groups(db, current_user, kind=kind, archived=archived, search=q, page=page, page_size=page_size)
+
+
+# ---- training groups: pick a training, pick the people, create the group (docs/group-chat-training.md)
+
+@router.get(
+    "/trainings", response_model=TrainingsForGroupsResponse, summary="Trainings I can start a group for",
+    description=(
+        "Step 1 of creating a training group. Enterprise Admin: every training of the clinic. Provider: the trainings they are "
+        "assigned to (`instructor_id`), or all of the clinic's when GROUP_PROVIDER_REQUIRES_TRAINING_ASSIGNMENT is off. Verified "
+        "Providers and Enterprise Admins only. Each item says how many learners can be invited and how many groups it already has."
+    ),
+)
+def group_trainings(
+    request: Request, q: str | None = Query(None, max_length=200), status_filter: str | None = Query(None, alias="status"),
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return training_service.manageable_trainings(db, current_user, token(request), q=q, status=status_filter, page=page, page_size=page_size)
+
+
+@router.get(
+    "/trainings/{training_id}/learners", response_model=TrainingLearnersResponse, summary="Enrolled learners of a training (searchable, paged)",
+    description=(
+        "Step 2. Each row has the `user_id` to invite (null = no chat account found, `can_invite` false), the enrolment status and "
+        "`group_state` (none | invited | member | declined | left | removed). `q` searches name and email. By default only learners "
+        "who can be invited are listed; `eligible_only=false` or `enrolment_status` shows the others. `not_in_group=true` hides "
+        "everyone already in or invited to a group of this training (or to `group_id`) - use it to find people who enrolled later. "
+        "403 for a training of another clinic, or for a Provider not assigned to it."
+    ),
+)
+def group_training_learners(
+    request: Request, training_id: UUID, q: str | None = Query(None, max_length=200),
+    enrolment_status: str | None = Query(None), eligible_only: bool = True, not_in_group: bool = False, group_id: UUID | None = None,
+    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return training_service.list_learners(
+        db, current_user, training_id, token(request), q=q, enrolment_status=enrolment_status, eligible_only=eligible_only,
+        not_in_group=not_in_group, group_id=group_id, page=page, page_size=page_size,
+    )
+
+
+@router.get(
+    "/trainings/{training_id}/providers", response_model=TrainingProvidersResponse, summary="Verified Providers I can add to a training group",
+    description=(
+        "Step 3. The clinic's verified Providers. `is_training_instructor` marks the Provider the training is assigned to "
+        "(`instructor_id`); the instructor name typed in the training form is returned as text only and nobody is added from it."
+    ),
+)
+def group_training_providers(
+    request: Request, training_id: UUID, q: str | None = Query(None, max_length=200),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return training_service.list_providers(db, current_user, training_id, token(request), q=q)
+
+
+@router.get(
+    "/trainings/{training_id}/groups", response_model=GroupListResponse, summary="Groups already made for a training",
+    description="Groups of this training the caller is in; the clinic's Enterprise Admin sees all of them (details only, never messages).",
+)
+def group_training_groups(request: Request, training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return training_service.training_groups(db, current_user, training_id, token(request))
 
 
 @router.get("/invitations", response_model=InvitationsResponse, summary="My pending group invitations")
@@ -204,8 +268,22 @@ def list_members(group_id: UUID, db: Session = Depends(get_db), current_user: di
 
 @router.post("/{group_id}/members", status_code=status.HTTP_201_CREATED, summary="Invite people",
              description="Owner or admin. By named invitation only (there are no invite links). Each person must accept.")
-def invite_members(group_id: UUID, payload: InviteMembers, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return service.invite_members(db, current_user, group_id, payload)
+def invite_members(request: Request, group_id: UUID, payload: InviteMembers, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return service.invite_members(db, current_user, group_id, payload, token(request))
+
+
+@router.post(
+    "/{group_id}/members/invite-enrolled", response_model=InviteEnrolledResponse, status_code=status.HTTP_201_CREATED,
+    summary="Training groups: invite enrolled learners without sending every id",
+    description=(
+        "Owner or admin of a group linked to a training. Send `user_ids` (they must be enrolled in the training, or verified "
+        "Providers of the clinic; otherwise 422 with `invalid_user_ids`) or `all_eligible: true` (everyone eligible who is not in "
+        "or invited to this group, oldest enrolment first, up to the free places). `not_invited_group_full` counts the learners "
+        "left out because the group is full - make another group for them. Use it again later to invite people who enrolled afterwards."
+    ),
+)
+def invite_enrolled(request: Request, group_id: UUID, payload: InviteEnrolled, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return service.invite_enrolled(db, current_user, group_id, payload, token(request))
 
 
 @router.delete("/{group_id}/members/{user_id}", summary="Remove a member (or cancel an invitation)",

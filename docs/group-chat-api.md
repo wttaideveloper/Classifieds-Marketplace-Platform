@@ -13,7 +13,7 @@ A group is one conversation with several people, a name, and a group admin. In a
 
 1. Only a **verified provider** or a **clinic admin** can create a group. A patient cannot.
 2. **Nobody is added without agreeing.** An invited person sees nothing in the group until they accept.
-3. Every group is **linked to a program, an appointment series or a care episode**. There are no free-form groups.
+3. Every group is **linked to a program, an appointment series, a care episode or a training**. There are no free-form groups. Training groups have their own document: `group-chat-training.md`.
 
 There are two kinds of group:
 
@@ -70,7 +70,7 @@ Two rules that are easy to miss:
 
 ### Creating and joining
 
-1. A verified provider calls `POST /groups` with a name, the kind, the link (program, appointment series or care episode) and, optionally, people to invite.
+1. A verified provider calls `POST /groups` with a name, the kind, the link (program, appointment series, care episode or training) and, optionally, people to invite.
 2. Each invited person gets a notification. They are **not members** yet: the group does not appear in their list, and every group endpoint answers 403.
 3. The invited person opens `GET /groups/invitations/{id}`. It shows what the group is for, who the providers are, how many people can see it, and what members can see. It shows no messages.
 4. They accept with `POST /groups/{id}/accept` and `consent: true`. Someone under 18 must also send a parent's or guardian's name and relationship. The invitation text they saw is saved as their consent record.
