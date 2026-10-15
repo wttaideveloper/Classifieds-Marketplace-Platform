@@ -24,8 +24,10 @@ from app.services.review_common import (
     average_rating,
     clean_comment,
     parse_rating,
+    DELETED_STATUS,
     NEW_REVIEW_STATUS,
     check_move,
+    needs_resubmission,
     public_name,
     rating_distribution,
     status_after_edit,
@@ -79,7 +81,7 @@ def _log(db: Session, kind: str, item, review, to_status: str, actor, actor_role
 
 def _edit(db: Session, kind: str, existing, data, comment, reviewer_name, is_verified, access_token):
     """Change the author's own review. The status stays, except that a rejected review goes back to pending."""
-    was_rejected = existing.moderation_status == "rejected"
+    was_rejected = needs_resubmission(existing.moderation_status)  # rejected, or deleted by a Super Admin
     existing.rating = str(data.rating)
     existing.comment = comment
     existing.reviewer_name = reviewer_name
@@ -152,22 +154,26 @@ def delete_review(db: Session, kind: str, item, review_id: UUID, current_user: d
     review = db.query(model).filter(model.id == review_id, fk_col == item.id).first()
     if not review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
-    announce = None  # set when a moderator (not the author) deletes it: the owner's Enterprise Admins are told
     if review.user_id != user_id:
         role = str((current_user or {}).get("role") or "").lower()
         if role != "super_admin":
             raise HTTPException(status_code=403, detail="You can only delete your own review")
         assert_staff_in_tenant(db, current_user, access_token, *_owner_tenants(item))  # an active Super Admin only
-        _log(db, kind, item, review, "deleted", current_user, role)   # a Super Admin removed someone else's review
+        if review.moderation_status == DELETED_STATUS:
+            return {"message": "Review deleted"}   # already deleted: nothing to record or announce
+        # A Super Admin's delete keeps the row, marked deleted, so the author still sees it in their own review.
+        _log(db, kind, item, review, DELETED_STATUS, current_user, role)
         announce = dict(
             review_id=review.id, item_id=item.id, item_name=_item_name(kind, item),
             tenant_id=next((t for t in _owner_tenants(item) if t), None), previous_status=review.moderation_status,
             actor=current_user, actor_role=role, access_token=access_token,
         )
-    db.delete(review)
-    db.commit()
-    if announce:
+        review.moderation_status = DELETED_STATUS
+        db.commit()
         review_notifications.notify_review_deleted(kind, **announce)
+        return {"message": "Review deleted"}
+    db.delete(review)   # the author deleting their own review removes it for good
+    db.commit()
     return {"message": "Review deleted"}
 
 

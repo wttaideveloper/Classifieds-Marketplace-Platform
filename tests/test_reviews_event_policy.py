@@ -44,7 +44,7 @@ def write(world, user=None, **body):
 
 
 def moderate(world, review_id, action, user):
-    return client_for(world.db, user).patch(url(world, f"/{review_id}/moderate"), json={"action": action})
+    return client_for(world.db, user).patch(url(world, f"/{review_id}/moderate"), json={"action": action, "reason": "Test reason"})
 
 
 # --- who the reviewer is -------------------------------------------------------------------------
@@ -283,3 +283,57 @@ def test_sorting_filtering_and_paging_do_not_change_the_summary(world):
     assert public(world)[1]["pagination"] == {"total": 5, "page": 1, "page_size": 5, "total_pages": 1}
     got, body = public(world, page=2, page_size=2)
     assert got == [4, 3] and body["pagination"] == {"total": 5, "page": 2, "page_size": 2, "total_pages": 3}
+
+
+# --- a review a Super Admin deleted stays visible to its author, marked deleted ----------------------------------
+
+def delete_review(world, review_id, user):
+    return client_for(world.db, user).request("DELETE", url(world, f"/{review_id}"), json={"reason": "Test reason"})
+
+
+def test_a_review_a_super_admin_deleted_shows_as_deleted_to_its_author(world):
+    review_id = write(world, rating=5).json()["id"]
+    assert delete_review(world, review_id, super_admin_user()).status_code == 200
+
+    mine = client_for(world.db, world.asha).get(url(world, "/me")).json()
+
+    assert mine["id"] == review_id and mine["moderation_status"] == "deleted"
+    assert mine["status_label"] == "Deleted" and mine["is_public"] is False and mine["edit_label"] == "Resubmit Review"
+    public_list = client_for(world.db, None).get(url(world)).json()
+    assert public_list["count"] == 0 and public_list["average_rating"] is None
+    assert client_for(world.db, customer_user("other@example.com")).get(url(world, "/me")).json() is None
+
+
+def test_a_deleted_event_review_is_in_no_staff_tab_and_not_in_the_report(world):
+    review_id = write(world, rating=4).json()["id"]
+    admin = staff_user(TENANT, "admin")
+    delete_review(world, review_id, super_admin_user())
+
+    staff_list = client_for(world.db, admin).get(url(world, "/manage")).json()
+    report = client_for(world.db, admin).get(f"{API}/{world.event.id}/reports", params={"type": "feedback"}).json()["data"]
+
+    assert staff_list["reviews"] == [] and staff_list["counts"] == {"pending": 0, "approved": 0, "rejected": 0}
+    assert report["total_reviews"] == 0 and report["approved_reviews"] == 0 and report["average_rating"] is None
+
+
+def test_a_deleted_event_review_cannot_be_moderated_and_the_author_can_resubmit_it(world, dispatched):
+    review_id = write(world, rating=2).json()["id"]
+    delete_review(world, review_id, super_admin_user())
+    assert moderate(world, review_id, "approved", super_admin_user()).status_code == 409
+    dispatched.clear()
+
+    again = write(world, rating=4, comment="Better after all")
+
+    assert again.json()["id"] == review_id and again.json()["moderation_status"] == "pending"
+    assert [(n, a) for n, a in dispatched if n == "_deliver_submitted"] == [("_deliver_submitted", ("event", review_id, None, True))]
+    assert moderate(world, review_id, "approved", super_admin_user()).status_code == 200
+    assert client_for(world.db, None).get(url(world)).json()["count"] == 1
+
+
+def test_the_author_removes_a_deleted_event_review_for_good_and_staff_still_cannot(world):
+    review_id = write(world).json()["id"]
+    assert delete_review(world, review_id, staff_user(TENANT, "admin")).status_code == 403
+    delete_review(world, review_id, super_admin_user())
+
+    assert delete_review(world, review_id, world.asha).status_code == 200
+    assert client_for(world.db, world.asha).get(url(world, "/me")).json() is None

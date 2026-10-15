@@ -20,7 +20,7 @@ import threading
 from uuid import UUID
 
 from app.services import notification_idempotency
-from app.services.review_common import parse_rating
+from app.services.review_common import REASON_MODULES, parse_rating
 
 logger = logging.getLogger(__name__)
 
@@ -231,15 +231,15 @@ def _deliver_submitted(module: str, review_id: str, access_token: str | None, re
 
 # --- a decision -> the author ---------------------------------------------------------------------------
 
-def notify_review_decision(module: str, review_id, new_status: str, *, access_token: str | None = None) -> None:
+def notify_review_decision(module: str, review_id, new_status: str, *, access_token: str | None = None, reason: str | None = None) -> None:
     """Call after a moderator changed the status from something else to `new_status` and it was committed.
-    Only approved / rejected are announced."""
+    Only approved / rejected are announced. `reason` (training and event rejections) goes in the metadata only."""
     if new_status not in CATEGORY_BY_STATUS:
         return
-    _dispatch(_deliver_decision, module, str(review_id), new_status, access_token)
+    _dispatch(_deliver_decision, module, str(review_id), new_status, access_token, reason if new_status == "rejected" else None)
 
 
-def _deliver_decision(module: str, review_id: str, new_status: str, access_token: str | None):
+def _deliver_decision(module: str, review_id: str, new_status: str, access_token: str | None, reason: str | None = None):
     from app.db.database import SessionLocal
 
     category = CATEGORY_BY_STATUS[new_status]
@@ -265,7 +265,7 @@ def _deliver_decision(module: str, review_id: str, new_status: str, access_token
             db, recipients=[author], category=category, title=title, message=message, tenant_id=None,
             metadata={
                 id_key: str(item.id), "entity_type": module, "entity_id": str(item.id),
-                "review_id": review_id, "status": new_status,
+                "review_id": review_id, "status": new_status, "reason": reason,
             },
             dedupe_key=f"{category}:{module}:{review_id}:{version}",
         )
@@ -309,7 +309,7 @@ def _actor_name(actor: dict | None) -> str | None:
 
 def notify_review_moderated(
     module: str, *, review_id, item_id, item_name: str | None, tenant_id, previous_status: str | None,
-    new_status: str, actor: dict | None, actor_role: str | None, access_token: str | None = None,
+    new_status: str, actor: dict | None, actor_role: str | None, access_token: str | None = None, reason: str | None = None,
 ) -> None:
     """Call after a moderator changed a review's status and it was committed. Does nothing for a no-op change, for
     a Super Admin acting, or for a module other than training / event."""
@@ -318,22 +318,31 @@ def notify_review_moderated(
     _safely_notify(
         "review_moderated", module, review_id=review_id, item_id=item_id, item_name=item_name, tenant_id=tenant_id,
         previous_status=previous_status, new_status=new_status, actor=actor, actor_role=actor_role,
-        access_token=access_token,
+        access_token=access_token, reason=reason if new_status == "rejected" else None,
     )
 
 
 def notify_review_deleted(
     module: str, *, review_id, item_id, item_name: str | None, tenant_id, previous_status: str | None,
-    actor: dict | None, actor_role: str | None, access_token: str | None = None,
+    actor: dict | None, actor_role: str | None, access_token: str | None = None, reason: str | None = None,
 ) -> None:
-    """Call after a moderator (not the author) deleted a review and it was committed."""
+    """Call after a moderator (not the author) deleted a review and it was committed. Tells the owning Enterprise
+    Admin(s) and, for training and event reviews, the review's author (who still sees it marked deleted)."""
     if module not in MODERATION_NOTICE_MODULES:
         return
+    reason = reason if module in REASON_MODULES else None
     _safely_notify(
         "review_deleted", module, review_id=review_id, item_id=item_id, item_name=item_name, tenant_id=tenant_id,
         previous_status=previous_status, new_status="deleted", actor=actor, actor_role=actor_role,
-        access_token=access_token,
+        access_token=access_token, reason=reason,
     )
+    if module in REASON_MODULES:
+        try:
+            from datetime import datetime
+
+            _dispatch(_deliver_author_deleted, module, str(review_id), reason, access_token, datetime.utcnow().isoformat())
+        except Exception:
+            logger.exception("could not queue the review_deleted notification for the author")
 
 
 def _safely_notify(category: str, module: str, **fields) -> None:
@@ -357,7 +366,7 @@ def _dispatch_platform_notice(category: str, module: str, *, actor_role, actor, 
 
 def _deliver_platform_notice(
     category: str, module: str, *, review_id, item_id, item_name, tenant_id, previous_status, new_status, actor,
-    access_token, stamp,
+    access_token, stamp, reason=None,
 ):
     from app.db.database import SessionLocal
     from app.services import event_notification_service as recipients_of
@@ -393,7 +402,38 @@ def _deliver_platform_notice(
                 "previous_status": previous_status, "new_status": new_status, "action": new_status,
                 "actor_name": name, "actor_id": str(actor["id"]) if actor.get("id") else None,
                 "actor_role": actor.get("role"), "tenant_id": str(tenant_id) if tenant_id else None,
+                "reason": reason,
             },
             dedupe_key=f"{category}:{module}:{review_id}:{previous_status}>{new_status}:{stamp}",
             channels=["in_app"],
+        )
+
+
+# --- a Super Admin deleted a training / event review -> its author ---------------------------------------------------
+#
+# The author keeps seeing the review, marked deleted (my_review / GET .../reviews/me). The reason is in the metadata only:
+# the notification text is the same for everyone and the push payload never carries it.
+
+def _deliver_author_deleted(module: str, review_id: str, reason: str | None, access_token: str | None, stamp: str):
+    from app.db.database import SessionLocal
+
+    with SessionLocal() as db:
+        loaded = _load(db, module, UUID(review_id))   # the review is kept, marked deleted
+        if loaded is None:
+            return None
+        review, item, name, id_key = loaded
+        author = _author_user_id(db, module, review, item, access_token)
+        if author is None:
+            logger.info("review_deleted not sent to the author: review %s has no resolvable author", review_id)
+            return None
+        shown = f'"{name}"' if name else "your item"
+        return _deliver(
+            db, recipients=[author], category="review_deleted", title="Review deleted",
+            message=f"Your review of {shown} was deleted by an administrator.", tenant_id=None,
+            metadata={
+                id_key: str(item.id), "entity_type": module, "entity_id": str(item.id), "item_id": str(item.id),
+                "item_name": name, "review_id": review_id, "status": "deleted", "new_status": "deleted", "action": "deleted",
+                "recipient": "author", "reason": reason,
+            },
+            dedupe_key=f"review_deleted:author:{module}:{review_id}:{stamp}",
         )

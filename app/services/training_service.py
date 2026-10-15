@@ -14,8 +14,12 @@ from app.services.review_common import (
     apply_list_options,
     average_rating,
     average_rating as review_average,  # get_training_summary_service has a local named average_rating
+    DELETED_STATUS,
     NEW_REVIEW_STATUS,
     check_move,
+    clean_reason,
+    needs_resubmission,
+    not_deleted,
     clean_comment,
     edit_label,
     is_public,
@@ -3761,7 +3765,7 @@ def create_training_review_service(db: Session, tid: UUID, data, *, access_token
     resubmitted = False
     if existing:
         # Editing keeps the status the review already has, except that a rejected review goes back to pending.
-        resubmitted = existing.moderation_status == "rejected"
+        resubmitted = needs_resubmission(existing.moderation_status)   # rejected, or deleted by a Super Admin
         existing.rating = str(data.rating)
         existing.comment = comment
         existing.moderation_status = status_after_edit(existing.moderation_status)
@@ -3784,7 +3788,7 @@ def create_training_review_service(db: Session, tid: UUID, data, *, access_token
             ).first()
             if r is None:
                 raise
-            resubmitted = r.moderation_status == "rejected"
+            resubmitted = needs_resubmission(r.moderation_status)
             r.rating = str(data.rating)
             r.comment = comment
             r.moderation_status = status_after_edit(r.moderation_status)
@@ -3843,7 +3847,7 @@ def get_my_training_review_service(db: Session, tid: UUID, current_user: dict):
     return _review_dict(r, name=_reviewer_names(db, tid, {email}).get(email), include_email=True)
 
 
-def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None):
+def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None, reason: str | None = None):
     """Approve / reject / reset a review. `access` is the caller's CatalogAccess (Enterprise Admin or Super Admin)."""
     from app.models.training_model import TrainingReview
     from app.services import review_notifications
@@ -3860,6 +3864,10 @@ def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, ac
     if not r:
         raise HTTPException(status_code=404, detail="Review not found")
     previous = r.moderation_status
+    if action == "rejected":
+        reason = clean_reason(reason, "reject a review")   # a rejection always says why
+    else:
+        reason = None
     changed = check_move(previous, action)
     if changed:
         review_audit.record(
@@ -3867,22 +3875,23 @@ def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, ac
             tenant_id=(training.enterprise.tenant_id if training.enterprise else None) or training.tenant_id,
             from_status=previous, to_status=action, actor=actor, actor_role=access.role,
             customer_name=review_audit.customer_name_of(db, "training", r, training),
-            business_name=review_audit.business_name_of(training),
+            business_name=review_audit.business_name_of(training), reason=reason,
         )
         r.moderation_status = action
         db.commit()
         db.refresh(r)
     if changed:
-        review_notifications.notify_review_decision("training", r.id, action, access_token=access_token)
+        review_notifications.notify_review_decision("training", r.id, action, access_token=access_token, reason=reason)
         review_notifications.notify_review_moderated(
             "training", review_id=r.id, item_id=training.id, item_name=training.title,
             tenant_id=(training.enterprise.tenant_id if training.enterprise else None) or training.tenant_id,
             previous_status=previous, new_status=action, actor=actor, actor_role=access.role, access_token=access_token,
+            reason=reason,
         )
     return _review_dict(r, name=_reviewer_names(db, tid, {r.participant_email}).get(r.participant_email), include_email=True)
 
 
-def delete_training_review_service(db: Session, tid: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None):
+def delete_training_review_service(db: Session, tid: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None, reason: str | None = None):
     """The review's author, or staff (admin / provider) of the business that owns the training, or a Super Admin."""
     from app.models.training_model import TrainingReview
     from app.services.review_access import assert_staff_in_tenant
@@ -3892,30 +3901,35 @@ def delete_training_review_service(db: Session, tid: UUID, review_id: UUID, curr
     if not r:
         raise HTTPException(status_code=404, detail="Review not found")
     email = str((current_user or {}).get("email") or "").strip().lower()
-    announce = None  # set when a moderator (not the author) deletes it: the owning Enterprise Admins are told
     if not email or email != (r.participant_email or "").strip().lower():
         role = str((current_user or {}).get("role") or "").lower()
         if role != "super_admin":
             raise HTTPException(status_code=403, detail="You can only delete your own review")
         owners = ((training.enterprise.tenant_id if training.enterprise else None), training.tenant_id)
         assert_staff_in_tenant(db, current_user, access_token, *owners)  # an active Super Admin only
+        reason = clean_reason(reason, "delete a review")   # deleting someone else's review always says why
+        if r.moderation_status == DELETED_STATUS:
+            return {"message": "Review deleted"}   # already deleted: nothing to record or announce
+        # A Super Admin's delete keeps the row, marked deleted, so the author still sees it in `my_review`.
         review_audit.record(
             db, module="training", review_id=r.id, item_id=training.id, item_name=training.title,
-            tenant_id=next((t for t in owners if t), None), from_status=r.moderation_status, to_status="deleted",
+            tenant_id=next((t for t in owners if t), None), from_status=r.moderation_status, to_status=DELETED_STATUS,
             actor=current_user, actor_role=role,
             customer_name=review_audit.customer_name_of(db, "training", r, training),
-            business_name=review_audit.business_name_of(training),
+            business_name=review_audit.business_name_of(training), reason=reason,
         )
         announce = dict(
             review_id=r.id, item_id=training.id, item_name=training.title, tenant_id=next((t for t in owners if t), None),
-            previous_status=r.moderation_status, actor=current_user, actor_role=role, access_token=access_token,
+            previous_status=r.moderation_status, actor=current_user, actor_role=role, access_token=access_token, reason=reason,
         )
-    db.delete(r)
-    db.commit()
-    if announce:
+        r.moderation_status = DELETED_STATUS
+        db.commit()
         from app.services import review_notifications
 
         review_notifications.notify_review_deleted("training", **announce)
+        return {"message": "Review deleted"}
+    db.delete(r)   # the author deleting their own review removes it for good
+    db.commit()
     return {"message": "Review deleted"}
 
 

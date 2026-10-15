@@ -419,14 +419,15 @@ def test_approving_a_review_changes_the_public_listing_and_the_stars_at_once(wor
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-def test_a_deleted_review_is_gone_but_its_history_row_stays(world, module, audit_client):
+def test_a_review_a_super_admin_deleted_is_marked_deleted_and_has_a_history_row(world, module, audit_client):
     review = training_review(world) if module == "training" else event_review(world)
     previous, review_id = review.moderation_status, str(review.id)
 
     assert delete(world, module, user=ROOT).status_code == 200
 
     table = TrainingReview if module == "training" else EventFeedback
-    assert world.db.query(table).filter(table.id == UUID(review_id)).count() == 0
+    world.db.expire_all()
+    assert world.db.get(table, UUID(review_id)).moderation_status == "deleted"   # kept, so its author still sees it
     [row] = [r for r in history(audit_client) if r["review_id"] == review_id]
     assert row["to_status"] == "deleted" and row["from_status"] == previous
     assert row["actor_role"] == "super_admin" and row["actor_name"] == "Root" and row["created_at"]

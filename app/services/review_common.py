@@ -13,6 +13,29 @@ from fastapi import HTTPException, Query
 MODERATION_STATUSES = ("pending", "approved", "rejected")
 MAX_COMMENT_LENGTH = 2000
 
+# Training and event reviews: a Super Admin must say why when rejecting or deleting a review. The reason is kept in the
+# moderation history and sent in the notification metadata (feed and realtime event; never in the push payload).
+REASON_MODULES = ("training", "event")
+MIN_REASON_LENGTH = 3
+MAX_REASON_LENGTH = 500
+
+
+def clean_reason(raw, what: str) -> str:
+    """The moderator's reason, trimmed and on one line. 422 when it is missing, blank, not text, shorter than 3 or longer
+    than 500 characters. `what` finishes "A reason is required to ...": "reject a review", "delete a review"."""
+    if raw is None:
+        raise HTTPException(status_code=422, detail=f"A reason is required to {what}")
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=422, detail="reason must be text")
+    text = " ".join(raw.split())
+    if not text:
+        raise HTTPException(status_code=422, detail=f"A reason is required to {what}")
+    if len(text) < MIN_REASON_LENGTH:
+        raise HTTPException(status_code=422, detail=f"The reason must be at least {MIN_REASON_LENGTH} characters")
+    if len(text) > MAX_REASON_LENGTH:
+        raise HTTPException(status_code=422, detail=f"The reason must be at most {MAX_REASON_LENGTH} characters")
+    return text
+
 
 def parse_rating(raw) -> int | None:
     """A stored rating is text. Only a whole number from 1 to 5 counts; anything else is None."""
@@ -69,8 +92,14 @@ def validate_action(action) -> str:
 
 NEW_REVIEW_STATUS = "approved"
 
-# status -> (what the customer sees, is it public)
-STATUS_LABELS = {"approved": "Approved", "pending": "Waiting for Approval", "rejected": "Not Approved"}
+# A Super Admin deleting someone else's review does not erase it: the row stays with this status, hidden from every
+# public count and from the admin tabs, so the author still sees it (GET .../reviews/me, `my_review`) marked as deleted.
+# It is not a status a moderator can choose (the moderate calls take approved | rejected | pending); the author can
+# delete it for good, or edit it to resubmit it.
+DELETED_STATUS = "deleted"
+
+# status -> what the customer sees
+STATUS_LABELS = {"approved": "Approved", "pending": "Waiting for Approval", "rejected": "Not Approved", "deleted": "Deleted"}
 
 # what a Super Admin may do to a review in each status
 ALLOWED_MOVES = {
@@ -88,19 +117,33 @@ def is_public(status: str | None) -> bool:
     return status == "approved"
 
 
+def needs_resubmission(status: str | None) -> bool:
+    """A rejected or deleted review is hidden; when its author edits it, it goes back for approval."""
+    return status in ("rejected", DELETED_STATUS)
+
+
 def edit_label(status: str | None) -> str:
-    """The button the customer sees on the edit form: a rejected review is resubmitted, any other is just saved."""
-    return "Resubmit Review" if status == "rejected" else "Save Changes"
+    """The button the customer sees on the edit form: a rejected or deleted review is resubmitted, any other is just saved."""
+    return "Resubmit Review" if needs_resubmission(status) else "Save Changes"
 
 
 def status_after_edit(status: str | None) -> str:
     """The status of a review after its author edited it."""
-    return "pending" if status == "rejected" else (status or "pending")
+    return "pending" if needs_resubmission(status) else (status or "pending")
+
+
+def not_deleted(column):
+    """SQL condition: the review is not one a Super Admin deleted. For the admin tabs, counts and reports."""
+    import sqlalchemy as sa
+
+    return sa.or_(column.is_(None), column != DELETED_STATUS)
 
 
 def check_move(previous: str | None, action: str) -> bool:
     """Is moving a review from `previous` to `action` a change? False when it is already there (nothing to do).
     409 when a Super Admin may not make that move (a rejected review can only be approved)."""
+    if previous == DELETED_STATUS:
+        raise HTTPException(status_code=409, detail="A deleted review cannot be moderated. Its author can edit it to resubmit it")
     current = previous if previous in ALLOWED_MOVES else "pending"
     if current == action:
         return False

@@ -54,7 +54,7 @@ def customer_name_of(db: Session, module: str, review, item) -> str | None:
 def record(
     db: Session, *, module: str, review_id, item_id, item_name: str | None, tenant_id,
     from_status: str | None, to_status: str, actor: dict | None = None, actor_role: str | None = None,
-    customer_name: str | None = None, business_name: str | None = None,
+    customer_name: str | None = None, business_name: str | None = None, reason: str | None = None,
 ) -> None:
     """Add a history row to the current transaction (the caller commits)."""
     try:
@@ -66,6 +66,7 @@ def record(
                 actor_role=(actor_role or (actor or {}).get("role") or None),
                 actor_name=_clean_name((actor or {}).get("name")),
                 customer_name=_clean_name(customer_name), business_name=_clean_name(business_name),
+                reason=(reason or None) and reason[:500],
             ))
     except Exception:
         logger.exception("could not write the review moderation log (%s %s -> %s)", module, review_id, to_status)
@@ -116,6 +117,7 @@ def list_log(
             # the name saved when it happened; for older rows, the person's current name
             "actor_name": _clean_name(r.actor_name) or names.get(str(r.actor_user_id)),
             "customer_name": _clean_name(r.customer_name), "business_name": _clean_name(r.business_name),
+            "reason": r.reason,
             "created_at": r.created_at,
         }
         for r in rows

@@ -7,7 +7,7 @@ A new review is public the moment it is posted. Only a Super Admin changes a sta
 
 Reviews exist for trainings, products, services and events. Courses are the same as trainings, so every `/trainings/...` path also works as `/courses/...`.
 
-Deploy note for the backend team: this feature needs these migrations (`e9a1c3b5d7f2` for training reviews, `f2b4d6a8c0e1` for event reviews, `a3c5e7f9b1d4` for the moderation history, `a9c4e1b7d3f2` for the moderator's name and `d4f8a2c6e1b9` for the customer and enterprise names in the history). Run them before the new code starts. Existing training reviews are marked approved by the first migration, so they stay visible. Reviews that are already pending when you deploy stay pending until a Super Admin decides on them; only reviews written after the deploy start as approved.
+Deploy note for the backend team: this feature needs these migrations (`e9a1c3b5d7f2` for training reviews, `f2b4d6a8c0e1` for event reviews, `a3c5e7f9b1d4` for the moderation history, `a9c4e1b7d3f2` for the moderator's name, `d4f8a2c6e1b9` for the customer and enterprise names in the history and `e8b2d5f1a7c3` for the reason). Run them before the new code starts. Existing training reviews are marked approved by the first migration, so they stay visible. Reviews that are already pending when you deploy stay pending until a Super Admin decides on them; only reviews written after the deploy start as approved.
 
 
 ## 1. API list
@@ -88,10 +88,12 @@ Not available yet: replies, helpful votes, photos, reporting a review.
 - The comment is optional and can have at most 2000 characters. More than that gives 422. Spaces around it are cut, and a comment with only spaces is saved as empty.
 - A person has one review per item. Sending it again changes the old review. The server answers 201 both times, so you cannot tell new from edited by the status code.
 - A new review is saved with `moderation_status: "approved"` and is public at once. No admin has to approve it first. The public lists show approved reviews only.
+- **Reasons (trainings and events).** A Super Admin must give a `reason` to **reject** a training or event review and to **delete** someone else's training or event review. It is 3 to 500 characters (spaces around it are cut, line breaks become spaces). Missing, blank, shorter than 3 or longer than 500 gives 422 `{"detail": "A reason is required to reject a review"}` (or "... to delete a review", "The reason must be at least 3 characters", "The reason must be at most 500 characters"); a `reason` that is not text gives the usual 422 body error list. Nothing is changed when it is refused. A reason is not needed to approve or hold back (pending) a review, when an author deletes their own review, or for product and service reviews (it is ignored there). The reason is saved in the moderation history (`reason` in `GET /reviews/audit`) and sent as `metadata.reason` in the notifications (part 4).
 - Only a Super Admin changes a status. The `action` is `approved`, `rejected` or `pending`. The allowed moves are: approved to rejected or pending, pending to approved or rejected, rejected to approved. Asking for the status the review already has does nothing and returns 200. Any other move (a rejected review to pending) gives 409. An Enterprise Admin or a provider gets 403 "Only a Super Admin can moderate reviews", even for the items of their own business.
 - Editing: an approved review stays approved and the new text is public at once. A pending review stays pending. A rejected review goes back to `pending` when its author edits it (this is the resubmission), and stays hidden until a Super Admin approves it.
-- Every review answer has `status_label` for the customer ("Approved", "Waiting for Approval" or "Not Approved"), `is_public` and `edit_label` (the button on the edit form: "Save Changes", or "Resubmit Review" for a rejected review).
-- A person can delete their own review in any status. A Super Admin can delete any review. Nobody else can.
+- Every review answer has `status_label` for the customer ("Approved", "Waiting for Approval", "Not Approved" or "Deleted"), `is_public` and `edit_label` (the button on the edit form: "Save Changes", or "Resubmit Review" for a rejected or deleted review).
+- A person can delete their own review in any status; it is removed completely. A Super Admin can delete any review. Nobody else can.
+- When a **Super Admin** deletes someone else's review, the review is not erased: it gets `moderation_status: "deleted"`, disappears from every public list, count and average and from the admin tabs, and its author still gets it in `my_review` / `GET .../reviews/me` with `status_label: "Deleted"`, `is_public: false` and `edit_label: "Resubmit Review"`. The author can then edit it (it goes to `pending` for a Super Admin to decide, like a rejected review) or delete it for good (then `my_review` is `null`). A deleted review cannot be moderated (409), and deleting it again changes nothing. When the **author** deletes their own review it is removed completely.
 - `average_rating` is the mean of the approved reviews, rounded to 2 decimals. It is null when there are none, and the app shows "No ratings yet", never 0.0. (On product and service cards the field is a plain number and is 0 when there are none, so check `reviews_count`.)
 - `rating_distribution` is how many approved reviews gave each star: `{"5": 3, "4": 1, "3": 0, "2": 0, "1": 0}`.
 - Nobody sees an email address in a public list. The author sees their own email in their own review, and the business's staff see it in the moderation lists.
@@ -156,25 +158,25 @@ Response 200
   "pagination": { "total": 1, "page": 1, "page_size": 1, "total_pages": 1 }
 }
 ```
-Approved reviews only. `participant_email` is always null here. Show `participant_name`, and "Learner" when it is null. `average_rating` is null when there are none.
+Approved reviews only. `participant_email` is always null here. Show `participant_name`, and "Learner" when it is null. `average_rating` is null when there are none. A logged-in caller also gets `my_review` in this answer: their own review in any status, including `deleted` when a Super Admin deleted it. It is not counted in `reviews`, `count` or the average, and it is `null` only when the caller has no review (or removed it themselves).
 
 GET /trainings/{id} has the same approved reviews in a `reviews` list (latest 50) with id, training_id, participant_name, rating, comment and created_at, and the fields `average_rating` (null when none) and `reviews_count`.
 
 #### GET /trainings/{training_id}/reviews/me
 
-Login required. Returns the caller's own review in the same shape as the POST answer (with `moderation_status`), or `null` when they have not written one. Use it to fill the edit screen and to show the status label ("Approved", "Waiting for Approval" or "Not Approved") after the app was closed.
+Login required. Returns the caller's own review in the same shape as the POST answer (with `moderation_status`), or `null` when they have not written one. Use it to fill the edit screen and to show the status label ("Approved", "Waiting for Approval", "Not Approved" or "Deleted") after the app was closed. A review a Super Admin deleted is returned here with `moderation_status: "deleted"`.
 
 #### DELETE /trainings/{training_id}/reviews/{review_id}
 
-The author can delete their own review, whatever its status, and a Super Admin can delete any review. Response 200 `{"message": "Review deleted"}`. Anyone else, including the Enterprise Admin and the providers of the business that owns the training, gets 403 "You can only delete your own review". An unknown review, or one from another training, gives 404. When a Super Admin deletes someone else's review it is written to the moderation history and the owning Enterprise Admins are told. Also available under `/courses/...`.
+The author can delete their own review, whatever its status, and a Super Admin can delete any review. Response 200 `{"message": "Review deleted"}`. When a Super Admin deletes it, the review stays for its author with the status `deleted` (see part 2). Anyone else, including the Enterprise Admin and the providers of the business that owns the training, gets 403 "You can only delete your own review". An unknown review, or one from another training, gives 404. When a Super Admin deletes someone else's review it is written to the moderation history and the owning Enterprise Admins are told. To delete someone else's review a Super Admin sends a body `{ "reason": "Abusive language" }` (required, 3 to 500 characters, else 422). If your client cannot send a body with DELETE, use `?reason=Abusive%20language`. The author does not need a reason. Also available under `/courses/...`.
 
 #### PATCH /trainings/{training_id}/reviews/{review_id}/moderate
 
 Super Admin only.
 ```json
-{ "action": "approved" }
+{ "action": "rejected", "reason": "Contains personal details" }
 ```
-Returns the review as in the POST answer. An Enterprise Admin or a provider gets 403 "Only a Super Admin can moderate reviews". A move that is not allowed (a rejected review to pending) gives 409 "A rejected review can only be moved to approved". A review that is not on this training gives 404. An action other than approved, rejected or pending gives 400. Also available as `/courses/{training_id}/reviews/{review_id}/moderate`.
+`reason` is required when `action` is `rejected` (see part 2); for `approved` and `pending` leave it out. Returns the review as in the POST answer. An Enterprise Admin or a provider gets 403 "Only a Super Admin can moderate reviews". A move that is not allowed (a rejected review to pending) gives 409 "A rejected review can only be moved to approved". A review that is not on this training gives 404. An action other than approved, rejected or pending gives 400. Also available as `/courses/{training_id}/reviews/{review_id}/moderate`.
 
 
 ### Product and service
@@ -230,7 +232,7 @@ Login required. The caller's own review in the same shape as above (any status),
 
 #### DELETE /products/{product_id}/reviews/{review_id}
 
-The author can delete their own review. A Super Admin can delete any review. Response 200 `{"message": "Review deleted"}`. Anyone else, including the Enterprise Admin and the providers of the business that owns the product, gets 403 "You can only delete your own review". An unknown review gives 404.
+The author can delete their own review. A Super Admin can delete any review. Response 200 `{"message": "Review deleted"}`. When a Super Admin deletes it, the review stays for its author with the status `deleted` (see part 2). Anyone else, including the Enterprise Admin and the providers of the business that owns the product, gets 403 "You can only delete your own review". An unknown review gives 404.
 
 #### PATCH /products/{product_id}/reviews/{review_id}/moderate
 
@@ -299,7 +301,7 @@ Anyone can call it, no login. It returns the approved reviews of the event, newe
 
 #### DELETE /events/{event_id}/reviews/{review_id}
 
-The author can delete their own review, and a Super Admin can delete any review. Response 200 `{"message": "Review deleted"}`. Anyone else, including the Enterprise Admin and the providers of the business that owns the event, gets 403 "You can only delete your own review". An unknown review or a feedback row gives 404. A Super Admin's deletion of someone else's review is written to the moderation history.
+The author can delete their own review, and a Super Admin can delete any review. Response 200 `{"message": "Review deleted"}`. When a Super Admin deletes it, the review stays for its author with the status `deleted` (see part 2). Anyone else, including the Enterprise Admin and the providers of the business that owns the event, gets 403 "You can only delete your own review". An unknown review or a feedback row gives 404. A Super Admin's deletion of someone else's review is written to the moderation history. It needs a body `{ "reason": "…" }` (or `?reason=`), 3 to 500 characters, else 422. The author does not need a reason.
 
 #### GET /events/{event_id}/reviews/me
 
@@ -327,8 +329,9 @@ For the Enterprise Admin or the provider of the business that owns the event, or
 
 An active Super Admin only. An Enterprise Admin or a provider gets 403 "Only a Super Admin can moderate reviews".
 ```json
-{ "action": "approved" }
+{ "action": "rejected", "reason": "Not about this event" }
 ```
+`reason` is required for `rejected` (3 to 500 characters, else 422) and left out for `approved` and `pending`.
 A review that is not on this event, or a feedback row that is not a review, gives 404.
 
 #### POST /events/{event_id}/feedback and GET /events/{event_id}/feedback
@@ -393,8 +396,9 @@ Response 200
 
 Approve, reject or move to pending one review when you only have the module and the review id, for example from the queue above. Super Admin only.
 ```json
-{ "action": "approved" }
+{ "action": "rejected", "reason": "Contains personal details" }
 ```
+For a `training` or `event` review, `reason` is required when `action` is `rejected` (3 to 500 characters, else 422 with `{"detail": "A reason is required to reject a review"}`). For other actions and for `product` and `service` reviews it is not needed and is ignored.
 It returns the row in the same shape as one item of the queue. The same rules apply as for the module's own moderate API: Super Admin only (an Enterprise Admin or a provider gets 403 "Only a Super Admin can moderate reviews"), a move that is not allowed gets 409, unknown review 404, unknown module 422, unknown action 400.
 
 
@@ -402,7 +406,13 @@ It returns the row in the same shape as one item of the queue. The same rules ap
 
 Delete one review when you only have the module and the review id, for example from a row of the queue. `module` is `training` (or `course`), `product`, `service` or `event`.
 
-Same rules as the module's own delete: the author can delete their own review; a Super Admin can delete any review. Response 200 `{"message": "Review deleted"}`. Anyone else (including the Enterprise Admin of the owning business) gets 403 "You can only delete your own review", an unknown review 404, an unknown module 422. A Super Admin deleting someone else's review is written to the moderation history.
+Body (for a Super Admin deleting a **training or event** review):
+```json
+{ "reason": "Abusive language" }
+```
+The reason is required there (3 to 500 characters, else 422 `{"detail": "A reason is required to delete a review"}`). If your client cannot send a body with DELETE, send `?reason=Abusive%20language` instead. The author deleting their own review, and any product or service delete, need no reason.
+
+Same rules as the module's own delete: the author can delete their own review (removed completely); a Super Admin can delete any review (kept for its author with the status `deleted`). Response 200 `{"message": "Review deleted"}`. Anyone else (including the Enterprise Admin of the owning business) gets 403 "You can only delete your own review", an unknown review 404, an unknown module 422. A Super Admin deleting someone else's review is written to the moderation history.
 
 #### GET /reviews/audit
 
@@ -418,6 +428,7 @@ Response 200
       "id": "…", "module": "product", "review_id": "…", "item_id": "…", "item_name": "Yoga Mat Pro",
       "business_name": "Acme Wellness", "customer_name": "Ravi",
       "from_status": "approved", "to_status": "pending",
+      "reason": null,
       "actor_user_id": "…", "actor_role": "super_admin", "actor_name": "Meera Krishnan", "created_at": "…"
     }
   ],
@@ -425,6 +436,7 @@ Response 200
 }
 ```
 - A row is written every time a Super Admin really changes a status, and every time a Super Admin deletes someone else's review (`to_status: "deleted"`). Setting the status a review already has writes nothing. An author deleting their own review is not written, and neither is a customer editing or resubmitting a review. The current status of a review is the `to_status` of its latest row, or its `moderation_status`.
+- `reason` is the Super Admin's reason when they rejected or deleted a training or event review, as saved. It is `null` for approving, holding back, product and service reviews, and rows written before reasons existed. Enterprise Admins see it for their own business.
 - `business_name` (the enterprise that owns the item) and `customer_name` (who wrote the review) are saved when the action happens, so they stay the same if the names change later. They are `null` on rows written before this release, and `customer_name` is `null` when only an e-mail address is known.
 - `actor_name` is the moderator's display name, so the app needs no extra lookup. It is saved when the action happens (so it is who they were at that time). Rows written before this field existed get the person's current name when the history is read. It is `null` when no real name can be found, and it is never an e-mail address.
 - A problem writing the history never stops the moderator's action; it is logged on the server.
@@ -438,7 +450,7 @@ They use the notification feed and the Socket.IO `notification` event that alrea
 |---|---|---|
 | review_submitted | the Enterprise Admin(s) of the business that owns the item, and a copy to the Super Admin(s) | a new review is posted (it is already approved), or a customer edits a rejected review and resubmits it (it waits for a Super Admin). Any other edit does not send it again |
 | review_approved | the author | a Super Admin changes the status to approved |
-| review_rejected | the author | a Super Admin changes the status to rejected |
+| review_rejected | the author | a Super Admin changes the status to rejected. Training and event: `metadata.reason` |
 
 Putting a review back to pending sends nothing to the author, and neither does setting the status it already has.
 
@@ -449,9 +461,26 @@ What a Super Admin does is told to the owning Enterprise Admin(s), for all four 
 | Category | Sent to | When |
 |---|---|---|
 | review_moderated | the Enterprise Admin(s) who own the item | a Super Admin approves, rejects or moves a review to pending |
-| review_deleted | the Enterprise Admin(s) who own the item | a Super Admin deletes someone else's review |
+| review_deleted | the Enterprise Admin(s) who own the item | a Super Admin deletes someone else's review. Training and event: `metadata.reason` |
+| review_deleted | the author (`metadata.recipient: "author"`) | a Super Admin deletes their **training or event** review. They still see it marked deleted. `metadata.reason` |
 
 Metadata: `entity_type` (`training`, `product`, `service` or `event`), `entity_id` and `item_id` (the same), the matching `training_id`, `product_id`, `service_id` or `event_id`, `item_name`, `review_id`, `previous_status`, `new_status` (`approved`, `rejected`, `pending` or `deleted`), `action` (same as `new_status`), `actor_name`, `actor_id` and `actor_role` (`super_admin`). The Super Admin who acted is never told about their own action. Nothing is sent when the status does not change or when an author deletes their own review. `actor_name` is left out when the server cannot find the person's name (an e-mail address is never used).
+
+**Reasons in notifications (training and event only).** `metadata.reason` is the Super Admin's reason on `review_rejected` (author), on `review_moderated` when `action` is `rejected` (Enterprise Admins) and on `review_deleted` (Enterprise Admins and the author). It is in the in-app feed and the realtime `notification` event. It is **not** in the push payload (the push `data` block leaves out `reason`, as it always has), and the title and text of the notification never contain it, so nothing private shows on a lock screen. Approve and pending notifications, and all product and service notifications, carry no reason and are unchanged. The author's `review_deleted` notice is new: the text is "Your review of … was deleted by an administrator."
+
+Example `review_rejected` (to the author), title "Review not approved":
+```json
+{ "category": "review_rejected", "training_id": "8341…", "entity_type": "training", "entity_id": "8341…", "review_id": "6f8e…", "status": "rejected", "reason": "Contains personal details" }
+```
+Example `review_moderated` (to an Enterprise Admin), text "Super Admin Meera Krishnan rejected a review of \"Yoga Basics\".":
+```json
+{ "category": "review_moderated", "entity_type": "training", "entity_id": "8341…", "item_id": "8341…", "training_id": "8341…", "item_name": "Yoga Basics", "review_id": "6f8e…", "previous_status": "pending", "new_status": "rejected", "action": "rejected", "actor_name": "Meera Krishnan", "actor_id": "eae8…", "actor_role": "super_admin", "tenant_id": "ab4d…", "reason": "Contains personal details" }
+```
+Example `review_deleted` (to the author), title "Review deleted":
+```json
+{ "category": "review_deleted", "training_id": "8341…", "entity_type": "training", "entity_id": "8341…", "item_id": "8341…", "item_name": "Yoga Basics", "review_id": "6f8e…", "status": "deleted", "new_status": "deleted", "action": "deleted", "recipient": "author", "reason": "Abusive language" }
+```
+The Enterprise Admin's `review_deleted` has the same fields as `review_moderated` above, with `new_status` and `action` set to `deleted`.
 
 Every one has `metadata.category` and these fields in `metadata`: `entity_type` (training, product, service or event), `entity_id` (the item), the matching `training_id`, `product_id`, `service_id` or `event_id`, `review_id` and `status`. `review_submitted` also has `rating`.
 
@@ -496,9 +525,10 @@ Things to do in every app
 - Convert the dates to local time. They are UTC, so add "Z" to the string before you parse it.
 - Show "No ratings yet" when `average_rating` is null, and when a product or service card has `reviews_count` 0.
 - After a new review is sent, the answer has `moderation_status: "approved"`. It is already in the public list, so show "Thanks, your review is live". If the answer has `moderation_status: "pending"` (the user resubmitted a rejected review), show "Thanks, your review will be public once it has been approved".
-- To show whether the user already reviewed, call `GET .../reviews/me` when the item page opens. If it is `null` show "Write a review", otherwise show their review with `status_label` ("Approved", "Waiting for Approval" or "Not Approved") and an "Edit" button.
+- To show whether the user already reviewed, call `GET .../reviews/me` when the item page opens. If it is `null` show "Write a review", otherwise show their review with `status_label` ("Approved", "Waiting for Approval", "Not Approved" or "Deleted") and an "Edit" button.
 - The button on the edit form is the `edit_label` of the review: "Save Changes", or "Resubmit Review" when the review is rejected. The user can edit a review in every status.
 - A "Delete" button asks for a confirmation and calls DELETE; the review leaves the lists at once.
+- A review with `moderation_status: "deleted"` is shown only to its author, for example "This review was deleted by an administrator", with the "Resubmit Review" button (`edit_label`) and a "Remove" button (DELETE) that clears it. It is never in the public list, so do not look for it there.
 
 What to show for errors
 
@@ -511,6 +541,7 @@ What to show for errors
 
 For the owner screens:
 - 403 "Only a Super Admin can moderate reviews": show the reviews and the history to Enterprise Admins and providers, but hide the Approve, Reject, Move to Pending and Delete buttons. Only a Super Admin sees them.
+- 422 "A reason is required to reject a review" / "... to delete a review": for training and event reviews, ask the Super Admin for a reason (3 to 500 characters) in the Reject and Delete dialogs before you send the request, and show the server text if it still fails.
 - 409 "A rejected review can only be moved to approved": hide "Move to Pending" on a rejected review. Offer only the moves the status allows: approved gives Reject and Move to Pending, pending gives Approve and Reject, rejected gives Approve.
 
 Do not design for these yet, they do not exist: replies, helpful votes, photos, reporting a review.

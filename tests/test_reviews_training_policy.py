@@ -106,7 +106,7 @@ def anonymous(client):
 
 def moderate(client, tid, review_id, action, user, prefix="trainings"):
     as_user(client, user)
-    resp = client.patch(f"/api/v1/{prefix}/{tid}/reviews/{review_id}/moderate", json={"action": action})
+    resp = client.patch(f"/api/v1/{prefix}/{tid}/reviews/{review_id}/moderate", json={"action": action, "reason": "Test reason"})
     as_user(client, LEARNER)
     return resp
 
@@ -541,8 +541,115 @@ def test_the_author_can_delete_their_review_in_any_status_and_it_leaves_the_list
     review_id = post(client, tid).json()["id"]
     moderate(client, tid, review_id, "rejected", ROOT)
 
-    resp = client.delete(f"/api/v1/trainings/{tid}/reviews/{review_id}")
+    resp = client.request("DELETE", f"/api/v1/trainings/{tid}/reviews/{review_id}", json={"reason": "Test reason"})
 
     assert resp.status_code == 200 and resp.json() == {"message": "Review deleted"}
     assert client.get(f"/api/v1/trainings/{tid}/reviews/me").json() is None
     assert post(client, tid, rating=5).json()["moderation_status"] == "approved"   # a fresh review starts approved again
+
+
+# --- a review a Super Admin deleted stays visible to its author, marked deleted ----------------------------------
+
+def delete_as(client, tid, review_id, user):
+    as_user(client, user)
+    resp = client.request("DELETE", f"/api/v1/trainings/{tid}/reviews/{review_id}", json={"reason": "Test reason"})
+    as_user(client, LEARNER)
+    return resp
+
+
+def test_the_author_still_sees_a_review_a_super_admin_deleted_with_the_status_deleted(world):
+    client, sessions, tid = world
+    review_id = post(client, tid, rating=4).json()["id"]
+
+    assert delete_as(client, tid, review_id, ROOT).status_code == 200
+
+    mine = listing(client, tid)["my_review"]
+    assert mine["id"] == review_id and mine["moderation_status"] == "deleted"
+    assert mine["status_label"] == "Deleted" and mine["is_public"] is False and mine["edit_label"] == "Resubmit Review"
+    assert client.get(f"/api/v1/trainings/{tid}/reviews/me").json() == mine
+    with sessions() as db:
+        assert db.query(TrainingReview).count() == 1       # kept, not erased
+
+
+def test_a_deleted_review_is_not_public_and_does_not_count(world):
+    client, _, tid = world
+    review_id = post(client, tid, rating=4).json()["id"]
+    assert listing(client, tid)["count"] == 1
+
+    delete_as(client, tid, review_id, ROOT)
+
+    body = listing(client, tid)
+    assert body["reviews"] == [] and body["count"] == 0 and body["average_rating"] is None
+    assert client.get(f"/api/v1/trainings/{tid}").json()["reviews_count"] == 0
+    anonymous(client)
+    assert listing(client, tid)["my_review"] is None and listing(client, tid)["count"] == 0
+
+
+def test_only_the_author_sees_the_deleted_review(world, ):
+    client, sessions, tid = world
+    review_id = post(client, tid).json()["id"]
+    delete_as(client, tid, review_id, ROOT)
+    with sessions() as db:
+        db.add(TrainingEnrolment(training_id=tid, participant_name="Ravi", participant_email="ravi@example.com", status="enrolled"))
+        db.commit()
+
+    as_user(client, {"id": str(uuid4()), "role": "customer", "email": "ravi@example.com"})
+
+    assert listing(client, tid)["my_review"] is None and client.get(f"/api/v1/trainings/{tid}/reviews/me").json() is None
+
+
+def test_deleting_it_again_changes_nothing(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+    delete_as(client, tid, review_id, ROOT)
+
+    again = delete_as(client, tid, review_id, ROOT)
+
+    assert again.status_code == 200 and listing(client, tid)["my_review"]["moderation_status"] == "deleted"
+
+
+def test_a_deleted_review_cannot_be_moderated(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+    delete_as(client, tid, review_id, ROOT)
+
+    for action in ("approved", "rejected", "pending"):
+        resp = moderate(client, tid, review_id, action, ROOT)
+        assert resp.status_code == 409 and "deleted review cannot be moderated" in resp.json()["detail"]
+
+
+def test_the_author_can_resubmit_a_deleted_review(world, dispatched):
+    client, _, tid = world
+    review_id = post(client, tid, rating=1, comment="rude").json()["id"]
+    delete_as(client, tid, review_id, ROOT)
+    dispatched.clear()
+
+    again = post(client, tid, rating=3, comment="Fair course")
+
+    assert again.json()["id"] == review_id and again.json()["moderation_status"] == "pending"
+    assert again.json()["status_label"] == "Waiting for Approval"
+    assert listing(client, tid)["count"] == 0
+    assert [(n, a) for n, a in dispatched if n == "_deliver_submitted"] == [("_deliver_submitted", ("training", review_id, None, True))]
+    assert moderate(client, tid, review_id, "approved", ROOT).status_code == 200
+    assert listing(client, tid)["count"] == 1
+
+
+def test_the_author_can_remove_the_deleted_review_for_good(world):
+    client, sessions, tid = world
+    review_id = post(client, tid).json()["id"]
+    delete_as(client, tid, review_id, ROOT)
+
+    resp = client.request("DELETE", f"/api/v1/trainings/{tid}/reviews/{review_id}", json={"reason": "Test reason"})
+
+    assert resp.status_code == 200
+    assert listing(client, tid)["my_review"] is None
+    with sessions() as db:
+        assert db.query(TrainingReview).count() == 0
+
+
+def test_staff_still_cannot_delete_it(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+
+    assert delete_as(client, tid, review_id, staff()).status_code == 403
+    assert listing(client, tid)["my_review"]["moderation_status"] == "approved"

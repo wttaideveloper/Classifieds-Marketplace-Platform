@@ -182,7 +182,7 @@ def get_my_product_review(
     "/{product_id}/reviews/{review_id}",
     summary="Delete a review",
     description=(
-        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review."
+        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. A Super Admin's delete keeps the review for its author with moderation_status `deleted` (hidden from everyone else)."
     ),
 )
 def delete_product_review(

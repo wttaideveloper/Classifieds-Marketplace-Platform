@@ -441,3 +441,42 @@ def test_paging(world, kind, item):
     assert body["total"] == 5 and body["average_rating"] == 3.2
     assert client.get(f"/api/v1/{kind}/{iid}/reviews", params={"page_size": 101}).status_code == 422
     assert client.get(f"/api/v1/{kind}/{iid}/reviews", params={"page": 0}).status_code == 422
+
+
+# --- a review a Super Admin deleted stays visible to its author, marked deleted ----------------------------------
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_a_review_a_super_admin_deleted_shows_as_deleted_to_its_author(world, kind, item):
+    client, sessions, ids = world
+    iid = ids[item]
+    review_id = post(client, kind, iid, rating=2).json()["id"]
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 1
+
+    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 200
+
+    mine = client.get(f"/api/v1/{kind}/{iid}/reviews/me").json()
+    assert mine["id"] == review_id and mine["moderation_status"] == "deleted"
+    assert mine["status_label"] == "Deleted" and mine["is_public"] is False and mine["edit_label"] == "Resubmit Review"
+    listed = client.get(f"/api/v1/{kind}/{iid}/reviews").json()
+    assert listed["total"] == 0 and listed["average_rating"] is None and listed["reviews"] == []
+    assert client.get(f"/api/v1/{kind}/").json()["items"][0]["reviews_count"] == 0
+    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 200   # again: no change
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_a_deleted_review_cannot_be_moderated_but_can_be_resubmitted_or_removed(world, kind, item, dispatched):
+    client, _, ids = world
+    iid = ids[item]
+    review_id = post(client, kind, iid).json()["id"]
+    act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}")
+    moderate_url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
+
+    assert act(client, ROOT, "patch", moderate_url, json={"action": "approved"}).status_code == 409
+    dispatched.clear()
+    again = post(client, kind, iid, rating=4, comment="Reconsidered")
+    assert again.json()["moderation_status"] == "pending" and again.json()["status_label"] == "Waiting for Approval"
+    assert [(n, a) for n, a in dispatched if n == "_deliver_submitted"] == [("_deliver_submitted", (item, review_id, None, True))]
+
+    act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}")
+    assert client.delete(f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 200       # the author, for good
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews/me").json() is None
