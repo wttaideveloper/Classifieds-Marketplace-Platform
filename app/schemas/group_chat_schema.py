@@ -3,10 +3,10 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 GroupKind = Literal["care", "program"]
-GroupLinkType = Literal["program", "appointment_series", "care_episode"]
+GroupLinkType = Literal["program", "appointment_series", "care_episode", "training"]
 GroupRole = Literal["owner", "admin", "member"]
 MemberKind = Literal["provider", "patient"]
 MembershipStatus = Literal["invited", "active", "declined", "removed", "left"]
@@ -41,6 +41,20 @@ class GroupCreate(BaseModel):
     context_id: UUID
     invitees: list[GroupInvitee] = Field(default_factory=list)
     admins_only_posting: bool | None = Field(None, description="Default: on for a program group, off for a care group.")
+    invite_all_enrolled: bool = Field(
+        False,
+        description="Training groups only: also invite every eligible enrolled learner of the training, up to the group limit "
+                    "(the people in `invitees` come first). The answer is the group; `GET /groups/{id}/members` shows who was invited.",
+    )
+    exclude_user_ids: list[UUID] = Field(default_factory=list, description="With invite_all_enrolled: people to leave out.")
+
+    @model_validator(mode="after")
+    def _training_rules(self):
+        if self.context_type == "training" and self.kind != "program":
+            raise ValueError("A training group is a program group: send kind = program")
+        if self.invite_all_enrolled and self.context_type != "training":
+            raise ValueError("invite_all_enrolled works for training groups only")
+        return self
 
     @field_validator("name")
     @classmethod
@@ -63,6 +77,19 @@ class GroupSettingsUpdate(BaseModel):
 
 class InviteMembers(BaseModel):
     invitees: list[GroupInvitee] = Field(..., min_length=1)
+
+
+class InviteEnrolled(BaseModel):
+    """Invite learners of a training group's training without sending thousands of ids."""
+    user_ids: list[UUID] | None = Field(None, description="Invite exactly these enrolled learners (and verified providers).")
+    all_eligible: bool = Field(False, description="Invite every eligible enrolled learner who is not already in or invited to this group, up to the free places.")
+    exclude_user_ids: list[UUID] = Field(default_factory=list, description="With all_eligible: people to leave out.")
+
+    @model_validator(mode="after")
+    def _one_way(self):
+        if self.all_eligible == bool(self.user_ids):
+            raise ValueError("Send either user_ids or all_eligible = true")
+        return self
 
 
 class Guardian(BaseModel):
@@ -194,6 +221,7 @@ class GroupResponse(BaseModel):
     avatar_url: str | None = None
     context_type: str | None = None
     context_id: UUID | None = None
+    context_name: str | None = Field(None, description="Training groups: the title of the linked training.")
     tenant_id: UUID | None = None
     status: Literal["open", "closed"]
     admins_only_posting: bool
@@ -429,3 +457,72 @@ class OriginalMessageResponse(BaseModel):
     hidden_reason: str | None = None
     hidden_at: datetime | None = None
     created_at: datetime
+
+
+# ---------------------------------------------------------------- training groups
+
+class TrainingForGroupResponse(BaseModel):
+    id: UUID
+    title: str
+    status: str | None = None
+    delivery_mode: str | None = None
+    instructor_name: str | None = Field(None, description="The text typed in the training form. Information only: it is never turned into a member.")
+    instructor_user_id: UUID | None = Field(None, description="Training.instructor_id when the training has one (the assigned Provider).")
+    instructor_is_verified_provider: bool = False
+    enrolled_count: int = Field(0, description="Enrolled learners who can be invited (enrolled, active, completed, approved or attended).")
+    group_count: int = Field(0, description="Open and closed groups already linked to this training.")
+    created_at: datetime | None = None
+
+
+class TrainingsForGroupsResponse(BaseModel):
+    items: list[TrainingForGroupResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class TrainingLearnerResponse(BaseModel):
+    enrolment_id: UUID
+    name: str | None = None
+    email: str | None = Field(None, description="For the clinic's staff, as in the enrolment list.")
+    enrolment_status: str
+    user_id: UUID | None = Field(None, description="The learner's application user id: the id to invite. null = no chat account found.")
+    can_invite: bool
+    reason: str | None = Field(None, description="Why can_invite is false: not_eligible_status | no_account | already_member | already_invited.")
+    group_state: Literal["none", "invited", "member", "declined", "left", "removed"] = "none"
+    group_ids: list[UUID] = Field(default_factory=list, description="Groups of this training the learner is invited to or a member of.")
+    enrolled_at: datetime | None = None
+
+
+class TrainingLearnersResponse(BaseModel):
+    training_id: UUID
+    training_title: str
+    items: list[TrainingLearnerResponse]
+    total: int
+    page: int
+    page_size: int
+    eligible_total: int = Field(..., description="Eligible enrolments of the training, whatever the filters.")
+    max_members: int = Field(..., description="The group limit, owner and pending invitations included.")
+
+
+class TrainingProviderResponse(BaseModel):
+    user_id: UUID
+    name: str | None = None
+    registration_number: str | None = None
+    is_training_instructor: bool = False
+    is_me: bool = False
+
+
+class TrainingProvidersResponse(BaseModel):
+    training_id: UUID
+    instructor_name: str | None = None
+    items: list[TrainingProviderResponse]
+    total: int
+
+
+class InviteEnrolledResponse(BaseModel):
+    invited: list[UUID]
+    skipped: list[UUID] = Field(default_factory=list, description="Already active, already invited, or the caller.")
+    not_invited_group_full: int = Field(0, description="Eligible learners left out because the group reached its limit. Make another group for them.")
+    no_account: int = Field(0, description="Eligible enrolments with no chat account (no user id could be found).")
+    free_places: int = Field(..., description="Places left in the group after these invitations.")

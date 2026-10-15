@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from types import SimpleNamespace
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -27,6 +28,9 @@ from app.models.group_chat_model import GroupConsent
 from app.repository import chat_repo
 from app.services import group_chat_common as common
 from app.services import group_chat_notify as notify
+from app.services import group_chat_training as training_groups
+
+_UNSET = object()
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +96,19 @@ def _last_visible_message(db: Session, conversation: Conversation, member: Conve
     return query.order_by(Message.created_at.desc(), Message.id.desc()).first()
 
 
-def group_dict(db: Session, conversation: Conversation, member: ConversationParticipant | None, *, active_count: int | None = None) -> dict:
+def group_dict(
+    db: Session, conversation: Conversation, member: ConversationParticipant | None, *, active_count: int | None = None,
+    context_name=_UNSET,
+) -> dict:
     """GroupResponse as a dict, for the person `member` (None for a compliance admin who is not in the group)."""
     count = active_count if active_count is not None else common.count_active(db, conversation.id)
+    if context_name is _UNSET:
+        context_name = training_groups.context_names(db, [conversation]).get(conversation.id)
     last = _last_visible_message(db, conversation, member) if member is not None else None
     return {
         "id": conversation.id, "name": conversation.subject or "", "kind": conversation.group_kind or "program",
         "description": conversation.description, "avatar_url": conversation.avatar_url,
-        "context_type": conversation.context_type, "context_id": conversation.context_id,
+        "context_type": conversation.context_type, "context_id": conversation.context_id, "context_name": context_name,
         "tenant_id": conversation.tenant_id, "status": "closed" if conversation.status != "open" else "open",
         "admins_only_posting": bool(conversation.admins_only_posting), "created_by": conversation.created_by,
         "created_at": conversation.created_at, "member_count": count, "visibility_notice": common.visibility_notice(count),
@@ -171,14 +180,26 @@ def create_group(db: Session, current_user: dict, payload, access_token: str | N
     tenant_id = common.caller_tenant(db, current_user, access_token)
     if tenant_id is None:
         raise HTTPException(status_code=403, detail="Authenticated tenant identity required to create a group")
-    if not _link_exists(db, payload.context_type, payload.context_id, tenant_id):
+    training = None
+    if payload.context_type == training_groups.LINK_TYPE:
+        training = training_groups.assert_can_link(db, current_user, payload.context_id, access_token)
+    elif not _link_exists(db, payload.context_type, payload.context_id, tenant_id):
         raise HTTPException(status_code=422, detail=f"The linked {payload.context_type.replace('_', ' ')} was not found")
 
     invitees = [i for i in payload.invitees if i.user_id != user_id]
     unique = {i.user_id: i for i in invitees}
     invitees = list(unique.values())
+    if training is not None:
+        training_groups.check_invitees(db, training, tenant_id, [i.user_id for i in invitees], access_token)
     if 1 + len(invitees) > common.max_members(payload.kind):
         raise HTTPException(status_code=409, detail=f"A {payload.kind} group can have at most {common.max_members(payload.kind)} members")
+    if training is not None and payload.invite_all_enrolled:
+        room = common.max_members(payload.kind) - 1 - len(invitees)
+        picked, _stats = training_groups.pick_eligible(
+            db, None, training, user_id, access_token, limit=room,
+            exclude=set(payload.exclude_user_ids), already_taken={i.user_id for i in invitees},
+        )
+        invitees = invitees + picked
 
     full = common.resolve_names(db, Conversation(tenant_id=tenant_id), [i.user_id for i in invitees], current_user)
     common.assert_name_allowed(db, None, payload.name, [n for n in full.values() if n])
@@ -258,7 +279,8 @@ def list_groups(
         .filter(ConversationParticipant.conversation_id.in_(ids), ConversationParticipant.membership_status == "active")
         .group_by(ConversationParticipant.conversation_id).all()
     ) if ids else {}
-    return {"items": [group_dict(db, c, m, active_count=counts.get(c.id, 0)) for c, m in rows], "total": total}
+    titles = training_groups.context_names(db, [c for c, _ in rows])
+    return {"items": [group_dict(db, c, m, active_count=counts.get(c.id, 0), context_name=titles.get(c.id)) for c, m in rows], "total": total}
 
 
 def _invitation_dict(db: Session, conversation: Conversation, member: ConversationParticipant, current_user: dict) -> dict:
@@ -270,6 +292,9 @@ def _invitation_dict(db: Session, conversation: Conversation, member: Conversati
     if member.invited_by:
         inviter_name = names.get(str(member.invited_by))
     kind_text = "one patient's care team" if conversation.group_kind == "care" else "several patients taking part in one program"
+    if conversation.context_type == training_groups.LINK_TYPE:
+        title = training_groups.context_names(db, [conversation]).get(conversation.id)
+        kind_text = f"the learners of the training \"{title}\"" if title else "the learners of one training"
     return {
         "conversation_id": conversation.id, "name": conversation.subject or "", "kind": conversation.group_kind or "program",
         "description": conversation.description,
@@ -396,14 +421,23 @@ def list_members(db: Session, current_user: dict, conversation_id: UUID) -> dict
     return {"members": members, "total": len(members)}
 
 
-def invite_members(db: Session, current_user: dict, conversation_id: UUID, payload) -> dict:
+def invite_members(db: Session, current_user: dict, conversation_id: UUID, payload, access_token: str | None = None) -> dict:
     conversation = common.load_group(db, conversation_id)
     member = common.active_member(db, conversation, current_user)
     common.require_admin(member, "invite people")
     common.assert_open(conversation)
     unique = {i.user_id: i for i in payload.invitees}
+    if conversation.context_type == training_groups.LINK_TYPE and conversation.context_id:
+        training_groups.check_invitees(
+            db, training_groups._load_training(db, conversation.context_id), conversation.tenant_id,
+            [u for u in unique if u != member.user_id], access_token,
+        )
     _capacity_check(db, conversation, len({uid for uid in unique if uid != member.user_id}))
-    rows, skipped = _invitee_rows(db, conversation, list(unique.values()), member.user_id)
+    return _send_invitations(db, conversation, member, list(unique.values()), current_user)
+
+
+def _send_invitations(db: Session, conversation: Conversation, member: ConversationParticipant, invitees, current_user: dict) -> dict:
+    rows, skipped = _invitee_rows(db, conversation, invitees, member.user_id)
     for row in rows:
         common.audit(db, conversation, actor=current_user, action="member_invited", target_user_id=row.user_id,
                      details={"member_kind": row.member_kind, "is_minor": row.is_minor})
@@ -413,6 +447,36 @@ def invite_members(db: Session, current_user: dict, conversation_id: UUID, paylo
     for row in rows:
         notify.emit_user(row.user_id, "group_invitation", {"conversation_id": str(conversation.id)})
     return {"invited": [r.user_id for r in rows], "skipped": skipped}
+
+
+def invite_enrolled(db: Session, current_user: dict, conversation_id: UUID, payload, access_token: str | None = None) -> dict:
+    """Training groups: invite chosen learners (and Providers) by id, or every eligible enrolled learner who is not in the
+    group yet, up to the free places. A training with more learners than the group limit needs more than one group: the
+    ones left out are counted in `not_invited_group_full`."""
+    conversation = common.load_group(db, conversation_id)
+    member = common.active_member(db, conversation, current_user)
+    common.require_admin(member, "invite people")
+    common.assert_open(conversation)
+    if conversation.context_type != training_groups.LINK_TYPE or not conversation.context_id:
+        raise HTTPException(status_code=422, detail="This works for groups linked to a training only")
+    limit = common.max_members(conversation.group_kind)
+    held = common.count_active(db, conversation.id) + common.count_pending(db, conversation.id)
+    stats = {"no_account": 0, "not_invited_group_full": 0}
+    if payload.all_eligible:
+        training = training_groups._load_training(db, conversation.context_id)
+        invitees, stats = training_groups.pick_eligible(
+            db, conversation, training, member.user_id, access_token, limit=limit - held, exclude=set(payload.exclude_user_ids),
+        )
+    else:
+        wanted = {u for u in payload.user_ids if u != member.user_id}
+        training_groups.check_invitees(
+            db, training_groups._load_training(db, conversation.context_id), conversation.tenant_id, wanted, access_token,
+        )
+        _capacity_check(db, conversation, len(wanted))
+        invitees = [SimpleNamespace(user_id=u, display_name=None, is_minor=False) for u in wanted]
+    result = _send_invitations(db, conversation, member, invitees, current_user) if invitees else {"invited": [], "skipped": []}
+    free = limit - (common.count_active(db, conversation.id) + common.count_pending(db, conversation.id))
+    return {**result, "no_account": stats["no_account"], "not_invited_group_full": stats["not_invited_group_full"], "free_places": max(free, 0)}
 
 
 def accept_invitation(db: Session, current_user: dict, conversation_id: UUID, payload) -> dict:
