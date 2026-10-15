@@ -89,7 +89,7 @@ def test_every_module_logs_a_moderator_action(world, module):
     before = current.moderation_status
 
     resp = world.client.patch(
-        f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}/moderate", json={"action": target}
+        f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}/moderate", json={"action": target, "reason": "Test reason"}
     )
 
     assert resp.status_code == 200, resp.text
@@ -107,7 +107,7 @@ def test_only_real_changes_are_logged_and_each_change_adds_a_row(world):
     world.as_user(ROOT)
     url = f"/api/v1/products/{world.ids.a.product}/reviews/{rid}/moderate"
     for action in ("approved", "pending", "pending", "rejected"):
-        world.client.patch(url, json={"action": action})
+        world.client.patch(url, json={"action": action, "reason": "Test reason"})
 
     assert [(r.from_status, r.to_status) for r in history(world, review_id=UUID(rid))] == [
         ("approved", "pending"), ("pending", "rejected"),
@@ -119,7 +119,7 @@ def test_the_queue_route_logs_with_the_acting_user(world):
     admin = ROOT
     world.as_user(admin)
 
-    world.client.patch(f"/api/v1/reviews/training/{rid}/moderate", json={"action": "approved"})
+    world.client.patch(f"/api/v1/reviews/training/{rid}/moderate", json={"action": "approved", "reason": "Test reason"})
 
     [row] = history(world, review_id=UUID(rid))
     assert row.to_status == "approved" and str(row.actor_user_id) == admin["id"]
@@ -129,7 +129,7 @@ def test_a_super_admins_action_is_logged_under_the_owning_business(world):
     rid = review_id(world, "event")
     world.as_user(ROOT)
 
-    world.client.patch(f"/api/v1/events/{world.ids.a.event}/reviews/{rid}/moderate", json={"action": "approved"})
+    world.client.patch(f"/api/v1/events/{world.ids.a.event}/reviews/{rid}/moderate", json={"action": "approved", "reason": "Test reason"})
 
     [row] = history(world, review_id=UUID(rid))
     assert row.actor_role == "super_admin" and row.tenant_id == A
@@ -146,7 +146,7 @@ def test_a_problem_writing_the_history_never_blocks_the_moderator(world, monkeyp
     rid = review_id(world, "service")   # seeded as rejected
     world.as_user(ROOT)
 
-    resp = world.client.patch(f"/api/v1/services/{world.ids.a.service}/reviews/{rid}/moderate", json={"action": "approved"})
+    resp = world.client.patch(f"/api/v1/services/{world.ids.a.service}/reviews/{rid}/moderate", json={"action": "approved", "reason": "Test reason"})
 
     assert resp.status_code == 200 and resp.json()["moderation_status"] == "approved"
     world.db.expire_all()
@@ -160,7 +160,7 @@ def test_the_author_can_delete_their_own_training_or_event_review_without_a_hist
     rid = review_id(world, module)
     world.as_user(AUTHORS[module])
 
-    resp = world.client.delete(f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}")
+    resp = world.client.request("DELETE", f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}", json={"reason": "Test reason"})
 
     assert resp.status_code == 200 and resp.json() == {"message": "Review deleted"}
     assert history(world, review_id=UUID(rid)) == []
@@ -173,7 +173,7 @@ def test_a_stranger_cannot_delete_someone_elses_review(world, module):
     rid = review_id(world, module)
     world.as_user({"id": str(uuid4()), "role": "customer", "email": "stranger@example.com"})
 
-    resp = world.client.delete(f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}")
+    resp = world.client.request("DELETE", f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}", json={"reason": "Test reason"})
 
     assert resp.status_code == 403 and resp.json()["detail"] == "You can only delete your own review"
 
@@ -184,7 +184,7 @@ def test_staff_of_the_owning_business_cannot_delete_someone_elses_review(world, 
     rid = review_id(world, module)
     world.as_user(staff(role))
 
-    resp = world.client.delete(f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}")
+    resp = world.client.request("DELETE", f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}", json={"reason": "Test reason"})
 
     assert resp.status_code == 403 and resp.json()["detail"] == "You can only delete your own review"
     assert history(world, review_id=UUID(rid)) == []
@@ -195,7 +195,7 @@ def test_staff_of_another_business_cannot_delete(world, module):
     rid = review_id(world, module)
     world.as_user(staff("admin", B))
 
-    resp = world.client.delete(f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}")
+    resp = world.client.request("DELETE", f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{rid}", json={"reason": "Test reason"})
 
     assert resp.status_code == 403 and history(world, review_id=UUID(rid)) == []
 
@@ -205,7 +205,7 @@ def test_a_super_admin_can_delete_any_review(world, module):
     rid = review_id(world, module, tag="b")
     world.as_user(ROOT)
 
-    resp = world.client.delete(f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module, 'b')}/reviews/{rid}")
+    resp = world.client.request("DELETE", f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module, 'b')}/reviews/{rid}", json={"reason": "Test reason"})
 
     assert resp.status_code == 200
     [row] = history(world, review_id=UUID(rid))
@@ -218,8 +218,8 @@ def test_deleting_an_unknown_review_or_one_from_another_item_is_404(world, modul
     other = item_of(world, module, "b")
     world.as_user(ROOT)
 
-    assert world.client.delete(f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{uuid4()}").status_code == 404
-    assert world.client.delete(f"/api/v1/{MODULE_PATHS[module]}/{other}/reviews/{rid}").status_code == 404
+    assert world.client.request("DELETE", f"/api/v1/{MODULE_PATHS[module]}/{item_of(world, module)}/reviews/{uuid4()}", json={"reason": "Test reason"}).status_code == 404
+    assert world.client.request("DELETE", f"/api/v1/{MODULE_PATHS[module]}/{other}/reviews/{rid}", json={"reason": "Test reason"}).status_code == 404
 
 
 def test_an_event_feedback_row_cannot_be_deleted_as_a_review(world):
@@ -228,7 +228,7 @@ def test_an_event_feedback_row_cannot_be_deleted_as_a_review(world):
     world.db.commit()
     world.as_user(ROOT)
 
-    assert world.client.delete(f"/api/v1/events/{world.ids.a.event}/reviews/{row.id}").status_code == 404
+    assert world.client.request("DELETE", f"/api/v1/events/{world.ids.a.event}/reviews/{row.id}", json={"reason": "Test reason"}).status_code == 404
 
 
 # --- reading the history -------------------------------------------------------------------------
@@ -238,10 +238,10 @@ def make_history(world):
     training, event_, service_ = review_id(world, "training"), review_id(world, "event"), review_id(world, "service")
     rid_b = review_id(world, "training", "b")
     world.as_user(ROOT)
-    world.client.patch(f"/api/v1/reviews/training/{training}/moderate", json={"action": "approved"})
-    world.client.patch(f"/api/v1/reviews/event/{event_}/moderate", json={"action": "rejected"})
-    world.client.delete(f"/api/v1/services/{world.ids.a.service}/reviews/{service_}")
-    world.client.patch(f"/api/v1/reviews/training/{rid_b}/moderate", json={"action": "approved"})
+    world.client.patch(f"/api/v1/reviews/training/{training}/moderate", json={"action": "approved", "reason": "Test reason"})
+    world.client.patch(f"/api/v1/reviews/event/{event_}/moderate", json={"action": "rejected", "reason": "Test reason"})
+    world.client.request("DELETE", f"/api/v1/services/{world.ids.a.service}/reviews/{service_}", json={"reason": "Test reason"})
+    world.client.patch(f"/api/v1/reviews/training/{rid_b}/moderate", json={"action": "approved", "reason": "Test reason"})
 
 
 def audit(world, user, **params):
@@ -262,7 +262,7 @@ def test_an_admin_sees_the_history_of_their_own_business_newest_first(world):
     assert body["items"][2]["customer_name"] == "Learner a" and body["items"][2]["business_name"] == "Business A"
     assert set(first) == {
         "id", "module", "review_id", "item_id", "item_name", "from_status", "to_status", "actor_user_id", "actor_role",
-        "actor_name", "customer_name", "business_name", "created_at",
+        "actor_name", "customer_name", "business_name", "reason", "created_at",
     }
 
 
@@ -312,7 +312,7 @@ def test_a_super_admin_can_delete_a_review_given_only_its_module_and_id(world, m
     admin = ROOT
     world.as_user(admin)
 
-    resp = world.client.delete(f"/api/v1/reviews/{module}/{rid}")
+    resp = world.client.request("DELETE", f"/api/v1/reviews/{module}/{rid}", json={"reason": "Test reason"})
 
     assert resp.status_code == 200 and resp.json() == {"message": "Review deleted"}
     [row] = history(world, review_id=UUID(rid))
@@ -326,17 +326,17 @@ def test_the_same_delete_rules_apply_from_the_queue(world, module):
     rid = review_id(world, module)
     for user in (staff("admin", B), staff("admin"), staff("provider"), {"id": str(uuid4()), "role": "customer", "email": "stranger@example.com"}):
         world.as_user(user)
-        assert world.client.delete(f"/api/v1/reviews/{module}/{rid}").status_code == 403, user
+        assert world.client.request("DELETE", f"/api/v1/reviews/{module}/{rid}", json={"reason": "Test reason"}).status_code == 403, user
     assert history(world, review_id=UUID(rid)) == []
     world.as_user(ROOT)
-    assert world.client.delete(f"/api/v1/reviews/{module}/{rid}").status_code == 200
+    assert world.client.request("DELETE", f"/api/v1/reviews/{module}/{rid}", json={"reason": "Test reason"}).status_code == 200
 
 
 def test_the_course_name_works_and_an_author_can_delete_their_own_without_a_history_row(world):
     rid = review_id(world, "training")
     world.as_user(AUTHORS["training"])
 
-    assert world.client.delete(f"/api/v1/reviews/course/{rid}").status_code == 200
+    assert world.client.request("DELETE", f"/api/v1/reviews/course/{rid}", json={"reason": "Test reason"}).status_code == 200
     assert history(world, review_id=UUID(rid)) == []
 
 
@@ -344,6 +344,30 @@ def test_deleting_from_the_queue_unknown_things(world):
     world.as_user(ROOT)
     rid = review_id(world, "training")
 
-    assert world.client.delete(f"/api/v1/reviews/training/{uuid4()}").status_code == 404
-    assert world.client.delete(f"/api/v1/reviews/program/{rid}").status_code == 422
-    assert world.client.delete(f"/api/v1/reviews/product/{rid}").status_code == 404   # a training review id is not a product review
+    assert world.client.request("DELETE", f"/api/v1/reviews/training/{uuid4()}", json={"reason": "Test reason"}).status_code == 404
+    assert world.client.request("DELETE", f"/api/v1/reviews/program/{rid}", json={"reason": "Test reason"}).status_code == 422
+    assert world.client.request("DELETE", f"/api/v1/reviews/product/{rid}", json={"reason": "Test reason"}).status_code == 404   # a training review id is not a product review
+
+
+# --- a Super Admin's delete keeps the review, marked deleted ------------------------------------------------------
+
+@pytest.mark.parametrize("module", ["training", "product", "service", "event"])
+def test_a_deleted_review_leaves_every_tab_and_count_but_stays_in_the_history(world, module):
+    rid = review_id(world, module)
+    before = world.as_user(ROOT).get("/api/v1/reviews/manage", params={"tenant_id": str(A)}).json()["counts"]
+    world.as_user(ROOT)
+
+    assert world.client.request("DELETE", f"/api/v1/reviews/{module}/{rid}", json={"reason": "Test reason"}).status_code == 200
+
+    queue = world.client.get("/api/v1/reviews/manage", params={"tenant_id": str(A)}).json()
+    assert all(r["review_id"] != rid for r in queue["items"])
+    assert sum(queue["counts"].values()) == sum(before.values()) - 1                      # not counted as pending either
+    world.as_user(staff())
+    assert all(r["review_id"] != rid for r in world.client.get("/api/v1/reviews/manage").json()["items"])
+    [row] = history(world, review_id=UUID(rid))
+    assert row.to_status == "deleted"
+    # deleting it again records nothing new
+    world.as_user(ROOT)
+    assert world.client.request("DELETE", f"/api/v1/reviews/{module}/{rid}", json={"reason": "Test reason"}).status_code == 200
+    assert len(history(world, review_id=UUID(rid))) == 1
+    assert world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "approved", "reason": "Test reason"}).status_code == 409

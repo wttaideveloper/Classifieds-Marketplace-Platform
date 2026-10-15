@@ -25,6 +25,7 @@ class ReviewModerationLog(Base):
     actor_name = Column(String(255), nullable=True)  # display name when it happened; never an e-mail address
     customer_name = Column(String(255), nullable=True)  # the reviewer's name when it happened; never an e-mail address
     business_name = Column(String(255), nullable=True)  # the owning enterprise's name when it happened
+    reason = Column(String(500), nullable=True)  # why a Super Admin rejected or deleted a training / event review
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (Index("ix_review_moderation_log_module_created", "module", "created_at"),)

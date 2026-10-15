@@ -40,6 +40,19 @@ class ReviewQueueResponse(BaseModel):
 
 class ReviewModerateBody(BaseModel):
     action: str = Field(..., description="approved | rejected | pending")
+    reason: str | None = Field(
+        None,
+        description="Required when action is rejected on a training or event review (3 to 500 characters, else 422). "
+                    "Ignored for other actions and for product and service reviews.",
+    )
+
+
+class ReviewDeleteBody(BaseModel):
+    reason: str | None = Field(
+        None,
+        description="Required when a Super Admin deletes someone else's training or event review (3 to 500 characters, else 422). "
+                    "Not needed when the author deletes their own review, or for product and service reviews.",
+    )
 
 
 class ReviewAuditItem(BaseModel):
@@ -55,6 +68,7 @@ class ReviewAuditItem(BaseModel):
     actor_user_id: UUID | None = Field(None, description="Who did it")
     actor_role: str | None = None
     actor_name: str | None = Field(None, description="The actor's display name, never an e-mail address; null when the server cannot find one")
+    reason: str | None = Field(None, description="Why a Super Admin rejected or deleted a training or event review. null for other actions and older rows")
     customer_name: str | None = Field(None, description="Who wrote the review, as they were named when it happened; never an e-mail address. Null on older rows")
     business_name: str | None = Field(None, description="The enterprise that owns the item, as named when it happened. Null on older rows")
     created_at: datetime

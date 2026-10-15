@@ -32,11 +32,13 @@ This document explains how reviews and ratings work for the three kinds of users
    - Approved: the changes are saved and public at once. It stays approved. No new approval is needed.
    - Pending: the changes are saved and it stays pending until a Super Admin decides.
    - Rejected: the changes are saved and the review becomes **pending** (a resubmission). It stays hidden until a Super Admin approves it.
-6. The author can delete their own review in any status. A Super Admin can delete any review. Nobody else can, including the Enterprise Admin and the providers of the business.
-7. The rating is a whole number from 1 to 5. The comment is optional, at most 2000 characters.
-8. A person has one review per item. Posting again changes the old review.
-9. The average is the mean of the approved reviews. With no approved review it is empty (null) and the app shows "No ratings yet", never 0.0.
-10. Nobody sees another person's email address in a public list. Show the name only.
+6. For **training and event** reviews a Super Admin must give a reason (3 to 500 characters) to reject a review or to delete someone else's review. The reason is kept in the moderation history, shown to the Enterprise Admin in the history, and sent in the notifications to the author and the owning Enterprise Admins (in the app, not in push). Approving, holding back, product and service reviews need no reason.
+7. The author can delete their own review in any status; it is removed completely. A Super Admin can delete any review. Nobody else can, including the Enterprise Admin and the providers of the business.
+   A review deleted by a Super Admin is not erased. It gets the status **deleted**: hidden from the public, the averages and the admin tabs, but still shown to its author with the label "Deleted", so they know what happened. The author can edit it to resubmit it (it goes to pending, like a rejected review) or remove it for good. A Super Admin cannot approve, reject or pend a deleted review.
+8. The rating is a whole number from 1 to 5. The comment is optional, at most 2000 characters.
+9. A person has one review per item. Posting again changes the old review.
+10. The average is the mean of the approved reviews. With no approved review it is empty (null) and the app shows "No ratings yet", never 0.0.
+11. Nobody sees another person's email address in a public list. Show the name only.
 
 What the customer sees for each status:
 
@@ -45,6 +47,7 @@ What the customer sees for each status:
 | approved | Approved | yes |
 | pending | Waiting for Approval | no |
 | rejected | Not Approved | no |
+| deleted (by a Super Admin) | Deleted | no |
 
 The server sends these as `status_label`, together with `is_public` and `edit_label` ("Save Changes", or "Resubmit Review" for a rejected review), so the apps do not have to translate the status themselves.
 
@@ -68,7 +71,7 @@ The person who buys, enrols or attends. The reviews live in the existing Ratings
 - Write a review: 1 to 5 stars (required) and a comment (optional).
 - See their own review at any time, with its date and its status label.
 - Edit it: an approved review is saved and stays public, a pending review stays pending, a rejected review is resubmitted.
-- Delete it, after confirming.
+- Delete it, after confirming. If a Super Admin deleted it, they still see it marked "Deleted" and can resubmit or remove it.
 - Get a notification when a Super Admin approves or rejects their review.
 
 ### Flow: write a review

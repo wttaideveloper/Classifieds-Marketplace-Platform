@@ -1225,6 +1225,7 @@ class TrainingReviewListResponse(BaseModel):
 
 class TrainingReviewModerateRequest(BaseModel):
     action: str = Field(..., description="approved | rejected | pending")
+    reason: str | None = Field(None, description="Required when action is rejected (3 to 500 characters, else 422)")
 
 
 # ---- Wishlist ----

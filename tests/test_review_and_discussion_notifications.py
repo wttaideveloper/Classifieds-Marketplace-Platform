@@ -125,9 +125,9 @@ def moderate(world, module, action, user=None):
         world.as_user(user)
     if module == "training":
         r = training_review(world)
-        return world.client.patch(f"/api/v1/trainings/{world.ids.a.training}/reviews/{r.id}/moderate", json={"action": action})
+        return world.client.patch(f"/api/v1/trainings/{world.ids.a.training}/reviews/{r.id}/moderate", json={"action": action, "reason": "Test reason"})
     r = event_review(world)
-    return world.client.patch(f"/api/v1/events/{world.ids.a.event}/reviews/{r.id}/moderate", json={"action": action})
+    return world.client.patch(f"/api/v1/events/{world.ids.a.event}/reviews/{r.id}/moderate", json={"action": action, "reason": "Test reason"})
 
 
 def delete(world, module, user=None):
@@ -135,9 +135,9 @@ def delete(world, module, user=None):
         world.as_user(user)
     if module == "training":
         r = training_review(world)
-        return world.client.delete(f"/api/v1/trainings/{world.ids.a.training}/reviews/{r.id}")
+        return world.client.request("DELETE", f"/api/v1/trainings/{world.ids.a.training}/reviews/{r.id}", json={"reason": "Test reason"})
     r = event_review(world)
-    return world.client.delete(f"/api/v1/events/{world.ids.a.event}/reviews/{r.id}")
+    return world.client.request("DELETE", f"/api/v1/events/{world.ids.a.event}/reviews/{r.id}", json={"reason": "Test reason"})
 
 
 # =============================================================================================================
@@ -264,7 +264,7 @@ def test_product_and_service_reviews_are_announced_the_same_way(world, module):
     review = review_of(world, module)
     action = "rejected" if review.moderation_status != "rejected" else "approved"
 
-    resp = world.client.patch(f"/api/v1/{kind}/{getattr(world.ids.a, module)}/reviews/{review.id}/moderate", json={"action": action})
+    resp = world.client.patch(f"/api/v1/{kind}/{getattr(world.ids.a, module)}/reviews/{review.id}/moderate", json={"action": action, "reason": "Test reason"})
 
     assert resp.status_code == 200
     [notice] = moderated(world)

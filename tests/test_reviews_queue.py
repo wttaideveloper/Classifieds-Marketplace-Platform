@@ -199,7 +199,7 @@ def test_a_super_admin_can_approve_a_review_of_every_module(world, module, dispa
     rid = review_id(world, "training" if module == "course" else module)
     world.as_user(ROOT)
 
-    resp = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "approved"})
+    resp = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "approved", "reason": "Test reason"})
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["review_id"] == rid and resp.json()["moderation_status"] == "approved"
@@ -213,7 +213,7 @@ def test_an_enterprise_admin_can_look_but_not_moderate_even_their_own_items(worl
     rid = review_id(world, module)
     world.as_user(staff())   # the Enterprise Admin of business A, which owns this review's item
 
-    resp = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "rejected"})
+    resp = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "rejected", "reason": "Test reason"})
 
     assert resp.status_code == 403 and resp.json()["detail"] == "Only a Super Admin can moderate reviews"
     assert queue(world).status_code == 200   # they can still read the queue
@@ -224,7 +224,7 @@ def test_another_business_cannot_moderate_it(world, module):
     rid = review_id(world, module)
     world.as_user(staff("admin", B))
 
-    resp = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "approved"})
+    resp = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "approved", "reason": "Test reason"})
 
     assert resp.status_code == 403
 
@@ -234,15 +234,15 @@ def test_providers_and_customers_cannot_moderate_and_a_super_admin_can(world, mo
     rid = review_id(world, module)
     for user in (staff("provider"), staff("admin"), CUSTOMER):
         world.as_user(user)
-        assert world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "rejected"}).status_code == 403, user
+        assert world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "rejected", "reason": "Test reason"}).status_code == 403, user
     world.as_user(ROOT)
-    assert world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "rejected"}).status_code == 200
+    assert world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "rejected", "reason": "Test reason"}).status_code == 200
 
 
 def test_unknown_review_module_and_action(world):
     rid = review_id(world, "training")
     world.as_user(ROOT)
-    patch = lambda module, rid_, action: world.client.patch(f"/api/v1/reviews/{module}/{rid_}/moderate", json={"action": action})
+    patch = lambda module, rid_, action: world.client.patch(f"/api/v1/reviews/{module}/{rid_}/moderate", json={"action": action, "reason": "Test reason"})
 
     assert patch("training", uuid4(), "approved").status_code == 404
     assert patch("program", rid, "approved").status_code == 422
@@ -257,7 +257,7 @@ def test_the_event_feedback_rows_are_not_reviews(world):
     world.db.add(row)
     world.db.commit()
 
-    assert world.client.patch(f"/api/v1/reviews/event/{row.id}/moderate", json={"action": "approved"}).status_code == 404
+    assert world.client.patch(f"/api/v1/reviews/event/{row.id}/moderate", json={"action": "approved", "reason": "Test reason"}).status_code == 404
 
 
 # --- the business filter and the business columns (the Super Admin's global page) -----------------

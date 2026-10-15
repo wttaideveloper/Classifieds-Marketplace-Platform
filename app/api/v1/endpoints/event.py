@@ -1,7 +1,7 @@
 from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import (
@@ -1173,24 +1173,33 @@ def list_reviews_to_moderate(
     description=(
         "Active Super Admin only; Enterprise Admins and providers get 403. Allowed moves: approved -> rejected | pending, "
         "pending -> approved | rejected, rejected -> approved. The same status again does nothing; any other move is 409."
+        " For a training or event review, `reason` is required when rejecting (3 to 500 characters, else 422); it is saved in the moderation history and sent in the notification metadata."
     ),
 )
 def moderate_review(request: Request, event_id: UUID, review_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_event_admin_or_super)):
     return moderate_review_service(
         db, review_id, payload.get("action", "approved"), event_id=event_id,
-        access_token=extract_access_token(request), actor=current_user,
+        access_token=extract_access_token(request), actor=current_user, reason=payload.get("reason"),
     )
 
 
 @router.delete(
     "/{event_id}/reviews/{review_id}", summary="Delete a review",
     description=(
-        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. "
+        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. A Super Admin's delete keeps the review for its author with moderation_status `deleted` (hidden from everyone else). "
         "A Super Admin deleting someone else's review is recorded in the moderation history."
+        " To delete someone else's training or event review a Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422."
     ),
 )
-def delete_review(request: Request, event_id: UUID, review_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return delete_event_review_service(db, event_id, review_id, current_user, access_token=extract_access_token(request))
+def delete_review(
+    request: Request, event_id: UUID, review_id: UUID, payload: dict | None = Body(None),
+    reason: str | None = Query(None, description="The same as the body field `reason`, for clients that cannot send a body with DELETE"),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return delete_event_review_service(
+        db, event_id, review_id, current_user, access_token=extract_access_token(request),
+        reason=((payload or {}).get("reason") if (payload or {}).get("reason") is not None else reason),
+    )
 
 
 @router.get("/{event_id}/reports", summary="Event Reports")

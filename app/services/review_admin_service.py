@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.repository.query_utils import build_pagination_meta
 from app.services.review_access import assert_can_moderate, can_view_all_tenants
-from app.services.review_common import MODERATION_STATUSES, parse_rating, public_name, status_label, validate_action
+from app.services.review_common import MODERATION_STATUSES, not_deleted, parse_rating, public_name, status_label, validate_action
 
 _EVERYONE = type("Everyone", (), {"role": "super_admin", "tenant_id": None})()
 
@@ -199,6 +199,7 @@ def list_reviews_for_moderation(
     collected: list[dict] = []
     for current in ([wanted_module] if wanted_module else list(MODULES)):
         query, Review, Item, fk, name_col = _scoped_query(db, current, scope)
+        query = query.filter(not_deleted(Review.moderation_status))   # a review a Super Admin deleted is not in any tab
         if item_id is not None:
             query = query.filter(fk == item_id)
         if rating is not None:
@@ -234,7 +235,7 @@ def list_reviews_for_moderation(
 
 # ----------------------------------------------------------------------------- delete by module + id
 
-def delete_any_review(db: Session, module: str, review_id: UUID, current_user: dict, *, access_token: str | None = None) -> dict:
+def delete_any_review(db: Session, module: str, review_id: UUID, current_user: dict, *, access_token: str | None = None, reason: str | None = None) -> dict:
     """Delete one review given only its module and id. Same rules as the module's own delete: the author, or staff of
     the business that owns the item, or a Super Admin; deleting someone else's review is written to the history."""
     current = normalize_module(module)
@@ -248,7 +249,7 @@ def delete_any_review(db: Session, module: str, review_id: UUID, current_user: d
         review = db.get(TrainingReview, review_id)
         if review is None:
             raise HTTPException(status_code=404, detail="Review not found")
-        return delete_training_review_service(db, review.training_id, review_id, current_user, access_token=access_token)
+        return delete_training_review_service(db, review.training_id, review_id, current_user, access_token=access_token, reason=reason)
     if current == "product":
         from app.models.product_model import ProductReview
         from app.services.product_service import delete_product_review_service
@@ -271,12 +272,12 @@ def delete_any_review(db: Session, module: str, review_id: UUID, current_user: d
     review = db.get(EventFeedback, review_id)
     if review is None or not review.is_review:
         raise HTTPException(status_code=404, detail="Review not found")
-    return delete_event_review_service(db, review.event_id, review_id, current_user, access_token=access_token)
+    return delete_event_review_service(db, review.event_id, review_id, current_user, access_token=access_token, reason=reason)
 
 
 # ----------------------------------------------------------------------------- moderate by module + id
 
-def moderate_any_review(db: Session, module: str, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None) -> dict:
+def moderate_any_review(db: Session, module: str, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None, reason: str | None = None) -> dict:
     """Approve / reject / reset one review. Returns the same row shape as the list."""
     validate_action(action)
     current = normalize_module(module)
@@ -292,7 +293,7 @@ def moderate_any_review(db: Session, module: str, review_id: UUID, action: str, 
         review = db.get(TrainingReview, review_id)
         if review is None:
             raise HTTPException(status_code=404, detail="Review not found")
-        moderate_training_review_service(db, review.training_id, review_id, action, access, access_token=access_token, actor=actor)
+        moderate_training_review_service(db, review.training_id, review_id, action, access, access_token=access_token, actor=actor, reason=reason)
     elif current == "product":
         from app.models.product_model import ProductReview
         from app.services.product_service import moderate_product_review_service
@@ -321,7 +322,7 @@ def moderate_any_review(db: Session, module: str, review_id: UUID, action: str, 
         if event is None:
             raise HTTPException(status_code=404, detail="Review not found")
         assert_can_moderate(access, event_owner_tenant_id(event))
-        moderate_review_service(db, review_id, action, event_id=review.event_id, access_token=access_token, actor=actor)
+        moderate_review_service(db, review_id, action, event_id=review.event_id, access_token=access_token, actor=actor, reason=reason)
 
     # Re-read it through the list query so the answer has the same shape (and is scoped the same way).
     # The change is already saved, so look the row up without the caller's scope if the scoped lookup misses it.

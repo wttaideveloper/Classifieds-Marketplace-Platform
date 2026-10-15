@@ -1,14 +1,14 @@
 """Review moderation queue across training/course, product, service and event reviews."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Body, Depends, Path, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.catalog_access import get_catalog_access, require_review_moderator
 from app.core.dependencies import extract_access_token, get_current_user
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.review_schema import ReviewAuditResponse, ReviewModerateBody, ReviewQueueItem, ReviewQueueResponse
+from app.schemas.review_schema import ReviewAuditResponse, ReviewDeleteBody, ReviewModerateBody, ReviewQueueItem, ReviewQueueResponse
 from app.services.review_admin_service import delete_any_review, list_reviews_for_moderation, moderate_any_review
 from app.services.review_audit import list_log
 
@@ -52,6 +52,7 @@ def list_reviews_to_moderate(
         "Same rules as the per-module moderate endpoints: Super Admin only (Enterprise Admins and providers get 403). "
         "Allowed moves: approved -> rejected | pending, pending -> approved | rejected, rejected -> approved. Putting a "
         "review to `approved` or `rejected` notifies its author."
+        " For a training or event review, `reason` is required when rejecting (3 to 500 characters, else 422); it is saved in the moderation history and sent in the notification metadata."
     ),
 )
 def moderate_review(
@@ -64,7 +65,8 @@ def moderate_review(
     current_user: dict = Depends(get_current_user),
 ):
     return moderate_any_review(
-        db, module, review_id, payload.action, access, access_token=extract_access_token(request), actor=current_user
+        db, module, review_id, payload.action, access, access_token=extract_access_token(request), actor=current_user,
+        reason=payload.reason,
     )
 
 
@@ -74,16 +76,22 @@ def moderate_review(
     description=(
         "Same rules as the module's own delete: the review's author, or a Super Admin. Deleting someone else's review "
         "is written to the moderation history."
+        " To delete someone else's training or event review a Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422."
     ),
 )
 def delete_review(
     request: Request,
     module: str = Path(..., description="training | course | product | service | event"),
     review_id: UUID = Path(...),
+    payload: ReviewDeleteBody | None = Body(None),
+    reason: str | None = Query(None, description="The same as the body field, for clients that cannot send a body with DELETE"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return delete_any_review(db, module, review_id, current_user, access_token=extract_access_token(request))
+    return delete_any_review(
+        db, module, review_id, current_user, access_token=extract_access_token(request),
+        reason=(payload.reason if payload and payload.reason is not None else reason),
+    )
 
 
 @router.get(

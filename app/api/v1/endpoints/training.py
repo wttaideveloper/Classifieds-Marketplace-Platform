@@ -1,5 +1,5 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Path, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
 from app.core.catalog_access import require_review_moderator
 from app.services.review_common import ListOptions, review_list_params
@@ -523,6 +523,7 @@ def my_review(training_id: UUID, db: Session = Depends(get_db), current_user: di
         "Super Admin only. Enterprise Admins and providers can look at reviews but get 403. Allowed moves: "
         "approved -> rejected | pending, pending -> approved | rejected, rejected -> approved. The same status again "
         "does nothing; any other move is 409. Approving or rejecting notifies the author and the owning Enterprise Admins."
+        " For a training or event review, `reason` is required when rejecting (3 to 500 characters, else 422); it is saved in the moderation history and sent in the notification metadata."
     ),
 )
 def moderate_review(
@@ -530,23 +531,28 @@ def moderate_review(
     db: Session = Depends(get_db), access=Depends(require_review_moderator), current_user: dict = Depends(get_current_user),
 ):
     return moderate_training_review_service(
-        db, training_id, review_id, payload.action, access, access_token=_auth_token_from_request(request), actor=current_user
+        db, training_id, review_id, payload.action, access, access_token=_auth_token_from_request(request), actor=current_user,
+        reason=payload.reason,
     )
 
 
 @router.delete(
     "/{training_id}/reviews/{review_id}", summary="Delete a review",
     description=(
-        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. "
+        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. A Super Admin's delete keeps the review for its author with moderation_status `deleted` (hidden from everyone else). "
         "A Super Admin deleting someone else's review is recorded in the moderation history."
+        " To delete someone else's training or event review a Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422."
     ),
 )
 def delete_review(
     request: Request, training_id: UUID, review_id: UUID,
+    payload: dict | None = Body(None),
+    reason: str | None = Query(None, description="The same as the body field `reason`, for clients that cannot send a body with DELETE"),
     db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
 ):
     return delete_training_review_service(
-        db, training_id, review_id, current_user, access_token=_auth_token_from_request(request)
+        db, training_id, review_id, current_user, access_token=_auth_token_from_request(request),
+        reason=((payload or {}).get("reason") if (payload or {}).get("reason") is not None else reason),
     )
 
 
