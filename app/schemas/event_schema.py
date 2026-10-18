@@ -675,6 +675,8 @@ class EventResponse(BaseModel):
 
 
 class EventListItemResponse(EventResponse):
+    approved_reviews: int = Field(0, description="Number of approved reviews of this event (the ones in GET /events/{id}/reviews). 0 when there are none.")
+    average_rating: float | None = Field(None, description="Mean of the approved reviews' ratings, rounded to 2 decimals. null when there are none - show \"No ratings yet\", never 0.0.")
     registration_status: bool = Field(False, description="True while the signed-in caller has a live registration (confirmed or attended) for this event. Always false for an anonymous request. (On the event detail, `registration_status` is the status text.)")
 
 
@@ -974,7 +976,21 @@ class EventFeedbackResponse(BaseModel):
     moderation_status: str = "pending"
     created_at: datetime | None = None
 
-    @computed_field(description="What the customer sees: Approved | Waiting for Approval | Not Approved")
+    moderation_reason: str | None = Field(None, exclude=True)
+
+    @computed_field(description="The same as moderation_status: approved | pending | rejected | deleted")
+    @property
+    def status(self) -> str:
+        return self.moderation_status or "pending"
+
+    @computed_field(description="Why a Super Admin rejected, held back (pending) or deleted this review. null otherwise")
+    @property
+    def reason(self) -> str | None:
+        from app.services.review_common import shown_reason
+
+        return shown_reason(self.moderation_status, self.moderation_reason)
+
+    @computed_field(description="What the customer sees: Approved | Waiting for Approval | Not Approved | Deleted")
     @property
     def status_label(self) -> str:
         from app.services.review_common import status_label

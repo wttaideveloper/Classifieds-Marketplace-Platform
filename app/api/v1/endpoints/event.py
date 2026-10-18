@@ -209,7 +209,8 @@ def create_event(event: EventCreate, request: Request, db: Session = Depends(get
     description=(
         "Public browsing returns **published** events only. Staff (admin/provider) additionally see every "
         "event of their own tenant in any status; an active Platform Super Admin sees all. Authentication is "
-        "optional — an absent or invalid token is treated as an anonymous public reader."
+        "optional — an absent or invalid token is treated as an anonymous public reader. Every item carries "
+        "`approved_reviews` (the number of approved reviews, 0 when none) and `average_rating` (null when none)."
     ),
 )
 def list_events(
@@ -1139,11 +1140,16 @@ def my_review(event_id: UUID, db: Session = Depends(get_db), current_user: dict 
         "Public. Approved reviews of a published event, newest first, with the average rating "
         "(`null` when there are none, show \"No ratings yet\"). Never includes email addresses. Optional `sort` "
         "(newest|oldest|highest|lowest), `rating`, `with_comment`, `page` and `page_size` change which reviews are "
-        "listed; the average, `count` and `rating_distribution` always cover all approved reviews."
+        "listed; the average, `count` and `rating_distribution` always cover all approved reviews. A signed-in caller also "
+        "gets `my_review`: their own review in any status (`status`, `status_label`, ...), or null when they have none. Their "
+        "own approved review is in `my_review` and not repeated in `reviews`, but it still counts in `count` and the average."
     ),
 )
-def list_reviews(event_id: UUID, opts: ListOptions = Depends(review_list_params), db: Session = Depends(get_db)):
-    return list_public_event_reviews_service(db, event_id, opts)
+def list_reviews(
+    event_id: UUID, opts: ListOptions = Depends(review_list_params), db: Session = Depends(get_db),
+    current_user: dict | None = Depends(get_optional_current_user),
+):
+    return list_public_event_reviews_service(db, event_id, opts, current_user)
 
 
 @router.get(
@@ -1173,7 +1179,7 @@ def list_reviews_to_moderate(
     description=(
         "Active Super Admin only; Enterprise Admins and providers get 403. Allowed moves: approved -> rejected | pending, "
         "pending -> approved | rejected, rejected -> approved. The same status again does nothing; any other move is 409."
-        " For a training or event review, `reason` is required when rejecting (3 to 500 characters, else 422); it is saved in the moderation history and sent in the notification metadata."
+        " `reason` is required when rejecting or moving to pending (3 to 500 characters, else 422); it is saved in the moderation history, sent in the notification metadata and shown to the review's author."
     ),
 )
 def moderate_review(request: Request, event_id: UUID, review_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_event_admin_or_super)):
@@ -1188,7 +1194,7 @@ def moderate_review(request: Request, event_id: UUID, review_id: UUID, payload: 
     description=(
         "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. A Super Admin's delete keeps the review for its author with moderation_status `deleted` (hidden from everyone else). "
         "A Super Admin deleting someone else's review is recorded in the moderation history."
-        " To delete someone else's training or event review a Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422."
+        " To delete someone else's review a Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422; the author sees it."
     ),
 )
 def delete_review(

@@ -32,7 +32,7 @@ from app.repository.event_repo import (
 )
 from app.repository.query_utils import build_pagination_meta
 from app.services import review_audit
-from app.services.review_common import ListOptions, apply_list_options, not_deleted, rating_distribution, status_label
+from app.services.review_common import ListOptions, apply_list_options, not_deleted, rating_distribution, shown_reason, status_label
 from app.schemas.event_schema import (
     EventDetailResponse,
     EventListItemResponse,
@@ -599,15 +599,38 @@ def get_events_service(
     )
     # Management listings (admin queues) pass include_registration=False: the flag is about the caller as an attendee.
     registered = _registered_event_ids(db, (viewer.user or {}).get("email"), [e.id for e in items]) if include_registration else set()
+    stats = _approved_review_stats(db, [e.id for e in items])
     return EventPaginatedResponse(
         items=[
             EventListItemResponse.model_validate(
-                {**_redact_event_data(map_event_list_item(e, db), e, viewer), "registration_status": e.id in registered}
+                {
+                    **_redact_event_data(map_event_list_item(e, db), e, viewer),
+                    "registration_status": e.id in registered,
+                    "approved_reviews": stats.get(e.id, (None, 0))[1],
+                    "average_rating": stats.get(e.id, (None, 0))[0],
+                }
             )
             for e in items
         ],
         pagination=build_pagination_meta(total, page, page_size),
     )
+
+
+def _approved_review_stats(db: Session, event_ids: list) -> dict:
+    """{event id: (average rating or None, number of approved reviews)} for a page of events, in one query. Only approved
+    reviews count; an event with none is simply missing from the result."""
+    if not event_ids:
+        return {}
+    from app.models.event_aux_models import EventFeedback
+
+    by_event: dict = {}
+    for event_id, rating in db.query(EventFeedback.event_id, EventFeedback.rating).filter(
+        EventFeedback.event_id.in_(event_ids), EventFeedback.is_review.is_(True), EventFeedback.moderation_status == "approved"
+    ).all():
+        value = _review_rating(rating)
+        if value is not None:
+            by_event.setdefault(event_id, []).append(value)
+    return {event_id: (_average_rating(ratings), len(ratings)) for event_id, ratings in by_event.items()}
 
 
 def _registered_event_ids(db: Session, email: str | None, event_ids: list) -> set:
@@ -1752,7 +1775,7 @@ def create_event_review_service(db: Session, event_id: UUID, payload: dict, curr
     """
     from app.models.event_aux_models import EventFeedback, EventRegistration
     from app.services import review_notifications
-    from app.services.review_common import NEW_REVIEW_STATUS, clean_comment, needs_resubmission, status_after_edit, validate_rating
+    from app.services.review_common import NEW_REVIEW_STATUS, after_author_edit, clean_comment, needs_resubmission, validate_rating
 
     _get_event_or_404(db, event_id)
     email = str((current_user or {}).get("email") or "").strip()
@@ -1775,7 +1798,7 @@ def create_event_review_service(db: Session, event_id: UUID, payload: dict, curr
         resubmitted = needs_resubmission(existing.moderation_status)   # rejected, or deleted by a Super Admin
         existing.rating = str(rating)
         existing.comment = comment
-        existing.moderation_status = status_after_edit(existing.moderation_status)
+        after_author_edit(existing, existing.moderation_status)
         if user_id is not None:
             existing.user_id = user_id
         db.commit()
@@ -1816,7 +1839,7 @@ def moderate_review_service(db: Session, review_id: UUID, action: str, event_id:
     from app.models.event_aux_models import EventFeedback
     from app.services import review_notifications
     from app.services.review_access import assert_super_admin_actor
-    from app.services.review_common import check_move, clean_reason, validate_action
+    from app.services.review_common import check_move, moderation_reason_for, set_moderation, validate_action
 
     validate_action(action)
     assert_super_admin_actor(actor)  # only a Super Admin moderates
@@ -1829,10 +1852,7 @@ def moderate_review_service(db: Session, review_id: UUID, action: str, event_id:
         raise HTTPException(status_code=404, detail="Review not found")
     previous = fb.moderation_status
     event = None
-    if action == "rejected":
-        reason = clean_reason(reason, "reject a review")   # a rejection always says why
-    else:
-        reason = None
+    reason = moderation_reason_for(action, reason)   # rejecting or holding a review back always says why
     changed = check_move(previous, action)
     if changed:
         event = get_event_by_id(db, fb.event_id, include_deleted=True)
@@ -1843,7 +1863,7 @@ def moderate_review_service(db: Session, review_id: UUID, action: str, event_id:
             customer_name=review_audit.customer_name_of(db, "event", fb, event) if event else None,
             business_name=review_audit.business_name_of(event) if event else None, reason=reason,
         )
-        fb.moderation_status = action
+        set_moderation(fb, action, reason)
         db.commit()
         db.refresh(fb)
     if changed:
@@ -1876,7 +1896,7 @@ def delete_event_review_service(db: Session, event_id: UUID, review_id: UUID, cu
             raise HTTPException(status_code=403, detail="You can only delete your own review")
         owner = event_owner_tenant_id(event)
         assert_staff_in_tenant(db, current_user, access_token, owner)  # an active Super Admin only
-        from app.services.review_common import clean_reason
+        from app.services.review_common import clean_reason, set_moderation
 
         reason = clean_reason(reason, "delete a review")   # deleting someone else's review always says why
         if fb.moderation_status == "deleted":
@@ -1892,7 +1912,7 @@ def delete_event_review_service(db: Session, event_id: UUID, review_id: UUID, cu
             review_id=fb.id, item_id=event.id, item_name=event.title, tenant_id=owner,
             previous_status=fb.moderation_status, actor=current_user, actor_role=role, access_token=access_token, reason=reason,
         )
-        fb.moderation_status = "deleted"
+        set_moderation(fb, "deleted", reason)
         db.commit()
         from app.services import review_notifications
 
@@ -1936,10 +1956,35 @@ def _reviewer_names(db: Session, event_id: UUID, reviews: list) -> dict[str, str
     return names
 
 
-def list_public_event_reviews_service(db: Session, event_id: UUID, opts=None):
+def _my_review_dict(db: Session, event_id: UUID, own) -> dict:
+    """The caller's own review for `my_review`: any status (approved, pending, rejected or deleted), no email address."""
+    from app.services.review_common import edit_label, is_public, shown_reason
+
+    names = _reviewer_names(db, event_id, [own])
+    return {
+        "id": own.id,
+        "participant_name": names.get((own.participant_email or "").strip().lower()),
+        "rating": _review_rating(own.rating),
+        "comment": own.comment,
+        "created_at": own.created_at,
+        "updated_at": getattr(own, "updated_at", None) or own.created_at,
+        "status": own.moderation_status or "pending",
+        "moderation_status": own.moderation_status or "pending",
+        "reason": shown_reason(own.moderation_status, getattr(own, "moderation_reason", None)),
+        "status_label": status_label(own.moderation_status),
+        "is_public": is_public(own.moderation_status),
+        "edit_label": edit_label(own.moderation_status),
+    }
+
+
+def list_public_event_reviews_service(db: Session, event_id: UUID, opts=None, current_user: dict | None = None):
     """Approved reviews of a published event, newest first. No email addresses.
     `opts` (sort / rating / with_comment / paging) only changes which reviews are listed; the average, count
-    and star breakdown cover all approved reviews."""
+    and star breakdown cover all approved reviews.
+
+    A signed-in caller also gets `my_review`: their own review in any status, found by their user id (their email only
+    for a review saved before user ids were recorded), or null. Their own approved review is not repeated in `reviews`
+    (and the paging describes `reviews`), but it still counts in `count`, the average and the star breakdown."""
     from app.models.event_aux_models import EventFeedback
 
     event = _get_event_or_404(db, event_id)
@@ -1957,12 +2002,20 @@ def list_public_event_reviews_service(db: Session, event_id: UUID, opts=None):
         .all()
     )
     ratings = [rating for rating in (_review_rating(r.rating) for r in rows) if rating is not None]
+    own = None
+    if current_user:
+        email = str(current_user.get("email") or "").strip()
+        user_id = _caller_user_uuid(current_user)
+        if email or user_id is not None:
+            own = _own_event_review(db, event_id, user_id, email)
+    others = [r for r in rows if own is None or r.id != own.id]
     shown, pagination = apply_list_options(
-        rows, opts or ListOptions(),
+        others, opts or ListOptions(),
         rating_of=lambda r: _review_rating(r.rating), created_of=lambda r: r.created_at, comment_of=lambda r: r.comment,
     )
     names = _reviewer_names(db, event_id, shown)
     return {
+        "my_review": _my_review_dict(db, event_id, own) if own is not None else None,
         "reviews": [
             {
                 "id": r.id,
@@ -2043,6 +2096,7 @@ def list_event_reviews_for_managers_service(
                 "comment": r.comment,
                 "moderation_status": r.moderation_status or "pending",
                 "status_label": status_label(r.moderation_status),
+                "reason": shown_reason(r.moderation_status, getattr(r, "moderation_reason", None)),
                 "created_at": r.created_at,
             }
             for r in rows

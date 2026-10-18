@@ -52,7 +52,7 @@ def list_reviews_to_moderate(
         "Same rules as the per-module moderate endpoints: Super Admin only (Enterprise Admins and providers get 403). "
         "Allowed moves: approved -> rejected | pending, pending -> approved | rejected, rejected -> approved. Putting a "
         "review to `approved` or `rejected` notifies its author."
-        " For a training or event review, `reason` is required when rejecting (3 to 500 characters, else 422); it is saved in the moderation history and sent in the notification metadata."
+        " `reason` is required when rejecting or moving to pending (3 to 500 characters, else 422); it is saved in the moderation history, sent in the notification metadata and shown to the review's author."
     ),
 )
 def moderate_review(
@@ -76,7 +76,7 @@ def moderate_review(
     description=(
         "Same rules as the module's own delete: the review's author, or a Super Admin. Deleting someone else's review "
         "is written to the moderation history."
-        " To delete someone else's training or event review a Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422."
+        " To delete someone else's review a Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422; the author sees it."
     ),
 )
 def delete_review(

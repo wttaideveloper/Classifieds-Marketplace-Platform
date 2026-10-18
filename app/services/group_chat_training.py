@@ -295,11 +295,13 @@ def list_learners(
             can, reason = False, "not_eligible_status"
         elif not r.user_id:
             can, reason = False, "no_account"
-        elif state == "member":
-            can, reason = False, "already_member"
-        elif state == "invited":
+        elif group_id is not None and state == "member":
+            can, reason = False, "already_member"      # in THE group being filled
+        elif group_id is not None and state == "invited":
             can, reason = False, "already_invited"
         else:
+            # Without group_id the list is for a NEW group: a learner can be in several groups of one training, so
+            # being in another group does not stop them being invited. group_state / group_ids still show where they are.
             can, reason = True, None
         items.append({
             "enrolment_id": r.id, "name": _name(r.participant_name), "email": r.participant_email, "enrolment_status": r.status,
@@ -310,6 +312,25 @@ def list_learners(
         "training_id": training.id, "training_title": training.title, "items": items, "total": total, "page": page,
         "page_size": page_size, "eligible_total": eligible_total, "max_members": common.max_members("program"),
     }
+
+
+def enrolment_names(db: Session, conversation, user_ids) -> dict:
+    """{user id: name on their enrolment} for a training group's pending invitees, newest enrolment first. Never an email."""
+    from app.models.training_model import TrainingEnrolment
+
+    ids = [u for u in user_ids if u]
+    if not ids or conversation.context_type != LINK_TYPE or not conversation.context_id:
+        return {}
+    names: dict = {}
+    for user_id, name in (
+        db.query(TrainingEnrolment.user_id, TrainingEnrolment.participant_name)
+        .filter(TrainingEnrolment.training_id == conversation.context_id, TrainingEnrolment.user_id.in_(ids))
+        .order_by(TrainingEnrolment.created_at.desc()).all()
+    ):
+        clean = _name(name)
+        if clean and "@" not in clean:
+            names.setdefault(user_id, clean)
+    return names
 
 
 def _name(value) -> str | None:

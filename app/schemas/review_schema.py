@@ -22,6 +22,7 @@ class ReviewQueueItem(BaseModel):
     business_name: str | None = Field(None, description="Short name of that business (for the Super Admin's global page)")
     moderation_status: str = Field(..., description="pending | approved | rejected")
     status_label: str = Field(..., description="Approved | Waiting for Approval | Not Approved (what the customer sees)")
+    reason: str | None = Field(None, description="The Super Admin's reason while the review is rejected, pending or deleted. null otherwise")
     created_at: datetime
     updated_at: datetime
 
@@ -42,16 +43,16 @@ class ReviewModerateBody(BaseModel):
     action: str = Field(..., description="approved | rejected | pending")
     reason: str | None = Field(
         None,
-        description="Required when action is rejected on a training or event review (3 to 500 characters, else 422). "
-                    "Ignored for other actions and for product and service reviews.",
+        description="Required when action is rejected or pending, for every module (3 to 500 characters, else 422). "
+                    "Not needed for approved. The author sees it as `reason` on their review.",
     )
 
 
 class ReviewDeleteBody(BaseModel):
     reason: str | None = Field(
         None,
-        description="Required when a Super Admin deletes someone else's training or event review (3 to 500 characters, else 422). "
-                    "Not needed when the author deletes their own review, or for product and service reviews.",
+        description="Required when a Super Admin deletes someone else's review, for every module (3 to 500 characters, else 422). "
+                    "Not needed when the author deletes their own review.",
     )
 
 

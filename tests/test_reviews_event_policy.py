@@ -337,3 +337,186 @@ def test_the_author_removes_a_deleted_event_review_for_good_and_staff_still_cann
 
     assert delete_review(world, review_id, world.asha).status_code == 200
     assert client_for(world.db, world.asha).get(url(world, "/me")).json() is None
+
+
+# --- my_review in the public list, and the numbers on the events list -------------------------------------------------
+
+def second_reviewer(world, rating=3, comment="Fine"):
+    ravi = customer_user("ravi@example.com")
+    make_registration(world.db, world.event, "ravi@example.com")
+    resp = write(world, ravi, rating=rating, comment=comment)
+    assert resp.status_code == 201, resp.text
+    return ravi, resp.json()["id"]
+
+
+def public_list(world, user=None, **params):
+    return client_for(world.db, user).get(url(world), params=params).json()
+
+
+def test_my_review_is_null_for_an_anonymous_reader_and_for_someone_with_no_review(world):
+    write(world, rating=5)
+
+    assert public_list(world)["my_review"] is None
+    assert public_list(world, customer_user("other@example.com"))["my_review"] is None
+
+
+def test_the_logged_in_users_review_is_my_review_and_not_in_the_reviews_list(world):
+    mine = write(world, rating=5, comment="Good").json()["id"]
+    ravi, theirs = second_reviewer(world, rating=3, comment="Fine")
+
+    body = public_list(world, world.asha)
+
+    assert body["my_review"]["id"] == mine
+    assert body["my_review"]["rating"] == 5 and body["my_review"]["comment"] == "Good"
+    assert body["my_review"]["status"] == "approved" and body["my_review"]["moderation_status"] == "approved"
+    assert body["my_review"]["status_label"] == "Approved" and body["my_review"]["is_public"] is True
+    assert body["my_review"]["edit_label"] == "Save Changes" and body["my_review"]["participant_name"]
+    assert "participant_email" not in body["my_review"] and "@" not in str(body["my_review"])
+    assert [r["id"] for r in body["reviews"]] == [theirs]                                  # only the other person's
+    # everything else still describes all the approved reviews, mine included
+    assert body["count"] == 2 and body["average_rating"] == 4.0
+    assert body["rating_distribution"] == {"5": 1, "4": 0, "3": 1, "2": 0, "1": 0}
+    # the paging describes the `reviews` list
+    assert body["pagination"] == {"total": 1, "page": 1, "page_size": 1, "total_pages": 1}
+
+
+def test_each_user_sees_their_own_review_as_my_review(world):
+    mine = write(world, rating=5).json()["id"]
+    ravi, theirs = second_reviewer(world)
+
+    as_ravi = public_list(world, ravi)
+    anonymous = public_list(world)
+
+    assert as_ravi["my_review"]["id"] == theirs and [r["id"] for r in as_ravi["reviews"]] == [mine]
+    assert anonymous["my_review"] is None and {r["id"] for r in anonymous["reviews"]} == {mine, theirs}   # no one is left out
+
+
+@pytest.mark.parametrize("action,label", [("pending", "Waiting for Approval"), ("rejected", "Not Approved")])
+def test_my_review_shows_a_review_that_is_not_public_with_its_status(world, action, label):
+    mine = write(world, rating=2).json()["id"]
+    _, theirs = second_reviewer(world, rating=4)
+    moderate(world, mine, action, super_admin_user())
+
+    body = public_list(world, world.asha)
+
+    assert body["my_review"]["id"] == mine and body["my_review"]["status"] == action
+    assert body["my_review"]["status_label"] == label and body["my_review"]["is_public"] is False
+    assert [r["id"] for r in body["reviews"]] == [theirs]
+    assert body["count"] == 1 and body["average_rating"] == 4.0                            # the hidden one does not count
+
+
+def test_my_review_shows_a_review_a_super_admin_deleted_as_deleted(world):
+    mine = write(world, rating=2).json()["id"]
+    client_for(world.db, super_admin_user()).request("DELETE", url(world, f"/{mine}"), json={"reason": "Abusive language"})
+
+    body = public_list(world, world.asha)
+
+    assert body["my_review"]["status"] == "deleted" and body["my_review"]["status_label"] == "Deleted"
+    assert body["my_review"]["edit_label"] == "Resubmit Review" and body["reviews"] == [] and body["count"] == 0
+
+
+def test_my_review_is_found_by_user_id_and_an_old_review_by_email(world):
+    old = EventFeedback(event_id=world.event.id, participant_email="Asha@example.com", rating="4", comment="Old", is_review=True, moderation_status="approved")
+    world.db.add(old)
+    world.db.commit()
+
+    body = public_list(world, world.asha)
+
+    assert body["my_review"]["id"] == str(old.id) and body["reviews"] == [] and body["count"] == 1
+
+
+def test_my_review_is_not_changed_by_the_filters_or_the_paging(world):
+    write(world, rating=5)
+    second_reviewer(world, rating=1, comment=None)
+
+    body = public_list(world, world.asha, rating=1, page=1, page_size=1)
+
+    assert body["my_review"]["rating"] == 5                                                # whatever the filter
+    assert [r["rating"] for r in body["reviews"]] == [1] and body["count"] == 2
+
+
+def listing(world, user=None):
+    return client_for(world.db, user).get(f"{API}/", params={"status": "published", "page": 1, "page_size": 50}).json()
+
+
+def test_the_events_list_has_approved_reviews_and_average_rating_on_every_item(world):
+    other = make_event(world.db, TENANT, enterprise=world.enterprise, title="Quiet event")
+
+    before = {i["id"]: i for i in listing(world)["items"]}
+    assert before[str(world.event.id)]["approved_reviews"] == 0 and before[str(world.event.id)]["average_rating"] is None
+
+    write(world, rating=5)
+    second_reviewer(world, rating=4)
+    hidden = second_reviewer_hidden(world)
+    after = {i["id"]: i for i in listing(world)["items"]}
+
+    assert after[str(world.event.id)]["approved_reviews"] == 2 and after[str(world.event.id)]["average_rating"] == 4.5
+    assert after[str(other.id)]["approved_reviews"] == 0 and after[str(other.id)]["average_rating"] is None
+    assert hidden                                                                         # a rejected review never counts
+
+
+def second_reviewer_hidden(world):
+    nair = customer_user("nair@example.com")
+    make_registration(world.db, world.event, "nair@example.com")
+    review_id = write(world, nair, rating=1).json()["id"]
+    moderate(world, review_id, "rejected", super_admin_user())
+    return review_id
+
+
+def test_the_event_list_numbers_come_from_one_query_for_the_page(world):
+    from sqlalchemy import event as sa_event
+
+    for i in range(4):
+        make_event(world.db, TENANT, enterprise=world.enterprise, title=f"Event {i}")
+    statements = []
+    sa_event.listen(world.db.bind, "before_cursor_execute", lambda *a: statements.append(a[2]))
+
+    listing(world)
+
+    assert sum(1 for s in statements if "event_feedback" in s and "FROM event_feedback" in s and "moderation_status" in s) <= 2
+
+
+# --- the author reads the Super Admin's reason on their own review --------------------------------------------------
+
+def moderate_reason(world, review_id, action, reason):
+    return client_for(world.db, super_admin_user()).patch(url(world, f"/{review_id}/moderate"), json={"action": action, "reason": reason})
+
+
+def test_my_review_carries_the_reason_for_a_hold_a_rejection_and_a_deletion(world):
+    review_id = write(world, rating=3).json()["id"]
+    assert public_list(world, world.asha)["my_review"]["reason"] is None
+
+    moderate_reason(world, review_id, "pending", "Needs a second look")
+    mine = public_list(world, world.asha)["my_review"]
+    assert mine["status"] == "pending" and mine["reason"] == "Needs a second look"
+
+    moderate_reason(world, review_id, "rejected", "Not about this event")
+    mine = client_for(world.db, world.asha).get(url(world, "/me")).json()
+    assert mine["status"] == "rejected" and mine["reason"] == "Not about this event" and mine["status_label"] == "Not Approved"
+
+    client_for(world.db, super_admin_user()).request("DELETE", url(world, f"/{review_id}"), json={"reason": "Abusive language"})
+    mine = public_list(world, world.asha)["my_review"]
+    assert mine["status"] == "deleted" and mine["reason"] == "Abusive language"
+    assert "Abusive language" not in str(public_list(world))                                    # not in the public list
+
+
+def test_the_event_reason_goes_when_the_author_resubmits_or_it_is_approved(world):
+    review_id = write(world, rating=3).json()["id"]
+    moderate_reason(world, review_id, "rejected", "Not about this event")
+
+    assert write(world, rating=4, comment="About the event now").json()["reason"] is None
+    moderate_reason(world, review_id, "approved", "n/a")
+    moderate_reason(world, review_id, "pending", "Checking")
+    assert public_list(world, world.asha)["my_review"]["reason"] == "Checking"
+    assert write(world, rating=5, comment="Edit while held back").json()["reason"] == "Checking"   # still pending: kept
+    moderate_reason(world, review_id, "approved", "n/a")
+    assert public_list(world, world.asha)["my_review"]["reason"] is None
+
+
+def test_the_staff_list_and_the_all_module_list_show_the_reason(world):
+    review_id = write(world, rating=3).json()["id"]
+    moderate_reason(world, review_id, "pending", "Needs a second look")
+
+    staff = client_for(world.db, staff_user(TENANT, "admin")).get(url(world, "/manage")).json()
+
+    assert staff["reviews"][0]["reason"] == "Needs a second look" and staff["reviews"][0]["moderation_status"] == "pending"

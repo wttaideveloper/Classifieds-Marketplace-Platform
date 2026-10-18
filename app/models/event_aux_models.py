@@ -111,7 +111,8 @@ class EventFeedback(Base):
     rating = Column(String(10))
     comment = Column(Text)
     is_review = Column(Boolean, default=False)
-    moderation_status = Column(String(20), default="pending")  # pending|approved|rejected
+    moderation_status = Column(String(20), default="pending")  # pending|approved|rejected|deleted
+    moderation_reason = Column(String(500), nullable=True)  # why a Super Admin rejected, held back or deleted it; shown to its author
     # The application user who wrote a review (null for feedback forms and for reviews written before this column).
     user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

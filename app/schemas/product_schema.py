@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
-from app.services.review_common import edit_label, is_public, public_name, status_label
+from app.services.review_common import edit_label, is_public, public_name, shown_reason, status_label
 
 from app.schemas.common_schema import EntityStatus, PaginatedResponse, CatalogReviewItem, PaginationMeta
 
@@ -340,6 +340,18 @@ class ProductReviewResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    moderation_reason: str | None = Field(None, exclude=True)
+
+    @computed_field(description="The same as moderation_status: approved | pending | rejected | deleted")
+    @property
+    def status(self) -> str:
+        return self.moderation_status or "pending"
+
+    @computed_field(description="Why a Super Admin rejected, held back (pending) or deleted this review. null otherwise")
+    @property
+    def reason(self) -> str | None:
+        return shown_reason(self.moderation_status, self.moderation_reason)
+
     @computed_field(description="What the customer sees: Approved | Waiting for Approval | Not Approved")
     @property
     def status_label(self) -> str:
@@ -376,3 +388,4 @@ class ProductReviewListResponse(BaseModel):
 
 class ProductReviewModerateRequest(BaseModel):
     action: str = Field(..., description="approved|rejected|pending")
+    reason: str | None = Field(None, description="Required when action is rejected or pending (3 to 500 characters, else 422). Not needed for approved.")

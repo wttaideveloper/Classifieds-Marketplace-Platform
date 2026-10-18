@@ -81,8 +81,8 @@ _CATEGORY_DOC = (
     "training_name, learner_name. review_moderated | review_deleted (to the owning Enterprise Admins when a "
     "Super Admin changes the status of, or deletes, a review; only a Super Admin can): metadata "
     "entity_type (training|product|service|event), entity_id, item_id, the matching <module>_id, item_name, review_id, "
-    "previous_status, new_status (approved|rejected|pending|deleted), action, actor_name, actor_id, actor_role. For training and event "
-    "reviews, review_rejected (to the author), review_moderated with action rejected, and review_deleted (to the owning Enterprise "
+    "previous_status, new_status (approved|rejected|pending|deleted), action, actor_name, actor_id, actor_role. For every module, "
+    "review_rejected (to the author), review_moderated with action rejected or pending, and review_deleted (to the owning Enterprise "
     "Admins and to the author, metadata.recipient=author) also carry metadata.reason, the Super Admin's reason. It is never in the "
     "notification text or the push payload."
 )

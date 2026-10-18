@@ -278,3 +278,88 @@ Every one of these actions is written to the group's audit trail.
 - Code: `app/services/group_chat_training.py` (the training rules), `app/services/group_chat_service.py` (`create_group`, `invite_members`, `invite_enrolled`), routes in `app/api/v1/endpoints/group_chat.py`, tests in `tests/test_group_chat_training.py`.
 - The roster writes `TrainingEnrolment.user_id` when it can work it out from the clinic's member list. This uses the same identity service lookups as the training notifications.
 - Limits that are not built: the backend does not close a training group when the Training ends (the owner closes it), and it does not invite late enrollees automatically.
+
+
+## 9. Integration answers
+
+### 9.1 Provider verification (403 "Your registration has not been verified yet")
+
+Group chat keeps its own list of verified Providers (`verified_providers`). It is separate from anything else: no other module in this backend feeds it, and being a Provider of the clinic, or verified somewhere else, does not put anyone on it. A Provider must be on this list to create a group, own one, be made an admin, or be invited into a training group as a Provider.
+
+- **Who adds them:** the clinic's Enterprise Admin (own clinic only) or the Super Admin, with `POST /groups/verified-providers`. Only `user_id` is required.
+  ```json
+  { "user_id": "<the Provider's user id>", "registration_number": "MH-12345", "registration_council": "State Medical Council" }
+  ```
+  `GET /groups/verified-providers` lists them; `DELETE /groups/verified-providers/{user_id}` revokes. Revoking does not remove groups the Provider already owns.
+- **Does the backend do it automatically?** No. Every Provider who should use group chat is added once.
+- **UI:** yes, a small screen for the Enterprise Admin (and Super Admin) is needed: a list from `GET /groups/verified-providers` and an "Add Provider" form that takes the Provider's user id, with the registration number and council as optional text. If you prefer to skip the whole step, the server setting `GROUP_REQUIRE_VERIFIED_PROVIDER=false` makes every Provider of the clinic count as verified for creating groups (they are then also usable as admins and owners only if they are on the list; keep the list for those).
+- **To unblock testing now:** call `POST /groups/verified-providers` as the Enterprise Admin with the Enzo Provider's user id.
+
+### 9.2 One learner in several groups of one Training
+
+Yes. A learner can be a member of any number of groups of the same Training. Nothing on the server stops it.
+
+The `already_invited` / `already_member` reason you saw was the roster's way of showing the learner's state. It now depends on what you are doing:
+- `GET /groups/trainings/{id}/learners` **without** `group_id` is for a **new** group: `can_invite` is `true` for every eligible learner with an account, and `group_state` / `group_ids` still say where the learner already is. Use them as information ("already in 1 group"), not as a block.
+- With `group_id=<the group you are filling>`, `can_invite` is about that group: `already_member` or `already_invited` only when they are in **that** group.
+- `not_in_group=true` still means "not in any group of this Training" (or in `group_id` when it is given).
+- `POST /groups/{id}/members/invite-enrolled` with `all_eligible` only skips people who are already in or invited to **that** group.
+
+### 9.3 Names of pending invitations
+
+`GET /groups/{id}/members` returns the name of a pending invitee to the owner and admins (only they see pending rows). The server uses the identity service name; when it has none, a training group uses the name on the learner's enrolment, then any name the person has used in chat. `name` is `null` only when no name is known anywhere. Learners never see pending invitations.
+
+### 9.4 Group picture (avatar)
+
+1. Upload the image with `POST /api/v1/uploads/` (multipart form: `file` = the image, `folder` = `group-avatars`). Image files up to 100 MB are accepted. The answer is `{ "url": "/api/v1/uploads/group-avatars/ab12cd.png", "name": "...", "size": 12345, "type": "image/png" }`.
+2. Send that `url` as `avatar_url` in `POST /groups` or `PATCH /groups/{id}`. Show the picture by loading the same `url` from the API host (the download needs no token).
+3. `avatar_url` accepts the upload `url` or an `http(s)://` address; anything else is 422. An empty string removes the picture.
+
+The attachment API (`POST /attachments/upload`) is for files sent in messages. It needs an existing conversation, so it cannot be used when the group is being created.
+
+### 9.5 Reopen
+
+`POST /groups/{id}/reopen`
+```json
+{ "reason": "More sessions were added" }
+```
+`reason` is required, 3 to 255 characters (422 otherwise). Allowed: the group **owner**, or compliance (the clinic's Enterprise Admin for that clinic's groups, or the Super Admin). A group admin or a member gets 403. The group must be closed (409 "The group is not closed" if not). The answer is the group, open again. The retention clock stops and all members are notified (`group_reopened`).
+
+### 9.6 Permissions in the group details
+
+`GET /groups/{id}` (and every group object, including `GET /groups` and the compliance list) now has `permissions`, worked out by the server from the caller's role, the kind of member, whether the group is open and the posting rules. Use it instead of reading `my_role`.
+
+| Field | True when |
+|---|---|
+| can_post | the caller is a member, the group is open, they are not muted, and posting is allowed for them (providers-only posting makes it false for learners) |
+| can_edit_group | owner or admin, group open (name, description, picture) |
+| can_change_settings | owner or admin, group open (who can send messages) |
+| can_invite | owner or admin, group open |
+| can_view_members | active member |
+| can_view_pending_invitations | owner or admin |
+| can_remove_members | owner or admin, or compliance |
+| can_make_admin | owner or admin, or compliance |
+| can_remove_admin | owner or compliance (a reason is required) |
+| can_mute_members | owner or admin |
+| can_hide_messages | owner or admin |
+| can_pin_messages | a Provider who is a member |
+| can_close | owner or admin, group open |
+| can_reopen | the group is closed and the caller is the owner or compliance |
+| can_transfer_ownership | owner |
+| can_reassign_owner | compliance |
+| can_leave | any active member except the owner |
+| can_view_audit | owner or compliance |
+| can_set_legal_hold | compliance |
+| can_report | active member |
+| can_mute_group | active member (mute or pin the group for myself) |
+
+`my_role` and `my_kind` are still returned. When the caller is compliance and not a member (the Enterprise Admin looking at a Provider's group) only the compliance fields are true: `can_remove_members`, `can_make_admin`, `can_remove_admin`, `can_reopen` (if closed), `can_reassign_owner`, `can_view_audit`, `can_set_legal_hold`.
+
+### 9.7 Close
+
+`POST /groups/{id}/close` takes **no required body**. Call it with no body, with `{}`, or with a reason:
+```json
+{ "reason": "Training ended" }
+```
+`reason` is optional, up to 255 characters. Allowed: the owner or an admin of the group. The group becomes read-only, the retention period starts, members are notified, and the answer is the group with `status: "closed"`, `closed_at` and `closed_reason`. Closing a group that is already closed gives 409. A member gets 403.
+

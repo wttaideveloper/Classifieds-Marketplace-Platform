@@ -550,9 +550,9 @@ def test_the_author_can_delete_their_review_in_any_status_and_it_leaves_the_list
 
 # --- a review a Super Admin deleted stays visible to its author, marked deleted ----------------------------------
 
-def delete_as(client, tid, review_id, user):
+def delete_as(client, tid, review_id, user, reason="Test reason"):
     as_user(client, user)
-    resp = client.request("DELETE", f"/api/v1/trainings/{tid}/reviews/{review_id}", json={"reason": "Test reason"})
+    resp = client.request("DELETE", f"/api/v1/trainings/{tid}/reviews/{review_id}", json={"reason": reason})
     as_user(client, LEARNER)
     return resp
 
@@ -653,3 +653,70 @@ def test_staff_still_cannot_delete_it(world):
 
     assert delete_as(client, tid, review_id, staff()).status_code == 403
     assert listing(client, tid)["my_review"]["moderation_status"] == "approved"
+
+
+# --- the author reads the Super Admin's reason on their own review --------------------------------------------------
+
+def moderate_with(client, tid, review_id, action, reason, user=ROOT):
+    as_user(client, user)
+    resp = client.patch(f"/api/v1/trainings/{tid}/reviews/{review_id}/moderate", json={"action": action, "reason": reason})
+    as_user(client, LEARNER)
+    return resp
+
+
+def test_the_author_sees_the_reason_for_a_rejection_a_hold_and_a_deletion(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+    assert listing(client, tid)["my_review"]["reason"] is None
+
+    moderate_with(client, tid, review_id, "pending", "Needs a second look")
+    mine = listing(client, tid)["my_review"]
+    assert mine["status"] == "pending" and mine["moderation_status"] == "pending" and mine["reason"] == "Needs a second look"
+
+    moderate_with(client, tid, review_id, "rejected", "Contains personal details")
+    mine = client.get(f"/api/v1/trainings/{tid}/reviews/me").json()
+    assert mine["status"] == "rejected" and mine["reason"] == "Contains personal details" and mine["status_label"] == "Not Approved"
+
+    delete_as(client, tid, review_id, ROOT, reason="Abusive language")
+    mine = listing(client, tid)["my_review"]
+    assert mine["status"] == "deleted" and mine["reason"] == "Abusive language" and mine["status_label"] == "Deleted"
+
+
+def test_the_reason_goes_when_the_review_is_approved_or_resubmitted(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+    moderate_with(client, tid, review_id, "rejected", "Contains personal details")
+
+    again = post(client, tid, rating=4, comment="Fair course")            # the author's resubmission
+    assert again.json()["status"] == "pending" and again.json()["reason"] is None
+
+    moderate_with(client, tid, review_id, "approved", "n/a")
+    moderate_with(client, tid, review_id, "pending", "Checking the new text")
+    assert post(client, tid, rating=4, comment="Edited again").json()["reason"] == "Checking the new text"   # still pending: kept
+    moderate_with(client, tid, review_id, "approved", "ignored")
+    assert listing(client, tid)["my_review"]["reason"] is None and listing(client, tid)["my_review"]["status"] == "approved"
+
+
+def test_nobody_but_the_author_sees_the_reason(world):
+    client, sessions, tid = world
+    review_id = post(client, tid).json()["id"]
+    moderate_with(client, tid, review_id, "rejected", "Contains personal details")
+    with sessions() as db:
+        db.add(TrainingEnrolment(training_id=tid, participant_name="Ravi", participant_email="ravi@example.com", status="enrolled"))
+        db.commit()
+
+    as_user(client, {"id": str(uuid4()), "role": "customer", "email": "ravi@example.com"})
+    other = listing(client, tid)
+    anonymous(client)
+    public = listing(client, tid)
+
+    assert "Contains personal details" not in str(other) and "Contains personal details" not in str(public)
+
+
+def test_a_hold_needs_a_reason(world):
+    client, _, tid = world
+    review_id = post(client, tid).json()["id"]
+
+    resp = moderate_with(client, tid, review_id, "pending", None)
+
+    assert resp.status_code == 422 and resp.json() == {"detail": "A reason is required to move a review to pending"}

@@ -105,8 +105,8 @@ When the program or care episode ends, an admin calls `POST /groups/{id}/close`.
 | POST | /groups/{id}/decline | the invited person | decline |
 | POST | /groups/{id}/leave | member | leave |
 | POST | /groups/{id}/consent/withdraw | member | take consent back (leaves at once) |
-| POST | /groups/{id}/close | owner, admin | close (read-only, retention starts) |
-| POST | /groups/{id}/reopen | owner, compliance | reopen, with a reason |
+| POST | /groups/{id}/close | owner, admin | close (read-only, retention starts). No body needed; optional `reason` |
+| POST | /groups/{id}/reopen | owner, compliance | reopen. Body `{ "reason": "..." }`, required, 3 to 255 characters |
 
 Archiving a group for yourself uses the existing `PATCH /conversations/{id}/archive`.
 
@@ -228,6 +228,8 @@ Response 201 (the same shape comes back from `GET /groups/{id}`):
   "legal_hold": false
 }
 ```
+Every group object also has `permissions` (what the caller can do right now: `can_post`, `can_edit_group`, `can_change_settings`, `can_invite`, `can_remove_members`, `can_make_admin`, `can_remove_admin`, `can_mute_members`, `can_hide_messages`, `can_pin_messages`, `can_close`, `can_reopen`, `can_transfer_ownership`, `can_reassign_owner`, `can_leave`, `can_view_audit`, `can_view_members`, `can_view_pending_invitations`, `can_set_legal_hold`, `can_report`, `can_mute_group`). Use it to show or hide controls; the rules are in `group-chat-training.md`, section 9.6.
+
 `member_count` counts the people who can see the group (active members). It does not count pending invitations. Show `visibility_notice` and `emergency_notice` on every group screen.
 
 ### The invitation
@@ -463,7 +465,7 @@ A provider can create a group, own one or be made an admin only if their registr
 
 Before the first group can be created, every provider who needs to must be added this way. This is a one-time load: use `GET /groups/verified-providers` to check. A provider whose verification is revoked can no longer create groups; groups they already own are left alone (the owner can hand them over).
 
-A clinic admin can create groups without being in this list. If a clinic admin should also be made an admin of someone else's group, add them to the list.
+This list belongs to group chat only: nothing else in the system adds a provider to it, so every provider who should use group chat is added once (a small admin screen over `GET`/`POST`/`DELETE /groups/verified-providers`). A clinic admin can create groups without being in this list. If a clinic admin should also be made an admin of someone else's group, add them to the list.
 
 A provider who is not verified, when invited into a group, is treated like a patient there (they cannot pin, tag everyone or be made an admin).
 

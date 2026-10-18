@@ -189,7 +189,7 @@ def list_groups_for_compliance(
     from app.services.group_chat_training import context_names
 
     titles = context_names(db, rows)
-    return {"items": [group_dict(db, c, None, active_count=counts.get(c.id, 0), context_name=titles.get(c.id)) for c in rows], "total": total}
+    return {"items": [group_dict(db, c, None, active_count=counts.get(c.id, 0), context_name=titles.get(c.id), compliance=True) for c in rows], "total": total}
 
 
 # ---------------------------------------------------------------- what a patient agreed to, and their data

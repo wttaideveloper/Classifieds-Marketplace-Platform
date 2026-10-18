@@ -96,9 +96,52 @@ def _last_visible_message(db: Session, conversation: Conversation, member: Conve
     return query.order_by(Message.created_at.desc(), Message.id.desc()).first()
 
 
+def permissions_for(conversation: Conversation, member: ConversationParticipant | None, *, compliance: bool = False) -> dict:
+    """What the caller can do with the group now, from the same rules the endpoints enforce. `compliance` is true for the
+    clinic's Enterprise Admin of this group, or the Super Admin (they may act on a group without being in it)."""
+    from fastapi import HTTPException as _Http
+
+    active = member is not None and member.membership_status == "active"
+    is_admin = active and common.is_admin(member)
+    is_owner = active and member.group_role == "owner"
+    is_open = conversation.status == "open" and not conversation.is_read_only
+    can_post = False
+    if active:
+        from app.services.group_chat_messages import assert_can_post
+
+        try:
+            assert_can_post(conversation, member)
+            can_post = True
+        except _Http:
+            can_post = False
+    return {
+        "can_post": can_post,
+        "can_edit_group": is_admin and is_open,
+        "can_change_settings": is_admin and is_open,
+        "can_invite": is_admin and is_open,
+        "can_view_members": active,
+        "can_view_pending_invitations": is_admin,
+        "can_remove_members": is_admin or compliance,
+        "can_make_admin": is_admin or compliance,
+        "can_remove_admin": is_owner or compliance,
+        "can_mute_members": is_admin,
+        "can_hide_messages": is_admin,
+        "can_pin_messages": active and member.member_kind == "provider",
+        "can_close": is_admin and is_open,
+        "can_reopen": (is_owner or compliance) and conversation.status == "closed",
+        "can_transfer_ownership": is_owner,
+        "can_reassign_owner": compliance,
+        "can_leave": active and not is_owner,
+        "can_view_audit": is_owner or compliance,
+        "can_set_legal_hold": compliance,
+        "can_report": active,
+        "can_mute_group": active,
+    }
+
+
 def group_dict(
     db: Session, conversation: Conversation, member: ConversationParticipant | None, *, active_count: int | None = None,
-    context_name=_UNSET,
+    context_name=_UNSET, compliance: bool = False,
 ) -> dict:
     """GroupResponse as a dict, for the person `member` (None for a compliance admin who is not in the group)."""
     count = active_count if active_count is not None else common.count_active(db, conversation.id)
@@ -118,6 +161,7 @@ def group_dict(
             "edit_window_minutes": settings.GROUP_EDIT_WINDOW_MINUTES,
         },
         "my_role": member.group_role if member else None, "my_kind": member.member_kind if member else None,
+        "permissions": permissions_for(conversation, member, compliance=compliance),
         "muted": common.member_is_muted_now(member) if member else False, "pinned": bool(member.pinned) if member else False,
         "is_archived": bool(member.is_archived) if member else False,
         "unread_count": _unread_count(db, conversation, member) if member else 0,
@@ -243,10 +287,11 @@ def create_group(db: Session, current_user: dict, payload, access_token: str | N
 def get_group(db: Session, current_user: dict, conversation_id: UUID, access_token: str | None = None) -> dict:
     conversation = common.load_group(db, conversation_id)
     member = common.get_member(db, conversation.id, common.user_uuid(current_user))
+    compliance = common.is_compliance_admin(db, current_user, conversation, access_token)
     if member is not None and member.membership_status == "active":
-        return group_dict(db, conversation, member)
-    if common.is_compliance_admin(db, current_user, conversation, access_token):
-        return group_dict(db, conversation, None)  # read the group's details, not its messages
+        return group_dict(db, conversation, member, compliance=compliance)
+    if compliance:
+        return group_dict(db, conversation, None, compliance=True)  # read the group's details, not its messages
     raise HTTPException(status_code=403, detail="You are not a member of this group")
 
 
@@ -406,11 +451,19 @@ def list_members(db: Session, current_user: dict, conversation_id: UUID) -> dict
         .order_by(ConversationParticipant.joined_at.asc()).all()
     )
     full = common.resolve_names(db, conversation, [r.user_id for r in rows], current_user)
+    # An owner or admin can tell who they invited: when the identity service has no name for a pending invitee, use the
+    # name on their enrolment (training groups). Only admins see invited rows, and only an admin invited them.
+    pending_names = (
+        training_groups.enrolment_names(db, conversation, [r.user_id for r in rows if r.membership_status == "invited"])
+        if common.is_admin(viewer) else {}
+    )
     order = {"owner": 0, "admin": 1, "member": 2}
     rows.sort(key=lambda r: (r.membership_status != "active", order.get(r.group_role or "member", 2), r.joined_at or datetime.min))
     members = [
         {
-            "user_id": r.user_id, "name": common.name_for_viewer(conversation, viewer, r, full), "role": r.group_role,
+            "user_id": r.user_id,
+            "name": common.name_for_viewer(conversation, viewer, r, full) or (pending_names.get(r.user_id) if r.membership_status == "invited" else None),
+            "role": r.group_role,
             "kind": r.member_kind, "status": r.membership_status, "is_me": r.user_id == viewer.user_id,
             "joined_at": r.joined_at if r.membership_status == "active" else None,
             "posting_muted": common.posting_muted_now(r) if common.is_admin(viewer) else False,

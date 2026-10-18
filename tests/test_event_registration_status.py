@@ -15,7 +15,7 @@ from app.api.v1.endpoints import event as event_routes
 from app.core.dependencies import get_current_user, get_optional_current_user
 from app.db.database import Base, get_db
 from app.models.enterprise_model import Enterprise
-from app.models.event_aux_models import EventRegistration
+from app.models.event_aux_models import EventFeedback, EventRegistration
 from app.models.event_model import Event
 
 
@@ -23,7 +23,7 @@ from app.models.event_model import Event
 def setup(monkeypatch):
     monkeypatch.setattr(SQLiteTypeCompiler, "visit_JSONB", lambda *a, **kw: "JSON", raising=False)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Event.__table__, EventRegistration.__table__])
+    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Event.__table__, EventRegistration.__table__, EventFeedback.__table__])
     sessions = sessionmaker(bind=engine)
     eid = uuid4()
     with sessions() as db:
@@ -198,6 +198,8 @@ def test_list_registration_lookup_is_one_query_for_the_whole_page(listing):
     assert [t for t, v in flags.items() if not v] == ["Conference"] and sum(flags.values()) == 4
     lookups = [s for s in statements if "participant_email" in s and "event_registrations.event_id IN" in s]
     assert len(lookups) == 1
+    # the review numbers on the page are also one query, not one per event
+    assert len([s for s in statements if "FROM event_feedback" in s]) == 1
 
 
 def test_list_keeps_existing_fields_pagination_and_the_detail_contract(listing):

@@ -523,7 +523,7 @@ def my_review(training_id: UUID, db: Session = Depends(get_db), current_user: di
         "Super Admin only. Enterprise Admins and providers can look at reviews but get 403. Allowed moves: "
         "approved -> rejected | pending, pending -> approved | rejected, rejected -> approved. The same status again "
         "does nothing; any other move is 409. Approving or rejecting notifies the author and the owning Enterprise Admins."
-        " For a training or event review, `reason` is required when rejecting (3 to 500 characters, else 422); it is saved in the moderation history and sent in the notification metadata."
+        " `reason` is required when rejecting or moving to pending (3 to 500 characters, else 422); it is saved in the moderation history, sent in the notification metadata and shown to the review's author."
     ),
 )
 def moderate_review(
@@ -541,7 +541,7 @@ def moderate_review(
     description=(
         "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. A Super Admin's delete keeps the review for its author with moderation_status `deleted` (hidden from everyone else). "
         "A Super Admin deleting someone else's review is recorded in the moderation history."
-        " To delete someone else's training or event review a Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422."
+        " To delete someone else's review a Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422; the author sees it."
     ),
 )
 def delete_review(
