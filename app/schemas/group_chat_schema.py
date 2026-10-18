@@ -208,18 +208,10 @@ class DataRequestCreate(BaseModel):
 
 class VerifiedProviderCreate(BaseModel):
     user_id: UUID
-    registration_number: str = Field(..., min_length=1, max_length=80)
-    registration_council: str = Field(..., min_length=1, max_length=120)
+    registration_number: str | None = Field(None, max_length=80)
+    registration_council: str | None = Field(None, max_length=120)
     tenant_id: UUID | None = None
     notes: str | None = Field(None, max_length=500)
-
-    @field_validator("registration_number", "registration_council")
-    @classmethod
-    def registration_details_must_not_be_blank(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("must not be blank")
-        return value
 
 
 # ---------------------------------------------------------------- responses
