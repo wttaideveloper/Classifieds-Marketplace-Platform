@@ -10,10 +10,19 @@ import pytest
 from app.models.chat_model import Conversation, ConversationParticipant, Message
 from app.models.group_chat_model import GroupAuditLog, VerifiedProvider
 from tests.group_chat_support import (
-    TENANT, accept, audit_actions, joined_group, make_group, messages_of, person, say, texts, uid, world,  # noqa: F401
+    OTHER_TENANT, TENANT, accept, audit_actions, joined_group, make_group, messages_of, person, say, texts, uid, world,  # noqa: F401
 )
 
 API = "/api/v1/groups"
+
+
+def verification_payload(user, **extra):
+    return {
+        "user_id": user["id"],
+        "registration_number": "MH-12345",
+        "registration_council": "State Medical Council",
+        **extra,
+    }
 
 
 @pytest.fixture
@@ -442,8 +451,7 @@ def test_a_clinic_admin_verifies_a_provider_of_their_own_clinic(world):
     nobody = world.as_user(p.unverified).post(API, json={"name": "Try", "kind": "program", "context_type": "program", "context_id": str(uuid4())})
     assert nobody.status_code == 403
 
-    resp = world.as_user(p.admin).post(f"{API}/verified-providers", json={
-        "user_id": p.unverified["id"], "registration_number": "MH-12345", "registration_council": "State Medical Council"})
+    resp = world.as_user(p.admin).post(f"{API}/verified-providers", json=verification_payload(p.unverified))
 
     assert resp.status_code == 201
     body = resp.json()
@@ -456,7 +464,8 @@ def test_a_clinic_admin_verifies_a_provider_of_their_own_clinic(world):
 def test_a_clinic_admin_cannot_verify_for_another_clinic(world):
     p = world.people
 
-    resp = world.as_user(p.outsider_admin).post(f"{API}/verified-providers", json={"user_id": p.unverified["id"], "tenant_id": str(TENANT)})
+    resp = world.as_user(p.outsider_admin).post(
+        f"{API}/verified-providers", json=verification_payload(p.unverified, tenant_id=str(TENANT)))
 
     assert resp.status_code == 403
 
@@ -464,9 +473,10 @@ def test_a_clinic_admin_cannot_verify_for_another_clinic(world):
 def test_the_platform_can_verify_for_any_clinic_and_providers_cannot_verify_themselves(world):
     p = world.people
 
-    assert world.as_user(p.root).post(f"{API}/verified-providers", json={"user_id": p.unverified["id"], "tenant_id": str(TENANT)}).status_code == 201
+    assert world.as_user(p.root).post(
+        f"{API}/verified-providers", json=verification_payload(p.unverified, tenant_id=str(TENANT))).status_code == 201
     for user in (p.rao, p.unverified, p.priya):
-        assert world.as_user(user).post(f"{API}/verified-providers", json={"user_id": p.unverified["id"]}).status_code == 403
+        assert world.as_user(user).post(f"{API}/verified-providers", json=verification_payload(p.unverified)).status_code == 403
         assert world.as_user(user).get(f"{API}/verified-providers").status_code == 403
 
 
@@ -490,6 +500,44 @@ def test_the_list_shows_the_clinics_providers_only(world):
 
 def test_revoking_someone_who_was_never_verified_is_404(world):
     assert world.as_user(world.people.admin).delete(f"{API}/verified-providers/{uuid4()}").status_code == 404
+
+
+def test_verification_rejects_non_providers_unknown_users_and_incomplete_registration_details(world):
+    p = world.people
+
+    assert world.as_user(p.admin).post(f"{API}/verified-providers", json=verification_payload(p.priya)).status_code == 422
+    assert world.as_user(p.admin).post(f"{API}/verified-providers", json=verification_payload({"id": str(uuid4())})).status_code == 422
+    incomplete = verification_payload(p.unverified)
+    incomplete["registration_council"] = " "
+    assert world.as_user(p.admin).post(f"{API}/verified-providers", json=incomplete).status_code == 422
+    assert world.as_user(p.root).post(f"{API}/verified-providers", json=verification_payload(p.unverified)).status_code == 422
+
+
+def test_verification_is_idempotent_and_scoped_to_the_providers_clinic(world):
+    p = world.people
+    first = world.as_user(p.admin).post(f"{API}/verified-providers", json=verification_payload(p.unverified))
+    second = world.as_user(p.admin).post(f"{API}/verified-providers", json=verification_payload(p.unverified))
+
+    assert first.status_code == second.status_code == 201
+    assert world.db.query(VerifiedProvider).filter(VerifiedProvider.user_id == uid(p.unverified)).count() == 1
+
+    verified = world.db.query(VerifiedProvider).filter(VerifiedProvider.user_id == uid(p.rao)).one()
+    verified.tenant_id = OTHER_TENANT
+    world.db.commit()
+    denied = world.as_user(p.rao).post(API, json={
+        "name": "Wrong clinic", "kind": "program", "context_type": "program", "context_id": str(uuid4()),
+    })
+    assert denied.status_code == 403
+
+
+def test_repeated_revocation_is_idempotent_and_the_list_excludes_revoked_records(world):
+    p = world.people
+    first = world.as_user(p.admin).delete(f"{API}/verified-providers/{p.rao['id']}")
+    second = world.as_user(p.admin).delete(f"{API}/verified-providers/{p.rao['id']}")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["status"] == second.json()["status"] == "revoked"
+    assert p.rao["id"] not in {row["user_id"] for row in world.as_user(p.admin).get(f"{API}/verified-providers").json()}
 
 
 # =============================================================================================================

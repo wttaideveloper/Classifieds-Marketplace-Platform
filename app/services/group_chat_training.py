@@ -59,10 +59,10 @@ def _load_training(db: Session, training_id: UUID):
 def assert_can_manage(db: Session, current_user: dict, training_id: UUID, access_token: str | None = None):
     """The training, or 403 / 404. Only the clinic's Enterprise Admin and verified Providers of the clinic (assigned to
     the training, unless that rule is off) may use a training for a group."""
-    common.assert_can_create_groups(db, current_user)     # admin, or a verified provider; never a learner / Super Admin
     caller_tenant = common.caller_tenant(db, current_user, access_token)
     if caller_tenant is None:
         raise HTTPException(status_code=403, detail="Authenticated tenant identity required to use a training for a group")
+    common.assert_can_create_groups(db, current_user, caller_tenant)  # admin, or a verified provider; never a learner / Super Admin
     training = _load_training(db, training_id)
     owner = _training_tenant(training)
     if owner is None or owner != caller_tenant or (training.tenant_id and UUID(str(training.tenant_id)) != caller_tenant):
@@ -101,10 +101,10 @@ def manageable_trainings(
 ) -> dict:
     from app.models.training_model import Training, TrainingEnrolment
 
-    common.assert_can_create_groups(db, current_user)
     tenant = common.caller_tenant(db, current_user, access_token)
     if tenant is None:
         raise HTTPException(status_code=403, detail="Authenticated tenant identity required to use a training for a group")
+    common.assert_can_create_groups(db, current_user, tenant)
     query = db.query(Training).filter(Training.is_deleted.is_(False), _tenant_filter(tenant))
     if common.platform_role(current_user) == "provider" and settings.GROUP_PROVIDER_REQUIRES_TRAINING_ASSIGNMENT:
         query = query.filter(Training.instructor_id == common.user_uuid(current_user))
@@ -149,8 +149,7 @@ def _verified_ids(db: Session, user_ids, tenant: UUID) -> set[UUID]:
         return set()
     rows = (
         db.query(VerifiedProvider.user_id)
-        .filter(VerifiedProvider.user_id.in_(ids), VerifiedProvider.status == "verified",
-                sa.or_(VerifiedProvider.tenant_id == tenant, VerifiedProvider.tenant_id.is_(None)))
+        .filter(VerifiedProvider.user_id.in_(ids), VerifiedProvider.status == "verified", VerifiedProvider.tenant_id == tenant)
         .all()
     )
     return {r[0] for r in rows}
@@ -324,7 +323,7 @@ def list_providers(db: Session, current_user: dict, training_id: UUID, access_to
     tenant = common.caller_tenant(db, current_user, access_token)
     rows = (
         db.query(VerifiedProvider)
-        .filter(VerifiedProvider.status == "verified", sa.or_(VerifiedProvider.tenant_id == tenant, VerifiedProvider.tenant_id.is_(None)))
+        .filter(VerifiedProvider.status == "verified", VerifiedProvider.tenant_id == tenant)
         .order_by(VerifiedProvider.verified_at.asc()).limit(500).all()
     )
     me = common.user_uuid(current_user)

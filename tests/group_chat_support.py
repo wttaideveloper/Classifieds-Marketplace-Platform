@@ -115,6 +115,21 @@ def world(monkeypatch):
         names[p["id"]] = p["name"]
     recipients.platform = [uid(root)]
     recipients.clinic = [uid(admin)]
+
+    # Group-provider verification checks the established Identity tenant-members
+    # source of truth.  Keep the integration fixture in-process while preserving
+    # the same documented member shape and role mapping used in production.
+    def tenant_users(tenant_id, access_token=None):
+        if tenant_id == TENANT:
+            source = (admin, rao, mehta, nair, unverified, priya, ravi, asha, stranger)
+        elif tenant_id == OTHER_TENANT:
+            source = (outsider_admin,)
+        else:
+            source = ()
+        return [{"userId": user["id"], "role": user["role"], "membershipStatus": "active", "userStatus": "active"}
+                for user in source]
+
+    monkeypatch.setattr("app.services.event_notification_service.list_tenant_users", tenant_users)
     for p in (rao, mehta, nair):
         db.add(VerifiedProvider(user_id=uid(p), tenant_id=TENANT, status="verified", registration_number="REG-" + p["name"][-3:]))
     db.commit()

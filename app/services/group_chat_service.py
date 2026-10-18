@@ -144,7 +144,7 @@ def _invitee_rows(db: Session, conversation: Conversation, invitees, inviter_id:
         if existing is not None and existing.membership_status in ("active", "invited"):
             skipped.append(uid)
             continue
-        kind = "provider" if common.is_verified_provider(db, uid) else "patient"
+        kind = "provider" if common.is_verified_provider(db, uid, conversation.tenant_id) else "patient"
         row = existing or ConversationParticipant(conversation_id=conversation.id, user_id=uid)
         row.role = "provider" if kind == "provider" else "customer"
         row.membership_status = "invited"
@@ -175,11 +175,11 @@ def _capacity_check(db: Session, conversation: Conversation, extra: int) -> None
 # ---------------------------------------------------------------- create / read / update
 
 def create_group(db: Session, current_user: dict, payload, access_token: str | None = None) -> dict:
-    common.assert_can_create_groups(db, current_user)
     user_id = common.user_uuid(current_user)
     tenant_id = common.caller_tenant(db, current_user, access_token)
     if tenant_id is None:
         raise HTTPException(status_code=403, detail="Authenticated tenant identity required to create a group")
+    common.assert_can_create_groups(db, current_user, tenant_id)
     training = None
     if payload.context_type == training_groups.LINK_TYPE:
         training = training_groups.assert_can_link(db, current_user, payload.context_id, access_token)
@@ -601,7 +601,7 @@ def change_role(db: Session, current_user: dict, conversation_id: UUID, target_i
     if payload.role == previous:
         return {"conversation_id": conversation.id, "user_id": target_id, "role": previous}
     if payload.role == "admin":
-        if target.member_kind != "provider" or not common.is_verified_provider(db, target_id):
+        if target.member_kind != "provider" or not common.is_verified_provider(db, target_id, conversation.tenant_id):
             raise HTTPException(status_code=422, detail="Only a verified provider can be an admin; patients cannot")
         if common.count_admins(db, conversation.id) >= settings.GROUP_MAX_ADMINS:
             raise HTTPException(status_code=409, detail=f"A group can have at most {settings.GROUP_MAX_ADMINS} admins")
@@ -671,7 +671,7 @@ def _verified_provider_target(db: Session, conversation: Conversation, target_id
     target = common.get_member(db, conversation.id, target_id)
     if target is None or target.membership_status != "active":
         raise HTTPException(status_code=404, detail="Member not found")
-    if target.member_kind != "provider" or not common.is_verified_provider(db, target_id):
+    if target.member_kind != "provider" or not common.is_verified_provider(db, target_id, conversation.tenant_id):
         raise HTTPException(status_code=422, detail="Only a verified provider can own a group; patients never can")
     return target
 

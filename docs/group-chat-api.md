@@ -461,7 +461,9 @@ A provider can create a group, own one or be made an admin only if their registr
 { "user_id": "…", "registration_number": "MH-12345", "registration_council": "State Medical Council" }
 ```
 
-Before the first group can be created, every provider who needs to must be added this way. This is a one-time load: use `GET /groups/verified-providers` to check. A provider whose verification is revoked can no longer create groups; groups they already own are left alone (the owner can hand them over).
+Before the first group can be created, every provider who needs to must be added this way. The registration number and council are required, and the server confirms that the target is an active Provider in that clinic using the Identity tenant-members source. This is a one-time load: use `GET /groups/verified-providers` to check current (not revoked) entries. A provider whose verification is revoked can no longer create groups; groups they already own are left alone (the owner can hand them over).
+
+An Enterprise Admin's clinic is taken from their authenticated tenant identity; they cannot supply another clinic. A Platform Super Admin can verify for any clinic, but must include that clinic's `tenant_id` in the request. A verification only authorizes groups in the recorded clinic.
 
 A clinic admin can create groups without being in this list. If a clinic admin should also be made an admin of someone else's group, add them to the list.
 
@@ -524,6 +526,6 @@ Errors look like `{"detail": "message"}`.
 
 ## 13. Deploy
 
-1. Run the migration: `alembic upgrade e5b2c7a9d1f3`. It adds the group columns and the new tables and changes nothing for existing chats (every current participant becomes `active`). The earlier chat migrations (`b6d1f3a8c2e4`, `d3a8f1c6e9b2`) must run first.
+1. Run the repository's full migration deployment command: `alembic upgrade heads`. The group-chat migration is `e5b2c7a9d1f3` (after `b6d1f3a8c2e4` and `d3a8f1c6e9b2`); `b3e7c1a9d5f4` follows it. The group migration adds the group columns and new tables without changing existing chats (every current participant becomes `active`).
 2. Add the verified providers (section 9) and set the settings you need (section 10).
 3. Set `GROUP_GRIEVANCE_OFFICER_*` and the retention period once legal has confirmed them.

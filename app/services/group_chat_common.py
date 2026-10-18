@@ -68,22 +68,34 @@ def is_compliance_admin(db: Session, current_user: dict, conversation: Conversat
     return caller_tenant(db, current_user, access_token) == conversation.tenant_id
 
 
-def is_verified_provider(db: Session, user_id: UUID) -> bool:
+def is_verified_provider(db: Session, user_id: UUID, tenant_id: UUID | None) -> bool:
+    """Whether the provider has a current verification for this clinic.
+
+    Provider registrations are clinic-scoped.  In particular, a record created by
+    a Super Admin for one clinic must never authorize the same person to administer
+    a group belonging to another clinic.
+    """
+    if tenant_id is None:
+        return False
     return (
         db.query(VerifiedProvider.id)
-        .filter(VerifiedProvider.user_id == user_id, VerifiedProvider.status == "verified")
+        .filter(
+            VerifiedProvider.user_id == user_id,
+            VerifiedProvider.tenant_id == tenant_id,
+            VerifiedProvider.status == "verified",
+        )
         .first()
         is not None
     )
 
 
-def assert_can_create_groups(db: Session, current_user: dict) -> None:
+def assert_can_create_groups(db: Session, current_user: dict, tenant_id: UUID | None) -> None:
     """Verified providers and clinic admins only. Patients can never create a group."""
     role = platform_role(current_user)
     if role == "admin":
         return  # the clinic (Enterprise Admin)
     if role == "provider":
-        if not settings.GROUP_REQUIRE_VERIFIED_PROVIDER or is_verified_provider(db, user_uuid(current_user)):
+        if not settings.GROUP_REQUIRE_VERIFIED_PROVIDER or is_verified_provider(db, user_uuid(current_user), tenant_id):
             return
         raise HTTPException(
             status_code=403,
