@@ -174,11 +174,11 @@ def get_my_service_review_service(db: Session, service_id: UUID, current_user: d
     return catalog_reviews.my_review(db, "service", service_id, current_user)
 
 
-def delete_service_review_service(db: Session, service_id: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None):
+def delete_service_review_service(db: Session, service_id: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None, reason: str | None = None):
     service = _service_or_404(db, service_id)
-    return catalog_reviews.delete_review(db, "service", service, review_id, current_user, access_token=access_token)
+    return catalog_reviews.delete_review(db, "service", service, review_id, current_user, access_token=access_token, reason=reason)
 
 
-def moderate_service_review_service(db: Session, service_id: UUID, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None):
+def moderate_service_review_service(db: Session, service_id: UUID, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None, reason: str | None = None):
     service = _service_or_404(db, service_id)
-    return catalog_reviews.moderate_review(db, "service", service, review_id, action, access, access_token=access_token, actor=actor)
+    return catalog_reviews.moderate_review(db, "service", service, review_id, action, access, access_token=access_token, actor=actor, reason=reason)

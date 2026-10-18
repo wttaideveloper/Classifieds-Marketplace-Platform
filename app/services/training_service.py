@@ -16,10 +16,14 @@ from app.services.review_common import (
     average_rating as review_average,  # get_training_summary_service has a local named average_rating
     DELETED_STATUS,
     NEW_REVIEW_STATUS,
+    after_author_edit,
     check_move,
     clean_reason,
+    moderation_reason_for,
     needs_resubmission,
     not_deleted,
+    set_moderation,
+    shown_reason,
     clean_comment,
     edit_label,
     is_public,
@@ -3735,7 +3739,8 @@ def _review_dict(r, *, name: str | None, include_email: bool) -> dict:
         "id": str(r.id), "training_id": str(r.training_id), "rating": parse_rating(r.rating),
         "comment": r.comment, "participant_email": r.participant_email if include_email else None,
         "participant_name": name, "verified": True,
-        "moderation_status": r.moderation_status or "pending",
+        "moderation_status": r.moderation_status or "pending", "status": r.moderation_status or "pending",
+        "reason": shown_reason(r.moderation_status, getattr(r, "moderation_reason", None)),
         "status_label": status_label(r.moderation_status), "is_public": is_public(r.moderation_status),
         "edit_label": edit_label(r.moderation_status),
         "created_at": r.created_at.isoformat(),
@@ -3767,8 +3772,9 @@ def create_training_review_service(db: Session, tid: UUID, data, *, access_token
         # Editing keeps the status the review already has, except that a rejected review goes back to pending.
         resubmitted = needs_resubmission(existing.moderation_status)   # rejected, or deleted by a Super Admin
         existing.rating = str(data.rating)
+        previous_status = existing.moderation_status
         existing.comment = comment
-        existing.moderation_status = status_after_edit(existing.moderation_status)
+        after_author_edit(existing, previous_status)
         db.commit()
         db.refresh(existing)
         r = existing
@@ -3789,9 +3795,10 @@ def create_training_review_service(db: Session, tid: UUID, data, *, access_token
             if r is None:
                 raise
             resubmitted = needs_resubmission(r.moderation_status)
+            previous_status = r.moderation_status
             r.rating = str(data.rating)
             r.comment = comment
-            r.moderation_status = status_after_edit(r.moderation_status)
+            after_author_edit(r, previous_status)
             db.commit()
             is_new = False
         db.refresh(r)
@@ -3864,10 +3871,7 @@ def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, ac
     if not r:
         raise HTTPException(status_code=404, detail="Review not found")
     previous = r.moderation_status
-    if action == "rejected":
-        reason = clean_reason(reason, "reject a review")   # a rejection always says why
-    else:
-        reason = None
+    reason = moderation_reason_for(action, reason)   # rejecting or holding a review back always says why
     changed = check_move(previous, action)
     if changed:
         review_audit.record(
@@ -3877,7 +3881,7 @@ def moderate_training_review_service(db: Session, tid: UUID, review_id: UUID, ac
             customer_name=review_audit.customer_name_of(db, "training", r, training),
             business_name=review_audit.business_name_of(training), reason=reason,
         )
-        r.moderation_status = action
+        set_moderation(r, action, reason)
         db.commit()
         db.refresh(r)
     if changed:
@@ -3922,7 +3926,7 @@ def delete_training_review_service(db: Session, tid: UUID, review_id: UUID, curr
             review_id=r.id, item_id=training.id, item_name=training.title, tenant_id=next((t for t in owners if t), None),
             previous_status=r.moderation_status, actor=current_user, actor_role=role, access_token=access_token, reason=reason,
         )
-        r.moderation_status = DELETED_STATUS
+        set_moderation(r, DELETED_STATUS, reason)
         db.commit()
         from app.services import review_notifications
 

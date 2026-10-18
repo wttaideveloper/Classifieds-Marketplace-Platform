@@ -101,14 +101,14 @@ def test_only_a_super_admin_can_moderate(world, kind, item):
     url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
 
     for user in (staff("admin"), staff("admin", OTHER), staff("provider"), BUYER):
-        denied = act(client, user, "patch", url, json={"action": "rejected"})
+        denied = act(client, user, "patch", url, json={"action": "rejected", "reason": "Test reason"})
         assert denied.status_code == 403, user
         assert denied.json()["detail"] == "Only a Super Admin can moderate reviews"
     assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 1   # nothing changed
 
-    assert act(client, ROOT, "patch", url, json={"action": "rejected"}).status_code == 200
+    assert act(client, ROOT, "patch", url, json={"action": "rejected", "reason": "Test reason"}).status_code == 200
     assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 0
-    assert act(client, ROOT, "patch", url, json={"action": "approved"}).status_code == 200
+    assert act(client, ROOT, "patch", url, json={"action": "approved", "reason": "Test reason"}).status_code == 200
     assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 1
 
 
@@ -125,7 +125,7 @@ def test_moderate_checks_the_review_is_on_the_item_in_the_url(world, kind, item)
             db.add(Service(id=other_id, enterprise_id=ids["ent"], service_name="Reiki", service_category="Wellness", duration=30, service_price=10.0))
         db.commit()
 
-    wrong = act(client, ROOT, "patch", f"/api/v1/{kind}/{other_id}/reviews/{review_id}/moderate", json={"action": "rejected"})
+    wrong = act(client, ROOT, "patch", f"/api/v1/{kind}/{other_id}/reviews/{review_id}/moderate", json={"action": "rejected", "reason": "Test reason"})
 
     assert wrong.status_code == 404
 
@@ -150,7 +150,7 @@ def test_a_super_admin_can_delete_any_review(world, kind, item):
     iid = ids[item]
     review_id = post(client, kind, iid).json()["id"]
 
-    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 200
+    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}", params={"reason": "Test reason"}).status_code == 200
 
 
 @pytest.mark.parametrize("kind,item", KINDS)
@@ -226,19 +226,19 @@ def test_pending_stays_pending_on_edit_and_rejected_goes_back_to_pending(world, 
     review_id = post(client, kind, iid).json()["id"]
     url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
 
-    act(client, ROOT, "patch", url, json={"action": "pending"})
+    act(client, ROOT, "patch", url, json={"action": "pending", "reason": "Test reason"})
     held = post(client, kind, iid, rating=2).json()
     assert held["moderation_status"] == "pending" and held["status_label"] == "Waiting for Approval"
     assert held["edit_label"] == "Save Changes"
 
-    act(client, ROOT, "patch", url, json={"action": "rejected"})
+    act(client, ROOT, "patch", url, json={"action": "rejected", "reason": "Test reason"})
     mine = client.get(f"/api/v1/{kind}/{iid}/reviews/me").json()
     assert mine["status_label"] == "Not Approved" and mine["edit_label"] == "Resubmit Review"
     again = post(client, kind, iid, rating=4, comment="better").json()
     assert again["id"] == review_id and again["moderation_status"] == "pending"
     assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 0   # hidden until a Super Admin decides
 
-    assert act(client, ROOT, "patch", url, json={"action": "approved"}).status_code == 200
+    assert act(client, ROOT, "patch", url, json={"action": "approved", "reason": "Test reason"}).status_code == 200
     assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 1
 
 
@@ -248,9 +248,9 @@ def test_a_super_admin_cannot_move_a_rejected_review_back_to_pending(world, kind
     iid = ids[item]
     review_id = post(client, kind, iid).json()["id"]
     url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
-    act(client, ROOT, "patch", url, json={"action": "rejected"})
+    act(client, ROOT, "patch", url, json={"action": "rejected", "reason": "Test reason"})
 
-    resp = act(client, ROOT, "patch", url, json={"action": "pending"})
+    resp = act(client, ROOT, "patch", url, json={"action": "pending", "reason": "Test reason"})
 
     assert resp.status_code == 409 and "can only be moved to approved" in resp.json()["detail"]
 
@@ -306,7 +306,7 @@ def test_notifications_on_submit_and_on_decisions_only(world, dispatched, kind, 
 
     url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
     for action in ("pending", "approved", "approved", "rejected"):
-        act(client, ROOT, "patch", url, json={"action": action})
+        act(client, ROOT, "patch", url, json={"action": action, "reason": "Test reason"})
 
     # the author hears about real approve / reject decisions only (held back, and "already there", are silent)
     assert [(n, a[2]) for n, a in dispatched if n == "_deliver_decision"] == [("_deliver_decision", "approved"), ("_deliver_decision", "rejected")]
@@ -317,7 +317,7 @@ def test_a_resubmission_is_announced_but_an_ordinary_edit_is_not(world, dispatch
     client, _, ids = world
     iid = ids[item]
     review_id = post(client, kind, iid).json()["id"]
-    act(client, ROOT, "patch", f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate", json={"action": "rejected"})
+    act(client, ROOT, "patch", f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate", json={"action": "rejected", "reason": "Test reason"})
     dispatched.clear()
 
     post(client, kind, iid, rating=3)          # rejected -> pending: waits for a Super Admin
@@ -452,7 +452,7 @@ def test_a_review_a_super_admin_deleted_shows_as_deleted_to_its_author(world, ki
     review_id = post(client, kind, iid, rating=2).json()["id"]
     assert client.get(f"/api/v1/{kind}/{iid}/reviews").json()["total"] == 1
 
-    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 200
+    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}", params={"reason": "Test reason"}).status_code == 200
 
     mine = client.get(f"/api/v1/{kind}/{iid}/reviews/me").json()
     assert mine["id"] == review_id and mine["moderation_status"] == "deleted"
@@ -460,7 +460,7 @@ def test_a_review_a_super_admin_deleted_shows_as_deleted_to_its_author(world, ki
     listed = client.get(f"/api/v1/{kind}/{iid}/reviews").json()
     assert listed["total"] == 0 and listed["average_rating"] is None and listed["reviews"] == []
     assert client.get(f"/api/v1/{kind}/").json()["items"][0]["reviews_count"] == 0
-    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 200   # again: no change
+    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}", params={"reason": "Test reason"}).status_code == 200   # again: no change
 
 
 @pytest.mark.parametrize("kind,item", KINDS)
@@ -468,15 +468,63 @@ def test_a_deleted_review_cannot_be_moderated_but_can_be_resubmitted_or_removed(
     client, _, ids = world
     iid = ids[item]
     review_id = post(client, kind, iid).json()["id"]
-    act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}")
+    act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}", params={"reason": "Test reason"})
     moderate_url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
 
-    assert act(client, ROOT, "patch", moderate_url, json={"action": "approved"}).status_code == 409
+    assert act(client, ROOT, "patch", moderate_url, json={"action": "approved", "reason": "Test reason"}).status_code == 409
     dispatched.clear()
     again = post(client, kind, iid, rating=4, comment="Reconsidered")
     assert again.json()["moderation_status"] == "pending" and again.json()["status_label"] == "Waiting for Approval"
     assert [(n, a) for n, a in dispatched if n == "_deliver_submitted"] == [("_deliver_submitted", (item, review_id, None, True))]
 
-    act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}")
+    act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}", params={"reason": "Test reason"})
     assert client.delete(f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 200       # the author, for good
     assert client.get(f"/api/v1/{kind}/{iid}/reviews/me").json() is None
+
+
+# --- the author reads the Super Admin's reason on their own review --------------------------------------------------
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_the_author_sees_the_reason_for_a_hold_a_rejection_and_a_deletion(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    review_id = post(client, kind, iid).json()["id"]
+    url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
+    mine = lambda: client.get(f"/api/v1/{kind}/{iid}/reviews/me").json()
+    assert mine()["reason"] is None and mine()["status"] == "approved"
+
+    act(client, ROOT, "patch", url, json={"action": "pending", "reason": "Needs a second look"})
+    assert mine()["status"] == "pending" and mine()["reason"] == "Needs a second look"
+    act(client, ROOT, "patch", url, json={"action": "rejected", "reason": "Off topic"})
+    assert mine()["status"] == "rejected" and mine()["reason"] == "Off topic"
+    act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}", params={"reason": "Abusive language"})
+    assert mine()["status"] == "deleted" and mine()["reason"] == "Abusive language" and mine()["status_label"] == "Deleted"
+    assert "Abusive language" not in str(client.get(f"/api/v1/{kind}/{iid}/reviews").json())
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_the_reason_goes_when_the_review_is_resubmitted_or_approved(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    review_id = post(client, kind, iid).json()["id"]
+    url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
+    act(client, ROOT, "patch", url, json={"action": "rejected", "reason": "Off topic"})
+
+    again = post(client, kind, iid, rating=4, comment="On topic now")
+    assert again.json()["status"] == "pending" and again.json()["reason"] is None
+
+    act(client, ROOT, "patch", url, json={"action": "approved"})
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews/me").json()["reason"] is None
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_holding_back_rejecting_and_deleting_need_a_reason(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    review_id = post(client, kind, iid).json()["id"]
+    url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
+
+    assert act(client, ROOT, "patch", url, json={"action": "pending"}).status_code == 422
+    assert act(client, ROOT, "patch", url, json={"action": "rejected", "reason": "ab"}).status_code == 422
+    assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 422
+    assert client.get(f"/api/v1/{kind}/{iid}/reviews/me").json()["status"] == "approved"

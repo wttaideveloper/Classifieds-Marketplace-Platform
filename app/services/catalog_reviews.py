@@ -26,8 +26,12 @@ from app.services.review_common import (
     parse_rating,
     DELETED_STATUS,
     NEW_REVIEW_STATUS,
+    after_author_edit,
     check_move,
+    clean_reason,
+    moderation_reason_for,
     needs_resubmission,
+    set_moderation,
     public_name,
     rating_distribution,
     status_after_edit,
@@ -70,23 +74,25 @@ def _item_name(kind: str, item) -> str | None:
     return getattr(item, "product_name" if kind == "product" else "service_name", None)
 
 
-def _log(db: Session, kind: str, item, review, to_status: str, actor, actor_role) -> None:
+def _log(db: Session, kind: str, item, review, to_status: str, actor, actor_role, reason: str | None = None) -> None:
     review_audit.record(
         db, module=kind, review_id=review.id, item_id=item.id, item_name=_item_name(kind, item),
         tenant_id=next((t for t in _owner_tenants(item) if t), None),
         from_status=review.moderation_status, to_status=to_status, actor=actor, actor_role=actor_role,
         customer_name=review_audit.customer_name_of(db, kind, review, item), business_name=review_audit.business_name_of(item),
+        reason=reason,
     )
 
 
 def _edit(db: Session, kind: str, existing, data, comment, reviewer_name, is_verified, access_token):
     """Change the author's own review. The status stays, except that a rejected review goes back to pending."""
     was_rejected = needs_resubmission(existing.moderation_status)  # rejected, or deleted by a Super Admin
+    previous = existing.moderation_status
     existing.rating = str(data.rating)
     existing.comment = comment
     existing.reviewer_name = reviewer_name
     existing.is_verified_purchase = is_verified
-    existing.moderation_status = status_after_edit(existing.moderation_status)
+    after_author_edit(existing, previous)
     db.commit()
     db.refresh(existing)
     if was_rejected:
@@ -148,7 +154,7 @@ def my_review(db: Session, kind: str, item_id: UUID, current_user: dict):
     return db.query(model).filter(fk_col == item_id, model.user_id == user_id).first()
 
 
-def delete_review(db: Session, kind: str, item, review_id: UUID, current_user: dict, *, access_token: str | None = None):
+def delete_review(db: Session, kind: str, item, review_id: UUID, current_user: dict, *, access_token: str | None = None, reason: str | None = None):
     model, fk_col, _ = _fk(kind)
     user_id, _ = identity(current_user)
     review = db.query(model).filter(model.id == review_id, fk_col == item.id).first()
@@ -159,16 +165,17 @@ def delete_review(db: Session, kind: str, item, review_id: UUID, current_user: d
         if role != "super_admin":
             raise HTTPException(status_code=403, detail="You can only delete your own review")
         assert_staff_in_tenant(db, current_user, access_token, *_owner_tenants(item))  # an active Super Admin only
+        reason = clean_reason(reason, "delete a review")   # deleting someone else's review always says why
         if review.moderation_status == DELETED_STATUS:
             return {"message": "Review deleted"}   # already deleted: nothing to record or announce
         # A Super Admin's delete keeps the row, marked deleted, so the author still sees it in their own review.
-        _log(db, kind, item, review, DELETED_STATUS, current_user, role)
+        _log(db, kind, item, review, DELETED_STATUS, current_user, role, reason)
         announce = dict(
             review_id=review.id, item_id=item.id, item_name=_item_name(kind, item),
             tenant_id=next((t for t in _owner_tenants(item) if t), None), previous_status=review.moderation_status,
-            actor=current_user, actor_role=role, access_token=access_token,
+            actor=current_user, actor_role=role, access_token=access_token, reason=reason,
         )
-        review.moderation_status = DELETED_STATUS
+        set_moderation(review, DELETED_STATUS, reason)
         db.commit()
         review_notifications.notify_review_deleted(kind, **announce)
         return {"message": "Review deleted"}
@@ -177,7 +184,7 @@ def delete_review(db: Session, kind: str, item, review_id: UUID, current_user: d
     return {"message": "Review deleted"}
 
 
-def moderate_review(db: Session, kind: str, item, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None):
+def moderate_review(db: Session, kind: str, item, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None, reason: str | None = None):
     model, fk_col, _ = _fk(kind)
     validate_action(action)
     assert_can_moderate(access, *_owner_tenants(item))
@@ -186,17 +193,18 @@ def moderate_review(db: Session, kind: str, item, review_id: UUID, action: str, 
     if not review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
     previous = review.moderation_status
+    reason = moderation_reason_for(action, reason)   # rejecting or holding a review back always says why
     if not check_move(previous, action):
         return review  # already there: nothing to record or announce
-    _log(db, kind, item, review, action, actor, access.role)
-    review.moderation_status = action
+    _log(db, kind, item, review, action, actor, access.role, reason)
+    set_moderation(review, action, reason)
     db.commit()
     db.refresh(review)
-    review_notifications.notify_review_decision(kind, review.id, action, access_token=access_token)
+    review_notifications.notify_review_decision(kind, review.id, action, access_token=access_token, reason=reason)
     review_notifications.notify_review_moderated(
         kind, review_id=review.id, item_id=item.id, item_name=_item_name(kind, item),
         tenant_id=next((t for t in _owner_tenants(item) if t), None), previous_status=previous, new_status=action,
-        actor=actor, actor_role=access.role, access_token=access_token,
+        actor=actor, actor_role=access.role, access_token=access_token, reason=reason,
     )
     return review
 

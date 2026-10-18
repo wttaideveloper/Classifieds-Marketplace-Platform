@@ -241,12 +241,18 @@ def test_the_roster_shows_who_is_already_in_a_group(tw):
     group = create(tw, p.rao, t.yoga, invitees=[p.priya, p.ravi]).json()
     accept(tw, p.priya, group["id"])
 
+    # for a NEW group (no group_id) being in another group of the training does not stop an invitation
     rows = {r["name"]: r for r in learners(tw, p.rao, t.yoga)["items"]}
-
-    assert rows["Priya Sharma"]["group_state"] == "member" and rows["Priya Sharma"]["can_invite"] is False
-    assert rows["Priya Sharma"]["reason"] == "already_member" and rows["Priya Sharma"]["group_ids"] == [group["id"]]
-    assert rows["Ravi Kumar"]["group_state"] == "invited" and rows["Ravi Kumar"]["reason"] == "already_invited"
+    assert rows["Priya Sharma"]["group_state"] == "member" and rows["Priya Sharma"]["group_ids"] == [group["id"]]
+    assert rows["Priya Sharma"]["can_invite"] is True and rows["Priya Sharma"]["reason"] is None
+    assert rows["Ravi Kumar"]["group_state"] == "invited" and rows["Ravi Kumar"]["can_invite"] is True
     assert rows["Asha Iyer"]["group_state"] == "none" and rows["Asha Iyer"]["can_invite"] is True
+
+    # relative to that group, they cannot be invited again
+    rows = {r["name"]: r for r in learners(tw, p.rao, t.yoga, group_id=group["id"])["items"]}
+    assert rows["Priya Sharma"]["can_invite"] is False and rows["Priya Sharma"]["reason"] == "already_member"
+    assert rows["Ravi Kumar"]["can_invite"] is False and rows["Ravi Kumar"]["reason"] == "already_invited"
+    assert rows["Asha Iyer"]["can_invite"] is True
 
 
 def test_not_in_group_hides_everyone_already_in_or_invited_so_late_enrollees_stand_out(tw):
@@ -683,3 +689,188 @@ def test_the_enterprise_admin_can_be_invited_into_a_providers_group_only_when_ve
     accept(tw, p.admin, group["id"])
     assert tw.as_user(p.admin).get(f"{API}/{group['id']}").json()["my_kind"] == "provider"
     assert say(tw, p.admin, group["id"], "Hello from the admin").status_code == 201
+
+
+# =============================================================================================================
+# 9. the same learner in several groups of one training; names of pending invitees
+# =============================================================================================================
+
+def test_the_same_learner_can_be_in_several_groups_of_one_training(tw):
+    t, p = tw.training, tw.people
+    first = create(tw, p.rao, t.yoga, invitees=[p.priya]).json()
+    accept(tw, p.priya, first["id"])
+
+    second = create(tw, p.rao, t.yoga, invitees=[p.priya], name="Weekend batch")
+    assert second.status_code == 201, second.text
+    accept(tw, p.priya, second.json()["id"])
+
+    mine = tw.as_user(p.priya).get(API).json()["items"]
+    assert {g["name"] for g in mine} == {"October Yoga Batch", "Weekend batch"}
+    row = next(r for r in learners(tw, p.rao, t.yoga)["items"] if r["name"] == "Priya Sharma")
+    assert sorted(row["group_ids"]) == sorted([first["id"], second.json()["id"]])
+
+
+def test_invite_enrolled_for_a_second_group_does_not_skip_people_who_are_in_the_first(tw):
+    t, p = tw.training, tw.people
+    create(tw, p.rao, t.yoga, invitees=[p.priya, p.ravi])
+    second = create(tw, p.rao, t.yoga, name="Second").json()
+
+    body = tw.as_user(p.rao).post(f"{API}/{second['id']}/members/invite-enrolled", json={"all_eligible": True}).json()
+
+    assert set(body["invited"]) == {p.priya["id"], p.ravi["id"], p.asha["id"]}
+
+
+def test_the_owner_sees_the_names_of_the_people_they_invited(tw):
+    t, p = tw.training, tw.people
+    tw.names.pop(p.priya["id"], None)       # the identity service knows nothing about these learners
+    tw.names.pop(p.ravi["id"], None)
+    group = create(tw, p.rao, t.yoga, invitees=[p.priya, p.ravi]).json()
+
+    members = {m["user_id"]: m for m in tw.as_user(p.rao).get(f"{API}/{group['id']}/members").json()["members"]}
+
+    assert members[p.priya["id"]]["status"] == "invited" and members[p.priya["id"]]["name"] == "Priya Sharma"
+    assert members[p.ravi["id"]]["name"] == "Ravi Kumar"
+
+
+def test_a_learner_cannot_see_invited_people_at_all(tw):
+    t, p = tw.training, tw.people
+    group = create(tw, p.rao, t.yoga, invitees=[p.priya, p.ravi]).json()
+    accept(tw, p.priya, group["id"])
+
+    members = tw.as_user(p.priya).get(f"{API}/{group['id']}/members").json()["members"]
+
+    assert [m["status"] for m in members] == ["active", "active"] and all(m["user_id"] != p.ravi["id"] for m in members)
+
+
+# =============================================================================================================
+# 10. permissions in the group details; close and reopen; the picture
+# =============================================================================================================
+
+def details(w, user, group_id):
+    resp = w.as_user(user).get(f"{API}/{group_id}")
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_the_owner_gets_every_management_permission(tw):
+    group = create(tw, tw.people.rao, tw.training.yoga).json()
+
+    perms = details(tw, tw.people.rao, group["id"])["permissions"]
+
+    assert perms["can_post"] and perms["can_edit_group"] and perms["can_change_settings"] and perms["can_invite"]
+    assert perms["can_remove_members"] and perms["can_make_admin"] and perms["can_remove_admin"] and perms["can_close"]
+    assert perms["can_transfer_ownership"] and perms["can_view_audit"] and perms["can_view_pending_invitations"]
+    assert perms["can_reopen"] is False and perms["can_leave"] is False and perms["can_reassign_owner"] is False
+
+
+def test_a_learner_gets_no_management_permission(tw):
+    t, p = tw.training, tw.people
+    group = create(tw, p.rao, t.yoga, invitees=[p.priya]).json()
+    accept(tw, p.priya, group["id"])
+
+    perms = details(tw, p.priya, group["id"])["permissions"]
+
+    assert not any(perms[k] for k in (
+        "can_edit_group", "can_change_settings", "can_invite", "can_remove_members", "can_make_admin", "can_remove_admin",
+        "can_mute_members", "can_hide_messages", "can_pin_messages", "can_close", "can_reopen", "can_transfer_ownership",
+        "can_view_audit", "can_view_pending_invitations", "can_reassign_owner", "can_set_legal_hold",
+    ))
+    assert perms["can_leave"] and perms["can_report"] and perms["can_mute_group"] and perms["can_view_members"]
+
+
+def test_posting_permission_follows_the_providers_only_setting(tw, monkeypatch):
+    t, p = tw.training, tw.people
+    monkeypatch.setattr(settings, "GROUP_PROGRAM_PATIENTS_CAN_POST", True)
+    group = create(tw, p.rao, t.yoga, invitees=[p.priya], admins_only_posting=True).json()
+    accept(tw, p.priya, group["id"])
+    assert details(tw, p.priya, group["id"])["permissions"]["can_post"] is False
+
+    tw.as_user(p.rao).patch(f"{API}/{group['id']}/settings", json={"admins_only_posting": False})
+    assert details(tw, p.priya, group["id"])["permissions"]["can_post"] is True
+
+
+def test_an_admin_can_manage_but_not_reopen_and_cannot_take_admin_away(tw):
+    t, p = tw.training, tw.people
+    group = joined(tw, p.rao, [p.mehta])
+    tw.as_user(p.rao).patch(f"{API}/{group['id']}/members/{p.mehta['id']}/role", json={"role": "admin"})
+
+    perms = details(tw, p.mehta, group["id"])["permissions"]
+
+    assert perms["can_edit_group"] and perms["can_invite"] and perms["can_close"] and perms["can_make_admin"]
+    assert perms["can_remove_admin"] is False and perms["can_transfer_ownership"] is False and perms["can_view_audit"] is False
+    tw.as_user(p.mehta).post(f"{API}/{group['id']}/close", json={})
+    assert details(tw, p.mehta, group["id"])["permissions"]["can_reopen"] is False
+
+
+def test_a_closed_group_removes_editing_and_posting_and_the_owner_can_reopen(tw):
+    p = tw.people
+    group = create(tw, p.rao, tw.training.yoga).json()
+    tw.as_user(p.rao).post(f"{API}/{group['id']}/close", json={"reason": "Training ended"})
+
+    perms = details(tw, p.rao, group["id"])["permissions"]
+
+    assert perms["can_post"] is False and perms["can_edit_group"] is False and perms["can_invite"] is False
+    assert perms["can_close"] is False and perms["can_reopen"] is True
+    assert details(tw, p.admin, group["id"])["permissions"]["can_reopen"] is True      # compliance too
+
+
+def test_the_enterprise_admin_looking_at_a_providers_group_gets_the_compliance_permissions_only(tw):
+    p = tw.people
+    group = create(tw, p.rao, tw.training.yoga).json()
+
+    perms = details(tw, p.admin, group["id"])["permissions"]
+
+    assert perms["can_view_audit"] and perms["can_reassign_owner"] and perms["can_set_legal_hold"] and perms["can_remove_members"]
+    assert perms["can_post"] is False and perms["can_view_members"] is False and perms["can_edit_group"] is False and perms["can_invite"] is False
+
+
+def test_close_works_with_no_body_with_an_empty_body_and_with_a_reason(tw):
+    p = tw.people
+    ids = [create(tw, p.rao, tw.training.yoga, name=f"Batch {i}").json()["id"] for i in range(3)]
+    client = tw.as_user(p.rao)
+
+    assert client.post(f"{API}/{ids[0]}/close").status_code == 200
+    assert client.post(f"{API}/{ids[1]}/close", json={}).status_code == 200
+    resp = client.post(f"{API}/{ids[2]}/close", json={"reason": "Training ended"})
+    assert resp.status_code == 200 and resp.json()["status"] == "closed" and resp.json()["closed_reason"] == "Training ended"
+    assert client.post(f"{API}/{ids[2]}/close").status_code == 409                       # already closed
+
+
+def test_reopen_needs_a_reason_and_is_for_the_owner_or_compliance(tw):
+    t, p = tw.training, tw.people
+    group = joined(tw, p.rao, [p.mehta, p.priya])
+    tw.as_user(p.rao).patch(f"{API}/{group['id']}/members/{p.mehta['id']}/role", json={"role": "admin"})
+    tw.as_user(p.rao).post(f"{API}/{group['id']}/close", json={})
+    url = f"{API}/{group['id']}/reopen"
+
+    assert tw.as_user(p.rao).post(url, json={}).status_code == 422
+    assert tw.as_user(p.rao).post(url, json={"reason": "ab"}).status_code == 422
+    assert tw.as_user(p.mehta).post(url, json={"reason": "Let me do it"}).status_code == 403     # an admin cannot
+    assert tw.as_user(p.priya).post(url, json={"reason": "Let me do it"}).status_code == 403
+    assert tw.as_user(p.outsider_admin).post(url, json={"reason": "Not my clinic"}).status_code == 403
+    opened = tw.as_user(p.rao).post(url, json={"reason": "More sessions were added"})
+    assert opened.status_code == 200 and opened.json()["status"] == "open"
+    tw.as_user(p.rao).post(f"{API}/{group['id']}/close", json={})
+    assert tw.as_user(p.admin).post(url, json={"reason": "Compliance review finished"}).status_code == 200      # the clinic's admin
+
+
+def test_the_picture_must_be_an_upload_url_or_an_http_address(tw):
+    p = tw.people
+    ok = create(tw, p.rao, tw.training.yoga, avatar_url="/api/v1/uploads/group-avatars/ab12.png")
+    assert ok.status_code == 201 and ok.json()["avatar_url"] == "/api/v1/uploads/group-avatars/ab12.png"
+    assert create(tw, p.rao, tw.training.yoga, avatar_url="javascript:alert(1)").status_code == 422
+    assert create(tw, p.rao, tw.training.yoga, avatar_url="C:/pictures/me.png").status_code == 422
+    gid = ok.json()["id"]
+    assert tw.as_user(p.rao).patch(f"{API}/{gid}", json={"avatar_url": "https://cdn.example.test/icon.png"}).status_code == 200
+    assert tw.as_user(p.rao).patch(f"{API}/{gid}", json={"avatar_url": "ftp://x/y.png"}).status_code == 422
+    cleared = tw.as_user(p.rao).patch(f"{API}/{gid}", json={"avatar_url": ""})
+    assert cleared.status_code == 200 and cleared.json()["avatar_url"] is None
+
+
+def test_every_group_response_carries_permissions(tw):
+    p = tw.people
+    group = create(tw, p.rao, tw.training.yoga).json()
+
+    assert "permissions" in group
+    assert "permissions" in tw.as_user(p.rao).get(API).json()["items"][0]
+    assert "permissions" in tw.as_user(p.admin).get(f"{API}/compliance/groups").json()["items"][0]

@@ -87,7 +87,7 @@ def test_average_is_null_when_nothing_is_approved(world):
     body = public(world).json()
 
     assert body == {
-        "reviews": [], "average_rating": None, "count": 0,
+        "my_review": None, "reviews": [], "average_rating": None, "count": 0,
         "rating_distribution": {"5": 0, "4": 0, "3": 0, "2": 0, "1": 0},
         "pagination": {"total": 0, "page": 1, "page_size": 0, "total_pages": 0},
     }
@@ -212,11 +212,11 @@ def test_moderating_from_the_list_changes_what_the_public_sees(world):
 
     [review] = manage(world, status="approved").json()["reviews"]
     url = f"{API}/{world.event.id}/reviews/{review['id']}/moderate"
-    assert client_for(world.db, world.owner).patch(url, json={"action": "pending"}).status_code == 403   # view only
+    assert client_for(world.db, world.owner).patch(url, json={"action": "pending", "reason": "Test reason"}).status_code == 403   # view only
     root = super_admin_user()   # each client_for() call re-points the shared app at its user, so ask again each time
-    assert client_for(world.db, root).patch(url, json={"action": "pending"}).status_code == 200
+    assert client_for(world.db, root).patch(url, json={"action": "pending", "reason": "Test reason"}).status_code == 200
     assert public(world).json()["count"] == 0
-    approve = client_for(world.db, root).patch(url, json={"action": "approved"})
+    approve = client_for(world.db, root).patch(url, json={"action": "approved", "reason": "Test reason"})
     assert approve.status_code == 200
 
     body = public(world).json()

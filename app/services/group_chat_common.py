@@ -253,7 +253,7 @@ def resolve_names(db: Session, conversation: Conversation, user_ids, current_use
 
     try:
         return chat_user_names.resolve_display_names(
-            list(user_ids), tenant_ids=[conversation.tenant_id], current_user=current_user
+            list(user_ids), tenant_ids=[conversation.tenant_id], current_user=current_user, db=db
         )
     except Exception:
         logger.exception("could not resolve group member names")

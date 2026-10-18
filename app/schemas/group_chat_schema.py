@@ -17,6 +17,14 @@ GroupMessageType = Literal["text", "image", "document", "audio", "video"]
 
 # ---------------------------------------------------------------- requests
 
+def _check_avatar_url(value: str | None) -> str | None:
+    if value is None or value == "":
+        return value   # "" clears the picture on update
+    if not value.startswith(("https://", "http://", "/api/v1/uploads/")):
+        raise ValueError("avatar_url must be the url returned by POST /api/v1/uploads/ or an http(s) address")
+    return value
+
+
 class GroupInvitee(BaseModel):
     user_id: UUID
     display_name: str | None = Field(
@@ -36,7 +44,11 @@ class GroupCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120, description="Must not contain a patient's name or a health condition.")
     kind: GroupKind = Field(..., description="care = one patient's care team; program = several patients in one program.")
     description: str | None = Field(None, max_length=500)
-    avatar_url: str | None = Field(None, max_length=500, description="https URL of the group icon (upload it first, then pass the link).")
+    avatar_url: str | None = Field(
+        None, max_length=500,
+        description="The group icon: the `url` returned by POST /api/v1/uploads/ (for example /api/v1/uploads/group-avatars/ab12.png), "
+                    "or an https:// address. Anything else is a 422.",
+    )
     context_type: GroupLinkType = Field(..., description="Every group follows a program, an appointment series or a care episode.")
     context_id: UUID
     invitees: list[GroupInvitee] = Field(default_factory=list)
@@ -56,6 +68,8 @@ class GroupCreate(BaseModel):
             raise ValueError("invite_all_enrolled works for training groups only")
         return self
 
+    _avatar = field_validator("avatar_url")(_check_avatar_url)
+
     @field_validator("name")
     @classmethod
     def _name_not_blank(cls, value: str) -> str:
@@ -68,7 +82,9 @@ class GroupCreate(BaseModel):
 class GroupUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
     description: str | None = Field(None, max_length=500)
-    avatar_url: str | None = Field(None, max_length=500)
+    avatar_url: str | None = Field(None, max_length=500, description="The url returned by POST /api/v1/uploads/ (or an https:// address). Send an empty string to remove the picture.")
+
+    _avatar = field_validator("avatar_url")(_check_avatar_url)
 
 
 class GroupSettingsUpdate(BaseModel):
@@ -219,6 +235,32 @@ class GroupLimits(BaseModel):
     edit_window_minutes: int
 
 
+class GroupPermissions(BaseModel):
+    """What the caller can do with this group right now. Built by the server from the caller's role, the kind of member
+    they are, whether the group is open and the group's posting rules, so the app does not have to work it out."""
+    can_post: bool = Field(..., description="Send a message (false when closed, muted, or posting is for providers only and the caller is not one).")
+    can_edit_group: bool = Field(..., description="Change the name, description and picture (PATCH /groups/{id}).")
+    can_change_settings: bool = Field(..., description="Change who can send messages (PATCH /groups/{id}/settings).")
+    can_invite: bool = Field(..., description="Invite people (POST /groups/{id}/members and /members/invite-enrolled).")
+    can_view_members: bool
+    can_view_pending_invitations: bool = Field(..., description="The members list also returns people who were invited and have not answered.")
+    can_remove_members: bool
+    can_make_admin: bool
+    can_remove_admin: bool = Field(..., description="Take admin away from someone (owner or compliance; a reason is required).")
+    can_mute_members: bool = Field(..., description="Stop a member posting (POST .../mute-posting).")
+    can_hide_messages: bool = Field(..., description="Remove any message from view, with a reason.")
+    can_pin_messages: bool
+    can_close: bool
+    can_reopen: bool = Field(..., description="The group is closed and the caller is its owner or compliance.")
+    can_transfer_ownership: bool
+    can_reassign_owner: bool = Field(..., description="Compliance only.")
+    can_leave: bool = Field(..., description="Any active member except the owner (who hands the group over first).")
+    can_view_audit: bool = Field(..., description="The owner and compliance.")
+    can_set_legal_hold: bool = Field(..., description="Compliance only.")
+    can_report: bool
+    can_mute_group: bool = Field(..., description="Mute notifications or pin the group for myself (PATCH /groups/{id}/preferences).")
+
+
 class GroupResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -243,6 +285,7 @@ class GroupResponse(BaseModel):
     limits: GroupLimits
     my_role: GroupRole | None = None
     my_kind: MemberKind | None = None
+    permissions: GroupPermissions | None = Field(None, description="What the caller can do with this group. Use it instead of working permissions out from my_role.")
     muted: bool = False
     pinned: bool = False
     is_archived: bool = False

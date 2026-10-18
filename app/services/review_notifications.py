@@ -318,7 +318,7 @@ def notify_review_moderated(
     _safely_notify(
         "review_moderated", module, review_id=review_id, item_id=item_id, item_name=item_name, tenant_id=tenant_id,
         previous_status=previous_status, new_status=new_status, actor=actor, actor_role=actor_role,
-        access_token=access_token, reason=reason if new_status == "rejected" else None,
+        access_token=access_token, reason=reason if new_status in ("rejected", "pending") else None,
     )
 
 

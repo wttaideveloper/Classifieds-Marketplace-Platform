@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.repository.query_utils import build_pagination_meta
 from app.services.review_access import assert_can_moderate, can_view_all_tenants
-from app.services.review_common import MODERATION_STATUSES, not_deleted, parse_rating, public_name, status_label, validate_action
+from app.services.review_common import MODERATION_STATUSES, not_deleted, parse_rating, public_name, shown_reason, status_label, validate_action
 
 _EVERYONE = type("Everyone", (), {"role": "super_admin", "tenant_id": None})()
 
@@ -150,6 +150,7 @@ def _row(module: str, review, item, name_column_value, names: dict) -> dict:
         "comment": review.comment,
         "moderation_status": review.moderation_status or "pending",
         "status_label": status_label(review.moderation_status),
+        "reason": shown_reason(review.moderation_status, getattr(review, "moderation_reason", None)),
         "created_at": review.created_at,
         "updated_at": getattr(review, "updated_at", None) or review.created_at,
         "tenant_id": (enterprise.tenant_id if enterprise is not None else None) or getattr(item, "tenant_id", None),
@@ -257,7 +258,7 @@ def delete_any_review(db: Session, module: str, review_id: UUID, current_user: d
         review = db.get(ProductReview, review_id)
         if review is None:
             raise HTTPException(status_code=404, detail="Review not found")
-        return delete_product_review_service(db, review.product_id, review_id, current_user, access_token=access_token)
+        return delete_product_review_service(db, review.product_id, review_id, current_user, access_token=access_token, reason=reason)
     if current == "service":
         from app.models.service_model import ServiceReview
         from app.services.service_service import delete_service_review_service
@@ -265,7 +266,7 @@ def delete_any_review(db: Session, module: str, review_id: UUID, current_user: d
         review = db.get(ServiceReview, review_id)
         if review is None:
             raise HTTPException(status_code=404, detail="Review not found")
-        return delete_service_review_service(db, review.service_id, review_id, current_user, access_token=access_token)
+        return delete_service_review_service(db, review.service_id, review_id, current_user, access_token=access_token, reason=reason)
     from app.models.event_aux_models import EventFeedback
     from app.services.event_service import delete_event_review_service
 
@@ -301,7 +302,7 @@ def moderate_any_review(db: Session, module: str, review_id: UUID, action: str, 
         review = db.get(ProductReview, review_id)
         if review is None:
             raise HTTPException(status_code=404, detail="Review not found")
-        moderate_product_review_service(db, review.product_id, review_id, action, access, access_token=access_token, actor=actor)
+        moderate_product_review_service(db, review.product_id, review_id, action, access, access_token=access_token, actor=actor, reason=reason)
     elif current == "service":
         from app.models.service_model import ServiceReview
         from app.services.service_service import moderate_service_review_service
@@ -309,7 +310,7 @@ def moderate_any_review(db: Session, module: str, review_id: UUID, action: str, 
         review = db.get(ServiceReview, review_id)
         if review is None:
             raise HTTPException(status_code=404, detail="Review not found")
-        moderate_service_review_service(db, review.service_id, review_id, action, access, access_token=access_token, actor=actor)
+        moderate_service_review_service(db, review.service_id, review_id, action, access, access_token=access_token, actor=actor, reason=reason)
     else:
         from app.models.event_aux_models import EventFeedback
         from app.repository.event_repo import event_owner_tenant_id, get_event_by_id

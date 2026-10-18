@@ -264,6 +264,7 @@ class TrainingReview(Base):
     comment = Column(Text)
     # pending -> approved | rejected. Only approved reviews are public.
     moderation_status = Column(String(20), default="pending", server_default="pending", nullable=False, index=True)
+    moderation_reason = Column(String(500), nullable=True)  # why a Super Admin rejected, held back or deleted it; shown to its author
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

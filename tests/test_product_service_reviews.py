@@ -85,7 +85,7 @@ def test_product_review_verified_purchase_and_moderation_gate(reviews_app):
 
     # a Super Admin holds it back -> hidden from the public list
     _set_identity(client.app, lambda: ROOT)
-    client.patch(f"/api/v1/products/{pid}/reviews/{body['id']}/moderate", json={"action": "pending"})
+    client.patch(f"/api/v1/products/{pid}/reviews/{body['id']}/moderate", json={"action": "pending", "reason": "Test reason"})
     listing = client.get(f"/api/v1/products/{pid}/reviews").json()
     assert listing["total"] == 0
     assert listing["reviews"] == []
@@ -119,7 +119,7 @@ def test_product_review_moderation_flow(reviews_app):
 
     staff = {"id": str(uuid4()), "email": "admin@example.com", "role": "admin", "tenant_id": str(TENANT)}
     _set_identity(client.app, lambda: staff)
-    denied = client.patch(f"/api/v1/products/{pid}/reviews/{review_id}/moderate", json={"action": "rejected"})
+    denied = client.patch(f"/api/v1/products/{pid}/reviews/{review_id}/moderate", json={"action": "rejected", "reason": "Test reason"})
     assert denied.status_code == 403 and denied.json()["detail"] == "Only a Super Admin can moderate reviews"
 
     _set_identity(client.app, lambda: ROOT)
@@ -127,7 +127,7 @@ def test_product_review_moderation_flow(reviews_app):
     assert listing["total"] == 1
     assert listing["average_rating"] == 5.0
 
-    moderated = client.patch(f"/api/v1/products/{pid}/reviews/{review_id}/moderate", json={"action": "rejected"})
+    moderated = client.patch(f"/api/v1/products/{pid}/reviews/{review_id}/moderate", json={"action": "rejected", "reason": "Test reason"})
     assert moderated.status_code == 200, moderated.text
     assert moderated.json()["moderation_status"] == "rejected"
     listing = client.get(f"/api/v1/products/{pid}/reviews").json()
@@ -161,7 +161,8 @@ def test_product_review_only_a_super_admin_can_delete_others_review(reviews_app)
     assert client.delete(f"/api/v1/products/{pid}/reviews/{review['id']}").status_code == 403
 
     _set_identity(app, lambda: ROOT)
-    assert client.delete(f"/api/v1/products/{pid}/reviews/{review['id']}").status_code == 200
+    assert client.delete(f"/api/v1/products/{pid}/reviews/{review['id']}").status_code == 422      # a reason is required
+    assert client.delete(f"/api/v1/products/{pid}/reviews/{review['id']}", params={"reason": "Abusive language"}).status_code == 200
 
 
 def test_product_review_requires_authentication(reviews_app):
@@ -188,7 +189,7 @@ def test_service_review_is_never_verified_and_still_works(reviews_app):
     assert listing["reviews"][0]["rating"] == 4
 
     _set_identity(client.app, lambda: ROOT)
-    moderated = client.patch(f"/api/v1/services/{sid}/reviews/{body['id']}/moderate", json={"action": "rejected"})
+    moderated = client.patch(f"/api/v1/services/{sid}/reviews/{body['id']}/moderate", json={"action": "rejected", "reason": "Test reason"})
     assert moderated.status_code == 200, moderated.text
     assert client.get(f"/api/v1/services/{sid}/reviews").json()["total"] == 0
 

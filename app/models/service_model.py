@@ -104,7 +104,8 @@ class ServiceReview(Base):
     rating = Column(String(10), nullable=False)
     comment = Column(Text)
     is_verified_purchase = Column(Boolean, default=False, nullable=False)  # always False today — no Service booking/order system exists to verify against
-    moderation_status = Column(String(20), default="pending", nullable=False, index=True)  # pending|approved|rejected
+    moderation_status = Column(String(20), default="pending", nullable=False, index=True)  # pending|approved|rejected|deleted
+    moderation_reason = Column(String(500), nullable=True)  # why a Super Admin rejected, held back or deleted it; shown to its author
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

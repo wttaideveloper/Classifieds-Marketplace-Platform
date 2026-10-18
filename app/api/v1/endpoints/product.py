@@ -2,7 +2,7 @@ from uuid import UUID
 from app.core.catalog_access import get_catalog_access, require_catalog_writer, require_review_moderator
 from app.core.dependencies import extract_access_token, get_current_user
 
-from fastapi import APIRouter, Depends, Path, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -182,18 +182,21 @@ def get_my_product_review(
     "/{product_id}/reviews/{review_id}",
     summary="Delete a review",
     description=(
-        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. A Super Admin's delete keeps the review for its author with moderation_status `deleted` (hidden from everyone else)."
+        "The review's own author, or a Super Admin. Enterprise Admins and providers cannot delete a customer's review. A Super Admin's delete keeps the review for its author with moderation_status `deleted` (hidden from everyone else). A Super Admin must send `reason` in the body (or `?reason=`), 3 to 500 characters, else 422; the author sees it."
     ),
 )
 def delete_product_review(
     request: Request,
     product_id: UUID = Path(...),
     review_id: UUID = Path(...),
+    payload: dict | None = Body(None),
+    reason: str | None = Query(None, description="The same as the body field `reason`, for clients that cannot send a body with DELETE"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     return delete_product_review_service(
-        db, product_id, review_id, current_user, access_token=extract_access_token(request)
+        db, product_id, review_id, current_user, access_token=extract_access_token(request),
+        reason=((payload or {}).get("reason") if (payload or {}).get("reason") is not None else reason),
     )
 
 
@@ -203,7 +206,8 @@ def delete_product_review(
     summary="Approve, reject, or reset a review's moderation status",
     description=(
         "Super Admin only; Enterprise Admins and providers get 403. Allowed moves: approved -> rejected | pending, "
-        "pending -> approved | rejected, rejected -> approved. The same status again does nothing; any other move is 409."
+        "pending -> approved | rejected, rejected -> approved. The same status again does nothing; any other move is 409. "
+        "`reason` is required (3 to 500 characters, else 422) when rejecting or moving to pending; the author sees it."
     ),
 )
 def moderate_product_review(
@@ -216,5 +220,6 @@ def moderate_product_review(
     current_user: dict = Depends(get_current_user),
 ):
     return moderate_product_review_service(
-        db, product_id, review_id, payload.action, access, access_token=extract_access_token(request), actor=current_user
+        db, product_id, review_id, payload.action, access, access_token=extract_access_token(request), actor=current_user,
+        reason=payload.reason,
     )

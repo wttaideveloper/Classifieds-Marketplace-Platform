@@ -15,7 +15,9 @@ MAX_COMMENT_LENGTH = 2000
 
 # Training and event reviews: a Super Admin must say why when rejecting or deleting a review. The reason is kept in the
 # moderation history and sent in the notification metadata (feed and realtime event; never in the push payload).
-REASON_MODULES = ("training", "event")
+REASON_MODULES = ("training", "product", "service", "event")
+# what a Super Admin must explain: rejecting, holding a review back (pending) and deleting someone else's review
+REASON_ACTIONS = {"rejected": "reject a review", "pending": "move a review to pending"}
 MIN_REASON_LENGTH = 3
 MAX_REASON_LENGTH = 500
 
@@ -115,6 +117,32 @@ def status_label(status: str | None) -> str:
 
 def is_public(status: str | None) -> bool:
     return status == "approved"
+
+
+def moderation_reason_for(action: str, raw) -> str | None:
+    """The cleaned reason for a moderation `action`: required (422 if missing or invalid) for rejected and pending,
+    None for approved."""
+    phrase = REASON_ACTIONS.get(action)
+    return clean_reason(raw, phrase) if phrase else None
+
+
+def shown_reason(status: str | None, reason: str | None) -> str | None:
+    """The reason to show with a review: only while it is rejected, pending or deleted."""
+    return reason if reason and status in ("rejected", "pending", DELETED_STATUS) else None
+
+
+def set_moderation(review, status: str, reason: str | None = None) -> None:
+    """A Super Admin's decision: the new status and, for rejected / pending / deleted, the reason. Approving clears it."""
+    review.moderation_status = status
+    review.moderation_reason = reason if status in ("rejected", "pending", DELETED_STATUS) else None
+
+
+def after_author_edit(review, previous_status: str | None) -> None:
+    """The author edited their review: a rejected or deleted one goes back to pending as a new submission, so the old
+    reason is cleared; a pending review stays pending and keeps its reason."""
+    review.moderation_status = status_after_edit(previous_status)
+    if needs_resubmission(previous_status):
+        review.moderation_reason = None
 
 
 def needs_resubmission(status: str | None) -> bool:

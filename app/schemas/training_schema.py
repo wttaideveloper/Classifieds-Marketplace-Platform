@@ -1207,7 +1207,9 @@ class TrainingReviewResponse(BaseModel):
     participant_name: str | None = Field(None, description="Display name from the participant's enrolment on this training — null if no matching enrolment is found")
     verified: bool = True
     moderation_status: str = Field("pending", description="pending|approved|rejected. A new review is approved at once; only approved reviews are in the public list")
-    status_label: str | None = Field(None, description="What the customer sees: Approved | Waiting for Approval | Not Approved")
+    status: str | None = Field(None, description="The same as moderation_status: approved | pending | rejected | deleted")
+    reason: str | None = Field(None, description="Why a Super Admin rejected, held back (pending) or deleted this review; shown to its author. null otherwise")
+    status_label: str | None = Field(None, description="What the customer sees: Approved | Waiting for Approval | Not Approved | Deleted")
     is_public: bool = Field(False, description="True only for an approved review")
     edit_label: str | None = Field(None, description="The edit form's button: Resubmit Review for a rejected review, else Save Changes")
     created_at: str
@@ -1225,7 +1227,7 @@ class TrainingReviewListResponse(BaseModel):
 
 class TrainingReviewModerateRequest(BaseModel):
     action: str = Field(..., description="approved | rejected | pending")
-    reason: str | None = Field(None, description="Required when action is rejected (3 to 500 characters, else 422)")
+    reason: str | None = Field(None, description="Required when action is rejected or pending (3 to 500 characters, else 422)")
 
 
 # ---- Wishlist ----

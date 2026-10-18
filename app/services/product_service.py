@@ -183,11 +183,11 @@ def get_my_product_review_service(db: Session, product_id: UUID, current_user: d
     return catalog_reviews.my_review(db, "product", product_id, current_user)
 
 
-def delete_product_review_service(db: Session, product_id: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None):
+def delete_product_review_service(db: Session, product_id: UUID, review_id: UUID, current_user: dict, *, access_token: str | None = None, reason: str | None = None):
     product = _product_or_404(db, product_id)
-    return catalog_reviews.delete_review(db, "product", product, review_id, current_user, access_token=access_token)
+    return catalog_reviews.delete_review(db, "product", product, review_id, current_user, access_token=access_token, reason=reason)
 
 
-def moderate_product_review_service(db: Session, product_id: UUID, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None):
+def moderate_product_review_service(db: Session, product_id: UUID, review_id: UUID, action: str, access, *, access_token: str | None = None, actor: dict | None = None, reason: str | None = None):
     product = _product_or_404(db, product_id)
-    return catalog_reviews.moderate_review(db, "product", product, review_id, action, access, access_token=access_token, actor=actor)
+    return catalog_reviews.moderate_review(db, "product", product, review_id, action, access, access_token=access_token, actor=actor, reason=reason)

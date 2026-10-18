@@ -70,13 +70,16 @@ def test_the_push_payload_leaves_the_reason_out():
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-def test_approving_and_holding_back_carry_no_reason(notes, module):
-    body(notes, module, "approved")
-    body(notes, module, "pending", "ignored")
+def test_approving_carries_no_reason_and_holding_back_sends_it_to_the_enterprise_admins_only(notes, module):
+    assert body(notes, module, "approved").status_code == 200
+    assert body(notes, module, "pending", "Needs a second look").status_code == 200
 
     assert moderated(notes, "review_approved")[0]["metadata"].get("reason") is None
-    for notice in moderated(notes, "review_moderated"):
-        assert "reason" not in notice["metadata"]
+    approved_notice, pending_notice = moderated(notes, "review_moderated")
+    assert "reason" not in approved_notice["metadata"]
+    assert pending_notice["metadata"]["reason"] == "Needs a second look" and pending_notice["metadata"]["action"] == "pending"
+    assert pending_notice["user_ids"] == ENTERPRISE_ADMINS
+    assert moderated(notes, "review_rejected") == []                  # holding back sends nothing to the author
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
@@ -122,13 +125,23 @@ def test_the_author_notice_is_skipped_when_the_author_cannot_be_found(notes, mon
     assert only["user_ids"] == ENTERPRISE_ADMINS
 
 
-def test_product_notifications_are_unchanged(notes):
-    review = review_of(notes, "product")
+@pytest.mark.parametrize("module", ["product", "service"])
+def test_product_and_service_notifications_carry_the_reason_too(notes, module):
+    kind = "products" if module == "product" else "services"
+    review = review_of(notes, module)
     notes.as_user(ROOT)
+    item = getattr(notes.ids.a, module)
+    target = "rejected" if review.moderation_status != "rejected" else "approved"
+    if target == "approved":
+        notes.client.patch(f"/api/v1/{kind}/{item}/reviews/{review.id}/moderate", json={"action": "approved"})
+        target = "rejected"
+    notes.sent.clear()
 
-    notes.client.patch(f"/api/v1/products/{notes.ids.a.product}/reviews/{review.id}/moderate", json={"action": "rejected"})
-    notes.client.delete(f"/api/v1/products/{notes.ids.a.product}/reviews/{review.id}")
+    notes.client.patch(f"/api/v1/{kind}/{item}/reviews/{review.id}/moderate", json={"action": target, "reason": "Off topic"})
+    notes.client.request("DELETE", f"/api/v1/{kind}/{item}/reviews/{review.id}", json={"reason": "Abusive language"})
 
-    for notice in notes.sent:
-        assert "reason" not in notice["metadata"]
-    assert [n["user_ids"] for n in moderated(notes, "review_deleted")] == [ENTERPRISE_ADMINS]          # no author notice
+    assert moderated(notes, "review_rejected")[0]["metadata"]["reason"] == "Off topic"
+    assert moderated(notes, "review_moderated")[0]["metadata"]["reason"] == "Off topic"
+    deleted = moderated(notes, "review_deleted")
+    assert {n["metadata"]["reason"] for n in deleted} == {"Abusive language"}
+    assert [n["user_ids"] for n in deleted if n["metadata"].get("recipient") == "author"] == [[AUTHOR]]

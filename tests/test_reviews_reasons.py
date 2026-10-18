@@ -1,7 +1,8 @@
 """A Super Admin must give a reason to reject or to delete someone else's training or event review.
 
 The reason is 3 to 500 characters, is kept in the moderation history and comes back from GET /reviews/audit as `reason`.
-Product and service reviews, approving, holding back (pending) and an author deleting their own review need no reason.
+Rejecting, holding back (pending) and deleting need a reason in every module; approving and an author deleting their own
+review do not. The author sees the reason on their review (`reason`).
 """
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from tests.test_reviews_audit_and_delete import (  # noqa: F401  (the world fixt
 )
 
 REASONED = ["training", "event"]
+ALL_MODULES = ["training", "product", "service", "event"]
 TABLES = {"training": TrainingReview, "event": EventFeedback}
 
 
@@ -84,30 +86,40 @@ def test_a_rejection_with_a_reason_is_saved_in_the_history_and_returned_by_the_a
     assert seen["reason"] == "Contains personal details"
 
 
-@pytest.mark.parametrize("module", REASONED)
-def test_approving_and_holding_back_need_no_reason_and_store_none(world, module):
+@pytest.mark.parametrize("module", ALL_MODULES)
+def test_approving_needs_no_reason_but_holding_back_does(world, module):
     rid = review_id(world, module)
     world.as_user(ROOT)
     url = f"/api/v1/reviews/{module}/{rid}/moderate"
-
-    assert world.client.patch(url, json={"action": "approved"}).status_code == 200
-    assert world.client.patch(url, json={"action": "pending", "reason": "ignored here"}).status_code == 200
-
-    assert [r.reason for r in history(world, review_id=UUID(rid))] == [None, None]
+    current = world.client.get("/api/v1/reviews/manage", params={"module": module}).json()["items"][0]["moderation_status"]
+    if current == "rejected":
+        assert world.client.patch(url, json={"action": "approved"}).status_code == 200      # rejected -> approved: no reason
+        current = "approved"
+    if current == "pending":
+        assert world.client.patch(url, json={"action": "approved"}).status_code == 200
+    assert world.client.patch(url, json={"action": "pending"}).status_code == 422
+    assert world.client.patch(url, json={"action": "pending"}).json() == {"detail": "A reason is required to move a review to pending"}
+    assert world.client.patch(url, json={"action": "pending", "reason": "Needs checking"}).status_code == 200
+    assert [r.reason for r in history(world, review_id=UUID(rid))][-1] == "Needs checking"
 
 
 @pytest.mark.parametrize("module", ["product", "service"])
-def test_product_and_service_rejections_need_no_reason(world, module):
+def test_product_and_service_rejections_and_deletes_need_a_reason_too(world, module):
     rid = review_id(world, module)
     world.as_user(ROOT)
-    # product a is approved and service a is rejected in the seed: move them to a different status each time
-    first = "rejected" if module == "product" else "approved"
+    url = f"/api/v1/reviews/{module}/{rid}/moderate"
+    target = "pending" if module == "service" else "rejected"       # the seeded service review is already rejected
+    if module == "service":
+        assert world.client.patch(url, json={"action": "approved"}).status_code == 200
 
-    resp = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": first})
-    with_reason = world.client.patch(f"/api/v1/reviews/{module}/{rid}/moderate", json={"action": "pending" if first == "approved" else "approved", "reason": "ignored"})
+    refused = world.client.patch(url, json={"action": target})
+    ok = world.client.patch(url, json={"action": target, "reason": "Off topic"})
+    refused_delete = world.client.delete(f"/api/v1/reviews/{module}/{rid}")
+    deleted = world.client.request("DELETE", f"/api/v1/reviews/{module}/{rid}", json={"reason": "Abusive language"})
 
-    assert resp.status_code == 200 and with_reason.status_code == 200
-    assert all(r.reason is None for r in history(world, review_id=UUID(rid)))
+    assert refused.status_code == 422 and ok.status_code == 200
+    assert refused_delete.status_code == 422 and deleted.status_code == 200
+    assert [r.reason for r in history(world, review_id=UUID(rid)) if r.reason] == ["Off topic", "Abusive language"]
 
 
 def test_a_reason_is_still_checked_after_the_permission(world):
@@ -179,13 +191,3 @@ def test_staff_are_refused_before_the_reason_matters(world, module):
     resp = delete(world, module, rid, user=staff(), body={"reason": "Not allowed"})
 
     assert resp.status_code == 403 and resp.json()["detail"] == "You can only delete your own review"
-
-
-@pytest.mark.parametrize("module", ["product", "service"])
-def test_product_and_service_deletes_need_no_reason(world, module):
-    rid = review_id(world, module)
-
-    resp = delete(world, module, rid, via="module")
-
-    assert resp.status_code == 200
-    assert history(world, review_id=UUID(rid))[0].reason is None

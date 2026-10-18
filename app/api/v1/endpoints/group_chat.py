@@ -86,7 +86,9 @@ def group_trainings(
         "`group_state` (none | invited | member | declined | left | removed). `q` searches name and email. By default only learners "
         "who can be invited are listed; `eligible_only=false` or `enrolment_status` shows the others. `not_in_group=true` hides "
         "everyone already in or invited to a group of this training (or to `group_id`) - use it to find people who enrolled later. "
-        "403 for a training of another clinic, or for a Provider not assigned to it."
+        "403 for a training of another clinic, or for a Provider not assigned to it. A learner can be in several groups of one training: "
+        "without `group_id` the list is for a NEW group, so `can_invite` ignores other groups (`group_state` and `group_ids` still say where "
+        "the learner is); with `group_id`, `can_invite` is about that group (`already_member` / `already_invited`)."
     ),
 )
 def group_training_learners(
