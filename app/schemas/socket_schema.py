@@ -216,7 +216,7 @@ SERVER_EVENTS_CATALOG = [
             "Categories include training_submitted, training_approved, training_rejected, "
             "training_changes_requested, training_enrolled, training_enrollment_accepted, "
             "training_enrollment_rejected, training_enrollment_requested (see docs/training-workflow-notifications.md), and review_submitted, "
-            "review_approved, review_rejected (metadata: entity_type, entity_id, review_id, status), "
+            "review_approved, review_rejected, review_pending (metadata: entity_type, entity_id, review_id, status; reason on rejected and pending), "
             "training_question_posted (metadata: training_id, discussion_id, training_name, learner_name), and "
             "review_moderated, review_deleted (metadata: entity_type, entity_id, review_id, previous_status, "
             "new_status, action, actor_name). Workflow "

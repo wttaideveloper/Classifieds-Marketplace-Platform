@@ -431,3 +431,42 @@ def test_a_review_a_super_admin_deleted_is_marked_deleted_and_has_a_history_row(
     [row] = [r for r in history(audit_client) if r["review_id"] == review_id]
     assert row["to_status"] == "deleted" and row["from_status"] == previous
     assert row["actor_role"] == "super_admin" and row["actor_name"] == "Root" and row["created_at"]
+
+
+
+# --- review_submitted carries what the customer wrote -----------------------------------------------------------------
+
+@pytest.mark.parametrize("module", ["training", "product", "service", "event"])
+def test_the_submitted_notice_carries_the_review_text_for_both_recipients(submitted, module):
+    review = announce(submitted, module)
+
+    owners, platform = submitted_notices(submitted)
+    for notice in (owners, platform):
+        assert notice["metadata"]["comment"] == (review.comment or "").strip() or notice["metadata"]["comment"] is None
+        assert notice["channels"] == ["in_app", "push"]            # push exists, but the delivery layer leaves `comment` out
+    assert owners["user_ids"] == ENTERPRISE_ADMINS and platform["user_ids"] == SUPER_ADMINS
+
+
+def test_the_submitted_notice_has_the_exact_text_and_leaves_it_out_when_there_is_no_comment(submitted):
+    review = training_review(submitted)
+    review.comment = "  Clear and practical.  "
+    submitted.db.commit()
+    announce(submitted, "training")
+    assert [n["metadata"]["comment"] for n in submitted_notices(submitted)] == ["Clear and practical."] * 2
+
+    submitted.sent.clear()
+    review.comment = None
+    submitted.db.commit()
+    DELIVER_SUBMITTED("training", str(review.id), None, True)               # a resubmission carries it too
+    notices = submitted_notices(submitted)
+    assert all("comment" not in n["metadata"] for n in notices) and all(n["metadata"]["resubmitted"] for n in notices)   # left out
+
+
+def test_a_long_comment_is_sent_whole(submitted):
+    review = training_review(submitted)
+    review.comment = "x" * 2000
+    submitted.db.commit()
+
+    announce(submitted, "training")
+
+    assert all(len(n["metadata"]["comment"]) == 2000 for n in submitted_notices(submitted))

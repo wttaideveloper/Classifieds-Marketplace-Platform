@@ -49,6 +49,7 @@ NotificationCategory = Literal[
     "review_submitted",
     "review_approved",
     "review_rejected",
+    "review_pending",
     "training_question_posted",
     "review_moderated",
     "review_deleted",
@@ -73,9 +74,10 @@ _CATEGORY_DOC = (
     "review_submitted (to the owning Enterprise Admins, and copied to the Platform Super Admins, when a new "
     "training/product/service/event review is posted - it is already approved - or when a customer edits a rejected "
     "review and resubmits it, which waits for a Super Admin; metadata resubmitted tells the two apart), "
-    "review_approved | review_rejected (to the review's author). Their metadata has entity_type "
+    "review_approved | review_rejected | review_pending (to the review's author; review_pending when a Super Admin moves "
+    "it to pending, with metadata.reason). Their metadata has entity_type "
     "(training|product|service|event), entity_id, the matching <module>_id, review_id and status; "
-    "review_submitted adds rating, item_id, item_name and learner_name (a display name, never an e-mail). "
+    "review_submitted adds rating, item_id, item_name, comment (what the customer wrote, left out when they wrote none; never in push) and learner_name (a display name, never an e-mail). "
     "training_question_posted (to the owning Enterprise Admins when a learner "
     "posts a question in a training discussion): metadata training_id, entity_type, entity_id, discussion_id, "
     "training_name, learner_name. review_moderated | review_deleted (to the owning Enterprise Admins when a "

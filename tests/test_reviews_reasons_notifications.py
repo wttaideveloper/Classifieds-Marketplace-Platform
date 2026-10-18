@@ -70,7 +70,7 @@ def test_the_push_payload_leaves_the_reason_out():
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
-def test_approving_carries_no_reason_and_holding_back_sends_it_to_the_enterprise_admins_only(notes, module):
+def test_approving_carries_no_reason_and_holding_back_sends_it_to_the_enterprise_admins_and_the_author(notes, module):
     assert body(notes, module, "approved").status_code == 200
     assert body(notes, module, "pending", "Needs a second look").status_code == 200
 
@@ -79,7 +79,8 @@ def test_approving_carries_no_reason_and_holding_back_sends_it_to_the_enterprise
     assert "reason" not in approved_notice["metadata"]
     assert pending_notice["metadata"]["reason"] == "Needs a second look" and pending_notice["metadata"]["action"] == "pending"
     assert pending_notice["user_ids"] == ENTERPRISE_ADMINS
-    assert moderated(notes, "review_rejected") == []                  # holding back sends nothing to the author
+    [held] = moderated(notes, "review_pending")                     # the author is told too
+    assert held["user_ids"] == [AUTHOR] and held["metadata"]["reason"] == "Needs a second look"
 
 
 @pytest.mark.parametrize("module", ["training", "event"])
@@ -145,3 +146,55 @@ def test_product_and_service_notifications_carry_the_reason_too(notes, module):
     deleted = moderated(notes, "review_deleted")
     assert {n["metadata"]["reason"] for n in deleted} == {"Abusive language"}
     assert [n["user_ids"] for n in deleted if n["metadata"].get("recipient") == "author"] == [[AUTHOR]]
+
+
+# --- the author is told when a review is moved to pending, with the reason -------------------------------------------
+
+@pytest.mark.parametrize("module", ["training", "event"])
+def test_moving_a_review_to_pending_notifies_the_author_with_the_reason(notes, module):
+    body(notes, module, "approved")
+    notes.sent.clear()
+
+    assert body(notes, module, "pending", "Needs a second look").status_code == 200
+
+    [notice] = moderated(notes, "review_pending")
+    assert notice["user_ids"] == [AUTHOR] and notice["channels"] == ["in_app", "push"]
+    assert notice["title"] == "Review waiting for approval"
+    assert notice["message"] == f'Your review of "{module.title()} a" is waiting for approval and is hidden for now.'
+    assert "Needs a second look" not in notice["title"] + notice["message"]
+    assert notice["metadata"] == {
+        "category": "review_pending", f"{module}_id": str(getattr(notes.ids.a, module)), "entity_type": module,
+        "entity_id": str(getattr(notes.ids.a, module)), "review_id": notice["metadata"]["review_id"],
+        "status": "pending", "reason": "Needs a second look",
+    }
+
+
+@pytest.mark.parametrize("module", ["product", "service"])
+def test_product_and_service_authors_are_told_about_a_hold_too(notes, module):
+    kind = "products" if module == "product" else "services"
+    review = review_of(notes, module)
+    item = getattr(notes.ids.a, module)
+    notes.as_user(ROOT)
+    if review.moderation_status != "approved":
+        notes.client.patch(f"/api/v1/{kind}/{item}/reviews/{review.id}/moderate", json={"action": "approved"})
+    notes.sent.clear()
+
+    notes.client.patch(f"/api/v1/{kind}/{item}/reviews/{review.id}/moderate", json={"action": "pending", "reason": "Needs a second look"})
+
+    [notice] = moderated(notes, "review_pending")
+    assert notice["user_ids"] == [AUTHOR] and notice["metadata"]["reason"] == "Needs a second look"
+
+
+def test_the_same_status_again_and_an_authors_resubmission_do_not_send_review_pending(notes):
+    body(notes, "training", "rejected", "Contains personal details")
+    notes.sent.clear()
+    review = training_review(notes)
+    from tests.test_review_and_discussion_notifications import LEARNER_ID  # noqa: F401  (the author edits their own review)
+
+    body(notes, "training", "rejected", "Contains personal details")        # already rejected: nothing changes
+
+    assert moderated(notes, "review_pending") == [] and moderated(notes, "review_rejected") == [] and review is not None
+
+
+def test_the_push_payload_leaves_the_review_text_and_the_reason_out():
+    assert {"reason", "comment"} <= set(notification_delivery_service.PUSH_OMITTED_METADATA_KEYS)

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Metadata keys that are delivered to the in-app feed and the realtime event but never put in the
 # push `data` block.
-PUSH_OMITTED_METADATA_KEYS = frozenset({"reason"})
+PUSH_OMITTED_METADATA_KEYS = frozenset({"reason", "comment"})
 
 
 def _emit_realtime_notification(user_id: UUID, payload: dict) -> None:

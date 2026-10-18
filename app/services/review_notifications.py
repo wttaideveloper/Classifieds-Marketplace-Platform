@@ -5,6 +5,7 @@
                         which is pending and waits for a Super Admin)
     review_approved  -> the review's author                                           (a Super Admin approved it)
     review_rejected  -> the review's author                                           (a Super Admin rejected it)
+    review_pending   -> the review's author                                           (a Super Admin moved it to pending)
 
 Sent after the change is committed, from a background thread, and never able to break the API call that
 triggered it. Each delivery is claimed first with a unique key (notification_idempotency), so a retry cannot send
@@ -24,7 +25,7 @@ from app.services.review_common import REASON_MODULES, parse_rating
 
 logger = logging.getLogger(__name__)
 
-CATEGORY_BY_STATUS = {"approved": "review_approved", "rejected": "review_rejected"}
+CATEGORY_BY_STATUS = {"approved": "review_approved", "rejected": "review_rejected", "pending": "review_pending"}
 
 
 def _dispatch(fn, *args, **kwargs) -> None:
@@ -207,6 +208,8 @@ def _deliver_submitted(module: str, review_id: str, access_token: str | None, re
             id_key: str(item.id), "entity_type": module, "entity_id": str(item.id), "item_id": str(item.id),
             "item_name": name, "review_id": review_id, "rating": rating, "status": review.moderation_status,
             "learner_name": _learner_name(db, module, review, item), "resubmitted": resubmitted,
+            # what the customer wrote, for the admins reading it in the app (feed / realtime only: never in push)
+            "comment": (review.comment or "").strip() or None,
         }
         # A resubmission can happen again after the next rejection, so each one gets its own key.
         version = ""
@@ -232,11 +235,11 @@ def _deliver_submitted(module: str, review_id: str, access_token: str | None, re
 # --- a decision -> the author ---------------------------------------------------------------------------
 
 def notify_review_decision(module: str, review_id, new_status: str, *, access_token: str | None = None, reason: str | None = None) -> None:
-    """Call after a moderator changed the status from something else to `new_status` and it was committed.
-    Only approved / rejected are announced. `reason` (training and event rejections) goes in the metadata only."""
+    """Call after a Super Admin changed the status from something else to `new_status` and it was committed. The author
+    is told about approved, rejected and pending (held back). `reason` (rejected and pending) goes in the metadata only."""
     if new_status not in CATEGORY_BY_STATUS:
         return
-    _dispatch(_deliver_decision, module, str(review_id), new_status, access_token, reason if new_status == "rejected" else None)
+    _dispatch(_deliver_decision, module, str(review_id), new_status, access_token, reason if new_status in ("rejected", "pending") else None)
 
 
 def _deliver_decision(module: str, review_id: str, new_status: str, access_token: str | None, reason: str | None = None):
@@ -257,6 +260,8 @@ def _deliver_decision(module: str, review_id: str, new_status: str, access_token
         shown = f'"{name}"' if name else "your item"
         if new_status == "approved":
             title, message = "Review approved", f"Your review of {shown} was approved and is now visible."
+        elif new_status == "pending":
+            title, message = "Review waiting for approval", f"Your review of {shown} is waiting for approval and is hidden for now."
         else:
             title, message = "Review not approved", f"Your review of {shown} was not approved."
         stamp = getattr(review, "updated_at", None) or review.created_at

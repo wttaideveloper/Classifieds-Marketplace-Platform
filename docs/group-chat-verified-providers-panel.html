@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verified providers for group chat</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2733; --muted: #5d6b7a; --line: #dde2e8;
+    --accent: #0f6b5c; --accent-text: #ffffff; --danger: #b3261e; --ok-bg: #e4f4ee; --err-bg: #fbe9e7; --focus: #1a73e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11161c; --card: #1a222b; --text: #e6ebf0; --muted: #9aa8b5; --line: #2c3743; --accent: #3fb59f; --accent-text: #08201b; --danger: #ff8a80; --ok-bg: #16352d; --err-bg: #3b1f1c; --focus: #8ab4f8; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; max-width: 70ch; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text); font: inherit; }
+  input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
+  .pill.verified { background: var(--ok-bg); }
+  .pill.revoked { background: var(--err-bg); }
+  .picked { border: 1px solid var(--accent); border-radius: 6px; padding: 12px; margin-top: 12px; }
+  .list { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; max-height: 260px; overflow-y: auto; }
+  .list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .list li:last-child { border-bottom: 0; }
+  .muted { color: var(--muted); font-size: 13px; }
+  #message { padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; display: none; }
+  #message.ok { display: block; background: var(--ok-bg); }
+  #message.err { display: block; background: var(--err-bg); }
+  .empty { padding: 16px 0; color: var(--muted); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Verified providers for group chat</h1>
+  <p class="lead">A provider has to be on this list before they can create a group, own one or be made an admin. Adding someone is a one-time step; they stay verified until you revoke them.</p>
+
+  <div id="message" role="status" aria-live="polite"></div>
+
+  <!-- In the real Enterprise Admin app the base URL and the token already exist; these two fields are only for trying the panel on its own. -->
+  <section id="connection">
+    <h2>Connection</h2>
+    <div class="row">
+      <div><label for="base">API address</label><input id="base" value="https://chat.wisdomtooth.tech/api/v1" autocomplete="off"></div>
+      <div><label for="token">Access token of the Enterprise Admin</label><input id="token" type="password" autocomplete="off" placeholder="Bearer token"></div>
+    </div>
+    <p class="muted">The token is kept in this page only and is never saved.</p>
+  </section>
+
+  <section>
+    <div class="bar">
+      <h2 style="margin:0">Verified providers</h2>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Registration number</th><th>Council</th><th>Verified on</th><th>Status</th><th><span class="sr-only">Action</span></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div id="rows-empty" class="empty" hidden>No providers are verified yet.</div>
+  </section>
+
+  <section>
+    <h2>Add a provider</h2>
+    <label for="search">Find a member of your clinic</label>
+    <input id="search" type="search" placeholder="Start typing a name" autocomplete="off">
+    <label style="margin-top:8px;display:flex;gap:8px;align-items:center">
+      <input id="all-roles" type="checkbox" style="width:auto"> Show every member, not only providers
+    </label>
+    <ul id="candidates" class="list" aria-label="Members that can be verified"></ul>
+    <div id="candidates-empty" class="empty" hidden>No members found. Providers who are verified now are not listed.</div>
+
+    <form id="form" class="picked" hidden>
+      <h2 style="margin-bottom:4px">Verify <span id="picked-name"></span></h2>
+      <p class="muted" style="margin-top:0">Registration details are optional but help your audit trail.</p>
+      <div class="row">
+        <div><label for="reg">Registration number</label><input id="reg" maxlength="80" autocomplete="off"></div>
+        <div><label for="council">Registration council</label><input id="council" maxlength="120" autocomplete="off"></div>
+      </div>
+      <div style="margin-top:12px"><label for="notes">Notes</label><textarea id="notes" rows="2" maxlength="500"></textarea></div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="primary" type="submit" id="verify">Verify provider</button>
+        <button type="button" id="cancel">Cancel</button>
+      </div>
+    </form>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var picked = null;
+  var searchTimer = null;
+
+  function api(method, path, body) {
+    var options = { method: method, headers: { "Authorization": "Bearer " + $("token").value.trim() } };
+    if (body !== undefined) { options.headers["Content-Type"] = "application/json"; options.body = JSON.stringify(body); }
+    return fetch($("base").value.replace(/\/+$/, "") + path, options).then(function (res) {
+      return res.text().then(function (text) {
+        var data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var detail = data && data.detail;
+          if (Array.isArray(detail)) { detail = detail.map(function (d) { return d.msg; }).join("; "); }
+          var message = typeof detail === "string" ? detail : "The request failed (" + res.status + ")";
+          if (res.status === 401) { message = "Sign in again: the access token was not accepted."; }
+          if (res.status === 403) { message = "Only your clinic's Enterprise Admin can verify providers. " + (typeof detail === "string" ? detail : ""); }
+          throw new Error(message.trim());
+        }
+        return data;
+      });
+    });
+  }
+
+  function say(text, kind) {
+    var box = $("message");
+    box.textContent = text;
+    box.className = kind;
+    if (kind === "ok") { setTimeout(function () { if (box.textContent === text) { box.className = ""; box.textContent = ""; } }, 5000); }
+  }
+  function fail(error) { say(error.message || "Something went wrong.", "err"); }
+
+  function cell(tr, text) { var td = document.createElement("td"); td.textContent = text || "—"; tr.appendChild(td); return td; }
+
+  function loadProviders() {
+    return api("GET", "/groups/verified-providers").then(function (items) {
+      var body = $("rows");
+      body.textContent = "";
+      items.forEach(function (p) {
+        var tr = document.createElement("tr");
+        cell(tr, p.name || "Name not available");
+        cell(tr, p.registration_number);
+        cell(tr, p.registration_council);
+        cell(tr, p.verified_at ? new Date(p.verified_at + "Z").toLocaleDateString() : "");
+        var status = document.createElement("td");
+        var pill = document.createElement("span");
+        pill.className = "pill " + p.status;
+        pill.textContent = p.status === "verified" ? "Verified" : "Revoked";
+        status.appendChild(pill);
+        tr.appendChild(status);
+        var action = document.createElement("td");
+        if (p.status === "verified") {
+          var button = document.createElement("button");
+          button.type = "button";
+          button.className = "danger";
+          button.textContent = "Revoke";
+          button.addEventListener("click", function () { revoke(p); });
+          action.appendChild(button);
+        }
+        tr.appendChild(action);
+        body.appendChild(tr);
+      });
+      $("rows-empty").hidden = items.length > 0;
+    }).catch(fail);
+  }
+
+  function revoke(p) {
+    var who = p.name || "this provider";
+    if (!window.confirm("Revoke the verification of " + who + "? They can no longer create groups. Groups they already own stay as they are.")) { return; }
+    api("DELETE", "/groups/verified-providers/" + encodeURIComponent(p.user_id)).then(function () {
+      say(who + " is no longer verified.", "ok");
+      return Promise.all([loadProviders(), loadCandidates()]);
+    }).catch(fail);
+  }
+
+  function loadCandidates() {
+    var query = "?page_size=50" + ($("all-roles").checked ? "&all_roles=true" : "");
+    var text = $("search").value.trim();
+    if (text) { query += "&q=" + encodeURIComponent(text); }
+    return api("GET", "/groups/verified-providers/candidates" + query).then(function (data) {
+      var list = $("candidates");
+      list.textContent = "";
+      data.items.forEach(function (c) {
+        var li = document.createElement("li");
+        var label = document.createElement("span");
+        label.textContent = c.name || "Name not available";
+        var role = document.createElement("span");
+        role.className = "muted";
+        role.textContent = " " + (c.roles || []).join(", ") + (c.verification === "revoked" ? " · verification was revoked" : "");
+        label.appendChild(role);
+        li.appendChild(label);
+        var button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Select";
+        button.addEventListener("click", function () { pick(c); });
+        li.appendChild(button);
+        list.appendChild(li);
+      });
+      $("candidates-empty").hidden = data.items.length > 0;
+    }).catch(fail);
+  }
+
+  function pick(c) {
+    picked = c;
+    $("picked-name").textContent = c.name || "this member";
+    $("reg").value = ""; $("council").value = ""; $("notes").value = "";
+    $("form").hidden = false;
+    $("reg").focus();
+  }
+
+  function clearPick() { picked = null; $("form").hidden = true; }
+
+  $("form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (!picked) { return; }
+    var body = { user_id: picked.user_id };
+    if ($("reg").value.trim()) { body.registration_number = $("reg").value.trim(); }
+    if ($("council").value.trim()) { body.registration_council = $("council").value.trim(); }
+    if ($("notes").value.trim()) { body.notes = $("notes").value.trim(); }
+    $("verify").disabled = true;
+    api("POST", "/groups/verified-providers", body).then(function (saved) {
+      say((saved.name || picked.name || "The provider") + " is verified and can now use group chat.", "ok");
+      clearPick();
+      return Promise.all([loadProviders(), loadCandidates()]);
+    }).catch(fail).then(function () { $("verify").disabled = false; });
+  });
+
+  $("cancel").addEventListener("click", clearPick);
+  $("refresh").addEventListener("click", function () { loadProviders(); loadCandidates(); });
+  $("all-roles").addEventListener("change", loadCandidates);
+  $("search").addEventListener("input", function () { clearTimeout(searchTimer); searchTimer = setTimeout(loadCandidates, 300); });
+  $("token").addEventListener("change", function () { loadProviders(); loadCandidates(); });
+})();
+</script>
+</body>
+</html>

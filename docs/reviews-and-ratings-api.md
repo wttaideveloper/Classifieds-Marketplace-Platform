@@ -480,10 +480,11 @@ They use the notification feed and the Socket.IO `notification` event that alrea
 | review_submitted | the Enterprise Admin(s) of the business that owns the item, and a copy to the Super Admin(s) | a new review is posted (it is already approved), or a customer edits a rejected review and resubmits it (it waits for a Super Admin). Any other edit does not send it again |
 | review_approved | the author | a Super Admin changes the status to approved |
 | review_rejected | the author | a Super Admin changes the status to rejected. `metadata.reason` |
+| review_pending | the author | a Super Admin moves the review to pending (holds it back). `metadata.reason`. Not sent when the author's own edit sends a rejected review back to pending |
 
-Putting a review back to pending sends nothing to the author, and neither does setting the status it already has.
+Setting the status a review already has sends nothing. An ordinary edit by the author sends nothing.
 
-`review_submitted` is sent for all four modules, and the Platform Super Admin(s) get a second copy with the same content. Anyone who is already an owner of the business gets it once. A new review reads "A 5 star review was posted on …"; a resubmission has the title "Review resubmitted", says it is waiting for approval, and has `resubmitted: true` in the metadata. Every `review_submitted` has `learner_name` (the reviewer's display name; left out when only an e-mail address is known), `item_id`, `item_name` and `status`.
+`review_submitted` is sent for all four modules, and the Platform Super Admin(s) get a second copy with the same content. Anyone who is already an owner of the business gets it once. A new review reads "A 5 star review was posted on …"; a resubmission has the title "Review resubmitted", says it is waiting for approval, and has `resubmitted: true` in the metadata. Every `review_submitted` has `learner_name` (the reviewer's display name; left out when only an e-mail address is known), `item_id`, `item_name` and `status`. It also has `comment`: what the customer wrote, exactly as saved (up to 2000 characters), so the admins can read the review from the notification. It is left out when the customer wrote no comment, and it is in the in-app feed and the realtime event only: like `reason`, it is never put in the push payload.
 
 What a Super Admin does is told to the owning Enterprise Admin(s), for all four modules:
 
@@ -495,7 +496,16 @@ What a Super Admin does is told to the owning Enterprise Admin(s), for all four 
 
 Metadata: `entity_type` (`training`, `product`, `service` or `event`), `entity_id` and `item_id` (the same), the matching `training_id`, `product_id`, `service_id` or `event_id`, `item_name`, `review_id`, `previous_status`, `new_status` (`approved`, `rejected`, `pending` or `deleted`), `action` (same as `new_status`), `actor_name`, `actor_id` and `actor_role` (`super_admin`). The Super Admin who acted is never told about their own action. Nothing is sent when the status does not change or when an author deletes their own review. `actor_name` is left out when the server cannot find the person's name (an e-mail address is never used).
 
-**Reasons in notifications (all four modules).** `metadata.reason` is the Super Admin's reason on `review_rejected` (author), on `review_moderated` when `action` is `rejected` **or `pending`** (Enterprise Admins) and on `review_deleted` (Enterprise Admins and the author). It is in the in-app feed and the realtime `notification` event. It is **not** in the push payload (the push `data` block leaves out `reason`, as it always has), and the title and text of the notification never contain it, so nothing private shows on a lock screen: the mobile app reads the reason from the notification metadata in the app, or from the review itself (`my_review.reason`). Approve notifications carry no reason. Moving a review to pending still sends nothing to the author; they see the status and the reason on their review. The author's `review_deleted` notice reads "Your review of … was deleted by an administrator."
+**Reasons in notifications (all four modules).** `metadata.reason` is the Super Admin's reason on `review_rejected` (author), on `review_moderated` when `action` is `rejected` **or `pending`** (Enterprise Admins) and on `review_deleted` (Enterprise Admins and the author). It is in the in-app feed and the realtime `notification` event. It is **not** in the push payload (the push `data` block leaves out `reason`, as it always has), and the title and text of the notification never contain it, so nothing private shows on a lock screen: the mobile app reads the reason from the notification metadata in the app, or from the review itself (`my_review.reason`). Approve notifications carry no reason. The author is told when a Super Admin moves their review to pending (`review_pending`, below) as well as when it is rejected or deleted. The author's `review_deleted` notice reads "Your review of … was deleted by an administrator."
+
+Example `review_pending` (to the author), title "Review waiting for approval", text "Your review of \"Yoga Basics\" is waiting for approval and is hidden for now.", sent in the app and as a push (the push has the title and text and the ids, not the reason):
+```json
+{ "category": "review_pending", "training_id": "8341…", "entity_type": "training", "entity_id": "8341…", "review_id": "6f8e…", "status": "pending", "reason": "Needs a second look" }
+```
+Example `review_submitted` (to an Enterprise Admin and, as a copy, to a Super Admin), title "New review", text "A 5 star review was posted on \"Yoga Basics\".":
+```json
+{ "category": "review_submitted", "training_id": "8341…", "entity_type": "training", "entity_id": "8341…", "item_id": "8341…", "item_name": "Yoga Basics", "review_id": "6f8e…", "rating": 5, "status": "approved", "learner_name": "Asha Rao", "resubmitted": false, "comment": "Clear and practical." }
+```
 
 Example `review_rejected` (to the author), title "Review not approved":
 ```json

@@ -91,7 +91,7 @@ The person who buys, enrols or attends. The reviews live in the existing Ratings
 
 ### Flow: the Super Admin holds the review back
 
-The Super Admin moves an approved review to pending for checking. It is hidden, and the customer sees "Waiting for Approval". The customer can still edit it; it stays pending until the Super Admin decides. (There is no notification to the customer for pending, only for approved and rejected.)
+The Super Admin moves an approved review to pending for checking. It is hidden, and the customer sees "Waiting for Approval". The customer can still edit it; it stays pending until the Super Admin decides. The customer gets a notification when the Super Admin holds the review back, with the reason.
 
 ### Screens the apps need
 
@@ -261,10 +261,11 @@ They use the notification feed and the socket event we already have.
 | review_submitted | the Enterprise Admin(s) of the owning business, and a copy to the Super Admin(s) | a customer posts a review, or edits a rejected one and resubmits it (`resubmitted: true`) |
 | review_approved | the author | a Super Admin approves the review |
 | review_rejected | the author | a Super Admin rejects the review |
+| review_pending | the author | a Super Admin moves the review to pending |
 | review_moderated | the owning Enterprise Admin(s) | a Super Admin approves, rejects or moves a review to pending |
 | review_deleted | the owning Enterprise Admin(s) | a Super Admin deletes a review |
 
-Moving a review to pending sends nothing to the author, and neither does setting the status it already has. An ordinary edit sends nothing. Each notification has `review_id`, `entity_type`, `entity_id` and `status` so the app can open the right screen.
+Setting the status a review already has sends nothing. An ordinary edit sends nothing. Each notification has `review_id`, `entity_type`, `entity_id` and `status` so the app can open the right screen.
 
 
 ## 8. What is not built yet
@@ -307,5 +308,5 @@ Moving a review to pending sends nothing to the author, and neither does setting
 - No public list or screen shows an email address.
 - The queue shows only the caller's business, a Super Admin sees all, and `counts` stay the same when a status filter is used. Naming another business as an Enterprise Admin gives 403.
 - Every Super Admin action appears once in `GET /reviews/audit` with the enterprise, item, customer, Super Admin, previous and new status. An Enterprise Admin sees only their own business; a provider gets 403.
-- The Enterprise Admin and the Super Admin get one notification for a new review and one for a resubmission, none for an ordinary edit. The author gets one for approved or rejected, none for pending, none when nothing changes. The owning Enterprise Admins get one for each Super Admin action.
+- The Enterprise Admin and the Super Admin get one notification for a new review and one for a resubmission, none for an ordinary edit. The author gets one for approved, rejected or pending, none when nothing changes. The owning Enterprise Admins get one for each Super Admin action.
 - Dates show in the user's local time.
