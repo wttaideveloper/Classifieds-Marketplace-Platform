@@ -299,7 +299,7 @@ def _assert_active_provider_in_tenant(user_id: UUID, tenant_id: UUID, access_tok
     from app.services import event_notification_service as members
 
     provider_roles = {"provider", "tenant_admin", "internal_user", "contributor", "reviewer", "publisher", "staff"}
-    for member in members._lookup(members.list_tenant_users, tenant_id, access_token=access_token) or []:
+    for member in (members.owning_tenant_users(tenant_id, access_token)[0] or []):
         if members._user_id(member) != user_id:
             continue
         if members._active(member) and members._roles(member) & provider_roles:
