@@ -351,7 +351,7 @@ def list_verified_providers(db: Session, current_user: dict, access_token: str |
         tenant = None
     else:
         tenant = _verification_scope(db, current_user, access_token, None)
-    query = db.query(VerifiedProvider)
+    query = db.query(VerifiedProvider).filter(VerifiedProvider.status == "verified")
     if tenant is not None:
         query = query.filter(VerifiedProvider.tenant_id == tenant)
     return with_names(db, query.order_by(VerifiedProvider.verified_at.desc()).all(), current_user)
