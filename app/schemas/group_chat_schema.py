@@ -213,6 +213,16 @@ class VerifiedProviderCreate(BaseModel):
     tenant_id: UUID | None = None
     notes: str | None = Field(None, max_length=500)
 
+    @field_validator("registration_number", "registration_council")
+    @classmethod
+    def registration_details_must_not_be_blank(cls, value):
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
 
 # ---------------------------------------------------------------- responses
 

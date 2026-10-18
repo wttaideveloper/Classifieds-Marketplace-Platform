@@ -347,7 +347,10 @@ def with_names(db: Session, rows: list[VerifiedProvider], current_user: dict) ->
 
 
 def list_verified_providers(db: Session, current_user: dict, access_token: str | None = None) -> list[dict]:
-    tenant = _verification_scope(db, current_user, access_token, None)
+    if common.is_super_admin(current_user):
+        tenant = None
+    else:
+        tenant = _verification_scope(db, current_user, access_token, None)
     query = db.query(VerifiedProvider)
     if tenant is not None:
         query = query.filter(VerifiedProvider.tenant_id == tenant)
