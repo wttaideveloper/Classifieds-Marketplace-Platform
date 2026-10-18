@@ -398,9 +398,11 @@ def test_only_a_real_approve_or_reject_notifies_the_author(world, dispatched):
     moderate(client, tid, review_id, "approved", ROOT)   # same status again: nothing new to say
     moderate(client, tid, review_id, "rejected", ROOT)
 
-    # the author is told about real approve / reject decisions only (a moderator action also queues a separate
+    # the author is told about every real decision (pending, approved, rejected) (a moderator action also queues a separate
     # notice for the Super Admins; that is covered in test_review_and_discussion_notifications.py)
-    assert [(name, args[2]) for name, args in dispatched if name == "_deliver_decision"] == [("_deliver_decision", "approved"), ("_deliver_decision", "rejected")]
+    assert [(name, args[2]) for name, args in dispatched if name == "_deliver_decision"] == [
+        ("_deliver_decision", "pending"), ("_deliver_decision", "approved"), ("_deliver_decision", "rejected"),
+    ]
 
 
 def test_simultaneous_first_posts_update_the_winner_instead_of_failing(world, monkeypatch):

@@ -225,7 +225,9 @@ def test_notified_on_submit_and_on_real_decisions_only(world, dispatched):
 
     # the author is told about real approve / reject decisions only (a moderator action also queues a separate
     # notice for the Super Admins; that is covered in test_review_and_discussion_notifications.py)
-    assert [(n, a[2]) for n, a in dispatched if n == "_deliver_decision"] == [("_deliver_decision", "approved"), ("_deliver_decision", "rejected")]
+    assert [(n, a[2]) for n, a in dispatched if n == "_deliver_decision"] == [
+        ("_deliver_decision", "pending"), ("_deliver_decision", "approved"), ("_deliver_decision", "rejected"),
+    ]
 
 
 # --- the feedback report -------------------------------------------------------------------------

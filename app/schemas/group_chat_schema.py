@@ -464,6 +464,7 @@ class VerifiedProviderResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     user_id: UUID
+    name: str | None = Field(None, description="The provider's display name, so the list can be read without a second lookup. null when no name is known.")
     tenant_id: UUID | None = None
     registration_number: str | None = None
     registration_council: str | None = None
@@ -569,3 +570,19 @@ class InviteEnrolledResponse(BaseModel):
     not_invited_group_full: int = Field(0, description="Eligible learners left out because the group reached its limit. Make another group for them.")
     no_account: int = Field(0, description="Eligible enrolments with no chat account (no user id could be found).")
     free_places: int = Field(..., description="Places left in the group after these invitations.")
+
+
+class ProviderCandidateResponse(BaseModel):
+    user_id: UUID
+    name: str | None = None
+    roles: list[str] = Field(default_factory=list, description="The member's roles in the clinic, as the identity service reports them.")
+    verification: Literal["not_verified", "verified", "revoked"]
+    registration_number: str | None = Field(None, description="Only for a verified provider.")
+
+
+class ProviderCandidatesResponse(BaseModel):
+    tenant_id: UUID
+    items: list[ProviderCandidateResponse]
+    total: int
+    page: int
+    page_size: int

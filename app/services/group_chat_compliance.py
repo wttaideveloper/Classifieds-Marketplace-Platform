@@ -304,15 +304,97 @@ def verify_provider(db: Session, current_user: dict, payload, access_token: str 
     row.status, row.verified_by, row.verified_at, row.revoked_at = "verified", common.user_uuid(current_user), datetime.utcnow(), None
     db.commit()
     db.refresh(row)
-    return row
+    return with_names(db, [row], current_user)[0]
 
 
-def list_verified_providers(db: Session, current_user: dict, access_token: str | None = None) -> list[VerifiedProvider]:
+def _provider_dict(row: VerifiedProvider, names: dict) -> dict:
+    return {
+        "user_id": row.user_id, "name": names.get(str(row.user_id)), "tenant_id": row.tenant_id,
+        "registration_number": row.registration_number, "registration_council": row.registration_council,
+        "status": row.status, "verified_by": row.verified_by, "verified_at": row.verified_at, "revoked_at": row.revoked_at,
+        "notes": row.notes,
+    }
+
+
+def with_names(db: Session, rows: list[VerifiedProvider], current_user: dict) -> list[dict]:
+    """The rows as plain dicts with the provider's display name (one cached lookup for the lot)."""
+    from types import SimpleNamespace
+
+    tenants = {r.tenant_id for r in rows if r.tenant_id}
+    names = common.resolve_names(
+        db, SimpleNamespace(tenant_id=next(iter(tenants)) if len(tenants) == 1 else None), [r.user_id for r in rows], current_user,
+    ) if rows else {}
+    return [_provider_dict(r, names) for r in rows]
+
+
+def list_verified_providers(db: Session, current_user: dict, access_token: str | None = None) -> list[dict]:
     tenant = _verification_scope(db, current_user, access_token)
     query = db.query(VerifiedProvider)
     if tenant is not None:
         query = query.filter(VerifiedProvider.tenant_id == tenant)
-    return query.order_by(VerifiedProvider.verified_at.desc()).all()
+    return with_names(db, query.order_by(VerifiedProvider.verified_at.desc()).all(), current_user)
+
+
+_PROVIDER_ROLES = {"provider", "tenant_admin", "internal_user", "staff"}
+
+
+def list_provider_candidates(
+    db: Session, current_user: dict, access_token: str | None = None, *, tenant_id: UUID | None = None, q: str | None = None,
+    include_verified: bool = False, all_roles: bool = False, page: int = 1, page_size: int = 50,
+) -> dict:
+    """The clinic's members that can be verified, for the "Add provider" picker. Source: the identity service's member
+    list of the clinic. By default only active members with a provider-type role who are not verified yet; `all_roles`
+    lists every active member (to verify an Enterprise Admin who is also a clinician) and `include_verified` also lists
+    the people who are verified now. Someone whose verification was revoked is always listed, marked `revoked`, so they can be
+    verified again."""
+    from app.services import chat_user_names
+    from app.services import event_notification_service as members
+
+    scope = _verification_scope(db, current_user, access_token)
+    tenant = scope or tenant_id
+    if tenant is None:
+        raise HTTPException(status_code=422, detail="tenant_id is required")
+    if scope is not None and tenant_id not in (None, scope):
+        raise HTTPException(status_code=403, detail="You can only list the members of your own clinic")
+
+    records = members.owning_tenant_users(tenant, access_token)[0] or []
+    found: dict = {}
+    for record in records:
+        user_id = members._user_id(record)
+        if user_id is None or user_id in found or not members._active(record):
+            continue
+        roles = members._roles(record)
+        if not all_roles and not (roles & _PROVIDER_ROLES):
+            continue
+        found[user_id] = {"name": chat_user_names.extract_display_name(record), "roles": sorted(roles)}
+
+    existing = {
+        r.user_id: r for r in db.query(VerifiedProvider).filter(VerifiedProvider.user_id.in_(list(found))).all()
+    } if found else {}
+    unnamed = [str(u) for u, v in found.items() if not v["name"]]
+    if unnamed:
+        from types import SimpleNamespace
+
+        looked_up = common.resolve_names(db, SimpleNamespace(tenant_id=tenant), unnamed, current_user)
+        for u, v in found.items():
+            v["name"] = v["name"] or looked_up.get(str(u))
+
+    needle = (q or "").strip().lower()
+    items = []
+    for user_id, info in found.items():
+        row = existing.get(user_id)
+        state = "not_verified" if row is None else row.status
+        if state == "verified" and not include_verified:
+            continue      # a revoked provider stays listed (marked revoked) so they can be verified again
+        if needle and needle not in (info["name"] or "").lower() and not any(needle in r for r in info["roles"]):
+            continue
+        items.append({
+            "user_id": user_id, "name": info["name"], "roles": info["roles"], "verification": state,
+            "registration_number": row.registration_number if row is not None and row.status == "verified" else None,
+        })
+    items.sort(key=lambda i: ((i["name"] or "~").lower(), str(i["user_id"])))
+    start = (page - 1) * page_size
+    return {"tenant_id": tenant, "items": items[start:start + page_size], "total": len(items), "page": page, "page_size": page_size}
 
 
 def revoke_provider(db: Session, current_user: dict, user_id: UUID, access_token: str | None = None) -> VerifiedProvider:
@@ -323,4 +405,4 @@ def revoke_provider(db: Session, current_user: dict, user_id: UUID, access_token
     row.status, row.revoked_at = "revoked", datetime.utcnow()
     db.commit()
     db.refresh(row)
-    return row
+    return with_names(db, [row], current_user)[0]

@@ -308,8 +308,10 @@ def test_notifications_on_submit_and_on_decisions_only(world, dispatched, kind, 
     for action in ("pending", "approved", "approved", "rejected"):
         act(client, ROOT, "patch", url, json={"action": action, "reason": "Test reason"})
 
-    # the author hears about real approve / reject decisions only (held back, and "already there", are silent)
-    assert [(n, a[2]) for n, a in dispatched if n == "_deliver_decision"] == [("_deliver_decision", "approved"), ("_deliver_decision", "rejected")]
+    # the author hears about every real decision (held back, approved, rejected); "already there" is silent
+    assert [(n, a[2]) for n, a in dispatched if n == "_deliver_decision"] == [
+        ("_deliver_decision", "pending"), ("_deliver_decision", "approved"), ("_deliver_decision", "rejected"),
+    ]
 
 
 @pytest.mark.parametrize("kind,item", KINDS)

@@ -167,6 +167,7 @@ The old generic endpoints (`GET /conversations/{id}/messages`, `PATCH` and `DELE
 | GET | /groups/grievance-officer | anyone | who to contact with a complaint |
 | POST | /groups/verified-providers | clinic admin, Super Admin | record that a provider's registration was verified |
 | GET | /groups/verified-providers | clinic admin, Super Admin | list |
+| GET | /groups/verified-providers/candidates | clinic admin, Super Admin (`tenant_id`) | the clinic's members that can be verified, for the "Add provider" picker. `q`, `all_roles`, `include_verified`, `page`, `page_size` |
 | DELETE | /groups/verified-providers/{user_id} | clinic admin, Super Admin | revoke |
 
 
@@ -465,7 +466,7 @@ A provider can create a group, own one or be made an admin only if their registr
 
 Before the first group can be created, every provider who needs to must be added this way. This is a one-time load: use `GET /groups/verified-providers` to check. A provider whose verification is revoked can no longer create groups; groups they already own are left alone (the owner can hand them over).
 
-This list belongs to group chat only: nothing else in the system adds a provider to it, so every provider who should use group chat is added once (a small admin screen over `GET`/`POST`/`DELETE /groups/verified-providers`). A clinic admin can create groups without being in this list. If a clinic admin should also be made an admin of someone else's group, add them to the list.
+The list returned by `GET /groups/verified-providers` includes each provider's `name`. For the screen that adds providers, `GET /groups/verified-providers/candidates` lists the clinic's active members who are not verified yet (a provider whose verification was revoked is listed as `revoked`, so they can be verified again). A ready-made panel for the Enterprise Admin area is in `group-chat-verified-providers-panel.html`. This list belongs to group chat only: nothing else in the system adds a provider to it, so every provider who should use group chat is added once (a small admin screen over `GET`/`POST`/`DELETE /groups/verified-providers`). A clinic admin can create groups without being in this list. If a clinic admin should also be made an admin of someone else's group, add them to the list.
 
 A provider who is not verified, when invited into a group, is treated like a patient there (they cannot pin, tag everyone or be made an admin).
 

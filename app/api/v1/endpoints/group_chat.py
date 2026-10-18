@@ -18,7 +18,7 @@ from app.schemas.group_chat_schema import (
     HideMessage, InvitationResponse, InvitationsResponse, InviteMembers, LegalHold, MembersResponse, OriginalMessageResponse,
     PostingMute, ReactionBody, ReadStatusResponse, ReassignOwner, ReopenGroup, ReportCreate, ReportResolve, ReportResponse,
     ReportsResponse, RoleChange, SaveToRecord, SendGroupMessage, ShareHistory, TransferOwnership, VerifiedProviderCreate,
-    VerifiedProviderResponse,
+    VerifiedProviderResponse, ProviderCandidatesResponse,
 )
 from app.services import group_chat_compliance as compliance
 from app.services import group_chat_messages as messages
@@ -172,6 +172,25 @@ def verify_provider(request: Request, payload: VerifiedProviderCreate, db: Sessi
 @router.get("/verified-providers", response_model=list[VerifiedProviderResponse], summary="Verified providers")
 def list_verified_providers(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return compliance.list_verified_providers(db, current_user, token(request))
+
+
+@router.get(
+    "/verified-providers/candidates", response_model=ProviderCandidatesResponse, summary="Clinic members that can be verified (the picker)",
+    description=(
+        "For the \"Add provider\" screen. Clinic admin: the members of their own clinic; Super Admin: pass `tenant_id`. By default "
+        "only active members with a provider-type role who are not verified now (someone whose verification was revoked is listed as `revoked`, so they can be verified again). `all_roles=true` lists every active member; "
+        "`include_verified=true` also lists the people who are verified now (`verification` says which). `q` searches the name and role."
+    ),
+)
+def provider_candidates(
+    request: Request, tenant_id: UUID | None = None, q: str | None = Query(None, max_length=200), include_verified: bool = False,
+    all_roles: bool = False, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return compliance.list_provider_candidates(
+        db, current_user, token(request), tenant_id=tenant_id, q=q, include_verified=include_verified, all_roles=all_roles,
+        page=page, page_size=page_size,
+    )
 
 
 @router.delete("/verified-providers/{user_id}", response_model=VerifiedProviderResponse, summary="Revoke a provider's verification")
