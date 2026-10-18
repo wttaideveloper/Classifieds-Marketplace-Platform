@@ -364,3 +364,9 @@ The attachment API (`POST /attachments/upload`) is for files sent in messages. I
 ```
 `reason` is optional, up to 255 characters. Allowed: the owner or an admin of the group. The group becomes read-only, the retention period starts, members are notified, and the answer is the group with `status: "closed"`, `closed_at` and `closed_reason`. Closing a group that is already closed gives 409. A member gets 403.
 
+### 9.8 Names of the owner, the inviter and the providers
+
+The server names people in this order: the identity service (the clinic's member list), then the name the person's own sign-in carried when they last used group chat, then the name they joined the group with. The owner's name is saved on their membership when they create the group, and a provider's when they accept, so `GET /groups/{id}/members` and the invitation (`invited_by_name`, `provider_names`) show a name even when the identity lookup has none. An email address is never used as a name. A group created before this change fills in the first time its owner opens any group screen.
+
+`kind` is `provider` for anyone who can act as a provider in the group, including an Enterprise Admin who owns a group. That is intentional: the group has only two kinds (`provider`, `patient`), and the kind decides what a person may do (post in a providers-only group, pin, tag everyone, be made an admin). There is no admin-specific kind. To show that someone is the owner, use `role: "owner"`.
+

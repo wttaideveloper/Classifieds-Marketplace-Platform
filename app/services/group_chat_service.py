@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.models.chat_model import Conversation, ConversationParticipant, Message
 from app.models.group_chat_model import GroupConsent
 from app.repository import chat_repo
+from app.services import chat_user_names
 from app.services import group_chat_common as common
 from app.services import group_chat_notify as notify
 from app.services import group_chat_training as training_groups
@@ -219,6 +220,7 @@ def _capacity_check(db: Session, conversation: Conversation, extra: int) -> None
 # ---------------------------------------------------------------- create / read / update
 
 def create_group(db: Session, current_user: dict, payload, access_token: str | None = None) -> dict:
+    chat_user_names.remember_display_name(db, current_user)
     common.assert_can_create_groups(db, current_user)
     user_id = common.user_uuid(current_user)
     tenant_id = common.caller_tenant(db, current_user, access_token)
@@ -261,6 +263,7 @@ def create_group(db: Session, current_user: dict, payload, access_token: str | N
     owner = ConversationParticipant(
         conversation_id=conversation.id, user_id=user_id, role="provider", membership_status="active", group_role="owner",
         member_kind="provider", joined_at=now, history_from=now, responded_at=now,
+        display_name=common.clean_display_name(current_user.get("name")),
     )
     db.add(owner)
     rows, _skipped = _invitee_rows(db, conversation, invitees, user_id)
@@ -285,6 +288,7 @@ def create_group(db: Session, current_user: dict, payload, access_token: str | N
 
 
 def get_group(db: Session, current_user: dict, conversation_id: UUID, access_token: str | None = None) -> dict:
+    chat_user_names.remember_display_name(db, current_user)
     conversation = common.load_group(db, conversation_id)
     member = common.get_member(db, conversation.id, common.user_uuid(current_user))
     compliance = common.is_compliance_admin(db, current_user, conversation, access_token)
@@ -333,9 +337,10 @@ def _invitation_dict(db: Session, conversation: Conversation, member: Conversati
     inviter_name = None
     provider_ids = [m.user_id for m in active if m.member_kind == "provider"]
     names = common.resolve_names(db, conversation, provider_ids + ([member.invited_by] if member.invited_by else []), current_user)
-    provider_names = sorted({names.get(str(uid)) for uid in provider_ids if names.get(str(uid))})
+    saved = {str(m.user_id): m.display_name for m in active if m.display_name}      # the name each provider joined with
+    provider_names = sorted({names.get(str(uid)) or saved.get(str(uid)) for uid in provider_ids if names.get(str(uid)) or saved.get(str(uid))})
     if member.invited_by:
-        inviter_name = names.get(str(member.invited_by))
+        inviter_name = names.get(str(member.invited_by)) or saved.get(str(member.invited_by))
     kind_text = "one patient's care team" if conversation.group_kind == "care" else "several patients taking part in one program"
     if conversation.context_type == training_groups.LINK_TYPE:
         title = training_groups.context_names(db, [conversation]).get(conversation.id)
@@ -358,6 +363,7 @@ def _invitation_dict(db: Session, conversation: Conversation, member: Conversati
 
 
 def list_invitations(db: Session, current_user: dict) -> dict:
+    chat_user_names.remember_display_name(db, current_user)
     user_id = common.user_uuid(current_user)
     rows = (
         db.query(Conversation, ConversationParticipant)
@@ -374,6 +380,7 @@ def list_invitations(db: Session, current_user: dict) -> dict:
 
 
 def get_invitation(db: Session, current_user: dict, conversation_id: UUID) -> dict:
+    chat_user_names.remember_display_name(db, current_user)
     conversation = common.load_group(db, conversation_id)
     member = common.get_member(db, conversation.id, common.user_uuid(current_user))
     if member is None or member.membership_status != "invited":
@@ -442,6 +449,7 @@ def update_settings(db: Session, current_user: dict, conversation_id: UUID, payl
 # ---------------------------------------------------------------- members
 
 def list_members(db: Session, current_user: dict, conversation_id: UUID) -> dict:
+    chat_user_names.remember_display_name(db, current_user)
     conversation = common.load_group(db, conversation_id)
     viewer = common.active_member(db, conversation, current_user)
     statuses = ["active", "invited"] if common.is_admin(viewer) else ["active"]
@@ -475,6 +483,7 @@ def list_members(db: Session, current_user: dict, conversation_id: UUID) -> dict
 
 
 def invite_members(db: Session, current_user: dict, conversation_id: UUID, payload, access_token: str | None = None) -> dict:
+    chat_user_names.remember_display_name(db, current_user)
     conversation = common.load_group(db, conversation_id)
     member = common.active_member(db, conversation, current_user)
     common.require_admin(member, "invite people")
@@ -533,6 +542,7 @@ def invite_enrolled(db: Session, current_user: dict, conversation_id: UUID, payl
 
 
 def accept_invitation(db: Session, current_user: dict, conversation_id: UUID, payload) -> dict:
+    chat_user_names.remember_display_name(db, current_user)
     conversation = common.load_group(db, conversation_id)
     user_id = common.user_uuid(current_user)
     member = common.get_member(db, conversation.id, user_id)
@@ -557,6 +567,7 @@ def accept_invitation(db: Session, current_user: dict, conversation_id: UUID, pa
     member.display_name = (
         common.clean_display_name(payload.display_name) or member.display_name
         or (common.default_display_name(full.get(str(user_id))) if member.member_kind == "patient" else None)
+        or (common.clean_display_name(current_user.get("name")) if member.member_kind == "provider" else None)
     )
     db.add(GroupConsent(
         conversation_id=conversation.id, user_id=user_id, granted_at=now, is_minor=bool(member.is_minor),
