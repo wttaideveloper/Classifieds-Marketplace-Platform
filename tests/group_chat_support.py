@@ -115,6 +115,17 @@ def world(monkeypatch):
         names[p["id"]] = p["name"]
     recipients.platform = [uid(root)]
     recipients.clinic = [uid(admin)]
+    # the clinic's member list at the identity service: the owner, the clinicians, the learners (not the other clinic's admin)
+    def member_record(user, role, status="active"):
+        return {"userId": user["id"], "membershipId": str(uuid4()), "role": role, "membershipStatus": status, "name": user["name"]}
+
+    clinic_members = [member_record(admin, "tenant_owner")]
+    clinic_members += [member_record(u, "internal_user") for u in (rao, mehta, nair, unverified)]
+    clinic_members += [member_record(u, "external_user") for u in (priya, ravi, asha)]
+    monkeypatch.setattr(
+        "app.services.event_notification_service.owning_tenant_users",
+        lambda tenant, token: (list(clinic_members) if tenant == TENANT else [member_record(outsider_admin, "tenant_owner")], "stub"),
+    )
     for p in (rao, mehta, nair):
         db.add(VerifiedProvider(user_id=uid(p), tenant_id=TENANT, status="verified", registration_number="REG-" + p["name"][-3:]))
     db.commit()
@@ -136,7 +147,7 @@ def world(monkeypatch):
 
     w = SimpleNamespace(
         db=db, client=client, as_user=as_user, people=people, events=events, notifications=notifications, pushes=pushes,
-        names=names, app=app, engine=engine, recipients=recipients,
+        names=names, app=app, engine=engine, recipients=recipients, clinic_members=clinic_members, member_record=member_record,
     )
     yield w
     db.close()

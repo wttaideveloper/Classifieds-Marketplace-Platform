@@ -286,7 +286,7 @@ Every one of these actions is written to the group's audit trail.
 
 Group chat keeps its own list of verified Providers (`verified_providers`). It is separate from anything else: no other module in this backend feeds it, and being a Provider of the clinic, or verified somewhere else, does not put anyone on it. A Provider must be on this list to create a group, own one, be made an admin, or be invited into a training group as a Provider.
 
-- **Who adds them:** the clinic's Enterprise Admin (own clinic only) or the Super Admin, with `POST /groups/verified-providers`. Only `user_id` is required.
+- **Who adds them:** the clinic's Enterprise Admin (own clinic only) or the Super Admin, with `POST /groups/verified-providers`. Only `user_id` is required (a Super Admin also sends `tenant_id`). The person must be an active member of that clinic with a provider, admin or owner role (`tenant_owner`, `tenant_admin` and `enterprise_admin` are fine); anyone else gets 422.
   ```json
   { "user_id": "<the Provider's user id>", "registration_number": "MH-12345", "registration_council": "State Medical Council" }
   ```

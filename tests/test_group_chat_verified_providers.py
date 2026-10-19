@@ -133,3 +133,104 @@ def test_a_provider_cannot_verify_themselves(clinic):
     resp = clinic.as_user(clinic.enzo).post(API, json={"user_id": clinic.enzo["id"]})
 
     assert resp.status_code == 403
+
+
+# --- only active members of the clinic can be verified -------------------------------------------------------------------
+
+def verify(w, caller, user, **extra):
+    return w.as_user(caller).post(API, json={"user_id": user["id"], **extra})
+
+
+@pytest.mark.parametrize("role", ["tenant_owner", "tenant_admin", "enterprise_admin", "internal_user", "staff", "provider"])
+def test_an_active_member_with_an_eligible_role_can_be_verified(world, role):
+    colleague = person("Dr Colleague", "provider")
+    world.clinic_members.append(world.member_record(colleague, role))
+
+    resp = verify(world, world.people.admin, colleague, registration_number="MH-1")
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "verified" and resp.json()["tenant_id"] == str(TENANT)
+
+
+def test_an_enterprise_owner_known_by_role_list_only_can_be_verified(world):
+    """The identity service may give the role only in tenantRbacRoles; role: tenant_owner is the usual case."""
+    owner = person("Clinic Owner", "admin")
+    world.clinic_members.append({"userId": owner["id"], "membershipId": str(uuid4()), "role": "tenant_owner",
+                                 "tenantRbacRoles": ["enterprise_admin", "tenant_owner"], "membershipStatus": "active", "userStatus": "active"})
+
+    assert verify(world, world.people.admin, owner).status_code == 201
+
+
+def test_someone_outside_the_clinic_cannot_be_verified(world):
+    stranger = person("Dr Elsewhere", "provider", tenant=OTHER_TENANT)
+
+    resp = verify(world, world.people.admin, stranger)
+
+    assert resp.status_code == 422 and resp.json()["detail"] == "The user is not a member of this clinic"
+    assert world.db.query(VerifiedProvider).filter_by(user_id=uid(stranger)).count() == 0
+
+
+def test_a_user_id_that_exists_nowhere_is_refused_too(world):
+    assert world.as_user(world.people.admin).post(API, json={"user_id": str(uuid4())}).status_code == 422
+
+
+def test_an_inactive_membership_cannot_be_verified(world):
+    gone = person("Dr Gone", "provider")
+    world.clinic_members.append(world.member_record(gone, "internal_user", status="suspended"))
+    paused = person("Dr Paused", "provider")
+    world.clinic_members.append({**world.member_record(paused, "internal_user"), "userStatus": "disabled"})
+
+    for user in (gone, paused):
+        resp = verify(world, world.people.admin, user)
+        assert resp.status_code == 422 and resp.json()["detail"] == "The user's membership in this clinic is not active"
+
+
+def test_a_learner_cannot_be_verified_as_a_provider(world):
+    resp = verify(world, world.people.admin, world.people.priya)
+
+    assert resp.status_code == 422 and "role" in resp.json()["detail"]
+
+
+def test_a_revoked_provider_who_left_the_clinic_cannot_be_verified_again(world):
+    p = world.people
+    world.clinic_members[:] = [m for m in world.clinic_members if m["userId"] != p.rao["id"]]
+    row = world.db.query(VerifiedProvider).filter_by(user_id=uid(p.rao)).one()
+    row.status = "revoked"
+    world.db.commit()
+
+    assert verify(world, p.admin, p.rao).status_code == 422
+    assert world.db.query(VerifiedProvider).filter_by(user_id=uid(p.rao)).one().status == "revoked"
+
+
+def test_the_super_admin_is_checked_against_the_clinic_they_name(world):
+    p = world.people
+
+    assert verify(world, p.root, p.unverified, tenant_id=str(TENANT)).status_code == 201
+    outside = verify(world, p.root, p.nair, tenant_id=str(OTHER_TENANT))
+    assert outside.status_code == 422 and outside.json()["detail"] == "The user is not a member of this clinic"
+
+
+def test_the_super_admin_must_name_the_clinic_for_a_new_provider(world):
+    resp = verify(world, world.people.root, world.people.unverified)
+
+    assert resp.status_code == 422 and resp.json()["detail"] == "tenant_id is required"
+
+
+def test_when_the_member_list_cannot_be_read_nothing_is_verified(world, monkeypatch):
+    monkeypatch.setattr("app.services.event_notification_service.owning_tenant_users", lambda tenant, token: ([], "stub"))
+
+    resp = verify(world, world.people.admin, world.people.unverified)
+
+    assert resp.status_code == 503
+    assert world.db.query(VerifiedProvider).filter_by(user_id=uid(world.people.unverified)).count() == 0
+
+
+def test_other_callers_are_still_refused_before_any_lookup(world, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("the member list must not be read for a caller who may not verify")
+
+    monkeypatch.setattr("app.services.event_notification_service.owning_tenant_users", boom)
+    p = world.people
+
+    assert verify(world, p.rao, p.unverified).status_code == 403
+    assert verify(world, p.outsider_admin, p.unverified, tenant_id=str(TENANT)).status_code == 403
