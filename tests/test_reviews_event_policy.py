@@ -522,3 +522,65 @@ def test_the_staff_list_and_the_all_module_list_show_the_reason(world):
     staff = client_for(world.db, staff_user(TENANT, "admin")).get(url(world, "/manage")).json()
 
     assert staff["reviews"][0]["reason"] == "Needs a second look" and staff["reviews"][0]["moderation_status"] == "pending"
+
+
+# --- feedback_status on GET /events/my/registrations -------------------------------------------------------------------
+
+def my_registrations(world, user=None):
+    return client_for(world.db, user or world.asha).get(f"{API}/my/registrations")
+
+
+def registration_of(world, event):
+    return next(r for r in my_registrations(world).json() if r["event_id"] == str(event.id))
+
+
+def test_feedback_status_is_false_until_the_user_sends_feedback_and_present_on_every_registration(world):
+    other = make_event(world.db, TENANT, enterprise=world.enterprise, title="Second event")
+    make_registration(world.db, other, "asha@example.com")
+
+    rows = my_registrations(world).json()
+
+    assert len(rows) == 2 and all(r["feedback_status"] is False for r in rows)
+
+
+def test_a_review_makes_feedback_status_true_for_that_event_only(world):
+    other = make_event(world.db, TENANT, enterprise=world.enterprise, title="Second event")
+    make_registration(world.db, other, "asha@example.com")
+    write(world, rating=5, comment="Good")
+
+    assert registration_of(world, world.event)["feedback_status"] is True
+    assert registration_of(world, other)["feedback_status"] is False
+
+
+def test_a_pending_or_rejected_review_still_counts_as_sent(world):
+    review_id = write(world, rating=3).json()["id"]
+    for action in ("pending", "rejected"):
+        moderate(world, review_id, action, super_admin_user())
+        assert registration_of(world, world.event)["feedback_status"] is True
+
+
+def test_a_feedback_form_counts_too(world):
+    client_for(world.db, world.asha).post(f"{API}/{world.event.id}/feedback", json={"participant_email": "asha@example.com", "answers": {"q1": "great"}})
+
+    assert registration_of(world, world.event)["feedback_status"] is True
+
+
+def test_a_review_a_super_admin_deleted_does_not_count(world):
+    review_id = write(world, rating=3).json()["id"]
+    client_for(world.db, super_admin_user()).request("DELETE", url(world, f"/{review_id}"), json={"reason": "Abusive language"})
+
+    assert registration_of(world, world.event)["feedback_status"] is False
+
+
+def test_someone_elses_feedback_does_not_count(world):
+    ravi, _ = second_reviewer(world, rating=4)
+
+    assert registration_of(world, world.event)["feedback_status"] is False                       # Asha wrote nothing
+    assert next(r for r in my_registrations(world, ravi).json())["feedback_status"] is True
+
+
+def test_an_old_review_saved_by_email_only_counts(world):
+    world.db.add(EventFeedback(event_id=world.event.id, participant_email="Asha@example.com", rating="4", is_review=True, moderation_status="approved"))
+    world.db.commit()
+
+    assert registration_of(world, world.event)["feedback_status"] is True

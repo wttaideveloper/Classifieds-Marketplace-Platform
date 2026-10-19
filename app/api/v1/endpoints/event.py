@@ -108,6 +108,7 @@ from app.services.event_service import (
     create_event_refund_service,
     create_event_service,
     create_event_review_service,
+    _caller_user_uuid,
     create_feedback_service,
     delete_event_review_service,
     create_registration_service,
@@ -262,12 +263,18 @@ def list_events(
     )
 
 
-@router.get("/my/registrations", summary="My registrations — upcoming/completed/cancelled")
+@router.get(
+    "/my/registrations", summary="My registrations — upcoming/completed/cancelled",
+    description=(
+        "Every registration object has `feedback_status`: true when the caller has already sent feedback for that event "
+        "(a review or a feedback form), false otherwise. A review a Super Admin deleted does not count."
+    ),
+)
 def my_registrations(status: str | None = Query(None, description="Filter by registration status: confirmed|attended|cancelled"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = current_user.get("email")
     if not email:
         raise HTTPException(status_code=400, detail="Email not found in token")
-    return my_registrations_service(db, email, status)
+    return my_registrations_service(db, email, status, user_id=_caller_user_uuid(current_user))
 
 
 @router.get(
@@ -1100,13 +1107,28 @@ def remind(event_id: UUID, db: Session = Depends(get_db), current_user: dict = D
     return {"message": message, "event_id": str(event_id), **summary}
 
 
-@router.post("/{event_id}/feedback", status_code=status.HTTP_201_CREATED, summary="Submit Feedback")
-def submit_feedback(event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return create_feedback_service(db, event_id, payload, is_review=False)
+@router.post(
+    "/{event_id}/feedback", status_code=status.HTTP_201_CREATED, summary="Submit Feedback",
+    description=(
+        "Needs a login. The attendee is the logged-in user (their token's email is saved; `participant_email` in the body is "
+        "only used when the token has none). Takes any of `form_id`, `answers` (the questionnaire answers), `rating` and "
+        "`comment`. The event's Enterprise Admins and the Super Admins get an `event_feedback_submitted` notification, with the "
+        "comment in `metadata.comment` (in the app only, never in push)."
+    ),
+)
+def submit_feedback(request: Request, event_id: UUID, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_feedback_service(db, event_id, payload, is_review=False, current_user=current_user, access_token=extract_access_token(request))
 
 
-@router.get("/{event_id}/feedback", summary="List Feedback")
-def list_feedback(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
+@router.get(
+    "/{event_id}/feedback", summary="List Feedback",
+    description=(
+        "The feedback forms sent for the event, newest first, with the attendee's name and the questionnaire `answers`. "
+        "Event managers (the owning Enterprise Admin or provider) and an active Super Admin. 200 with `[]` when there is none. "
+        "401 not logged in; 403 for anyone else, including staff of another business; 404 unknown event."
+    ),
+)
+def list_feedback(event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(require_event_staff)):
     return get_event_feedbacks_service(db, event_id, is_review=False)
 
 
@@ -1208,8 +1230,16 @@ def delete_review(
     )
 
 
-@router.get("/{event_id}/reports", summary="Event Reports")
-def reports(event_id: UUID, type: str = Query("registration"), format: str = Query("json"), db: Session = Depends(get_db), current_user: dict = Depends(require_event_manager)):
+@router.get(
+    "/{event_id}/reports", summary="Event Reports",
+    description=(
+        "Event managers (the owning Enterprise Admin or provider) can read every report type. An active Super Admin can read "
+        "the `feedback` report only (403 for the others). `format` only accepts json."
+    ),
+)
+def reports(event_id: UUID, type: str = Query("registration"), format: str = Query("json"), db: Session = Depends(get_db), current_user: dict = Depends(require_event_staff)):
+    if current_user.get("role") == "super_admin" and type != "feedback":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="A Super Admin can read the feedback report only")
     return get_event_reports_service(db, event_id, type)
 
 

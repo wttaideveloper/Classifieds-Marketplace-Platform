@@ -365,9 +365,11 @@ A review that is not on this event, or a feedback row that is not a review, give
 
 #### POST /events/{event_id}/feedback and GET /events/{event_id}/feedback
 
-POST needs a login and takes any of participant_email, form_id, answers, rating and comment. It is a form answer, not a review, and has no moderation. GET is only for event managers.
+POST needs a login and takes any of `form_id`, `answers` (the questionnaire answers), `rating` and `comment`. The attendee is the logged-in user: their token's email is saved, and a `participant_email` in the body is used only when the token has none. It is a form answer, not a review, and has no moderation. The event's Enterprise Admin(s) and the Super Admin(s) get an `event_feedback_submitted` notification (see `event-feedback.md`).
 
-The event feedback report (`GET /events/{event_id}/reports?type=feedback`) puts its numbers in `data`: `total_feedbacks`, `total_reviews`, `approved_reviews` and `average_rating`. The average is taken from the approved reviews only and is null when there are none.
+GET lists the forms newest first, each with `participant_name`, `participant_email`, `form_id`, `answers`, `rating`, `comment`, `is_review` and `created_at`. It is for the event's managers (the owning Enterprise Admin or provider) and an active Super Admin. It returns `[]` when there is no feedback. 401 not logged in, 403 for anyone else, 404 unknown event.
+
+The event feedback report (`GET /events/{event_id}/reports?type=feedback`, also readable by an active Super Admin, who can read no other report type) puts its numbers in `data`: `total_feedbacks`, `total_reviews`, `approved_reviews` and `average_rating`. The average is taken from the approved reviews only and is null when there are none.
 
 
 ### Moderation queue (all modules)
