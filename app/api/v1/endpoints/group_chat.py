@@ -166,7 +166,11 @@ def get_grievance_officer(current_user: dict = Depends(get_current_user)):
              summary="Record that a provider's registration has been verified",
              description="Clinic admin (own clinic) or Super Admin. The person must be an active member of the clinic with a provider, admin or owner role (422 otherwise). Only a verified provider can create or own a group or be made an admin.")
 def verify_provider(request: Request, payload: VerifiedProviderCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return compliance.verify_provider(db, current_user, payload, token(request))
+    try:
+        return compliance.verify_provider(db, current_user, payload, token(request))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise
 
 
 @router.get("/verified-providers", response_model=list[VerifiedProviderResponse], summary="Verified providers")
