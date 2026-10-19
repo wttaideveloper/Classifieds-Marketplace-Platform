@@ -283,7 +283,7 @@ def _verification_scope(db: Session, current_user: dict, access_token: str | Non
     """The clinic whose providers the caller is allowed to manage."""
     if common.is_super_admin(current_user):
         if requested_tenant is None:
-            raise HTTPException(status_code=422, detail="tenant_id is required when the platform verifies a provider")
+            raise HTTPException(status_code=422, detail="tenant_id is required")
         return requested_tenant
     if common.platform_role(current_user) == "admin":
         tenant = common.caller_tenant(db, current_user, access_token)
