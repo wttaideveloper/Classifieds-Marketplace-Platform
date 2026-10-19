@@ -306,6 +306,16 @@ class MemberResponse(BaseModel):
     joined_at: datetime | None = None
     posting_muted: bool = False
     posting_muted_until: datetime | None = None
+    is_verified_provider: bool | None = Field(
+        None, description="Owner and admins only (null for other viewers): the member is on the verified-provider list right now, "
+                          "so a verification revoked after they joined shows false.")
+    can_be_admin: bool | None = Field(
+        None, description="Owner and admins only (null for other viewers): PATCH .../role {\"role\": \"admin\"} would be accepted for this "
+                          "member now: an active, verified provider who is a plain member, while the group is below its admin limit.")
+    can_receive_ownership: bool | None = Field(
+        None, description="Owner and admins only (null for other viewers): this member could be handed the group "
+                          "(POST /groups/{id}/transfer-ownership): an active, verified provider who is not the owner or the caller. "
+                          "Only the owner can do the transfer; see permissions.can_transfer_ownership.")
 
 
 class MembersResponse(BaseModel):

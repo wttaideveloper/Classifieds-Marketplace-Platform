@@ -310,6 +310,10 @@ The `already_invited` / `already_member` reason you saw was the roster's way of 
 
 `GET /groups/{id}/members` returns the name of a pending invitee to the owner and admins (only they see pending rows). The server uses the identity service name; when it has none, a training group uses the name on the learner's enrolment, then any name the person has used in chat. `name` is `null` only when no name is known anywhere. Learners never see pending invitations.
 
+### 9.3a Who an owner can make admin or hand the group to
+
+A group owner or admin cannot read `GET /groups/verified-providers` (Super Admin and Enterprise Admin only), and does not need to. `GET /groups/{id}/members` gives the owner and admins `is_verified_provider`, `can_be_admin` and `can_receive_ownership` for each member (null for everyone else). `can_be_admin` is true for an active, verified provider who is a plain member while the group has room for another admin. `can_receive_ownership` is true for an active, verified provider who is not the owner and not the caller. They are computed live, so a revoked verification shows up on the next call. The promote and transfer endpoints still enforce every rule (422 / 409), so the fields only decide which buttons to show. Show "Make Group Admin" when `permissions.can_make_admin` and the member's `can_be_admin` are both true, and "Transfer ownership" when `permissions.can_transfer_ownership` and the member's `can_receive_ownership` are both true.
+
 ### 9.4 Group picture (avatar)
 
 1. Upload the image with `POST /api/v1/uploads/` (multipart form: `file` = the image, `folder` = `group-avatars`). Image files up to 100 MB are accepted. The answer is `{ "url": "/api/v1/uploads/group-avatars/ab12cd.png", "name": "...", "size": 12345, "type": "image/png" }`.

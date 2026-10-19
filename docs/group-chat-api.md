@@ -278,6 +278,21 @@ Show all of it before the person taps accept. When `requires_guardian_consent` i
 ```
 Providers are shown in full. Another patient is shown by display name only. In a care group everyone is shown in full. There is never a phone number, email or profile detail. `posting_muted` is only filled in for admins. Admins also see people with `status: "invited"`.
 
+**Who can be made an admin or owner.** The owner and the admins also get three extra fields on every member, so the app does not need `GET /groups/verified-providers` (which stays closed to group owners):
+
+```json
+{ "user_id": "9a1c…", "name": "Dr Mehta", "role": "member", "kind": "provider", "status": "active",
+  "is_verified_provider": true, "can_be_admin": true, "can_receive_ownership": true }
+```
+
+| Field | Meaning |
+|---|---|
+| `is_verified_provider` | the person is on the verified-provider list right now (a verification revoked after they joined shows `false`) |
+| `can_be_admin` | `PATCH …/role {"role":"admin"}` would be accepted: active, verified provider, currently a plain member, and the group is below its admin limit |
+| `can_receive_ownership` | `POST …/transfer-ownership` would be accepted for them: active, verified provider, not the owner and not the person asking |
+
+For anyone who is not an owner or admin all three are `null`. They are worked out on each request from the same rules the two endpoints enforce, and those endpoints still check everything themselves (422 not a verified provider, 409 admin limit). Use them to show or hide the buttons, together with `permissions.can_make_admin` and `permissions.can_transfer_ownership` on the group (the person using the app may use the action at all).
+
 ### Send a message, with a reply
 
 `POST /groups/{id}/messages`

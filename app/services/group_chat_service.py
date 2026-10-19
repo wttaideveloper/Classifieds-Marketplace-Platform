@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.chat_model import Conversation, ConversationParticipant, Message
-from app.models.group_chat_model import GroupConsent
+from app.models.group_chat_model import GroupConsent, VerifiedProvider
 from app.repository import chat_repo
 from app.services import chat_user_names
 from app.services import group_chat_common as common
@@ -465,10 +465,35 @@ def list_members(db: Session, current_user: dict, conversation_id: UUID) -> dict
         training_groups.enrolment_names(db, conversation, [r.user_id for r in rows if r.membership_status == "invited"])
         if common.is_admin(viewer) else {}
     )
+    # What the owner / admins may do with each member, worked out with the same rules change_role and transfer_ownership
+    # enforce, so the app needs no access to the verified-provider list. Other viewers get null.
+    manager = common.is_admin(viewer)
+    verified: set = set()
+    admins_full = False
+    if manager:
+        provider_ids = [r.user_id for r in rows if r.member_kind == "provider"]
+        if provider_ids:
+            verified = {
+                v[0] for v in db.query(VerifiedProvider.user_id)
+                .filter(VerifiedProvider.user_id.in_(provider_ids), VerifiedProvider.status == "verified").all()
+            }
+        admins_full = common.count_admins(db, conversation.id) >= settings.GROUP_MAX_ADMINS
+
+    def eligibility(r) -> dict:
+        if not manager:
+            return {"is_verified_provider": None, "can_be_admin": None, "can_receive_ownership": None}
+        eligible = r.membership_status == "active" and r.member_kind == "provider" and r.user_id in verified
+        return {
+            "is_verified_provider": r.user_id in verified,
+            "can_be_admin": eligible and r.group_role == "member" and not admins_full,
+            "can_receive_ownership": eligible and r.group_role != "owner" and r.user_id != viewer.user_id,
+        }
+
     order = {"owner": 0, "admin": 1, "member": 2}
     rows.sort(key=lambda r: (r.membership_status != "active", order.get(r.group_role or "member", 2), r.joined_at or datetime.min))
     members = [
         {
+            **eligibility(r),
             "user_id": r.user_id,
             "name": common.name_for_viewer(conversation, viewer, r, full) or (pending_names.get(r.user_id) if r.membership_status == "invited" else None),
             "role": r.group_role,
