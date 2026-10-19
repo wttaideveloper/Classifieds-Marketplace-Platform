@@ -323,7 +323,7 @@ def verify_provider(db: Session, current_user: dict, payload, access_token: str 
     """Record that a provider's registration has been checked. Needed before they can create or own a group.
 
     The person must be an active member of the clinic they are verified for (provider, admin or owner roles)."""
-    tenant = _verification_scope(db, current_user, access_token)
+    tenant = _verification_scope(db, current_user, access_token, payload.tenant_id)
     if tenant is not None and payload.tenant_id not in (None, tenant):
         raise HTTPException(status_code=403, detail="You can only verify providers of your own clinic")
     row = db.query(VerifiedProvider).filter(VerifiedProvider.user_id == payload.user_id).first()
