@@ -1,6 +1,6 @@
 from uuid import UUID
 from app.core.catalog_access import get_catalog_access, require_catalog_writer, require_review_moderator
-from app.core.dependencies import extract_access_token, get_current_user
+from app.core.dependencies import extract_access_token, get_current_user, get_optional_current_user
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
@@ -154,15 +154,18 @@ def create_product_review(
         "Public — approved reviews only. `average_rating` is null when there are none (show \"No ratings yet\"). "
         "`rating_distribution` is the number of approved reviews per star. Optional `sort` (newest|oldest|highest|lowest), "
         "`rating`, `with_comment`, `page` and `page_size` change which reviews are listed; the average, `total` and "
-        "`rating_distribution` always cover all approved reviews."
+        "`rating_distribution` always cover all approved reviews. A signed-in caller also gets `my_review`: their own review in any "
+        "status (`approved`, `pending`, `rejected` or `deleted`, with `status_label`, `reason` ...), or null. Their own approved "
+        "review is in `my_review` and not repeated in `reviews`, but it still counts in `total` and the average."
     ),
 )
 def list_product_reviews(
     product_id: UUID = Path(...),
     opts: ListOptions = Depends(review_list_params),
     db: Session = Depends(get_db),
+    current_user: dict | None = Depends(get_optional_current_user),
 ):
-    return list_product_reviews_service(db, product_id, opts)
+    return list_product_reviews_service(db, product_id, opts, current_user)
 
 
 @router.get(

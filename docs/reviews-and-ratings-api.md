@@ -227,6 +227,8 @@ Anyone can call it. It returns approved reviews only.
 ```
 `average_rating` is null when there are no approved reviews.
 
+If the caller is logged in, the answer also has `my_review`: their own review in any status, found by their user id, in the same shape as one review above (`GET .../reviews/me` returns the same object). It is `null` when they have no review, and for an anonymous reader. Send the token to get it; the list needs no login. Their own approved review is in `my_review` and is **not repeated in `reviews`**, but it still counts in `total`, `average_rating` and `rating_distribution`; `pagination` describes the `reviews` list. `my_review.status` is `approved`, `pending`, `rejected` or `deleted` (the same as `moderation_status`), with `status_label`, `is_public`, `edit_label` and, while it is rejected, pending or deleted, the Super Admin's `reason`. A review a Super Admin deleted comes back as `deleted`, not `null`. The filters and paging do not change `my_review`. Services are the same, with `service_id`.
+
 #### GET /products/{product_id}/reviews/me
 
 Login required. The caller's own review in the same shape as above (any status), or `null`.

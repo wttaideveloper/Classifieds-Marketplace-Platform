@@ -382,6 +382,7 @@ class ServiceReviewResponse(BaseModel):
 
 
 class ServiceReviewListResponse(BaseModel):
+    my_review: ServiceReviewResponse | None = Field(None, description="The signed-in caller's own review in any status (approved | pending | rejected | deleted); null when they have none or are not signed in. Not repeated in `reviews`; still counted in `total` and the average")
     reviews: list[ServiceReviewResponse]
     average_rating: float | None = Field(None, description="Average of approved reviews' ratings; null when there are none")
     total: int = Field(..., description="Count of approved reviews")

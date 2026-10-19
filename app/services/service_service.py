@@ -164,9 +164,9 @@ def create_service_review_service(db: Session, service_id: UUID, data, current_u
     )
 
 
-def list_service_reviews_service(db: Session, service_id: UUID, opts=None):
+def list_service_reviews_service(db: Session, service_id: UUID, opts=None, current_user: dict | None = None):
     _service_or_404(db, service_id)
-    return catalog_reviews.list_approved(db, "service", service_id, opts)
+    return catalog_reviews.list_approved(db, "service", service_id, opts, current_user)
 
 
 def get_my_service_review_service(db: Session, service_id: UUID, current_user: dict):

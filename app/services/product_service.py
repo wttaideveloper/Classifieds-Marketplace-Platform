@@ -173,9 +173,9 @@ def create_product_review_service(db: Session, product_id: UUID, data, current_u
     )
 
 
-def list_product_reviews_service(db: Session, product_id: UUID, opts=None):
+def list_product_reviews_service(db: Session, product_id: UUID, opts=None, current_user: dict | None = None):
     _product_or_404(db, product_id)
-    return catalog_reviews.list_approved(db, "product", product_id, opts)
+    return catalog_reviews.list_approved(db, "product", product_id, opts, current_user)
 
 
 def get_my_product_review_service(db: Session, product_id: UUID, current_user: dict):
