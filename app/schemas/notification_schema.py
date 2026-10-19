@@ -53,6 +53,7 @@ NotificationCategory = Literal[
     "training_question_posted",
     "review_moderated",
     "review_deleted",
+    "event_feedback_submitted",
 ]
 
 _TYPE_DOC = (

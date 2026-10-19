@@ -1722,15 +1722,26 @@ def send_announcement_service(db: Session, event_id: UUID, payload, current_user
             "emailed": delivery["emailed"], "failed": delivery["failed"], "skipped": delivery["skipped"],
             "by_source": delivery["by_source"], "failures": delivery["failures"], "smtp_configured": delivery["smtp_configured"]}
 
-def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_review: bool = False):
-    """Free-form feedback (a form's answers). A review goes through create_event_review_service."""
+def create_feedback_service(
+    db: Session, event_id: UUID, payload: dict, is_review: bool = False, current_user: dict | None = None,
+    access_token: str | None = None,
+):
+    """Free-form feedback (a form's answers). A review goes through create_event_review_service.
+
+    The attendee is the logged-in user: their token's email (and user id) are saved, and a `participant_email` in the body
+    is only used when the token has no email. The event's Enterprise Admins and the Super Admins are told
+    (event_feedback_submitted) once it is saved."""
     if is_review:
         return create_event_review_service(db, event_id, payload, {"email": payload.get("participant_email")})
     _get_event_or_404(db, event_id)
     from app.models.event_aux_models import EventFeedback
+    from app.services import event_feedback_notifications
+
+    token_email = str((current_user or {}).get("email") or "").strip()
     fb = EventFeedback(
         event_id=event_id,
-        participant_email=payload.get("participant_email"),
+        participant_email=token_email or payload.get("participant_email"),
+        user_id=_caller_user_uuid(current_user),
         form_id=payload.get("form_id"),
         answers=payload.get("answers"),
         rating=payload.get("rating"),
@@ -1740,6 +1751,7 @@ def create_feedback_service(db: Session, event_id: UUID, payload: dict, is_revie
     db.add(fb)
     db.commit()
     db.refresh(fb)
+    event_feedback_notifications.notify_feedback_submitted(fb.id, access_token=access_token)
     return fb
 
 
@@ -1828,11 +1840,27 @@ def get_my_event_review_service(db: Session, event_id: UUID, current_user: dict)
     return _own_event_review(db, event_id, user_id, email)
 
 
+def _feedback_view(f, names: dict) -> dict:
+    return {
+        "id": f.id, "event_id": f.event_id,
+        "participant_name": names.get((f.participant_email or "").strip().lower()),
+        "participant_email": f.participant_email, "form_id": f.form_id, "answers": f.answers,
+        "rating": f.rating, "comment": f.comment, "is_review": bool(f.is_review), "created_at": f.created_at,
+    }
+
+
 def get_event_feedbacks_service(db: Session, event_id: UUID, is_review: bool = False):
+    """The feedback forms sent for an event, newest first, each with the attendee's name (from their registration; null
+    when none) and the answers to the questionnaire. An event with no feedback gives an empty list."""
     _get_event_or_404(db, event_id)
     from app.models.event_aux_models import EventFeedback
 
-    return db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review == is_review).all()
+    rows = (
+        db.query(EventFeedback).filter(EventFeedback.event_id == event_id, EventFeedback.is_review == is_review)
+        .order_by(EventFeedback.created_at.desc()).all()
+    )
+    names = _reviewer_names(db, event_id, rows)
+    return [_feedback_view(f, names) for f in rows]
 
 
 def moderate_review_service(db: Session, review_id: UUID, action: str, event_id: UUID | None = None, *, access_token: str | None = None, actor: dict | None = None, reason: str | None = None):
@@ -2140,10 +2168,15 @@ def get_event_reports_service(db: Session, event_id: UUID, report_type: str):
             if rating is not None
         ]
         avg_rating = sum(ratings)/len(ratings) if ratings else None
+        feedback_names = _reviewer_names(db, event_id, feedbacks)
         data = {"total_feedbacks": len(feedbacks), "total_reviews": len(reviews),
                 "approved_reviews": sum(1 for r in reviews if r.moderation_status == "approved"),
                 "average_rating": avg_rating,
-                "feedbacks": [{"id": str(f.id), "rating": f.rating, "comment": f.comment} for f in feedbacks[:20]]}
+                "feedbacks": [
+                    {k: (str(v) if k == "id" else v) for k, v in _feedback_view(f, feedback_names).items()
+                     if k in ("id", "participant_name", "form_id", "answers", "rating", "comment", "created_at")}
+                    for f in sorted(feedbacks, key=lambda x: x.created_at, reverse=True)[:20]
+                ]}
     elif report_type == "revenue":
         # Revenue is what was actually paid (EventOrder), not ticket prices x registrations: that counted
         # unpaid/free registrations and ignored quantity and refunds. Same shape as before, sourced from orders.
@@ -3342,7 +3375,27 @@ def validate_qr_service(db: Session, event_id: UUID, qr_code: str | None):
 # ---- My Registrations ----
 
 
-def my_registrations_service(db: Session, email: str, status_filter: str | None = None):
+def _events_with_feedback(db: Session, event_ids: list, email: str, user_id) -> set:
+    """Ids (of `event_ids`) the caller has already sent feedback for, in one query: a review (by user id, or by email for a
+    review saved before user ids existed) or a feedback form (by email). A review a Super Admin deleted does not count:
+    its author can write a new one."""
+    from app.models.event_aux_models import EventFeedback
+    from app.services.review_common import not_deleted
+
+    if not event_ids:
+        return set()
+    mine = sa.func.lower(EventFeedback.participant_email) == (email or "").strip().lower()
+    if user_id is not None:
+        mine = sa.or_(EventFeedback.user_id == user_id, mine)
+    rows = (
+        db.query(EventFeedback.event_id)
+        .filter(EventFeedback.event_id.in_(event_ids), mine, not_deleted(EventFeedback.moderation_status))
+        .distinct().all()
+    )
+    return {r[0] for r in rows}
+
+
+def my_registrations_service(db: Session, email: str, status_filter: str | None = None, user_id=None):
     """List registrations for a user by email, with bulk event lookup.
 
     Phase 2.8: also exposes each registration's meal/accommodation selections, with a purchase-time price/
@@ -3379,6 +3432,8 @@ def my_registrations_service(db: Session, email: str, status_filter: str | None 
         for row in db.query(EventRegistrationOption).filter(EventRegistrationOption.registration_id.in_(reg_ids)).all():
             purchased_by_reg.setdefault(row.registration_id, {"meal": {}, "accommodation": {}})[row.option_type][row.option_id] = row
 
+    feedback_sent = _events_with_feedback(db, event_ids, email, user_id)
+
     out = []
     for r in regs:
         ev = ev_map.get(r.event_id)
@@ -3392,6 +3447,9 @@ def my_registrations_service(db: Session, email: str, status_filter: str | None 
             # event_start is naive wall-clock in this zone (docs/event-timezone-contract.md); clients need it to read it.
             "event_time_zone": ev.time_zone if ev else None,
             "registration_status": r.status,
+            # true once the caller has sent feedback for this event (a review or a feedback form); the app uses it to show
+            # "feedback sent" instead of the feedback button
+            "feedback_status": r.event_id in feedback_sent,
             "qr_code": r.qr_code,
             "checked_in_at": r.checked_in_at.isoformat() if r.checked_in_at else None,
             "meal_selections": (
