@@ -278,6 +278,21 @@ Show all of it before the person taps accept. When `requires_guardian_consent` i
 ```
 Providers are shown in full. Another patient is shown by display name only. In a care group everyone is shown in full. There is never a phone number, email or profile detail. `posting_muted` is only filled in for admins. Admins also see people with `status: "invited"`.
 
+**Who can be made an admin or owner.** The owner and the admins also get three extra fields on every member, so the app does not need `GET /groups/verified-providers` (which stays closed to group owners):
+
+```json
+{ "user_id": "9a1c…", "name": "Dr Mehta", "role": "member", "kind": "provider", "status": "active",
+  "is_verified_provider": true, "can_be_admin": true, "can_receive_ownership": true }
+```
+
+| Field | Meaning |
+|---|---|
+| `is_verified_provider` | the person is on the verified-provider list right now (a verification revoked after they joined shows `false`) |
+| `can_be_admin` | `PATCH …/role {"role":"admin"}` would be accepted: active, verified provider, currently a plain member, and the group is below its admin limit |
+| `can_receive_ownership` | `POST …/transfer-ownership` would be accepted for them: active, verified provider, not the owner and not the person asking |
+
+For anyone who is not an owner or admin all three are `null`. They are worked out on each request from the same rules the two endpoints enforce, and those endpoints still check everything themselves (422 not a verified provider, 409 admin limit). Use them to show or hide the buttons, together with `permissions.can_make_admin` and `permissions.can_transfer_ownership` on the group (the person using the app may use the action at all).
+
 ### Send a message, with a reply
 
 `POST /groups/{id}/messages`
@@ -464,9 +479,11 @@ A provider can create a group, own one or be made an admin only if their registr
 { "user_id": "…", "registration_number": "MH-12345", "registration_council": "State Medical Council" }
 ```
 
-Before the first group can be created, every provider who needs to must be added this way. The registration number and council are required, and the server confirms that the target is an active Provider in that clinic using the Identity tenant-members source. This is a one-time load: use `GET /groups/verified-providers` to check current (not revoked) entries. A provider whose verification is revoked can no longer create groups; groups they already own are left alone (the owner can hand them over).
+The person must be an **active member of the clinic** (the identity service's member list), with a clinician or administrator role: `provider`, `internal_user`, `staff`, `tenant_admin`, `tenant_owner` or `enterprise_admin`. So an Enterprise Admin or the clinic owner can be verified the same way, for example to be made an admin of a Provider's Training Group. The call is refused with 422 when the user is not a member of the clinic ("The user is not a member of this clinic"), the membership is not active, or the role is a learner (`external_user`), and with 503 when the member list cannot be read right now (nothing is saved). A Super Admin must send `tenant_id` (the clinic the person belongs to); a clinic admin's own clinic is used automatically. Verifying someone again after a revoke goes through the same check.
 
 An Enterprise Admin's clinic is taken from their authenticated tenant identity; they cannot supply another clinic. A Platform Super Admin can verify for any clinic, but must include that clinic's `tenant_id` in the request. A verification only authorizes groups in the recorded clinic.
+
+Before the first group can be created, every provider who needs to must be added this way. This is a one-time load: use `GET /groups/verified-providers` to check. A provider whose verification is revoked can no longer create groups; groups they already own are left alone (the owner can hand them over).
 
 This list belongs to group chat only: nothing else in the system adds a provider to it, so every provider who should use group chat is added once (a small admin screen over `GET`/`POST`/`DELETE /groups/verified-providers`). A clinic admin can create groups without being in this list. If a clinic admin should also be made an admin of someone else's group, add them to the list.
 

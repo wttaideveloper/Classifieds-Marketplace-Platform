@@ -286,7 +286,7 @@ Every one of these actions is written to the group's audit trail.
 
 Group chat keeps its own list of verified Providers (`verified_providers`). It is separate from anything else: no other module in this backend feeds it, and being a Provider of the clinic, or verified somewhere else, does not put anyone on it. A Provider must be on this list to create a group, own one, be made an admin, or be invited into a training group as a Provider.
 
-- **Who adds them:** the clinic's Enterprise Admin (own clinic only) or the Super Admin, with `POST /groups/verified-providers`. Only `user_id` is required.
+- **Who adds them:** the clinic's Enterprise Admin (own clinic only) or the Super Admin, with `POST /groups/verified-providers`. Only `user_id` is required (a Super Admin also sends `tenant_id`). The person must be an active member of that clinic with a provider, admin or owner role (`tenant_owner`, `tenant_admin` and `enterprise_admin` are fine); anyone else gets 422.
   ```json
   { "user_id": "<the Provider's user id>", "registration_number": "MH-12345", "registration_council": "State Medical Council" }
   ```
@@ -310,6 +310,10 @@ The `already_invited` / `already_member` reason you saw was the roster's way of 
 ### 9.3 Names of pending invitations
 
 `GET /groups/{id}/members` returns the name of a pending invitee to the owner and admins (only they see pending rows). The server uses the identity service name; when it has none, a training group uses the name on the learner's enrolment, then any name the person has used in chat. `name` is `null` only when no name is known anywhere. Learners never see pending invitations.
+
+### 9.3a Who an owner can make admin or hand the group to
+
+A group owner or admin cannot read `GET /groups/verified-providers` (Super Admin and Enterprise Admin only), and does not need to. `GET /groups/{id}/members` gives the owner and admins `is_verified_provider`, `can_be_admin` and `can_receive_ownership` for each member (null for everyone else). `can_be_admin` is true for an active, verified provider who is a plain member while the group has room for another admin. `can_receive_ownership` is true for an active, verified provider who is not the owner and not the caller. They are computed live, so a revoked verification shows up on the next call. The promote and transfer endpoints still enforce every rule (422 / 409), so the fields only decide which buttons to show. Show "Make Group Admin" when `permissions.can_make_admin` and the member's `can_be_admin` are both true, and "Transfer ownership" when `permissions.can_transfer_ownership` and the member's `can_receive_ownership` are both true.
 
 ### 9.4 Group picture (avatar)
 

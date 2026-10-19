@@ -294,31 +294,47 @@ def _verification_scope(db: Session, current_user: dict, access_token: str | Non
     raise HTTPException(status_code=403, detail="Only a clinic admin or the platform can verify providers")
 
 
-def _assert_active_provider_in_tenant(user_id: UUID, tenant_id: UUID, access_token: str | None) -> None:
-    """Confirm the target is an active Provider in the clinic using Identity's member source of truth."""
+_PROVIDER_ROLES = {"provider", "tenant_admin", "internal_user", "staff"}    # the picker's default list
+
+# Roles of a clinic member that may be verified for group chat: clinicians and the clinic's own administrators (an owner or
+# admin who also teaches, or who is to be made an admin of a Provider's group). A learner (external_user) is not.
+_VERIFIABLE_ROLES = _PROVIDER_ROLES | {"tenant_owner", "enterprise_admin"}
+
+
+def _assert_clinic_member(user_id: UUID, tenant: UUID, access_token: str | None) -> None:
+    """The person must be an active member of the clinic, with a role that can be verified. The clinic's member list
+    comes from the identity service (the same source as the picker)."""
     from app.services import event_notification_service as members
 
-    provider_roles = {"provider", "tenant_admin", "internal_user", "contributor", "reviewer", "publisher", "staff"}
-    for member in (members.owning_tenant_users(tenant_id, access_token)[0] or []):
-        if members._user_id(member) != user_id:
-            continue
-        if members._active(member) and members._roles(member) & provider_roles:
-            return
-        raise HTTPException(status_code=422, detail="The target user is not an active Provider in this clinic")
-    raise HTTPException(status_code=422, detail="The target user is not a member of this clinic")
+    records = members.owning_tenant_users(tenant, access_token)[0] or []
+    if not records:    # the lookup returns nothing when it fails; a clinic whose admin is calling is never empty
+        raise HTTPException(status_code=503, detail="The clinic's members could not be checked right now. Try again shortly")
+    mine = [r for r in records if members._user_id(r) == user_id]
+    if not mine:
+        raise HTTPException(status_code=422, detail="The user is not a member of this clinic")
+    active = [r for r in mine if members._active(r)]
+    if not active:
+        raise HTTPException(status_code=422, detail="The user's membership in this clinic is not active")
+    if not any(members._roles(r) & _VERIFIABLE_ROLES for r in active):
+        raise HTTPException(status_code=422, detail="Only a clinic provider, admin or owner can be verified, not this user's role")
 
 
 def verify_provider(db: Session, current_user: dict, payload, access_token: str | None = None) -> VerifiedProvider:
-    """Record that a provider's registration has been checked. Needed before they can create or own a group."""
-    tenant = _verification_scope(db, current_user, access_token, payload.tenant_id)
-    _assert_active_provider_in_tenant(payload.user_id, tenant, access_token)
+    """Record that a provider's registration has been checked. Needed before they can create or own a group.
+
+    The person must be an active member of the clinic they are verified for (provider, admin or owner roles)."""
+    tenant = _verification_scope(db, current_user, access_token)
+    if tenant is not None and payload.tenant_id not in (None, tenant):
+        raise HTTPException(status_code=403, detail="You can only verify providers of your own clinic")
     row = db.query(VerifiedProvider).filter(VerifiedProvider.user_id == payload.user_id).first()
-    if row is not None and row.tenant_id not in (None, tenant):
-        raise HTTPException(status_code=409, detail="This provider is already registered with another clinic")
+    clinic = payload.tenant_id or tenant or (row.tenant_id if row is not None else None)
+    if clinic is None:
+        raise HTTPException(status_code=422, detail="tenant_id is required")
+    _assert_clinic_member(payload.user_id, clinic, access_token)
     if row is None:
         row = VerifiedProvider(user_id=payload.user_id)
         db.add(row)
-    row.tenant_id = tenant
+    row.tenant_id = clinic
     row.registration_number, row.registration_council, row.notes = payload.registration_number, payload.registration_council, payload.notes
     row.status, row.verified_by, row.verified_at, row.revoked_at = "verified", common.user_uuid(current_user), datetime.utcnow(), None
     db.commit()
@@ -355,9 +371,6 @@ def list_verified_providers(db: Session, current_user: dict, access_token: str |
     if tenant is not None:
         query = query.filter(VerifiedProvider.tenant_id == tenant)
     return with_names(db, query.order_by(VerifiedProvider.verified_at.desc()).all(), current_user)
-
-
-_PROVIDER_ROLES = {"provider", "tenant_admin", "internal_user", "staff"}
 
 
 def list_provider_candidates(
