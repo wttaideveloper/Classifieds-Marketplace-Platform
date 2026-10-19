@@ -126,8 +126,12 @@ def upsert_review(db: Session, kind: str, item, data, current_user: dict, *, is_
     return review
 
 
-def list_approved(db: Session, kind: str, item_id: UUID, opts: ListOptions | None = None) -> dict:
-    """Approved reviews. The average, total and star breakdown cover all of them; `opts` only changes which are listed."""
+def list_approved(db: Session, kind: str, item_id: UUID, opts: ListOptions | None = None, current_user: dict | None = None) -> dict:
+    """Approved reviews. The average, total and star breakdown cover all of them; `opts` only changes which are listed.
+
+    A signed-in caller also gets `my_review`: their own review in any status (approved, pending, rejected or deleted), found
+    by their user id, or None. Their own approved review is not repeated in `reviews` (the paging describes `reviews`), but it
+    still counts in `total`, the average and the star breakdown."""
     model, fk_col, _ = _fk(kind)
     rows = [
         r for r in db.query(model).filter(fk_col == item_id, model.moderation_status == "approved")
@@ -135,11 +139,19 @@ def list_approved(db: Session, kind: str, item_id: UUID, opts: ListOptions | Non
         if parse_rating(r.rating) is not None
     ]
     ratings = [parse_rating(r.rating) for r in rows]
+    own = None
+    if current_user:
+        try:
+            own = my_review(db, kind, item_id, current_user)
+        except HTTPException:
+            own = None   # a token with no usable user id is treated as anonymous on this public list
+    others = [r for r in rows if own is None or r.id != own.id]
     shown, pagination = apply_list_options(
-        rows, opts or ListOptions(),
+        others, opts or ListOptions(),
         rating_of=lambda r: parse_rating(r.rating), created_of=lambda r: r.created_at, comment_of=lambda r: r.comment,
     )
     return {
+        "my_review": own,
         "reviews": shown,
         "average_rating": average_rating(ratings),
         "total": len(rows),

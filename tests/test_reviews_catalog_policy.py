@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.v1.endpoints import product as product_routes
 from app.api.v1.endpoints import service as service_routes
 from app.core.catalog_access import get_optional_catalog_user
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_optional_current_user
 from app.db.database import Base, get_db
 from app.models.cart_model import Order, OrderItem
 from app.models.enterprise_model import Enterprise
@@ -31,6 +31,7 @@ BUYER = {"id": str(uuid4()), "email": "buyer@example.com", "role": "customer", "
 def as_user(client, user):
     client.app.dependency_overrides[get_current_user] = lambda: user
     client.app.dependency_overrides[get_optional_catalog_user] = lambda: user
+    client.app.dependency_overrides[get_optional_current_user] = lambda: user
 
 
 ROOT = {"id": str(uuid4()), "role": "super_admin", "email": "root@example.com"}
@@ -501,7 +502,11 @@ def test_the_author_sees_the_reason_for_a_hold_a_rejection_and_a_deletion(world,
     assert mine()["status"] == "rejected" and mine()["reason"] == "Off topic"
     act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}", params={"reason": "Abusive language"})
     assert mine()["status"] == "deleted" and mine()["reason"] == "Abusive language" and mine()["status_label"] == "Deleted"
-    assert "Abusive language" not in str(client.get(f"/api/v1/{kind}/{iid}/reviews").json())
+    own = client.get(f"/api/v1/{kind}/{iid}/reviews").json()                              # the author sees it in my_review ...
+    assert own["my_review"]["reason"] == "Abusive language" and own["reviews"] == []
+    client.app.dependency_overrides[get_optional_current_user] = lambda: None
+    assert "Abusive language" not in str(client.get(f"/api/v1/{kind}/{iid}/reviews").json())      # ... nobody else does
+    as_user(client, BUYER)
 
 
 @pytest.mark.parametrize("kind,item", KINDS)
@@ -530,3 +535,99 @@ def test_holding_back_rejecting_and_deleting_need_a_reason(world, kind, item):
     assert act(client, ROOT, "patch", url, json={"action": "rejected", "reason": "ab"}).status_code == 422
     assert act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}").status_code == 422
     assert client.get(f"/api/v1/{kind}/{iid}/reviews/me").json()["status"] == "approved"
+
+
+# --- my_review in the public list -------------------------------------------------------------------------------------
+
+RAVI = {"id": str(uuid4()), "email": "ravi@example.com", "role": "customer", "name": "Ravi Kumar"}
+
+
+def public_list(client, kind, iid, user=None, **params):
+    if user is None:
+        client.app.dependency_overrides[get_optional_current_user] = lambda: None     # anonymous
+    else:
+        as_user(client, user)
+    try:
+        return client.get(f"/api/v1/{kind}/{iid}/reviews", params=params).json()
+    finally:
+        as_user(client, BUYER)
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_my_review_is_null_for_anonymous_and_for_someone_with_no_review(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    act(client, RAVI, "post", f"/api/v1/{kind}/{iid}/reviews", json={"rating": 4, "comment": "Fine"})
+
+    assert public_list(client, kind, iid)["my_review"] is None
+    assert public_list(client, kind, iid, BUYER)["my_review"] is None             # the buyer has not reviewed yet
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_my_review_is_the_logged_in_users_review_and_the_others_stay_in_reviews(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    mine = post(client, kind, iid, rating=5, comment="Good").json()["id"]
+    theirs = act(client, RAVI, "post", f"/api/v1/{kind}/{iid}/reviews", json={"rating": 3, "comment": "Fine"}).json()["id"]
+
+    body = public_list(client, kind, iid, BUYER)
+
+    assert body["my_review"]["id"] == mine and body["my_review"]["rating"] == 5 and body["my_review"]["comment"] == "Good"
+    assert body["my_review"]["status"] == "approved" and body["my_review"]["moderation_status"] == "approved"
+    assert body["my_review"]["status_label"] == "Approved" and body["my_review"]["is_public"] is True
+    assert body["my_review"]["reason"] is None and body["my_review"]["reviewer_name"] == "Asha Rao"
+    assert [r["id"] for r in body["reviews"]] == [theirs]                              # not repeated
+    assert body["total"] == 2 and body["average_rating"] == 4.0                       # but still counted
+    assert body["rating_distribution"] == {"5": 1, "4": 0, "3": 1, "2": 0, "1": 0}
+    assert body["pagination"] == {"total": 1, "page": 1, "page_size": 1, "total_pages": 1}
+    as_ravi = public_list(client, kind, iid, RAVI)
+    assert as_ravi["my_review"]["id"] == theirs and [r["id"] for r in as_ravi["reviews"]] == [mine]
+    anonymous = public_list(client, kind, iid)
+    assert anonymous["my_review"] is None and {r["id"] for r in anonymous["reviews"]} == {mine, theirs}
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_my_review_shows_a_hidden_review_with_its_status_and_reason(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    review_id = post(client, kind, iid, rating=2).json()["id"]
+    act(client, RAVI, "post", f"/api/v1/{kind}/{iid}/reviews", json={"rating": 4})
+    url = f"/api/v1/{kind}/{iid}/reviews/{review_id}/moderate"
+
+    expected = [("pending", "Waiting for Approval", "Needs a second look"), ("rejected", "Not Approved", "Off topic")]
+    for action, label, reason in expected:
+        act(client, ROOT, "patch", url, json={"action": action, "reason": reason})
+        body = public_list(client, kind, iid, BUYER)
+        assert body["my_review"]["status"] == action and body["my_review"]["status_label"] == label
+        assert body["my_review"]["reason"] == reason and body["my_review"]["is_public"] is False
+        assert [r["rating"] for r in body["reviews"]] == [4] and body["total"] == 1       # a hidden review is not counted
+
+    act(client, ROOT, "delete", f"/api/v1/{kind}/{iid}/reviews/{review_id}", params={"reason": "Abusive language"})
+    body = public_list(client, kind, iid, BUYER)
+    assert body["my_review"]["status"] == "deleted" and body["my_review"]["status_label"] == "Deleted"
+    assert body["my_review"]["reason"] == "Abusive language" and body["my_review"]["edit_label"] == "Resubmit Review"
+    assert "Abusive language" not in str(public_list(client, kind, iid))                  # not for anonymous readers
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_my_review_does_not_change_with_the_filters_and_paging(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    post(client, kind, iid, rating=5, comment="Good")
+    act(client, RAVI, "post", f"/api/v1/{kind}/{iid}/reviews", json={"rating": 1})
+
+    body = public_list(client, kind, iid, BUYER, rating=1, page=1, page_size=1)
+
+    assert body["my_review"]["rating"] == 5
+    assert [r["rating"] for r in body["reviews"]] == [1] and body["total"] == 2
+
+
+@pytest.mark.parametrize("kind,item", KINDS)
+def test_an_unusable_token_is_just_anonymous_on_the_public_list(world, kind, item):
+    client, _, ids = world
+    iid = ids[item]
+    post(client, kind, iid)
+
+    body = public_list(client, kind, iid, {"id": "not-a-uuid", "email": "x@example.com", "role": "customer"})
+
+    assert body["my_review"] is None and body["total"] == 1
