@@ -22,6 +22,7 @@ BASIC_TAGS = {
 EBOOK_TAGS = (BASIC_TAGS - {"img"}) | {
     "h5", "h6", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "sub", "sup", "mark", "small", "del", "ins", "dl", "dt", "dd",
 }
+READER_TAGS = {"p", "br", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "strong", "b", "em", "i"}
 VOID_TAGS = {"br", "hr", "img"}
 DROP_WITH_CONTENT = {"script", "style", "iframe", "object", "embed", "noscript", "template", "svg", "math", "form", "textarea", "select", "video", "audio", "link", "meta", "base"}
 BASIC_ATTRS = {"a": {"href", "title"}, "img": {"src", "alt", "title", "width", "height"}}
@@ -78,8 +79,8 @@ class _Cleaner(HTMLParser):
     def __init__(self, profile: str = "basic") -> None:
         super().__init__(convert_charrefs=True)
         self.profile = profile
-        self.tags = EBOOK_TAGS if profile == "ebook" else BASIC_TAGS
-        self.attrs = EBOOK_ATTRS if profile == "ebook" else BASIC_ATTRS
+        self.tags = READER_TAGS if profile == "ebook_reader" else EBOOK_TAGS if profile == "ebook" else BASIC_TAGS
+        self.attrs = {} if profile == "ebook_reader" else EBOOK_ATTRS if profile == "ebook" else BASIC_ATTRS
         self.out: list[str] = []
         self.open_tags: list[str] = []
         self.skip_depth = 0

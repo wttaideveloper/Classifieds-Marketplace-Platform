@@ -203,6 +203,7 @@ class SaveToRecord(BaseModel):
 
 class DataRequestCreate(BaseModel):
     conversation_id: UUID | None = Field(None, description="Omit for all of your groups.")
+    request_type: Literal["copy"] = Field("copy", description="Only data-copy requests are supported.")
     note: str | None = Field(None, max_length=500)
 
 
@@ -472,6 +473,8 @@ class DataRequestResponse(BaseModel):
     note: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
+    expires_at: datetime | None = None
+    error_code: str | None = None
 
 
 class GrievanceOfficerResponse(BaseModel):

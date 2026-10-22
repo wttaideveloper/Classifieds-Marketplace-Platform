@@ -208,6 +208,10 @@ async def startup():
 
     start_payment_jobs()
 
+    from app.services.group_data_export import start_scheduler as start_group_exports
+
+    start_group_exports()
+
 
 app.include_router(api_router, prefix="/api/v1")
 

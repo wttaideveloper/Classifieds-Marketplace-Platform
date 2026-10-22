@@ -1117,7 +1117,7 @@ def grade_assignment_service(db: Session, tid: UUID, aid: str, submission_id: st
     sub.grade=str(grade); sub.feedback=feedback; db.commit(); db.refresh(sub)
     return {"id": str(sub.id), "grade": sub.grade, "feedback": sub.feedback, "files": [dict(f) for f in (sub.files or [])], "resubmission_allowed": True}
 
-def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None, *, attendance_source: bool = False) -> dict:
+def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None, *, attendance_source: bool = False, commit: bool = True, deferred_notifications: list | None = None) -> dict:
     """Marks lesson_id complete for participant_email and recomputes section
     completion / overall_percent / mandatory-completion / certificate eligibility.
 
@@ -1148,8 +1148,7 @@ def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant
             overall_percent="0",
         )
         db.add(prog)
-        db.commit()
-        db.refresh(prog)
+        db.flush()
     lessons = set(prog.lessons_completed or [])
     completed_sections = set(prog.sections_completed or [])
     target_section_id = None
@@ -1191,8 +1190,14 @@ def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant
         if newly_completed:
             prog.completed_at = datetime.utcnow()
         prog.certificate_url=f"/api/v1/trainings/{tid}/certificate.pdf?participant_email={participant_email}"
-    db.commit(); db.refresh(prog)
-    if newly_completed:  # first completion only — later lesson saves must not re-send the certificate email
+    if commit:
+        db.commit()
+        db.refresh(prog)
+    else:
+        db.flush()
+    if newly_completed and not commit and deferred_notifications is not None:
+        deferred_notifications.append((t, tid, participant_email, prog.certificate_url))
+    if newly_completed and commit:
         try:
             from app.services import training_notifications
             enrol = _get_enrolment(db, tid, participant_email)
@@ -1448,7 +1453,7 @@ def _mark_lessons_completed_for_reference(db: Session, tid: UUID, participant_em
                 _apply_lesson_completion(db, tid, lesson["id"], participant_email, t=t)
 
 
-def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_email: str):
+def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_email: str, *, commit: bool = True, deferred_notifications: list | None = None):
     from app.models.training_model import TrainingProgress
     t = _get_training_or_404(db, tid)
     enrol = _get_enrolment(db, tid, participant_email)
@@ -1475,7 +1480,7 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
     accessible, reason = _lesson_is_accessible(target_lesson, lessons_so_far, enrol, t)
     if not accessible:
         raise HTTPException(status_code=403, detail=reason or "Lesson not accessible")
-    result = _apply_lesson_completion(db, tid, lesson_id, participant_email, t=t)
+    result = _apply_lesson_completion(db, tid, lesson_id, participant_email, t=t, commit=commit, deferred_notifications=deferred_notifications)
     # last completed for resume
     return {"lesson_id": lesson_id, **result, "resume_lesson": lesson_id}
 
@@ -3501,7 +3506,27 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
     }
 
     from app.services.training_curriculum import learning_response
-    return learning_response(result, curriculum, training, enrol, assignment_submissions)
+    result = learning_response(result, curriculum, training, enrol, assignment_submissions)
+    ebook_lessons = [item for section in result["sections"] for item in section["lessons"] if item.get("type") == "ebook"]
+    if ebook_lessons:
+        from app.models.ebook_model import TrainingEbook, TrainingEbookProgress
+        from app.services import media_service
+        ids = [str(item["id"]) for item in ebook_lessons]
+        books = {row.lesson_id: row for row in db.query(TrainingEbook).filter(TrainingEbook.training_id == tid, TrainingEbook.lesson_id.in_(ids), TrainingEbook.published.isnot(None)).all() if row.published is not None and row.published_version is not None}
+        records = {row.lesson_id: row for row in db.query(TrainingEbookProgress).filter(TrainingEbookProgress.training_id == tid, TrainingEbookProgress.lesson_id.in_(ids), TrainingEbookProgress.participant_email == email).all()} if email else {}
+        assets = media_service.lookup(db, {book.published.get("cover_asset_id") for book in books.values() if book.published.get("cover_asset_id")})
+        for item in ebook_lessons:
+            book = books.get(str(item["id"]))
+            pages = (book.published.get("pages") or []) if book else []
+            record = records.get(str(item["id"]))
+            page_ids = [page.get("id") for page in pages]
+            page_id = record.last_page_id if record and record.last_page_id in page_ids else (page_ids[0] if record and book and record.version_read != book.published_version and page_ids else None)
+            asset = assets.get(str(book.published.get("cover_asset_id"))) if book else None
+            item.update(cover_url=media_service.file_url(asset) if asset and not asset.is_deleted else None, page_count=len(pages),
+                        current_page_id=page_id, current_page_number=page_ids.index(page_id) + 1 if page_id in page_ids else 0)
+        for section in result["sections"]:
+            section["items"] = copy.deepcopy(section["lessons"])
+    return result
 
 
 def _require_enrolled_or_staff(db: Session, tid: UUID, current_user: dict):

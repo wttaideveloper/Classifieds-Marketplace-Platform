@@ -364,6 +364,90 @@ def test_a_data_request_for_a_group_you_were_never_in_is_refused(world, care):
     assert world.as_user(world.people.stranger).post(f"{API}/data-requests", json={"conversation_id": care["id"]}).status_code == 404
 
 
+def test_data_request_type_is_validated(world):
+    client = world.as_user(world.people.priya)
+    assert client.post(f"{API}/data-requests", json={"request_type": "copy"}).status_code == 201
+    assert client.post(f"{API}/data-requests", json={"request_type": "delete"}).status_code == 422
+    assert len(client.get(f"{API}/data-requests/me").json()) == 1
+
+
+def test_export_generation_download_and_ownership(world, care):
+    from app.services.group_data_export import process_one
+    p = world.people
+    assert say(world, p.priya, care["id"], "my message").status_code == 201
+    assert say(world, p.mehta, care["id"], "someone else's message").status_code == 201
+    client = world.as_user(p.priya)
+    request = client.post(f"{API}/data-requests", json={"conversation_id": care["id"]}).json()
+    path = f'{API}/data-requests/{request["id"]}/download'
+    assert client.get(path).status_code == 409
+    assert process_one(world.db)
+    assert not process_one(world.db)
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    payload = response.json()
+    assert payload["version"] == 1
+    assert [m["content"] for m in payload["messages"]] == ["my message"]
+    assert "someone else's message" not in response.text
+    assert world.as_user(p.mehta).get(path).status_code == 404
+    assert world.as_user(p.outsider_admin).get(path).status_code == 404
+
+
+def test_export_failure_retry_and_expiry(world, care, monkeypatch):
+    from datetime import datetime, timedelta
+    from app.services import group_data_export as exports
+    from app.models.group_chat_model import GroupDataRequest
+    client = world.as_user(world.people.priya)
+    request_id = client.post(f"{API}/data-requests", json={}).json()["id"]
+    original = exports._serialize
+    monkeypatch.setattr(exports, "_serialize", lambda *args: (_ for _ in ()).throw(ValueError("export_too_large")))
+    assert exports.process_one(world.db)
+    assert client.get(f"{API}/data-requests/me").json()[0]["status"] == "failed"
+    assert client.post(f"{API}/data-requests/{request_id}/retry").status_code == 200
+    monkeypatch.setattr(exports, "_serialize", original)
+    assert exports.process_one(world.db)
+    job = world.db.get(GroupDataRequest, UUID(request_id))
+    job.expires_at = datetime.utcnow() - timedelta(seconds=1)
+    world.db.commit()
+    assert client.get(f"{API}/data-requests/{request_id}/download").status_code == 410
+
+
+def test_export_attachment_reference_requires_matching_uploader_and_group(world, care):
+    from app.models.chat_model import ChatAttachment
+    from app.services import group_data_export as exports
+    p = world.people
+    own, other = uuid4(), uuid4()
+    for attachment_id, uploader in ((own, p.priya), (other, p.mehta)):
+        world.db.add(ChatAttachment(id=attachment_id, conversation_id=UUID(care["id"]), uploaded_by=uid(uploader), file_name="private.png",
+                                    file_path="secret/private.png", mime_type="image/png", file_size=1, attachment_type="image"))
+    world.db.add_all([Message(conversation_id=UUID(care["id"]), sender_id=uid(p.priya), content="own", attachment_id=own),
+                      Message(conversation_id=UUID(care["id"]), sender_id=uid(p.priya), content="other", attachment_id=other)])
+    world.db.commit()
+    client = world.as_user(p.priya)
+    request_id = client.post(f"{API}/data-requests", json={}).json()["id"]
+    assert exports.process_one(world.db)
+    response = client.get(f"{API}/data-requests/{request_id}/download")
+    by_content = {item["content"]: item for item in response.json()["messages"]}
+    assert by_content["own"]["attachment_id"] == str(own)
+    assert by_content["other"]["attachment_id"] is None
+    assert "secret/private.png" not in response.text
+
+
+def test_stale_export_worker_cannot_publish_after_claim_is_replaced(world, care, monkeypatch):
+    from app.models.group_chat_model import GroupDataRequest
+    from app.services import group_data_export as exports
+    request_id = world.as_user(world.people.priya).post(f"{API}/data-requests", json={}).json()["id"]
+    def replace_claim(db, job):
+        db.query(GroupDataRequest).filter_by(id=job.id).update({"processing_token": uuid4()}, synchronize_session=False)
+        db.commit()
+        return '{"version":1}'
+    monkeypatch.setattr(exports, "_serialize", replace_claim)
+    assert exports.process_one(world.db)
+    world.db.expire_all()
+    job = world.db.get(GroupDataRequest, UUID(request_id))
+    assert job.status == "in_progress" and job.export_json is None
+
+
 def test_a_former_member_can_still_ask_for_their_data(world, care):
     p = world.people
     world.as_user(p.priya).post(f"{API}/{care['id']}/leave")
