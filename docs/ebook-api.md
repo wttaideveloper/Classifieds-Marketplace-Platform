@@ -159,19 +159,21 @@ Notifications (existing feed and push): `ebook_submitted` to the Super Admins; `
 
 **Access.** `GET L` gives only the published copy, after the course's own checks: an active enrolment (a pending or rejected enrolment gets the same coded 403 as `/content`), a training that is open, a lesson that is not in draft, and not locked by prerequisites or release rules (403 `LESSON_LOCKED`). 404 when nothing is published. The training's own staff and Super Admins can read the same published copy to preview it. Progress, bookmarks and notes are for enrolled learners only.
 
-**Read response:** `{ id, training_id, lesson_id, title, version, published_at, page_count, ebook: { … } }`. Each picture has `url` (needs the same sign-in as everything else; send the bearer token when loading it), `natural_width`, `natural_height`. Editor-only fields (`html_notes`) are left out.
+**Read response:** The legacy `{ id, training_id, lesson_id, title, version, published_at, page_count, ebook: { … } }` remains available. Additive mobile fields are `published_version`, `subtitle`, `author`, `description`, `cover_url`, `completion_rule`, `allow_bookmarks`, `allow_notes`, `current_page_id`, and `pages`. Each mobile page has `id`, `order`, `title`, and ordered `blocks` of type `text` or `image`. Pictures use authenticated `url` values; send the bearer token when loading them. The learner text is sanitized on read. Editor-only fields (`html_notes`) are left out.
+
+`GET /api/v1/trainings/{trainingId}/content` includes `cover_url`, `page_count`, `current_page_id` and `current_page_number` on ebook lessons. The number is 0 when no page has been saved. Pages are not included in this summary.
 
 **Progress.**
 
 ```json
-PUT L/progress   { "page_id": "page_3", "page_number": 3, "progress_percent": 42, "last_scroll_position": 860 }
-→ { "last_page_id": "page_3", "last_page_number": 3, "last_scroll_position": 860, "progress_percent": 42, "completed": false,
-    "completed_at": null, "page_count": 8, "version_read": 4, "lesson_completed": false }
+PUT L/progress   { "page_id": "page_3" }
+→ { "published_version": 4, "last_page_id": "page_3", "last_page_number": 3, "last_scroll_position": null, "progress_percent": 25, "completed": false,
+    "completed_at": null, "page_count": 12, "version_read": 4, "lesson_completed": false }
 ```
 
-`progress_percent` is the furthest the learner has read and never goes down; the last page and scroll position are always the latest. The page decides the page number (a stale `page_number` is ignored). An unknown `page_id` is 422. When the eBook is republished and the page the learner stopped on is gone, `GET L/progress` returns `last_page_id: null` (start from the first page) and keeps `progress_percent`.
+The server derives percentage as floor(one-based page number × 100 / page count) for the current page, so it can decrease when the reader moves backwards. Legacy `page_number` and `progress_percent` input fields are accepted but ignored; clients that formerly supplied a percentage must use the server's value. An unknown `page_id` is 422. The initial response has a null page and zero percentage. On republishing, the saved page is retained if present or reset to the first page if absent; the version and percentage are recalculated.
 
-**Completion** follows the eBook's `completion_rule`: `read_to_end` completes when the **last page** is saved with `progress_percent: 100`; `opened` completes on the first save; `manual` only with `POST L/progress/complete`. Completing counts the lesson as done in the course progress (the same as `POST /trainings/{id}/progress/complete-lesson`), and a locked lesson cannot be completed this way.
+**Completion** follows the eBook's `completion_rule`: `read_to_end` completes on saving the final page; `opened` completes on the first save; `manual` only with `POST L/progress/complete`. Ebook progress and course completion are committed together, and the existing course completion and unlocking rules apply. A locked lesson cannot be completed this way.
 
 **Bookmarks** `{ "page_id": "page_3", "label": "Recipes", "scroll_position": 120 }`: 201 when new, 200 with the existing one for the same page and position. 403 when the eBook has `allow_bookmarks: false`. At most 200 per eBook. Listed in page order; `page_exists: false` when a later version removed the page (the bookmark is kept).
 

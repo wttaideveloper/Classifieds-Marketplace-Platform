@@ -6,6 +6,7 @@ are never read as a group id.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import extract_access_token, get_current_user
@@ -154,6 +155,20 @@ def create_data_request(payload: DataRequestCreate, db: Session = Depends(get_db
 @router.get("/data-requests/me", response_model=list[DataRequestResponse], summary="My data requests")
 def my_data_requests(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return compliance.list_my_data_requests(db, current_user)
+
+
+@router.get("/data-requests/{request_id}/download", summary="Download my completed group data export")
+def download_data_request(request_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services import group_data_export
+    data = group_data_export.download(db, request_id, current_user)
+    return Response(content=data, media_type="application/json", headers={"Content-Disposition": f'attachment; filename="group-data-{request_id}.json"',
+                                                                          "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@router.post("/data-requests/{request_id}/retry", response_model=DataRequestResponse, summary="Retry my failed data export")
+def retry_data_request(request_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services import group_data_export
+    return group_data_export.retry(db, request_id, current_user)
 
 
 @router.get("/grievance-officer", response_model=GrievanceOfficerResponse, summary="Who to contact with a grievance",

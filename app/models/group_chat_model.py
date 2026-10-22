@@ -13,6 +13,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import deferred
 
 from app.db.database import Base
 from app.models.chat_model import PORTABLE_JSON
@@ -137,7 +138,15 @@ class GroupDataRequest(Base):
     user_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     conversation_id = Column(UUID(as_uuid=True), nullable=True)  # null = all of their groups
     request_type = Column(String(20), default="copy", nullable=False)
-    status = Column(String(12), default="received", nullable=False)  # received | in_progress | completed
+    status = Column(String(12), default="received", nullable=False)  # received | in_progress | completed | failed
     note = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
+    processing_started_at = Column(DateTime, nullable=True)
+    processing_token = Column(UUID(as_uuid=True), nullable=True)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    error_code = Column(String(40), nullable=True)
+    export_json = deferred(Column(Text, nullable=True))
+    expires_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (Index("ix_group_data_requests_status_created", "status", "created_at"),)

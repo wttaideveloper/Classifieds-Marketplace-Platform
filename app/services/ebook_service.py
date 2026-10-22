@@ -12,6 +12,7 @@ A save after approval puts the draft back to `draft`; what is live does not chan
 """
 import json
 import logging
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -257,6 +258,9 @@ def render_document(db: Session, doc: dict, *, learner: bool) -> dict:
     for page in out.get("pages") or []:
         if learner:
             page.pop("html_notes", None)
+            # Published snapshots may predate the current editor or have been
+            # imported outside it. Never assume persisted markup is safe.
+            page["content_html"] = clean_html_report(page.get("content_html"), "ebook")[0]
         for image in page.get("images") or []:
             image.update(describe(image.get("asset_id")))
     return out
@@ -535,7 +539,7 @@ def publish(db: Session, tid: UUID, section_id: str, lesson_id: str, user: dict,
 def unpublish(db: Session, tid: UUID, section_id: str, lesson_id: str, user: dict, token: str | None) -> dict:
     ctx = authoring_context(db, tid, section_id, lesson_id, user, token, write=False, lock=True)
     row = ctx.row
-    if row is None or row.published is None:
+    if row is None or row.published is None or row.published_version is None:
         raise _err(409, "This eBook is not live")
     row.published, row.published_version, row.published_at = None, None, None
     _audit(db, row, "unpublished", user)
@@ -695,8 +699,51 @@ def learner_context(db: Session, tid: UUID, lesson_id: str, user: dict, token: s
 
 def learner_view(db: Session, tid: UUID, lesson_id: str, user: dict, token: str | None) -> dict:
     ctx = learner_context(db, tid, lesson_id, user, token, full_gate=True)
+    doc = render_document(db, ctx.document, learner=True)
+    pages = []
+    for page in sorted(doc.get("pages") or [], key=lambda p: p.get("order", 0)):
+        images = page.get("images") or []
+        blocks = []
+        def image_block(image):
+            ratio = image.get("aspect_ratio") or "original"
+            if ratio != "original":
+                match = re.fullmatch(r"(\d{1,2}):(\d{1,2})", str(ratio))
+                if not match or int(match.group(1)) == 0 or int(match.group(2)) == 0:
+                    ratio = "original"
+            return {**image, "type": "image", "width": image.get("width") if image.get("width") in ("small", "medium", "full") else "full",
+                    "fit": image.get("fit") if image.get("fit") in ("cover", "contain") else "cover", "aspect_ratio": ratio}
+        blocks.extend(image_block(i) for i in images if i.get("placement") == "before_content")
+        html = page.get("content_html") or ""
+        inline = {str(i.get("id")): i for i in images if i.get("placement") == "inline"}
+        used = set()
+        pattern = re.compile(r'<(div|figure|p)\b[^>]*\bdata-image-id="([A-Za-z0-9_-]{1,64})"[^>]*>\s*</\1>', re.IGNORECASE)
+        cursor = 0
+        def text_block(fragment):
+            cleaned = clean_html_report(fragment, "ebook_reader")[0]
+            if cleaned:
+                blocks.append({"id": f'{page["id"]}_text_{len(blocks) + 1}', "type": "text", "content_html": cleaned})
+        for match in pattern.finditer(html):
+            image_id = match.group(2)
+            if image_id not in inline or image_id in used:
+                continue
+            text_block(html[cursor:match.start()])
+            blocks.append(image_block(inline[image_id]))
+            used.add(image_id)
+            cursor = match.end()
+        text_block(html[cursor:])
+        blocks.extend(image_block(i) for i in images if i.get("placement") != "before_content" and str(i.get("id")) not in used)
+        for number, block in enumerate(blocks, 1):
+            block["order"] = number
+        pages.append({"id": page["id"], "order": page.get("order"), "title": page.get("title"), "blocks": blocks})
+    rec = _record(db, ctx, user, create=False) if ctx.email and not ctx.is_staff else None
+    if rec and rec.version_read != ctx.row.published_version:
+        _reconcile_progress(ctx, rec)
+        db.commit()
     return {"id": ctx.row.id, "training_id": tid, "lesson_id": lesson_id, "title": ctx.lesson.get("title"), "version": ctx.row.published_version,
-            "published_at": ctx.row.published_at, "page_count": len(ctx.document.get("pages") or []), "ebook": render_document(db, ctx.document, learner=True)}
+            "published_at": ctx.row.published_at, "page_count": len(pages), "ebook": doc, "published_version": ctx.row.published_version,
+            "subtitle": doc.get("subtitle"), "author": doc.get("author"), "description": doc.get("description"), "cover_url": doc.get("cover_url"),
+            "completion_rule": doc.get("completion_rule", "read_to_end"), "allow_bookmarks": doc.get("allow_bookmarks", True),
+            "allow_notes": doc.get("allow_notes", True), "current_page_id": rec.last_page_id if rec else None, "pages": pages}
 
 
 def _progress_out(db: Session, ctx: LearnerContext, rec: TrainingEbookProgress | None) -> dict:
@@ -709,15 +756,20 @@ def _progress_out(db: Session, ctx: LearnerContext, rec: TrainingEbookProgress |
         prog = db.query(TrainingProgress).filter(TrainingProgress.training_id == ctx.training.id, TrainingProgress.participant_email == ctx.email).first()
         lesson_done = bool(prog and str(ctx.lesson.get("id")) in set(prog.lessons_completed or []))
     if rec is None:
-        return {"last_page_id": None, "last_page_number": None, "last_scroll_position": None, "progress_percent": 0, "completed": False, "completed_at": None,
+        return {"published_version": ctx.row.published_version, "last_page_id": None, "last_page_number": None, "last_scroll_position": None, "progress_percent": 0, "completed": False, "completed_at": None,
                 "page_count": len(pages), "version_read": None, "lesson_completed": lesson_done}
     still_there = rec.last_page_id in index
-    return {"last_page_id": rec.last_page_id if still_there else None, "last_page_number": index.get(rec.last_page_id) if still_there else None,
-            "last_scroll_position": rec.last_scroll_position if still_there else None, "progress_percent": rec.progress_percent, "completed": rec.completed,
+    return {"published_version": ctx.row.published_version, "last_page_id": rec.last_page_id if still_there else None, "last_page_number": index.get(rec.last_page_id) if still_there else None,
+            "last_scroll_position": rec.last_scroll_position if still_there else None, "progress_percent": rec.progress_percent, "completed": bool(rec.completed and lesson_done),
             "completed_at": rec.completed_at, "page_count": len(pages), "version_read": rec.version_read, "lesson_completed": lesson_done}
 
 
 def _record(db: Session, ctx: LearnerContext, user: dict, *, create: bool) -> TrainingEbookProgress | None:
+    if create:
+        # Lock the existing enrolment as well as the progress row: the latter
+        # cannot be locked before the first progress record has been inserted.
+        db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id == ctx.training.id,
+                                           TrainingEnrolment.participant_email == ctx.email).with_for_update().first()
     rec = db.query(TrainingEbookProgress).filter(TrainingEbookProgress.training_id == ctx.training.id, TrainingEbookProgress.lesson_id == str(ctx.lesson.get("id")),
                                                  TrainingEbookProgress.participant_email == ctx.email).with_for_update().first()
     if rec is None and create:
@@ -729,20 +781,40 @@ def _record(db: Session, ctx: LearnerContext, user: dict, *, create: bool) -> Tr
 
 
 def get_progress(db: Session, tid: UUID, lesson_id: str, user: dict, token: str | None) -> dict:
-    ctx = learner_context(db, tid, lesson_id, user, token, full_gate=False, learners_only=True)
-    rec = db.query(TrainingEbookProgress).filter(TrainingEbookProgress.training_id == tid, TrainingEbookProgress.lesson_id == lesson_id,
-                                                 TrainingEbookProgress.participant_email == ctx.email).first()
+    ctx = learner_context(db, tid, lesson_id, user, token, full_gate=True, learners_only=True)
+    rec = _record(db, ctx, user, create=False)
+    if rec and rec.version_read != ctx.row.published_version:
+        _reconcile_progress(ctx, rec)
+        db.commit()
     return _progress_out(db, ctx, rec)
 
 
-def _count_in_course(db: Session, ctx: LearnerContext) -> None:
-    """The lesson counts as done in the course. A lesson that cannot be completed yet (locked) is left alone."""
+def _reconcile_progress(ctx: LearnerContext, rec: TrainingEbookProgress) -> None:
+    index = _page_index(ctx.document)
+    if rec.last_page_id not in index:
+        rec.last_page_id = next(iter(index), None)
+        rec.last_scroll_position = None
+    rec.last_page_number = index.get(rec.last_page_id)
+    rec.progress_percent = int(rec.last_page_number * 100 / len(index)) if rec.last_page_number and index else 0
+    rec.version_read = ctx.row.published_version
+
+
+def _count_in_course(db: Session, ctx: LearnerContext, notifications: list) -> None:
+    """Apply course completion in the same transaction as ebook progress."""
     from app.services.training_service import complete_lesson_service
 
-    try:
-        complete_lesson_service(db, ctx.training.id, str(ctx.lesson.get("id")), ctx.email)
-    except HTTPException as exc:
-        logger.info("eBook read but the lesson could not be marked done: %s", exc.detail)
+    complete_lesson_service(db, ctx.training.id, str(ctx.lesson.get("id")), ctx.email, commit=False, deferred_notifications=notifications)
+
+
+def _send_completion_notifications(db: Session, notifications: list) -> None:
+    from app.services import training_notifications
+    for training, tid, email, url in notifications:
+        try:
+            enrol = db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id == tid, TrainingEnrolment.participant_email == email).first()
+            training_notifications.notify_certificate_ready(training, email=email, name=getattr(enrol, "participant_name", None),
+                                                            user_id=getattr(enrol, "user_id", None), certificate_url=url)
+        except Exception:
+            logger.exception("eBook completion notification failed")
 
 
 def save_progress(db: Session, tid: UUID, lesson_id: str, user: dict, token: str | None, body) -> dict:
@@ -752,17 +824,26 @@ def save_progress(db: Session, tid: UUID, lesson_id: str, user: dict, token: str
         raise _err(422, "That page is not in the current version of this eBook. Reload it")
     rec = _record(db, ctx, user, create=True)
     rec.last_page_id, rec.last_page_number, rec.last_scroll_position = body.page_id, index[body.page_id], body.last_scroll_position
-    rec.progress_percent = max(rec.progress_percent or 0, body.progress_percent)
+    if rec.version_read is not None and rec.version_read != ctx.row.published_version:
+        rec.progress_percent = 0
+    rec.progress_percent = int(index[body.page_id] * 100 / len(index))
     rec.version_read = ctx.row.published_version
     rule = ctx.document.get("completion_rule", "read_to_end")
-    newly = False
-    if not rec.completed:
-        done = rule == "opened" or (rule == "read_to_end" and index[body.page_id] == len(index) and body.progress_percent >= 100)
-        if done:
-            rec.completed, rec.completed_at, newly = True, _now(), True
+    notifications = []
+    done = rule == "opened" or (rule == "read_to_end" and index[body.page_id] == len(index))
+    # Repair legacy ebook completions whose separately committed course update
+    # failed, using the same authorized and transactional completion path.
+    course_done = _progress_out(db, ctx, rec)["lesson_completed"] if rec.completed else False
+    if (done and not rec.completed) or (rec.completed and not course_done):
+        try:
+            _count_in_course(db, ctx, notifications)
+            rec.completed = True
+            rec.completed_at = rec.completed_at or _now()
+        except Exception:
+            db.rollback()
+            raise
     db.commit()
-    if newly:
-        _count_in_course(db, ctx)
+    _send_completion_notifications(db, notifications)
     db.refresh(rec)
     return _progress_out(db, ctx, rec)
 
@@ -773,12 +854,18 @@ def complete_manually(db: Session, tid: UUID, lesson_id: str, user: dict, token:
         raise _err(409, "This eBook is completed by reading it, not by marking it done")
     rec = _record(db, ctx, user, create=True)
     newly = not rec.completed
-    if newly:
-        rec.completed, rec.completed_at = True, _now()
+    course_done = _progress_out(db, ctx, rec)["lesson_completed"] if rec.completed else False
+    notifications = []
+    if newly or not course_done:
+        try:
+            _count_in_course(db, ctx, notifications)
+        except Exception:
+            db.rollback()
+            raise
+        rec.completed, rec.completed_at = True, rec.completed_at or _now()
         rec.progress_percent, rec.version_read = 100, ctx.row.published_version
     db.commit()
-    if newly:
-        _count_in_course(db, ctx)
+    _send_completion_notifications(db, notifications)
     db.refresh(rec)
     return _progress_out(db, ctx, rec)
 

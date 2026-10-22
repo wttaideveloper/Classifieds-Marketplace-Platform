@@ -628,7 +628,8 @@ def add_assessment_question_service(db: Session, tid: UUID, aid: str, data):
 
 def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, participant_email: str = "user@example.com"):
     import uuid as _uuid
-    from app.models.training_model import TrainingAssessmentSubmission
+    import copy
+    from app.models.training_model import TrainingAssessmentSubmission, TrainingEnrolment
     if _check_access_expiry(db, tid, participant_email):
         raise HTTPException(status_code=403, detail="Access expired")
     t = _get_training_or_404(db, tid)
@@ -636,6 +637,9 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
     target = next((a for a in assessments if str(a.get("id")) == str(aid)), None)
     if not target:
         raise HTTPException(status_code=404, detail="Assessment not found")
+    # Serialize submissions for the same learner before counting attempts.
+    db.query(TrainingEnrolment).filter(TrainingEnrolment.training_id == tid,
+        TrainingEnrolment.participant_email == participant_email).with_for_update().first()
     # attempt limit + time limit
     attempts_allowed_declared = target.get("attempt_limit") or target.get("attempts_allowed")
     attempt_limit = int(attempts_allowed_declared or 999)
@@ -672,12 +676,16 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
         except: pass
     questions = target.get("questions", [])
     answers = payload.answers if hasattr(payload, "answers") else payload.get("answers", []) if isinstance(payload, dict) else []
+    answer_ids = [str(a.get("question_id") or a.get("id") or "") for a in answers]
+    if len(set(answer_ids)) != len(answer_ids):
+        raise HTTPException(422, "A question may be answered only once")
     # Build lookup
     qmap = {str(q.get("id")): q for q in questions}
     total = sum(int(q.get("points", 1)) for q in questions) or len(questions)
     score = 0
     needs_manual = False
     pending_points = 0
+    question_results = {}
     for ans in answers:
         qid = str(ans.get("question_id") or ans.get("id") or "")
         given = str(ans.get("answer", "")).strip().lower()
@@ -685,6 +693,8 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
         if not q:
             continue
         qtype = q.get("question_type") or "mcq"
+        before = score
+        is_correct = False
         
         if qtype in ["short_answer", "essay", "blank_text"]:
             correct = str(q.get("correct_answer", "")).strip().lower()
@@ -693,6 +703,7 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
             else:
                 needs_manual = True
                 pending_points += int(q.get("points", 1))
+                question_results[qid] = {"is_correct": None, "points_awarded": None}
                 continue
             
         options = q.get("options") or []
@@ -715,6 +726,7 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
             correct_mapped = set([id_to_label.get(p, p) for p in correct_parts])
             
             if given_mapped == correct_mapped and given_mapped:
+                is_correct = True
                 score += int(q.get("points", 1))
         elif qtype == "true_false":
             correct = str(q.get("correct_answer", "")).strip().lower()
@@ -726,6 +738,7 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
             elif given_mapped in ["no", "n", "0"]: given_mapped = "false"
             
             if given_mapped and correct and given_mapped == correct:
+                is_correct = True
                 score += int(q.get("points", 1))
         else:
             correct = str(q.get("correct_answer", "")).strip().lower()
@@ -733,7 +746,9 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
             correct_mapped = id_to_label.get(correct, correct)
             
             if given and correct and given_mapped == correct_mapped:
+                is_correct = True
                 score += int(q.get("points", 1))
+        question_results[qid] = {"is_correct": is_correct, "points_awarded": score - before}
                 
     import math
     passing = (math.ceil(total * float(target["pass_percent"]) / 100)
@@ -751,7 +766,10 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
         feedback = "Failed"
         passed = False
         
-    sub = TrainingAssessmentSubmission(training_id=tid, assessment_id=str(aid), participant_email=participant_email, answers=answers, score=str(score), passed=passed)
+    snapshot = {"assessment": copy.deepcopy(target), "total_points": total, "passing_points": passing,
+                "attempt_number": cnt + 1, "status": "pending" if needs_manual else "evaluated",
+                "feedback": feedback, "question_results": question_results}
+    sub = TrainingAssessmentSubmission(training_id=tid, assessment_id=str(aid), participant_email=participant_email, answers=answers, score=str(score), passed=passed, review_snapshot=snapshot)
     db.add(sub); db.commit(); db.refresh(sub)
     # Mirrors get_secure_training_content_service's per-lesson is_completed rule for
     # exam/quiz lessons (submission is not None, regardless of pass/fail) — any
@@ -764,25 +782,36 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
 def grade_assessment_manual_service(db: Session, tid: UUID, aid: str, submission_id: str, grade: int, feedback: str | None = None):
     from app.models.training_model import TrainingAssessmentSubmission
     t=_get_training_or_404(db, tid)
-    sub=db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.id==submission_id, TrainingAssessmentSubmission.training_id==tid).first()
+    sub=db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.id==UUID(str(submission_id)), TrainingAssessmentSubmission.training_id==tid, TrainingAssessmentSubmission.assessment_id==str(aid)).first()
     if not sub: raise HTTPException(404, "Submission not found")
     # recalc passed with manual grade
     assessments=t.assessments or []
     target=next((a for a in assessments if str(a.get("id"))==str(aid)), None)
     total=sum(int(q.get("points",1)) for q in (target.get("questions",[]) if target else [])) or 1
     passing=int(target.get("passing_score") or target.get("pass_mark") or total*0.6) if target else total*0.6
+    if sub.review_snapshot:
+        import copy
+        snapshot = copy.deepcopy(sub.review_snapshot)
+        total = snapshot["total_points"]
+        passing = snapshot["passing_points"]
+        snapshot["status"] = "evaluated"
+        snapshot["feedback"] = feedback
+        sub.review_snapshot = snapshot
     sub.score=str(grade); sub.passed=grade>=passing; db.commit(); db.refresh(sub)
     return {"submission_id": str(sub.id), "score": grade, "passed": sub.passed, "total_points": total, "feedback": feedback, "explanation": "Manual evaluation completed"}
 
 def get_assessment_result_service(db: Session, tid: UUID, aid: str, submission_id: str, current_user: dict = None):
     from app.models.training_model import TrainingAssessmentSubmission
     t=_get_training_or_404(db, tid)
-    sub=db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.id==submission_id).first()
+    sub=db.query(TrainingAssessmentSubmission).filter(TrainingAssessmentSubmission.id==UUID(str(submission_id)),
+        TrainingAssessmentSubmission.training_id==tid, TrainingAssessmentSubmission.assessment_id==str(aid)).first()
     if not sub: raise HTTPException(404, "Submission not found")
     if current_user and current_user.get("role") not in ("admin","provider") and sub.participant_email != current_user.get("email"):
         raise HTTPException(403, "Not authorized to view this submission")
     assessments=t.assessments or []
     target=next((a for a in assessments if str(a.get("id"))==str(aid)), None)
+    if isinstance(getattr(sub, "review_snapshot", None), dict):
+        target = sub.review_snapshot.get("assessment") or target
     questions=target.get("questions",[]) if target else []
     # attach explanations
     review=[]
@@ -820,34 +849,31 @@ def list_training_assignments_service(db: Session, tid: UUID, current_user: dict
     items = []
     email = current_user.get("email") if current_user else None
     
-    from app.models.training_model import TrainingAssignmentSubmission, TrainingAssessmentSubmission
+    from app.services.assessment_attempts import assignment_summaries, summary
+    latest, assignment_counts = assignment_summaries(db, tid, email)
     
     assignments = list(t.assignments or [])
     for a in assignments:
         item = dict(a)
         item["type"] = "assignment"
-        if email:
-            item["attempts_made"] = db.query(TrainingAssignmentSubmission).filter(
-                TrainingAssignmentSubmission.training_id == tid,
-                TrainingAssignmentSubmission.assignment_id == str(item.get("id")),
-                TrainingAssignmentSubmission.participant_email == email
-            ).count()
-        else:
-            item["attempts_made"] = 0
+        item["attempts_made"] = assignment_counts.get(str(item.get("id")), 0)
         items.append(item)
         
     assessments = list(t.assessments or [])
     for a in assessments:
-        item = dict(a)
+        import copy
+        item = copy.deepcopy(a)
+        if not current_user or current_user.get("role") not in ("admin", "provider"):
+            for question in item.get("questions") or []:
+                question.pop("correct_answer", None)
+                question.pop("explanation", None)
         item["type"] = "assessment"
-        if email:
-            item["attempts_made"] = db.query(TrainingAssessmentSubmission).filter(
-                TrainingAssessmentSubmission.training_id == tid,
-                TrainingAssessmentSubmission.assessment_id == str(item.get("id")),
-                TrainingAssessmentSubmission.participant_email == email
-            ).count()
-        else:
-            item["attempts_made"] = 0
+        record, count, reviewable = latest.get(str(item.get("id")), (None, 0, False))
+        last = summary(record, count) if record else None
+        item.update(attempts_made=count, attempts_allowed=a.get("attempt_limit") or a.get("attempts_allowed"),
+                    latest_attempt_id=last["id"] if last else None, latest_score=last["score"] if last else None,
+                    latest_total_points=last["total_points"] if last else None, latest_score_percent=last["score_percent"] if last else None,
+                    latest_passed=last["passed"] if last else None, can_review=reviewable)
         items.append(item)
         
     return items
@@ -1117,7 +1143,7 @@ def grade_assignment_service(db: Session, tid: UUID, aid: str, submission_id: st
     sub.grade=str(grade); sub.feedback=feedback; db.commit(); db.refresh(sub)
     return {"id": str(sub.id), "grade": sub.grade, "feedback": sub.feedback, "files": [dict(f) for f in (sub.files or [])], "resubmission_allowed": True}
 
-def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None, *, attendance_source: bool = False) -> dict:
+def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant_email: str, t=None, *, attendance_source: bool = False, commit: bool = True, deferred_notifications: list | None = None) -> dict:
     """Marks lesson_id complete for participant_email and recomputes section
     completion / overall_percent / mandatory-completion / certificate eligibility.
 
@@ -1148,8 +1174,7 @@ def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant
             overall_percent="0",
         )
         db.add(prog)
-        db.commit()
-        db.refresh(prog)
+        db.flush()
     lessons = set(prog.lessons_completed or [])
     completed_sections = set(prog.sections_completed or [])
     target_section_id = None
@@ -1191,8 +1216,14 @@ def _apply_lesson_completion(db: Session, tid: UUID, lesson_id: str, participant
         if newly_completed:
             prog.completed_at = datetime.utcnow()
         prog.certificate_url=f"/api/v1/trainings/{tid}/certificate.pdf?participant_email={participant_email}"
-    db.commit(); db.refresh(prog)
-    if newly_completed:  # first completion only — later lesson saves must not re-send the certificate email
+    if commit:
+        db.commit()
+        db.refresh(prog)
+    else:
+        db.flush()
+    if newly_completed and not commit and deferred_notifications is not None:
+        deferred_notifications.append((t, tid, participant_email, prog.certificate_url))
+    if newly_completed and commit:
         try:
             from app.services import training_notifications
             enrol = _get_enrolment(db, tid, participant_email)
@@ -1448,7 +1479,7 @@ def _mark_lessons_completed_for_reference(db: Session, tid: UUID, participant_em
                 _apply_lesson_completion(db, tid, lesson["id"], participant_email, t=t)
 
 
-def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_email: str):
+def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_email: str, *, commit: bool = True, deferred_notifications: list | None = None):
     from app.models.training_model import TrainingProgress
     t = _get_training_or_404(db, tid)
     enrol = _get_enrolment(db, tid, participant_email)
@@ -1475,7 +1506,7 @@ def complete_lesson_service(db: Session, tid: UUID, lesson_id: str, participant_
     accessible, reason = _lesson_is_accessible(target_lesson, lessons_so_far, enrol, t)
     if not accessible:
         raise HTTPException(status_code=403, detail=reason or "Lesson not accessible")
-    result = _apply_lesson_completion(db, tid, lesson_id, participant_email, t=t)
+    result = _apply_lesson_completion(db, tid, lesson_id, participant_email, t=t, commit=commit, deferred_notifications=deferred_notifications)
     # last completed for resume
     return {"lesson_id": lesson_id, **result, "resume_lesson": lesson_id}
 
@@ -3501,7 +3532,27 @@ def get_secure_training_content_service(db: Session, tid: UUID, current_user: di
     }
 
     from app.services.training_curriculum import learning_response
-    return learning_response(result, curriculum, training, enrol, assignment_submissions)
+    result = learning_response(result, curriculum, training, enrol, assignment_submissions)
+    ebook_lessons = [item for section in result["sections"] for item in section["lessons"] if item.get("type") == "ebook"]
+    if ebook_lessons:
+        from app.models.ebook_model import TrainingEbook, TrainingEbookProgress
+        from app.services import media_service
+        ids = [str(item["id"]) for item in ebook_lessons]
+        books = {row.lesson_id: row for row in db.query(TrainingEbook).filter(TrainingEbook.training_id == tid, TrainingEbook.lesson_id.in_(ids), TrainingEbook.published.isnot(None)).all() if row.published is not None and row.published_version is not None}
+        records = {row.lesson_id: row for row in db.query(TrainingEbookProgress).filter(TrainingEbookProgress.training_id == tid, TrainingEbookProgress.lesson_id.in_(ids), TrainingEbookProgress.participant_email == email).all()} if email else {}
+        assets = media_service.lookup(db, {book.published.get("cover_asset_id") for book in books.values() if book.published.get("cover_asset_id")})
+        for item in ebook_lessons:
+            book = books.get(str(item["id"]))
+            pages = (book.published.get("pages") or []) if book else []
+            record = records.get(str(item["id"]))
+            page_ids = [page.get("id") for page in pages]
+            page_id = record.last_page_id if record and record.last_page_id in page_ids else (page_ids[0] if record and book and record.version_read != book.published_version and page_ids else None)
+            asset = assets.get(str(book.published.get("cover_asset_id"))) if book else None
+            item.update(cover_url=media_service.file_url(asset) if asset and not asset.is_deleted else None, page_count=len(pages),
+                        current_page_id=page_id, current_page_number=page_ids.index(page_id) + 1 if page_id in page_ids else 0)
+        for section in result["sections"]:
+            section["items"] = copy.deepcopy(section["lessons"])
+    return result
 
 
 def _require_enrolled_or_staff(db: Session, tid: UUID, current_user: dict):

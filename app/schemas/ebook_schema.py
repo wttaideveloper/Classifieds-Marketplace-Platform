@@ -198,6 +198,16 @@ class LearnerEbook(BaseModel):
     published_at: datetime | None = None
     page_count: int
     ebook: dict[str, Any]
+    published_version: int
+    subtitle: str | None = None
+    author: str | None = None
+    description: str | None = None
+    cover_url: str | None = None
+    completion_rule: str
+    allow_bookmarks: bool
+    allow_notes: bool
+    current_page_id: str | None = None
+    pages: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HistoryEntry(BaseModel):
@@ -276,11 +286,12 @@ class QueueResponse(BaseModel):
 class ProgressIn(_Strict):
     page_id: str = Field(..., min_length=1, max_length=64)
     page_number: int | None = Field(None, ge=1, description="Ignored if it does not match the page; the page decides")
-    progress_percent: int = Field(..., ge=0, le=100)
+    progress_percent: int | None = Field(None, ge=0, le=100, description="Legacy field; ignored. Progress is calculated by the server.")
     last_scroll_position: float | None = Field(None, ge=0)
 
 
 class ProgressOut(BaseModel):
+    published_version: int | None = None
     last_page_id: str | None = None
     last_page_number: int | None = None
     last_scroll_position: float | None = None

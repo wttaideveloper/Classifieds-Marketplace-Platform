@@ -118,14 +118,14 @@ def read_ebook(request: Request, training_id: UUID = TID, lesson_id: str = Path(
 
 
 @router.get(LEARNER + "/progress", response_model=ProgressOut, summary="Where I stopped reading (resume)",
-            description="`last_page_id` is null when nothing was read yet or the page no longer exists in the current published version (start from the first page).")
+            description="`last_page_id` is null before reading. If a new published version removed the saved page, resume from page one.")
 def get_reading_progress(request: Request, training_id: UUID = TID, lesson_id: str = Path(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return svc.get_progress(db, training_id, lesson_id, user, _token(request))
 
 
 @router.put(LEARNER + "/progress", response_model=ProgressOut, summary="Save where I am",
-            description="`progress_percent` is the furthest the learner has read and never goes down; the last page and scroll position are always the latest. The page decides the "
-                        "page number. When the completion rule is met (read_to_end: the last page read to 100%; opened: any save) the lesson counts as done in the course progress.")
+            description="Send `page_id`. The server calculates the page number and percentage; legacy `progress_percent` and `page_number` are ignored. "
+                        "The last page completes a read_to_end ebook; an opened ebook completes on any save.")
 def save_reading_progress(request: Request, payload: ProgressIn = Body(...), training_id: UUID = TID, lesson_id: str = Path(...), db: Session = Depends(get_db),
                           user: dict = Depends(get_current_user)):
     return svc.save_progress(db, training_id, lesson_id, user, _token(request), payload)

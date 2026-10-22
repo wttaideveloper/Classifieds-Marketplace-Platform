@@ -51,6 +51,68 @@ def test_a_learner_never_receives_unfinished_content(world):
     assert world.as_user(world.people.learner).get(world.learner_base).json()["version"] == 1
 
 
+def test_published_text_is_sanitized_when_read(world):
+    go_live(world)
+    row = world.db.query(TrainingEbook).one()
+    row.published["pages"][0]["content_html"] = '<p onclick="attack()">Safe</p><script>attack()</script><img src="https://example.test/x">'
+    flag_modified(row, "published")
+    world.db.commit()
+
+    response = world.as_user(world.people.learner).get(world.learner_base)
+    assert response.status_code == 200
+    assert response.json()["ebook"]["pages"][0]["content_html"] == "<p>Safe</p>"
+
+
+def test_mobile_summary_blocks_and_page_only_progress(world):
+    asset = upload(world)
+    go_live(world, doc([page("page_1", "One", images=[image_block(asset, placement="before_content")]), page("page_2", "Two")], cover_asset_id=asset))
+    client = world.as_user(world.people.learner)
+    summary = client.get(f"/trainings/{world.training.id}/content").json()["sections"][0]["lessons"]
+    book = next(item for item in summary if item["id"] == LESSON)
+    assert book["page_count"] == 2 and book["current_page_number"] == 0 and book["cover_url"].endswith(f"/api/v1/media/{asset}/file")
+    assert "pages" not in book
+    assert "page_count" not in next(item for item in summary if item["id"] == "les-video")
+    read = client.get(world.learner_base).json()
+    assert read["published_version"] == 1 and read["ebook"]["pages"]
+    assert [block["type"] for block in read["pages"][0]["blocks"]] == ["image", "text"]
+    assert read["pages"][0]["blocks"][0]["url"].endswith(f"/api/v1/media/{asset}/file")
+    result = client.put(world.learner_base + "/progress", json={"page_id": "page_1"}).json()
+    assert result["progress_percent"] == 50 and not result["completed"]
+    assert client.get(world.learner_base).json()["current_page_id"] == "page_1"
+
+
+def test_completion_failure_rolls_back_ebook_progress(world, monkeypatch):
+    from fastapi import HTTPException
+    from app.models.ebook_model import TrainingEbookProgress
+    from app.services import training_service
+    go_live(world, doc(THREE))
+    def fail(*args, **kwargs):
+        raise HTTPException(403, "completion failed")
+    monkeypatch.setattr(training_service, "complete_lesson_service", fail)
+    response = world.as_user(world.people.learner).put(world.learner_base + "/progress", json={"page_id": "page_3"})
+    assert response.status_code == 403
+    assert world.db.query(TrainingEbookProgress).count() == 0
+
+
+def test_final_page_unlocks_next_session_and_is_idempotent(world, monkeypatch):
+    from app.models.ebook_model import TrainingEbookProgress
+    monkeypatch.setattr("app.services.training_notifications.notify_certificate_ready", lambda *args, **kwargs: None)
+    world.training.sections[0]["lessons"][0]["is_mandatory"] = True
+    world.training.sections[0]["lessons"][1]["is_mandatory"] = False
+    world.training.sections.append({"id": "sec-2", "title": "Next", "type": "section", "lessons": [
+        {"id": "les-next", "type": "video", "title": "Next lesson"}]})
+    touch(world)
+    go_live(world, doc(THREE))
+    client = world.as_user(world.people.learner)
+    url = f"/trainings/{world.training.id}/content"
+    assert client.get(url).json()["sections"][1]["is_unlocked"] is False
+    assert client.put(world.learner_base + "/progress", json={"page_id": "page_3"}).json()["completed"] is True
+    assert client.put(world.learner_base + "/progress", json={"page_id": "page_3"}).json()["completed"] is True
+    assert client.get(url).json()["sections"][1]["is_unlocked"] is True
+    assert world.db.query(TrainingEbookProgress).count() == 1
+    assert world.db.query(TrainingProgress).one().lessons_completed.count(LESSON) == 1
+
+
 def test_nothing_is_available_until_it_is_published(world):
     assert world.as_user(world.people.learner).get(world.learner_base).status_code == 404
     saved(world)
@@ -148,7 +210,7 @@ def test_nothing_is_read_at_first(world):
 
     assert world.as_user(world.people.learner).get(world.learner_base + "/progress").json() == {
         "last_page_id": None, "last_page_number": None, "last_scroll_position": None, "progress_percent": 0, "completed": False, "completed_at": None,
-        "page_count": 3, "version_read": None, "lesson_completed": False}
+        "page_count": 3, "version_read": None, "lesson_completed": False, "published_version": 1}
 
 
 def test_progress_is_saved_and_can_be_resumed(world):
@@ -156,20 +218,20 @@ def test_progress_is_saved_and_can_be_resumed(world):
 
     saved_progress = progress(world, page_id="page_2", page_number=2, progress_percent=42, last_scroll_position=860).json()
 
-    assert saved_progress["last_page_id"] == "page_2" and saved_progress["last_page_number"] == 2 and saved_progress["progress_percent"] == 42
+    assert saved_progress["last_page_id"] == "page_2" and saved_progress["last_page_number"] == 2 and saved_progress["progress_percent"] == 66
     assert saved_progress["last_scroll_position"] == 860 and saved_progress["completed"] is False and saved_progress["version_read"] == 1
     resumed = world.as_user(world.people.learner).get(world.learner_base + "/progress").json()
     assert resumed["last_page_id"] == "page_2" and resumed["last_scroll_position"] == 860
     assert world.as_user(world.people.learner2).get(world.learner_base + "/progress").json()["last_page_id"] is None        # each learner has their own
 
 
-def test_the_furthest_percent_never_goes_down_but_the_position_does(world):
+def test_percentage_tracks_the_current_page_when_moving_back(world):
     go_live(world, doc(THREE))
     progress(world, page_id="page_3", progress_percent=70, last_scroll_position=10)
 
     back = progress(world, page_id="page_1", progress_percent=10, last_scroll_position=5).json()
 
-    assert back["progress_percent"] == 70 and back["last_page_id"] == "page_1" and back["last_scroll_position"] == 5
+    assert back["progress_percent"] == 33 and back["last_page_id"] == "page_1" and back["last_scroll_position"] == 5
 
 
 def test_the_page_decides_the_page_number_and_an_unknown_page_is_refused(world):
@@ -186,12 +248,10 @@ def test_the_page_decides_the_page_number_and_an_unknown_page_is_refused(world):
 
 def test_reading_to_the_end_completes_the_lesson_in_the_course(world):
     go_live(world, doc(THREE))
-    progress(world, page_id="page_3", progress_percent=60)
-    assert world.as_user(world.people.learner).get(world.learner_base + "/progress").json()["completed"] is False
     progress(world, page_id="page_2", progress_percent=100)                                         # 100% on a page that is not the last: not the end
     assert world.as_user(world.people.learner).get(world.learner_base + "/progress").json()["completed"] is False
 
-    done = progress(world, page_id="page_3", progress_percent=100).json()
+    done = progress(world, page_id="page_3").json()
 
     assert done["completed"] is True and done["completed_at"] and done["lesson_completed"] is True
     world.db.expire_all()
@@ -230,13 +290,13 @@ def test_resume_survives_a_new_version_unless_the_page_was_removed(world):
     decide(world)
 
     moved = world.as_user(world.people.learner).get(world.learner_base + "/progress").json()
-    assert moved["last_page_id"] == "page_3" and moved["last_page_number"] == 2 and moved["progress_percent"] == 80          # renumbered by the new order
+    assert moved["last_page_id"] == "page_3" and moved["last_page_number"] == 2 and moved["progress_percent"] == 66
 
     saved(world, doc([page("page_1", "One"), page("page_2", "Two")]))
     submit(world)
     decide(world)
     gone = world.as_user(world.people.learner).get(world.learner_base + "/progress").json()
-    assert gone["last_page_id"] is None and gone["last_page_number"] is None and gone["last_scroll_position"] is None and gone["progress_percent"] == 80
+    assert gone["last_page_id"] == "page_1" and gone["last_page_number"] == 1 and gone["last_scroll_position"] is None and gone["progress_percent"] == 50
 
 
 def test_progress_is_for_enrolled_learners_who_can_open_the_lesson(world):

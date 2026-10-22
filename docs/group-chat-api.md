@@ -170,6 +170,14 @@ The old generic endpoints (`GET /conversations/{id}/messages`, `PATCH` and `DELE
 | GET | /groups/verified-providers/candidates | clinic admin, Super Admin (`tenant_id`) | the clinic's members that can be verified, for the "Add provider" picker. `q`, `all_roles`, `include_verified`, `page`, `page_size` |
 | DELETE | /groups/verified-providers/{user_id} | clinic admin, Super Admin | revoke |
 
+Data requests: `POST /api/v1/groups/data-requests` accepts `{ "request_type": "copy", "conversation_id": null, "note": null }`. Fields are optional; `copy` is the default and other types return 422. A group-specific request accepts current or former members. `GET /api/v1/groups/data-requests/me` lists the caller's requests, including `status`, `error_code`, `completed_at` and `expires_at`.
+
+The database is the durable queue and private export store. API workers poll every 30 seconds; an atomic claim and a 15-minute lease allow recovery after a restart and fence off stale workers. The state transitions are `received` → `in_progress` → `completed` or `failed`; an interrupted claim is retried up to three times. The owner can submit `POST /api/v1/groups/data-requests/{id}/retry` for a failed request; other states return 409. Normal generation failures require this explicit retry. Pre-migration `in_progress` requests without a lease are left untouched and need operational review. No email is sent.
+
+`GET /api/v1/groups/data-requests/{id}/download` requires the request owner and returns a JSON attachment with `Cache-Control: private, no-store`. Another user's ID returns 404; an unfinished request returns 409; expired or unavailable output returns 410. The output expires seven days after completion and expired content is removed by the worker. Create another request after expiry. Exports are limited to 10 MiB; `export_too_large` is reported as a failure.
+
+The version 1 JSON contains `format`, `version`, `memberships`, and `messages`. Memberships include conversation ID, membership status, join/leave times and group role; active memberships additionally include the current group name, kind and description. Messages include ID, conversation ID, content, type, an attachment ID only if uploaded by the requester in that conversation and still available, creation and edit times. It excludes system messages, deleted or hidden messages, other authors' messages, attachment bytes and storage paths, credentials, and other participants' profiles. These are narrow implementation choices, not a statement of legal entitlement; retention and broader export scope require product/compliance review.
+
 
 ## 5. Samples
 

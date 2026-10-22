@@ -182,6 +182,8 @@ class TrainingAssessmentSubmission(Base):
     score = Column(String(20))
     passed = Column(Boolean, default=False)
     submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    review_snapshot = Column(JSONB, nullable=True)
+    __table_args__ = (Index("ix_assessment_attempt_owner", "training_id", "assessment_id", "participant_email", "submitted_at", "id"),)
 
 
 class TrainingAssignmentSubmission(Base):

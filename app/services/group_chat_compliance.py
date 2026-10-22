@@ -212,7 +212,8 @@ def create_data_request(db: Session, current_user: dict, payload) -> GroupDataRe
     user_id = common.user_uuid(current_user)
     if payload.conversation_id is not None:
         member = common.get_member(db, payload.conversation_id, user_id)
-        if member is None:
+        group = db.query(Conversation).filter(Conversation.id == payload.conversation_id, Conversation.conversation_type == "group").first()
+        if member is None or group is None:
             raise HTTPException(status_code=404, detail="Group not found")
     request = GroupDataRequest(user_id=user_id, conversation_id=payload.conversation_id, note=payload.note)
     db.add(request)

@@ -6,7 +6,7 @@ from app.services.review_common import ListOptions, review_list_params
 from app.core.dependencies import extract_access_token, get_current_user, get_optional_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
 from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
-from app.schemas.training_schema import TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse, TrainingModerationHistoryItem, TrainingReviewModerateRequest
+from app.schemas.training_schema import AssessmentAttemptSummary, AssessmentAttemptReview, TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse, TrainingModerationHistoryItem, TrainingReviewModerateRequest
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonAttendanceBatchRequest, LessonAttendanceRosterResponse, LessonCreate, LessonProgressSaveRequest, LessonProgressSaveResponse, LessonQrCheckInRequest, LessonQrCheckInResponse, LessonReorderRequest, SectionReorderRequest, TrainingAssignmentResponse, TrainingProgressResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingSummaryResponse, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
 from app.services.training_service import add_assessment_question_service, batch_mark_lesson_attendance_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_lesson_attendance_roster_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, qr_check_in_lesson_attendance_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, reorder_sections_service, reorder_lessons_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
@@ -809,6 +809,8 @@ def delete_question(training_id: UUID, aid: str, qid: str, db: Session = Depends
 @router.post("/{training_id}/assessments/{aid}/submit", status_code=201, response_model=AssessmentSubmitResponse, summary="Submit — automatic scoring, pass/attempt/time enforced")
 def submit_assessment(training_id: UUID, aid: str, payload: AssessmentSubmitCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = current_user.get("email") if current_user else "user@example.com"
+    from app.services.assessment_attempts import _context
+    _context(db, training_id, aid, current_user)
     return submit_assessment_service(db, training_id, aid, payload, participant_email=email)
 
 @router.post("/{training_id}/assessments/{aid}/submissions/{sid}/grade", summary="Manual evaluation for written answers")
@@ -817,8 +819,22 @@ def grade_assessment(training_id: UUID, aid: str, sid: UUID, payload: dict, db: 
     return grade_assessment_manual_service(db, training_id, aid, str(sid), int(payload.get("score") or payload.get("grade") or 0), payload.get("feedback"))
 
 @router.get("/{training_id}/assessments/{aid}/submissions/{sid}/review", response_model=AssessmentReviewResponse, summary="Answer explanations & result review")
-def review_assessment(training_id: UUID, aid: str, sid: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+def review_assessment(request: Request, training_id: UUID, aid: str, sid: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
     from app.services.training_service import get_assessment_result_service
+    from app.services.assessment_attempts import _allowed, _context
+    from app.models.training_model import TrainingAssessmentSubmission
+    from fastapi import HTTPException
+    if current_user.get("role") in ("admin", "provider", "super_admin"):
+        from app.repository.training_repo import require_training_owner
+        require_training_owner(db, training_id, current_user, access_token=extract_access_token(request))
+    else:
+        _, email = _context(db, training_id, aid, current_user)
+        submission = db.query(TrainingAssessmentSubmission).filter_by(id=sid, training_id=training_id,
+            assessment_id=str(aid), participant_email=email).first()
+        if not submission:
+            raise HTTPException(404, "Submission not found")
+        if not _allowed(submission.review_snapshot):
+            raise HTTPException(403, "Results are not available for review")
     return get_assessment_result_service(db, training_id, aid, str(sid), current_user)
 
 @router.get(
@@ -828,6 +844,18 @@ def review_assessment(training_id: UUID, aid: str, sid: UUID, db: Session=Depend
 )
 def list_assignments(training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return list_training_assignments_service(db, training_id, current_user)
+
+
+@router.get("/{training_id}/assignments/{aid}/attempts", response_model=list[AssessmentAttemptSummary], summary="My assessment attempts")
+def assessment_attempts(training_id: UUID, aid: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services import assessment_attempts as svc
+    return svc.attempts(db, training_id, aid, current_user)
+
+
+@router.get("/{training_id}/assignments/{aid}/attempts/{attempt_id}", response_model=AssessmentAttemptReview, summary="Review my assessment attempt")
+def assessment_attempt_review(training_id: UUID, aid: str, attempt_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services import assessment_attempts as svc
+    return svc.review(db, training_id, aid, attempt_id, current_user)
 
 @router.post("/{training_id}/assignments", status_code=201, response_model=TrainingAssignmentResponse)
 def create_assignment(training_id: UUID, payload: AssignmentCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager)):
