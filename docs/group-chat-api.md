@@ -104,7 +104,7 @@ When the program or care episode ends, an admin calls `POST /groups/{id}/close`.
 | POST | /groups/{id}/accept | the invited person | agree and join |
 | POST | /groups/{id}/decline | the invited person | decline |
 | POST | /groups/{id}/leave | member | leave |
-| POST | /groups/{id}/consent/withdraw | member | take consent back (leaves at once) |
+| POST | /groups/{id}/consent/withdraw | member (not the owner) | take consent back (leaves at once). The owner gets 409 until the group is handed over |
 | POST | /groups/{id}/close | owner, admin | close (read-only, retention starts). No body needed; optional `reason` |
 | POST | /groups/{id}/reopen | owner, compliance | reopen. Body `{ "reason": "..." }`, required, 3 to 255 characters |
 
@@ -229,7 +229,7 @@ Response 201 (the same shape comes back from `GET /groups/{id}`):
   "legal_hold": false
 }
 ```
-Every group object also has `permissions` (what the caller can do right now: `can_post`, `can_edit_group`, `can_change_settings`, `can_invite`, `can_remove_members`, `can_make_admin`, `can_remove_admin`, `can_mute_members`, `can_hide_messages`, `can_pin_messages`, `can_close`, `can_reopen`, `can_transfer_ownership`, `can_reassign_owner`, `can_leave`, `can_view_audit`, `can_view_members`, `can_view_pending_invitations`, `can_set_legal_hold`, `can_report`, `can_mute_group`). Use it to show or hide controls; the rules are in `group-chat-training.md`, section 9.6.
+Every group object also has `permissions` (what the caller can do right now: `can_post`, `can_edit_group`, `can_change_settings`, `can_invite`, `can_remove_members`, `can_make_admin`, `can_remove_admin`, `can_mute_members`, `can_hide_messages`, `can_pin_messages`, `can_close`, `can_reopen`, `can_transfer_ownership`, `can_reassign_owner`, `can_leave`, `can_withdraw_consent`, `can_view_audit`, `can_view_members`, `can_view_pending_invitations`, `can_set_legal_hold`, `can_report`, `can_mute_group`). Use it to show or hide controls; the rules are in `group-chat-training.md`, section 9.6.
 
 `member_count` counts the people who can see the group (active members). It does not count pending invitations. Show `visibility_notice` and `emergency_notice` on every group screen.
 

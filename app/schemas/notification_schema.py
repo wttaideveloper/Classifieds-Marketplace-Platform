@@ -54,6 +54,28 @@ NotificationCategory = Literal[
     "review_moderated",
     "review_deleted",
     "event_feedback_submitted",
+    "blog_post_submitted",
+    "blog_post_approved",
+    "blog_post_changes_requested",
+    "blog_post_rejected",
+    "blog_post_unpublished",
+    "blog_post_deleted",
+    "payment_succeeded",
+    "payment_received",
+    "payment_failed",
+    "payment_retry_reminder",
+    "payment_review_required",
+    "invoice_generated",
+    "refund_requested",
+    "refund_approved",
+    "refund_rejected",
+    "refund_completed",
+    "refund_escalated",
+    "settlement_completed",
+    "tax_rule_updated",
+    "ebook_submitted",
+    "ebook_approved",
+    "ebook_changes_requested",
 ]
 
 _TYPE_DOC = (
@@ -87,7 +109,14 @@ _CATEGORY_DOC = (
     "previous_status, new_status (approved|rejected|pending|deleted), action, actor_name, actor_id, actor_role. For every module, "
     "review_rejected (to the author), review_moderated with action rejected or pending, and review_deleted (to the owning Enterprise "
     "Admins and to the author, metadata.recipient=author) also carry metadata.reason, the Super Admin's reason. It is never in the "
-    "notification text or the push payload."
+    "notification text or the push payload. Blog / news types: blog_post_submitted (to the Platform Super Admins when a "
+    "merchant sends a post, or an edit of a live post, for approval; metadata is_edit tells them apart), "
+    "blog_post_approved | blog_post_changes_requested | blog_post_rejected | blog_post_unpublished | blog_post_deleted "
+    "(to the post's author, a merchant, after a Super Admin's action; the last four carry metadata.reason, never in the push "
+    "payload). Their metadata has post_id, entity_type=\"blog_post\", entity_id, kind (blog|news), title, slug, status, business_name. Payments: payment_succeeded (to the payer), payment_received (to the business's admins), payment_failed and payment_retry_reminder (to the payer; can_retry), "
+    "payment_review_required (to the Super Admins), invoice_generated (to the payer; also by e-mail; download_path), refund_requested (to the business's admins), "
+    "refund_approved | refund_rejected | refund_completed (to the payer; reason on rejected), refund_escalated (to the Super Admins), settlement_completed (to the business's admins), "
+    "tax_rule_updated (to the Super Admins). Their metadata has entity_type (payment|refund|invoice|settlement|tax_rule), entity_id and the matching id, amount and currency. eBooks: ebook_submitted (to the Super Admins when an eBook lesson is sent for approval), ebook_approved | ebook_changes_requested (to the person who sent it; the latter carries metadata.reason). Their metadata has ebook_id, training_id, section_id, lesson_id, lesson_title, training_title, status, version."
 )
 DeliveryType = Literal["immediate", "scheduled"]
 NotificationStatus = Literal["draft", "scheduled", "processing", "sent", "failed", "cancelled"]

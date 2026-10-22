@@ -142,6 +142,14 @@ def save_training_upload(
     if not file_bytes:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
 
+    # A picture uploaded by a signed-in person is checked (really an image, within the size limits, virus scan) and recorded as an
+    # asset the eBook editor can refer to by id. Pictures saved from inline data (no person) keep the older plain behaviour.
+    image_info = None
+    if purpose == "image" and db is not None and current_user is not None:
+        from app.services import media_service
+
+        image_info = media_service.inspect_image(file_bytes, filename)
+
     safe_name = _normalize_stored_name(filename or f"upload.{ext}") or f"file.{ext}"
     stored_name = f"{uuid.uuid4()}_{safe_name}"
     target = training_upload_root() / stored_name
@@ -153,13 +161,22 @@ def save_training_upload(
     url = to_https(f"{public_media_base()}/api/v1/trainings/upload/{stored_name}")
 
     logger.info("Saved training media %s (%s bytes, %s)", stored_name, size, purpose)
-    return {
+    result = {
         "url": url,
         "name": filename or safe_name,
         "size": size,
         "type": content_type or "application/octet-stream",
         "purpose": purpose,
     }
+    if image_info is not None:
+        try:
+            asset = media_service.register_image(db, current_user, image_info, stored_name, filename, size)
+        except Exception:
+            target.unlink(missing_ok=True)       # no orphan file if the record could not be written
+            raise
+        result.update({"asset_id": str(asset.id), "asset_url": media_service.file_url(asset), "width": asset.width, "height": asset.height,
+                       "sha256": asset.sha256, "scan_status": asset.scan_status})
+    return result
 
 
 def resolve_training_upload(stored_name: str) -> Path:

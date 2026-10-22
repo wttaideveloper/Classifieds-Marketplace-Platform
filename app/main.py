@@ -204,6 +204,10 @@ async def startup():
 
     start_reminder_scheduler()
 
+    from app.services.payment_jobs import start_scheduler as start_payment_jobs
+
+    start_payment_jobs()
+
 
 app.include_router(api_router, prefix="/api/v1")
 

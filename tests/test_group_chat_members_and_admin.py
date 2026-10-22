@@ -272,7 +272,30 @@ def test_withdrawing_consent_before_accepting_is_a_decline(world):
 
 
 def test_the_owner_cannot_withdraw_without_handing_over(world, care):
-    assert world.as_user(world.people.rao).post(f"{API}/{care['id']}/consent/withdraw").status_code == 409
+    resp = world.as_user(world.people.rao).post(f"{API}/{care['id']}/consent/withdraw")
+
+    assert resp.status_code == 409 and resp.json()["detail"] == "The owner must hand the group over before withdrawing"
+    mine = world.as_user(world.people.rao).get(f"{API}/{care['id']}").json()
+    assert mine["my_role"] == "owner" and mine["permissions"]["can_withdraw_consent"] is False and mine["permissions"]["can_leave"] is False
+    assert world.as_user(world.people.rao).get(f"{API}/{care['id']}/members").json()["members"][0]["role"] == "owner"       # still the owner, still a member
+    assert world.as_user(world.people.rao).post(f"{API}/{care['id']}/leave").status_code == 409
+
+
+def test_the_flag_follows_the_ownership_and_withdrawing_works_after_the_handover(world, care):
+    p = world.people
+
+    def perms(user):
+        return world.as_user(user).get(f"{API}/{care['id']}").json()["permissions"]
+
+    assert perms(p.rao)["can_withdraw_consent"] is False
+    assert perms(p.mehta)["can_withdraw_consent"] is True                                                 # a plain member can
+
+    assert world.as_user(p.rao).post(f"{API}/{care['id']}/transfer-ownership", json={"user_id": p.mehta["id"]}).status_code == 200
+
+    assert perms(p.rao)["can_withdraw_consent"] is True
+    assert perms(p.mehta)["can_withdraw_consent"] is False                                                # the new owner cannot
+    assert world.as_user(p.mehta).post(f"{API}/{care['id']}/consent/withdraw").status_code == 409
+    assert world.as_user(p.rao).post(f"{API}/{care['id']}/consent/withdraw").status_code == 200
 
 
 # --- roles ----------------------------------------------------------------------------------------------------------

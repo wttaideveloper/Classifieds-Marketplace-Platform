@@ -42,6 +42,18 @@ class Settings(BaseSettings):
     MAX_DOCUMENT_SIZE_MB: int = 25
     MAX_AUDIO_SIZE_MB: int = 25
     MAX_VIDEO_SIZE_MB: int = 300
+    # Images (training media, eBook pictures): the longest side and the total pixels are capped so a small file cannot unpack into a huge bitmap.
+    MAX_IMAGE_DIMENSION: int = 8000
+    MAX_IMAGE_PIXELS: int = 40_000_000
+    # Virus scanning of uploaded images through a ClamAV daemon (clamd). Empty host = not scanned. With CLAMAV_REQUIRED an upload is
+    # refused when the scanner cannot be reached; otherwise it is accepted and marked "unscanned".
+    CLAMAV_HOST: str = ""
+    CLAMAV_PORT: int = 3310
+    CLAMAV_REQUIRED: bool = False
+    # eBook limits
+    EBOOK_MAX_PAGES: int = 500
+    EBOOK_MAX_PAGE_HTML_BYTES: int = 200_000
+    EBOOK_MAX_IMAGES_PER_PAGE: int = 30
     # Dev-only: used when no JWT is sent (ENVIRONMENT=development)
     DEV_DEFAULT_USER_ID: str = "550e8400-e29b-41d4-a716-446655440000"
     DEV_DEFAULT_USER_ROLE: str = "admin"
@@ -139,6 +151,51 @@ class Settings(BaseSettings):
     GROUP_GRIEVANCE_OFFICER_EMAIL: str = ""
     GROUP_GRIEVANCE_OFFICER_PHONE: str = ""
 
+    # --- Payments, multi-currency and tax (docs/payments-api.md)
+    # Gateway that takes the card / bank payment: test (no money moves; for development and QA), razorpay or stripe.
+    PAYMENT_GATEWAY: Literal["test", "razorpay", "stripe"] = "test"
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    # Signs the test gateway's webhooks; only used while PAYMENT_GATEWAY=test.
+    TEST_GATEWAY_WEBHOOK_SECRET: str = "test-webhook-secret"
+    # The test gateway moves no money and anyone can complete a payment on it, so it is refused when ENVIRONMENT=production
+    # unless this is set (for a staging server that runs in production mode).
+    PAYMENT_ALLOW_TEST_GATEWAY: bool = False
+    # The currency the books are kept in. Fixed for the organisation: change it only with a finance sign-off.
+    PAYMENT_BASE_CURRENCY: str = "INR"
+    PAYMENT_GATEWAY_TIMEOUT_SECONDS: int = 20
+    # A payment still waiting this long for the gateway is checked against it (and expired when the gateway never saw it).
+    PAYMENT_STALE_MINUTES: int = 30
+    PAYMENT_MAX_ATTEMPTS: int = 5
+    # Risk check: anything at or above REVIEW is held for a person, at or above DENY is refused.
+    PAYMENT_RISK_REVIEW_SCORE: int = 50
+    PAYMENT_RISK_DENY_SCORE: int = 80
+    PAYMENT_RISK_HIGH_AMOUNT_BASE: float = 200000.0
+    # Optional outside fraud-scoring service. It is sent the payment's signals and answers {"score": 0-100, "reasons": [...]}.
+    # Empty = only the built-in rules. If it does not answer within 3 seconds the built-in rules decide alone.
+    FRAUD_SERVICE_URL: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    # Refund target turnaround after approval; a refund still open after this is escalated to the Super Admins.
+    REFUND_SLA_HOURS: int = 72
+    # Platform commission and gateway fee estimate used at settlement (a merchant's own commission overrides it).
+    PLATFORM_COMMISSION_PERCENT: float = 10.0
+    GATEWAY_FEE_PERCENT: float = 2.0
+    GATEWAY_FEE_FIXED_BASE: float = 0.0
+    # Where automatic exchange rates come from (Frankfurter / ECB reference rates, no key needed).
+    EXCHANGE_RATE_API_URL: str = "https://api.frankfurter.app/latest"
+    # Rates older than this are refused for a payment (the customer sees "rates unavailable" instead of a stale price).
+    EXCHANGE_RATE_MAX_AGE_HOURS: int = 48
+    # The background jobs (refresh rates, check stale payments, refund SLA, due settlements, retry reminders) run on an
+    # in-process thread like the training reminders. Unset = on in production, off in development.
+    PAYMENT_JOBS_ENABLED: bool | None = None
+    # A GSTIN / VAT number with a valid format is approved at once (reverse charge applies) instead of waiting for a Super Admin.
+    # Off by default: a format check does not prove the business is registered.
+    TAX_ID_AUTO_APPROVE_VALID_FORMAT: bool = False
+    PAYMENT_JOBS_INTERVAL_SECONDS: int = 600
+
     class Config:
         env_file = ".env"
 
@@ -160,6 +217,12 @@ class Settings(BaseSettings):
     def training_reminders_enabled(self) -> bool:
         if self.TRAINING_REMINDERS_ENABLED is not None:
             return self.TRAINING_REMINDERS_ENABLED
+        return self.ENVIRONMENT == "production"
+
+    @property
+    def payment_jobs_enabled(self) -> bool:
+        if self.PAYMENT_JOBS_ENABLED is not None:
+            return self.PAYMENT_JOBS_ENABLED
         return self.ENVIRONMENT == "production"
 
     @property

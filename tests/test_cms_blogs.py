@@ -5,16 +5,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.v1.endpoints.blog import router
-from app.core.dependencies import get_current_super_admin
+from app.core.blog_access import BlogActor, require_blog_super_admin
 
 
 app = FastAPI()
 app.include_router(router, prefix="/cms/blogs")
-app.dependency_overrides[get_current_super_admin] = lambda: {
-    "id": str(uuid4()),
-    "role": "super_admin",
-    "email": "super@example.com",
-}
+app.dependency_overrides[require_blog_super_admin] = lambda: BlogActor(id=str(uuid4()), name="Super", role="super_admin")
 client = TestClient(app)
 
 _BLOG_ID = str(uuid4())
@@ -34,8 +30,8 @@ def _detail(**overrides):
         "category": "Guides",
         "tags": ["health"],
         "status": "published",
-        "seo_title": None,
-        "seo_description": None,
+        "kind": "blog",
+        "status_label": "Published",
         "tenant_id": None,
         "enterprise_id": None,
         "published_at": "2026-09-08T10:00:00",
@@ -101,4 +97,4 @@ def test_delete_admin_blog(mock_delete):
     mock_delete.return_value = None
     response = client.delete(f"/cms/blogs/admin/posts/{_BLOG_ID}")
     assert response.status_code == 200
-    assert "archived" in response.json()["message"].lower()
+    assert "deleted" in response.json()["message"].lower()
