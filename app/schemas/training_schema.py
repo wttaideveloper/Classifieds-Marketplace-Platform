@@ -960,6 +960,54 @@ class TrainingAssignmentResponse(BaseModel):
     max_score: int | None = None
     accepted_file_types: list[str] | None = None
     allow_late_submissions: bool = False
+    attempts_allowed: int | None = None
+    attempts_made: int = 0
+    latest_attempt_id: str | None = None
+    latest_score: int | None = None
+    latest_total_points: int | None = None
+    latest_score_percent: int | None = None
+    latest_passed: bool | None = None
+    can_review: bool = False
+
+
+class AssessmentAttemptSummary(BaseModel):
+    id: str
+    attempt_number: int | None = None
+    submitted_at: datetime
+    score: int | None = None
+    total_points: int | None = None
+    score_percent: int | None = None
+    passed: bool | None = None
+    status: Literal["pending", "evaluated"]
+    can_review: bool
+
+
+class AssessmentAttemptOption(BaseModel):
+    id: str | None = None
+    label: str
+
+
+class AssessmentAttemptQuestion(BaseModel):
+    id: str
+    question_text: str | None = None
+    question_type: str
+    points: int
+    options: list[AssessmentAttemptOption] = Field(default_factory=list)
+    user_answer: str | None = None
+    correct_answer: str | None = None
+    explanation: str | None = None
+    is_correct: bool | None = None
+    points_awarded: int | None = None
+
+
+class AssessmentAttemptReview(AssessmentAttemptSummary):
+    assignment_id: str
+    assignment_title: str | None = None
+    attempts_allowed: int | None = None
+    passing_score: int | None = None
+    pass_percent: int | None = None
+    feedback: str | None = None
+    questions: list[AssessmentAttemptQuestion] = Field(default_factory=list)
 
 
 class AssignmentSubmitFile(BaseModel):

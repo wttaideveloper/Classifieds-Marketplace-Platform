@@ -1,5 +1,7 @@
 # Learner training endpoints
 
+See [assessment attempt history and review](assessment-attempt-review.md) for the assessment assignment and attempt APIs.
+
 All routes require authentication. Learner identity comes from the token.
 
 - `GET /api/v1/me/trainings`: enrolment card array; supports optional `status`. Includes `qr_code`, `qr_image_base64`, `delivery_mode`, `progress_percent`, and enrolment `status`.
