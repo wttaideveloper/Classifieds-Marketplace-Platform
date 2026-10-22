@@ -133,6 +133,7 @@ def permissions_for(conversation: Conversation, member: ConversationParticipant 
         "can_transfer_ownership": is_owner,
         "can_reassign_owner": compliance,
         "can_leave": active and not is_owner,
+        "can_withdraw_consent": active and not is_owner,       # the same rule: the owner hands the group over first
         "can_view_audit": is_owner or compliance,
         "can_set_legal_hold": compliance,
         "can_report": active,

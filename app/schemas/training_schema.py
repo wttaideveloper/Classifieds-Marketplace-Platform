@@ -610,7 +610,7 @@ class TopicCreate(BaseModel):
 
 class LessonCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
-    type: str = Field("text", description="text|video|youtube|audio|webpage|pdf|live|presentation|worksheet|document|venue|exam")
+    type: str = Field("text", description="text|video|youtube|audio|webpage|pdf|live|presentation|worksheet|document|venue|exam|ebook (an eBook lesson keeps its pages in /ebook, not here)")
     title: str
     content_url: str | None = None
     topics: list[TopicCreate] | None = Field(None, description="Topics within lesson: [{title, content_url, videos, documents, notes}]")
@@ -1260,6 +1260,13 @@ class TrainingUploadResponse(BaseModel):
     size: int
     type: str | None = None
     purpose: str | None = None
+    # Pictures only: the asset the eBook editor refers to by id (see /media/{asset_id}), and what was found in the file.
+    asset_id: str | None = Field(None, description="Use this in an eBook image block (asset_id) or as cover_asset_id")
+    asset_url: str | None = Field(None, description="The address that serves the picture to people allowed to see it (needs sign-in)")
+    width: int | None = None
+    height: int | None = None
+    sha256: str | None = None
+    scan_status: str | None = Field(None, description="clean | skipped (no virus scanner set up) | unscanned (scanner was down)")
 
 
 # ---- Discussions ----

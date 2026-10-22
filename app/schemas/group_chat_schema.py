@@ -257,6 +257,7 @@ class GroupPermissions(BaseModel):
     can_transfer_ownership: bool
     can_reassign_owner: bool = Field(..., description="Compliance only.")
     can_leave: bool = Field(..., description="Any active member except the owner (who hands the group over first).")
+    can_withdraw_consent: bool = Field(..., description="Take consent back (POST /groups/{id}/consent/withdraw). Same rule as can_leave: false for the owner, who must hand the group over first (otherwise 409).")
     can_view_audit: bool = Field(..., description="The owner and compliance.")
     can_set_legal_hold: bool = Field(..., description="Compliance only.")
     can_report: bool

@@ -54,8 +54,25 @@ _safe_include("app.api.v1.endpoints.training_category", prefix="/training-catego
 _safe_include("app.api.v1.endpoints.training", prefix="/courses", tags=["Courses"])
 _safe_include("app.api.v1.endpoints.program", prefix="/programs", tags=["Programs"])
 
+# eBook lessons (structured pages, draft / published, approval, reading progress) and the image assets they use
+_safe_include("app.api.v1.endpoints.ebook", prefix="/trainings", tags=["eBooks"])
+_safe_include("app.api.v1.endpoints.ebook", prefix="/courses", tags=["eBooks"])
+api_router.include_router(__import__("app.api.v1.endpoints.ebook", fromlist=["admin_router"]).admin_router, prefix="/admin", tags=["eBooks (Super Admin review)"])
+_safe_include("app.api.v1.endpoints.media", prefix="/media", tags=["Media"])
+
 # CMS — Blogs
 _safe_include("app.api.v1.endpoints.blog", prefix="/cms/blogs", tags=["CMS — Blogs"])
+
+# Payments, multi-currency, tax, invoices, refunds and merchant settlement
+_safe_include("app.api.v1.endpoints.currency", prefix="/currencies", tags=["Currency"])
+_safe_include("app.api.v1.endpoints.tax", prefix="/tax", tags=["Tax"])
+_safe_include("app.api.v1.endpoints.payment", prefix="/payments", tags=["Payments"])
+_safe_include("app.api.v1.endpoints.payment_method", prefix="/payment-methods", tags=["Payments"])
+_safe_include("app.api.v1.endpoints.invoice", prefix="/invoices", tags=["Invoices"])
+_safe_include("app.api.v1.endpoints.refund", prefix="/refunds", tags=["Refunds"])
+_safe_include("app.api.v1.endpoints.settlement", prefix="/settlements", tags=["Settlement"])
+_safe_include("app.api.v1.endpoints.payment_report", prefix="/payment-reports", tags=["Payment Reports"])
+_safe_include("app.api.v1.endpoints.finance", prefix="/finance", tags=["Finance"])
 
 # Search APIs
 _safe_include("app.api.v1.endpoints.search", prefix="/search", tags=["Search"])

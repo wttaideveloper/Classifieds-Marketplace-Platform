@@ -222,10 +222,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "CMS — Blogs",
         "description": (
-            "Platform CMS blog posts. "
-            "**Public:** `GET /cms/blogs` and `GET /cms/blogs/{slug}` return published posts only. "
-            "**Admin:** `/cms/blogs/admin/posts/*` for draft/publish/archive CRUD "
-            "(requires `admin` or `super_admin` Bearer/cookie)."
+            "Blogs and news. "
+            "**Public:** `GET /cms/blogs`, `GET /cms/blogs/categories` and `GET /cms/blogs/{slug}` return live posts only. "
+            "**Merchant (Enterprise Admin):** `/cms/blogs/my/posts/*` writes the business's own posts; each is sent for approval. "
+            "**Super Admin:** `/cms/blogs/admin/*` writes platform posts (published straight away), reviews the approval queue "
+            "(approve / request changes / reject, with a reason) and manages categories."
         ),
     },
 ]
@@ -250,6 +251,12 @@ PUBLIC_OPERATIONS: set[tuple[str, str]] = {
     ("get", "/api/v1/inventory"),
     ("get", "/health"),
     ("get", "/api/v1/cms/blogs"),
+    ("get", "/api/v1/cms/blogs/categories"),
+    ("get", "/api/v1/currencies"),
+    ("get", "/api/v1/currencies/base"),
+    ("get", "/api/v1/currencies/rates"),
+    ("get", "/api/v1/currencies/convert"),
+    ("post", "/api/v1/payments/webhook/{provider}"),
     ("get", "/api/v1/cms/blogs/{slug}"),
     ("get", "/api/v1/programs/{program_id}/availability"),
 }

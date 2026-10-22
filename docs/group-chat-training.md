@@ -354,6 +354,7 @@ The attachment API (`POST /attachments/upload`) is for files sent in messages. I
 | can_transfer_ownership | owner |
 | can_reassign_owner | compliance |
 | can_leave | any active member except the owner |
+| can_withdraw_consent | the same as can_leave: the owner cannot withdraw consent either (409 "The owner must hand the group over before withdrawing") until ownership is transferred |
 | can_view_audit | owner or compliance |
 | can_set_legal_hold | compliance |
 | can_report | active member |

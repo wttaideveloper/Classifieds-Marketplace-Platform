@@ -282,7 +282,10 @@ def duplicate_training_service(db: Session, tid: UUID):
     payload = {c.key: getattr(obj, c.key) for c in obj.__table__.columns if c.key not in ("id","created_at","updated_at")}
     payload["status"]="draft"; payload["is_deleted"]=False
     from app.models.training_model import Training
-    clone=Training(**payload); db.add(clone); db.commit(); db.refresh(clone)
+    clone=Training(**payload); db.add(clone); db.flush()
+    from app.services import ebook_service
+    ebook_service.copy_for_duplicate(db, tid, clone)
+    db.commit(); db.refresh(clone)
     return TrainingResponse.model_validate(map_training_write(clone))
 
 def update_training_status_service(db: Session, tid: UUID, st: str, current_user: dict | None = None, notes: str | None = None, access_token: str | None = None):
@@ -2956,7 +2959,12 @@ def get_lesson_service(db: Session, tid: UUID, section_id: str, lesson_id: str, 
     role = (current_user or {}).get("role")
     if lesson.get("is_draft") and role not in ("admin", "provider") and not lesson.get("is_preview"):
         raise HTTPException(status_code=403, detail="Draft lesson — not available to learners")
-    return {"section_id": section_id, "section_title": (section or {}).get("title"), **{k: v for k, v in lesson.items() if k != "attendance"}}
+    payload = {"section_id": section_id, "section_title": (section or {}).get("title"), **{k: v for k, v in lesson.items() if k != "attendance"}}
+    if lesson.get("type") == "ebook" and role not in ("admin", "provider", "super_admin"):
+        from app.services.training_curriculum import strip_ebook_content
+
+        strip_ebook_content(payload)
+    return payload
 
 
 def list_lesson_topics_service(db: Session, tid: UUID, section_id: str, lesson_id: str):

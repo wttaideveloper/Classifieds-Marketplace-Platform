@@ -5,9 +5,19 @@ from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
-ITEM_TYPES = {"topic", "video", "youtube", "live", "venue", "pdf", "notes", "quiz", "assignment"}
+ITEM_TYPES = {"topic", "video", "youtube", "live", "venue", "pdf", "notes", "quiz", "assignment", "ebook"}
 LEGACY_TYPES = {"text", "exam", "audio", "webpage", "presentation", "worksheet", "document"}
 STATE_FIELDS = {"is_locked", "is_completed", "completed_at", "is_submitted", "score", "score_percent", "passed", "feedback"}
+
+
+def strip_ebook_content(item: dict) -> dict:
+    """An eBook lesson's pages live in /ebook (published copy only). Whatever sits in the lesson's own content / detail fields is the
+    older way of saving the eBook as JSON, which may be an unfinished draft, so a learner never gets it from the course content."""
+    item["content"] = None
+    detail = item.get("detail")
+    if isinstance(detail, str) and detail.lstrip().startswith(("{", "[")):
+        item["detail"] = None
+    return item
 
 
 def real_content_url(value):
@@ -301,6 +311,8 @@ def curriculum_preview(sections):
             item["is_locked"] = not preview
             if item.get("assessment"):
                 item["assessment"] = {**item["assessment"], "questions": []}
+            if item.get("type") == "ebook":
+                strip_ebook_content(item)
         section["items"] = deepcopy(items)
     return result
 
@@ -346,6 +358,8 @@ def learning_response(result, curriculum, training, enrolment, assignment_submis
         for item in section["lessons"]:
             raw = source_items[item["id"]]
             kind, locked = item["type"], item["is_locked"]
+            if kind == "ebook":
+                strip_ebook_content(item)
             # QR-based attendance applies to both venue (in-person) and live
             # (which may still be scanned in for a hybrid/on-site session).
             # Unique per lesson/day (enrolment code + this lesson's id) so admin
