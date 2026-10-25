@@ -693,6 +693,11 @@ def learner_context(db: Session, tid: UUID, lesson_id: str, user: dict, token: s
                 raise _err(403, f"Content not available. The training is {training.status}")
     row = db.query(TrainingEbook).filter(TrainingEbook.training_id == tid, TrainingEbook.lesson_id == lesson_id).first()
     if row is None or row.published is None:
+        if is_staff:
+            # learners only ever see the published copy; tell the author why their own preview is empty
+            if row is None:
+                raise _err(404, "Nothing is published: no eBook has been saved for this lesson through the eBook API yet")
+            raise _err(404, f"Nothing is published yet. The eBook is saved as a draft (status: {row.status}); it must be sent for approval and published before this endpoint returns it")
         raise _err(404, "This eBook is not available yet")
     return LearnerContext(training=training, lesson=lesson, row=row, document=row.published, email=email, is_staff=is_staff)
 

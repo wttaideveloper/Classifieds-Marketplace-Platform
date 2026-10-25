@@ -468,3 +468,12 @@ def test_a_note_on_a_page_that_was_removed_is_kept_and_marked(world):
     [item] = world.as_user(world.people.learner).get(world.learner_base + "/notes").json()["items"]
 
     assert item["text"] == "Keep me" and item["page_exists"] is False and item["page_number"] is None
+
+
+def test_staff_previewing_an_unpublished_ebook_are_told_why_it_is_empty(world):
+    from tests.ebook_support import saved  # noqa: F401
+    assert world.as_user(world.people.author).put(world.base, json={"ebook": doc()}).status_code == 200
+
+    resp = world.as_user(world.people.author).get(world.learner_base)
+
+    assert resp.status_code == 404 and "draft" in resp.json()["detail"]

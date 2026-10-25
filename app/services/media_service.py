@@ -88,12 +88,16 @@ def file_url(asset: MediaAsset) -> str:
     return to_https(f"{public_media_base()}/api/v1/media/{asset.id}/file")
 
 
-def register_image(db: Session, current_user: dict, info: ImageInfo, stored_name: str, filename: str | None, size: int) -> MediaAsset:
+def register_image(db: Session, current_user: dict, info: ImageInfo, stored_name: str, filename: str | None, size: int, access_token: str | None = None) -> MediaAsset:
     try:
         owner = UUID(str(current_user.get("id")))
     except (ValueError, TypeError):
         owner = None
-    asset = MediaAsset(tenant_id=user_tenant(db, current_user), owner_user_id=owner, kind="image", stored_name=stored_name, original_name=(filename or "")[:255] or None,
+    tenant = user_tenant(db, current_user, access_token)
+    if tenant is None:
+        # an asset with no business would be unreadable for everyone but a Super Admin, so refuse rather than store it
+        raise _err(403, "Your business could not be determined, so the image was not saved. Sign in again and retry")
+    asset = MediaAsset(tenant_id=tenant, owner_user_id=owner, kind="image", stored_name=stored_name, original_name=(filename or "")[:255] or None,
                        content_type=info.mime, size=size, width=info.width, height=info.height, sha256=info.sha256, scan_status=info.scan_status)
     db.add(asset)
     db.commit()
@@ -147,8 +151,17 @@ def is_staff_of(db: Session, current_user: dict, asset: MediaAsset, access_token
         return profile_status_is_active(current_user)
     if role not in ("admin", "provider"):
         return False
+    if asset.tenant_id is None:
+        # saved before tenants were recorded: the uploader keeps access, and the record is repaired once their business is known
+        if asset.owner_user_id is None or str(asset.owner_user_id) != str(current_user.get("id")):
+            return False
+        tenant = user_tenant(db, current_user, access_token)
+        if tenant is not None:
+            asset.tenant_id = tenant
+            db.commit()
+        return True
     tenant = user_tenant(db, current_user, access_token)
-    return tenant is not None and asset.tenant_id is not None and tenant == asset.tenant_id
+    return tenant is not None and tenant == asset.tenant_id
 
 
 def _mentions(document: dict | None, asset_id: str) -> bool:
@@ -233,3 +246,34 @@ def delete_asset(db: Session, current_user: dict, asset: MediaAsset, access_toke
 def asset_summary(asset: MediaAsset) -> dict:
     return {"asset_id": str(asset.id), "url": file_url(asset), "name": asset.original_name, "size": asset.size, "type": asset.content_type, "width": asset.width,
             "height": asset.height, "sha256": asset.sha256, "scan_status": asset.scan_status, "created_at": asset.created_at}
+
+
+def backfill_tenants(db: Session, apply: bool = False, asset_id: str | None = None) -> dict:
+    """Give assets saved without a business the one they can be traced to, without calling any outside service.
+
+    A picture used by an eBook takes that eBook's business; failing that, an uploader whose other pictures all belong to one
+    business gives it to the rest. Anything else is left for its uploader, who repairs it by opening it while signed in.
+    """
+    query = db.query(MediaAsset).filter(MediaAsset.tenant_id.is_(None))
+    if asset_id:
+        query = query.filter(MediaAsset.id == UUID(str(asset_id)))
+    pending = query.all()
+    counts = {"checked": len(pending), "resolved": 0, "unresolved": 0, "written": 0}
+    if not pending:
+        return counts
+    ebooks = db.query(TrainingEbook).filter(TrainingEbook.tenant_id.isnot(None)).all()
+    for asset in pending:
+        needle = str(asset.id)
+        tenants = {e.tenant_id for e in ebooks if _mentions(e.draft, needle) or _mentions(e.published, needle)}
+        if not tenants and asset.owner_user_id is not None:
+            tenants = {t for (t,) in db.query(MediaAsset.tenant_id).filter(MediaAsset.owner_user_id == asset.owner_user_id, MediaAsset.tenant_id.isnot(None)).distinct()}
+        if len(tenants) != 1:
+            counts["unresolved"] += 1
+            continue
+        counts["resolved"] += 1
+        if apply:
+            asset.tenant_id = next(iter(tenants))
+            counts["written"] += 1
+    if apply:
+        db.commit()
+    return counts

@@ -71,6 +71,7 @@ from app.services.training_upload_service import save_training_upload, resolve_t
     ),
 )
 def upload_training_media(
+    request: Request,
     file: UploadFile = File(..., description="File to upload."),
     purpose: TrainingUploadPurpose | None = Form(
         None,
@@ -98,6 +99,7 @@ def upload_training_media(
         purpose.value if purpose else None,
         db,
         current_user,
+        access_token=extract_access_token(request),
     )
 
 

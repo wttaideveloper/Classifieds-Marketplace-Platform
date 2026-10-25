@@ -320,3 +320,64 @@ def test_pictures_are_checked_when_the_ebook_is_validated_after_a_delete(world):
     report = world.as_user(world.people.author).post(world.base + "/validate", json={}).json()
 
     assert report["valid"] is False and report["errors"][0]["code"] == "asset_unavailable" and "does not exist" in report["errors"][0]["message"]
+
+
+# --- pictures whose business is only known from the sign-in token, and pictures saved with no business ---------------------------------------
+
+def _tenant_only_from_token(monkeypatch, tenant):
+    monkeypatch.setattr("app.core.auth_context.resolve_auth_tenant_id_with_db",
+                        lambda _db, user, access_token=None: user.get("tenant_id") or (tenant if access_token == "tok" else None))
+
+
+def test_the_sign_in_token_is_used_to_find_the_business_of_an_upload(world, monkeypatch):
+    _tenant_only_from_token(monkeypatch, world.people.author["tenant_id"])
+    author = {**world.people.author, "tenant_id": None}
+
+    resp = world.as_user(author).post("/trainings/upload", files={"file": ("a.png", image_bytes("PNG"), "image/png")}, data={"purpose": "image"},
+                                      headers={"Authorization": "Bearer tok"})
+
+    assert resp.status_code == 201, resp.text
+    assert str(world.db.get(MediaAsset, UUID(resp.json()["asset_id"])).tenant_id) == world.people.author["tenant_id"]
+
+
+def test_an_upload_is_refused_when_the_business_cannot_be_found(world, monkeypatch):
+    _tenant_only_from_token(monkeypatch, world.people.author["tenant_id"])
+
+    resp = world.as_user({**world.people.author, "tenant_id": None}).post("/trainings/upload", files={"file": ("a.png", image_bytes("PNG"), "image/png")}, data={"purpose": "image"})
+
+    assert resp.status_code == 403 and world.db.query(MediaAsset).count() == 0 and list(world.tmp.iterdir()) == []
+
+
+def _orphan(world):
+    asset_id = upload(world)
+    asset = world.db.get(MediaAsset, UUID(asset_id))
+    asset.tenant_id = None
+    world.db.commit()
+    return asset_id
+
+
+def test_an_old_picture_without_a_business_can_still_be_opened_by_its_uploader_and_is_repaired(world):
+    asset_id = _orphan(world)
+
+    resp = world.as_user(world.people.author).get(f"/media/{asset_id}/file")
+
+    assert resp.status_code == 200 and resp.headers["content-type"] == "image/png"
+    world.db.expire_all()
+    assert str(world.db.get(MediaAsset, UUID(asset_id)).tenant_id) == world.people.author["tenant_id"]
+
+
+def test_an_old_picture_without_a_business_is_not_open_to_other_staff(world):
+    asset_id = _orphan(world)
+    other = {**world.people.author, "id": str(__import__("uuid").uuid4())}
+
+    assert world.as_user(other).get(f"/media/{asset_id}/file").status_code == 404
+
+
+def test_the_backfill_takes_the_business_from_the_uploaders_other_pictures(world):
+    kept, orphan = upload(world), _orphan(world)
+
+    dry = media_service.backfill_tenants(world.db)
+    assert dry["resolved"] == 1 and dry["written"] == 0 and world.db.get(MediaAsset, UUID(orphan)).tenant_id is None
+    done = media_service.backfill_tenants(world.db, apply=True, asset_id=orphan)
+
+    assert done["written"] == 1 and str(world.db.get(MediaAsset, UUID(orphan)).tenant_id) == world.people.author["tenant_id"] and kept

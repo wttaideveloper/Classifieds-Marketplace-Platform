@@ -101,6 +101,7 @@ def save_training_upload(
     purpose: str | None,
     db: Session | None = None,
     current_user: dict | None = None,
+    access_token: str | None = None,
 ) -> dict:
     """Validate and persist a training media file.
 
@@ -170,7 +171,7 @@ def save_training_upload(
     }
     if image_info is not None:
         try:
-            asset = media_service.register_image(db, current_user, image_info, stored_name, filename, size)
+            asset = media_service.register_image(db, current_user, image_info, stored_name, filename, size, access_token)
         except Exception:
             target.unlink(missing_ok=True)       # no orphan file if the record could not be written
             raise
