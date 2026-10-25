@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, or_
 
 from app.models.chat_model import ChatAttachment, Conversation, ConversationParticipant, Message
-from app.models.group_chat_model import GroupDataRequest
+from app.models.group_chat_model import GroupConsent, GroupDataRequest
 from app.services.group_chat_common import user_uuid
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ RETENTION = timedelta(days=7)
 
 
 def _serialize(db, job):
-    """Include only the owner's membership and authored visible messages, never attachment paths or bytes."""
+    """Include only the owner's memberships, own consent records and authored visible messages, never attachment paths or bytes."""
     out = io.StringIO()
     size = 0
 
@@ -48,6 +48,18 @@ def _serialize(db, job):
                 "left_at": member.left_at, "group_role": member.group_role}
         if member.membership_status == "active" and not group.is_deleted:
             item.update(group_name=group.subject, group_kind=group.group_kind, description=group.description)
+        if not first:
+            write(",")
+        write(dump(item)); first = False
+    write('],"consents":[')
+    consent_filter = [GroupConsent.user_id == job.user_id]
+    if job.conversation_id:
+        consent_filter.append(GroupConsent.conversation_id == job.conversation_id)
+    first = True
+    for consent in db.query(GroupConsent).filter(*consent_filter).order_by(GroupConsent.granted_at, GroupConsent.id).yield_per(100):
+        item = {"conversation_id": consent.conversation_id, "granted_at": consent.granted_at, "withdrawn_at": consent.withdrawn_at,
+                "is_minor": consent.is_minor, "guardian_name": consent.guardian_name, "guardian_relationship": consent.guardian_relationship,
+                "notice": consent.notice}
         if not first:
             write(",")
         write(dump(item)); first = False

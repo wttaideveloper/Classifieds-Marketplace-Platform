@@ -389,6 +389,7 @@ def test_export_generation_download_and_ownership(world, care):
     assert payload["version"] == 1
     assert [m["content"] for m in payload["messages"]] == ["my message"]
     assert "someone else's message" not in response.text
+    assert len(payload["consents"]) == 1 and payload["consents"][0]["conversation_id"] == care["id"] and payload["consents"][0]["notice"]
     assert world.as_user(p.mehta).get(path).status_code == 404
     assert world.as_user(p.outsider_admin).get(path).status_code == 404
 
