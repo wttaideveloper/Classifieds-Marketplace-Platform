@@ -191,9 +191,16 @@ def emit_read(db: Session, conversation: Conversation, reader_id: UUID, read_at)
     try:
         from app.services import group_chat_common as common
 
+        boundary = (
+            db.query(Message.id)
+            .filter(Message.conversation_id == conversation.id, Message.message_type != "system", Message.is_deleted.is_(False), Message.created_at <= read_at)
+            .order_by(Message.created_at.desc(), Message.id.desc()).first()
+        )
+        through = str(boundary[0]) if boundary else None
         for member in common.active_members(db, conversation.id):
             if member.user_id != reader_id and conversation.group_kind == "program" and member.member_kind != "provider":
                 continue
-            emit_user(member.user_id, "group_read", {"conversation_id": str(conversation.id), "user_id": str(reader_id), "read_at": read_at})
+            emit_user(member.user_id, "group_read", {"conversation_id": str(conversation.id), "user_id": str(reader_id), "read_at": read_at,
+                                                  "read_through_message_id": through})
     except Exception:
         logger.exception("group read emit failed")

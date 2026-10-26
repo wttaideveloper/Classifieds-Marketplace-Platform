@@ -359,6 +359,7 @@ Names in a message are chosen for the person reading it, so the same message can
 ```
 `status` is `visible`, `retracted` (the author took it back, placeholder "Message retracted") or `removed_by_admin`. Show the `placeholder` text in its place.
 - `read_by` is a list of user ids in a care group and `null` in a program group.
+- `read_summary` says how many people have read the viewer's **own** message (see "Read counts on each message" below). It is present on every message.
 - System lines ("Dr Rao added Priya", "Dr Mehta left") have `message_type: "system"`.
 
 ### Who has seen a message
@@ -367,7 +368,47 @@ Names in a message are chosen for the person reading it, so the same message can
 ```json
 { "message_id": "deb9dd74-…", "seen_by_count": 0, "recipient_count": 2, "label": "seen by 0 of 2", "seen_by": [] }
 ```
-In a care group everyone can call it. In a program group a patient gets 403 and a provider gets the answer. `recipient_count` counts the people who were in the group when the message was sent.
+In a care group everyone can call it. In a program group a patient gets 403 and a provider gets the answer. `recipient_count` is worked out when you ask: the active members other than the sender, leaving out anyone who cannot see that message (they joined after it was sent). Someone who leaves or is removed drops out of both numbers.
+
+### Read counts on each message
+
+Every message in `GET /groups/{id}/messages` (and in the pinned list, in search results and in the response to sending) has a `read_summary`, worked out for the whole page in one go, so the app does not need to call read-status once per message. It is for the viewer's **own** messages.
+
+```json
+"read_summary": { "available": true, "read_count": 3, "recipient_count": 5, "all_read": false, "reason": null }
+```
+
+| Field | Meaning |
+|---|---|
+| `available` | `true` when the counts below are filled in |
+| `read_count` | recipients who have read the group up to this message. `null` when not available |
+| `recipient_count` | active members other than the sender who can see this message. `null` when not available |
+| `all_read` | `read_count` equals `recipient_count`. `false` when there are no recipients. `null` when not available |
+| `reason` | `null` when available, otherwise one of the values below |
+
+When `available` is `false` the three counts are `null` and `reason` is one of:
+
+| `reason` | When |
+|---|---|
+| `system_message` | a system line such as "Dr Rao added Priya" |
+| `hidden` | the message was retracted or removed by an admin |
+| `not_shown_to_patients` | a program group and the viewer is a patient. Patients never see read information there |
+| `not_your_message` | the message was sent by someone else. Counts are only given to the sender |
+
+The order is the order of the table: a system line is always `system_message`, whoever asks. The counts follow the same rules as read-status: in a care group every member sees them for their own messages, and in a program group only providers do. Nothing existing changed. `read_by` keeps its meaning (care groups only), and `GET /groups/{id}/messages/{mid}/read-status` remains for the list of people.
+
+The counts can change without any message event: when someone joins, leaves or is removed, refetch the page (or use `group_read`, below, for readers).
+
+An own message in a care group, after one of two recipients has read the group:
+```json
+{ "id": "deb9dd74-…", "sender_id": "<me>", "content": "hello team",
+  "read_by": ["<priya>"],
+  "read_summary": { "available": true, "read_count": 1, "recipient_count": 2, "all_read": false, "reason": null }, "…": "…" }
+```
+Someone else's message, or any message in a program group seen by a patient:
+```json
+"read_summary": { "available": false, "read_count": null, "recipient_count": null, "all_read": null, "reason": "not_your_message" }
+```
 
 ### Edit, retract, remove
 
@@ -461,15 +502,19 @@ Also with `conversation_type: "group"`:
 | `member_removed` | they were removed. Use it to close the open screen and drop the group from the list | `conversation_id`, `user_id` |
 | `posting_muted` | an admin muted them | `conversation_id`, `until` (null when not timed) |
 | `posting_unmuted` | an admin unmuted them | `conversation_id` |
-| `group_read` | someone read the group (below) | `conversation_id`, `user_id`, `read_at` |
+| `group_read` | someone read the group (below) | `conversation_id`, `user_id`, `read_at`, `read_through_message_id` |
 
 ### Read receipts: `group_read`
 
 `POST /groups/{id}/read` (and the socket `mark_read` event with a group's `conversation_id`) marks the group read for the caller and sends `group_read` to each person who may see read receipts:
 
 ```json
-{ "conversation_id": "…", "conversation_type": "group", "user_id": "<who read>", "read_at": "2026-10-26T09:30:00" }
+{ "conversation_id": "…", "conversation_type": "group", "user_id": "<who read>", "read_at": "2026-10-26T09:30:00.123456",
+  "read_through_message_id": "deb9dd74-…" }
 ```
+
+- `read_through_message_id` is the newest message (not a system line, not deleted) that existed when the read was saved. It is the read boundary **for that member**: that person has read every message up to and including it, so a message created after it has not been read by them. `null` when the group has no such message. Use it to find the boundary in the messages you hold, instead of comparing times. It does not mean everyone has read; the recipient counts (`read_summary`) say how many have.
+- `read_at` is the time that was saved, in UTC, written without a `Z`. It is exactly the `read_at` returned by `POST /groups/{id}/read`.
 
 - `user_id` has read **every message sent up to `read_at`** (that is, messages with `created_at` up to `read_at`). It is not a single message, so update every message you hold that is that old.
 - Who receives it follows the read-status rules:

@@ -194,3 +194,102 @@ def test_move_local_uses_the_rooms_of_the_users_connected_sockets(monkeypatch):
     asyncio.run(room_sync.move_local("u1", "c1", False))
 
     assert entered == [("sid-a", "conversation:c1"), ("sid-b", "conversation:c1")] and left == [("sid-a", "conversation:c1"), ("sid-b", "conversation:c1")]
+
+
+# --- read_summary (the viewer's own messages only) and read_through_message_id --------------------------------------------------------------
+
+def listed(world, user, group_id):
+    resp = world.as_user(user).get(f"{API}/{group_id}/messages")
+    assert resp.status_code == 200, resp.text
+    return {m["id"]: m for m in resp.json()["items"]}
+
+
+def test_a_sender_sees_how_many_have_read_their_message_in_a_care_group(world, care):
+    p = world.people
+    sent = say(world, p.rao, care["id"], "hello team")
+    assert sent.status_code == 201
+    mid = sent.json()["id"]
+    assert sent.json()["read_summary"] == {"available": True, "read_count": 0, "recipient_count": 2, "all_read": False, "reason": None}
+
+    world.as_user(p.priya).post(f"{API}/{care['id']}/read")
+    assert listed(world, p.rao, care["id"])[mid]["read_summary"] == {"available": True, "read_count": 1, "recipient_count": 2, "all_read": False, "reason": None}
+
+    world.as_user(p.mehta).post(f"{API}/{care['id']}/read")
+    assert listed(world, p.rao, care["id"])[mid]["read_summary"]["all_read"] is True
+
+
+def test_read_counts_are_for_your_own_messages_only(world, care):
+    p = world.people
+    mid = say(world, p.rao, care["id"], "from the owner").json()["id"]
+
+    assert listed(world, p.priya, care["id"])[mid]["read_summary"] == {
+        "available": False, "read_count": None, "recipient_count": None, "all_read": None, "reason": "not_your_message"}
+
+
+def test_system_lines_and_hidden_messages_have_no_counts(world, care):
+    p = world.people
+    mid = say(world, p.rao, care["id"], "oops").json()["id"]
+    assert world.as_user(p.rao).post(f"{API}/{care['id']}/messages/{mid}/retract").status_code == 200
+
+    items = listed(world, p.rao, care["id"])
+    assert items[mid]["read_summary"]["reason"] == "hidden" and items[mid]["read_summary"]["available"] is False
+    system = [m for m in items.values() if m["message_type"] == "system"]
+    assert system and all(m["read_summary"]["reason"] == "system_message" for m in system)
+
+
+def test_in_a_program_group_providers_get_counts_and_patients_do_not(world, program):
+    p = world.people
+    provider_msg = say(world, p.rao, program["id"], "welcome").json()["id"]
+
+    assert listed(world, p.rao, program["id"])[provider_msg]["read_summary"] == {
+        "available": True, "read_count": 0, "recipient_count": 3, "all_read": False, "reason": None}
+    world.as_user(p.ravi).post(f"{API}/{program['id']}/read")
+    assert listed(world, p.rao, program["id"])[provider_msg]["read_summary"]["read_count"] == 1
+    mine = listed(world, p.priya, program["id"])
+    assert mine[provider_msg]["read_summary"] == {"available": False, "read_count": None, "recipient_count": None, "all_read": None, "reason": "not_shown_to_patients"}
+    assert mine[provider_msg]["read_by"] is None                                                         # unchanged
+
+
+def test_someone_who_leaves_drops_out_of_the_counts(world, program):
+    p = world.people
+    mid = say(world, p.rao, program["id"], "hello").json()["id"]
+    world.as_user(p.rao).delete(f"{API}/{program['id']}/members/{p.ravi['id']}")
+
+    assert listed(world, p.rao, program["id"])[mid]["read_summary"]["recipient_count"] == 2
+
+
+def test_group_read_names_the_newest_message_that_was_read(world, care):
+    p = world.people
+    first = say(world, p.rao, care["id"], "one").json()["id"]
+    second = say(world, p.rao, care["id"], "two").json()["id"]
+    world.events.clear()
+
+    resp = world.as_user(p.priya).post(f"{API}/{care['id']}/read")
+
+    got = {user: payload for user, payload in read_events(world)}
+    assert got[p.rao["id"]]["read_through_message_id"] == second != first
+    assert got[p.rao["id"]]["read_at"].isoformat() == resp.json()["read_at"]                                # the saved time, same in both
+    assert set(got[p.rao["id"]]) == {"conversation_id", "user_id", "read_at", "read_through_message_id"}
+
+
+def test_a_message_sent_after_the_read_is_not_part_of_it(world, care):
+    p = world.people
+    before = say(world, p.rao, care["id"], "before").json()["id"]
+    world.as_user(p.priya).post(f"{API}/{care['id']}/read")
+    after = say(world, p.rao, care["id"], "after").json()["id"]
+    world.events.clear()
+    world.as_user(p.mehta).post(f"{API}/{care['id']}/read")
+
+    through = {user: payload for user, payload in read_events(world)}[p.rao["id"]]["read_through_message_id"]
+    assert through == after and before != after
+    assert listed(world, p.rao, care["id"])[after]["read_summary"]["read_count"] == 1                    # only mehta has read the later one
+    assert listed(world, p.rao, care["id"])[before]["read_summary"]["read_count"] == 2
+
+
+def test_group_read_has_no_message_when_nothing_but_system_lines_exist(world, care):
+    p = world.people
+    world.events.clear()
+
+    world.as_user(p.priya).post(f"{API}/{care['id']}/read")
+
+    assert {user: payload for user, payload in read_events(world)}[p.rao["id"]]["read_through_message_id"] is None

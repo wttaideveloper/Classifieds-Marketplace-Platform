@@ -180,6 +180,8 @@ class Settings(BaseSettings):
     STRIPE_PUBLISHABLE_KEY: str = ""
     # Refund target turnaround after approval; a refund still open after this is escalated to the Super Admins.
     REFUND_SLA_HOURS: int = 72
+    # A timed quiz that is auto-submitted when the countdown ends reaches the server a little late; this much lateness is accepted.
+    ASSESSMENT_SUBMIT_GRACE_SECONDS: int = 60
     # Platform commission and gateway fee estimate used at settlement (a merchant's own commission overrides it).
     PLATFORM_COMMISSION_PERCENT: float = 10.0
     GATEWAY_FEE_PERCENT: float = 2.0

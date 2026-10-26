@@ -125,7 +125,11 @@ def mark_read(db: Session, current_user: dict, conversation_id: UUID) -> dict:
 
     conversation = common.load_group(db, conversation_id)         # 404 for anything that is not a group
     result = mark_conversation_read_service(db, current_user, conversation.id)
-    notify.emit_read(db, conversation, common.user_uuid(current_user), result["read_at"])
+    reader = common.user_uuid(current_user)
+    stored = chat_repo.get_participant(db, conversation.id, reader)
+    if stored is not None and stored.last_read_at is not None:
+        result = {**result, "read_at": stored.last_read_at}         # the time that was saved, so the event and the counts agree to the microsecond
+    notify.emit_read(db, conversation, reader, result["read_at"])
     return result
 
 
@@ -162,6 +166,26 @@ def _seen_by(conversation: Conversation, message: Message, members: list[Convers
     return seen, len(recipients)
 
 
+def _unavailable(reason: str) -> dict:
+    return {"available": False, "read_count": None, "recipient_count": None, "all_read": None, "reason": reason}
+
+
+def _read_summary(conversation: Conversation, viewer: ConversationParticipant, message: Message, members: list[ConversationParticipant],
+                  receipts: dict[UUID, set[UUID]]) -> dict:
+    """Counts for one message, for the person who sent it. The same visibility rules as the read-status endpoint: in a program
+    group only providers see read information."""
+    if message.message_type == "system":
+        return _unavailable("system_message")
+    if message.hidden_kind or message.is_deleted:
+        return _unavailable("hidden")
+    if conversation.group_kind == "program" and viewer.member_kind != "provider":
+        return _unavailable("not_shown_to_patients")
+    if message.sender_id != viewer.user_id:
+        return _unavailable("not_your_message")
+    seen, recipients = _seen_by(conversation, message, members, receipts)
+    return {"available": True, "read_count": len(seen), "recipient_count": recipients, "all_read": recipients > 0 and len(seen) == recipients, "reason": None}
+
+
 def render_messages(db: Session, conversation: Conversation, viewer: ConversationParticipant, messages: list[Message], current_user: dict | None = None) -> list[dict]:
     members = common.active_members(db, conversation.id)
     every = {m.user_id: m for m in db.query(ConversationParticipant).filter(
@@ -173,8 +197,10 @@ def render_messages(db: Session, conversation: Conversation, viewer: Conversatio
     quoted = {q.id: q for q in db.query(Message).filter(Message.id.in_(reply_ids)).all()} if reply_ids else {}
     receipts: dict[UUID, set[UUID]] = {}
     show_readers = conversation.group_kind == "care"
-    if show_readers and ids:
-        for r in db.query(MessageReadReceipt).filter(MessageReadReceipt.message_id.in_(ids)).all():
+    # one query for the whole page: receipts of the messages whose counts or reader list will be shown
+    wanted = [m.id for m in messages if show_readers or (m.sender_id == viewer.user_id and viewer.member_kind == "provider")]
+    if wanted:
+        for r in db.query(MessageReadReceipt).filter(MessageReadReceipt.message_id.in_(wanted)).all():
             receipts.setdefault(r.message_id, set()).add(r.user_id)
 
     def name(uid):
@@ -202,7 +228,8 @@ def render_messages(db: Session, conversation: Conversation, viewer: Conversatio
             "mentions_me": bool(m.mentions_all and m.sender_id != viewer.user_id) or str(viewer.user_id) in (m.mentions or []),
             "is_edited": bool(m.is_edited), "edited_at": m.edited_at, "pinned": m.pinned_at is not None and not hidden,
             "reactions": counts.get(m.id, {}), "my_reactions": mine.get(m.id, []),
-            "read_by": seen if show_readers else None, "created_at": m.created_at,
+            "read_by": seen if show_readers else None, "read_summary": _read_summary(conversation, viewer, m, members, receipts),
+            "created_at": m.created_at,
         })
     return out
 

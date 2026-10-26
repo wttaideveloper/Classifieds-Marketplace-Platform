@@ -45,14 +45,20 @@ def form(payload: dict) -> dict:
 
 
 def verify_signature(header: str, raw_body: bytes, secret: str, now: float | None = None) -> bool:
-    parts = dict(p.split("=", 1) for p in (header or "").split(",") if "=" in p)
-    timestamp, signature = parts.get("t"), parts.get("v1")
-    if not timestamp or not signature or not secret:
+    """Stripe may send several `v1=` signatures at once (while a signing secret is being rolled), so any one may match."""
+    pairs = [p.split("=", 1) for p in (header or "").split(",") if "=" in p]
+    timestamps = [value for key, value in pairs if key.strip() == "t"]
+    signatures = [value for key, value in pairs if key.strip() == "v1"]
+    if not timestamps or not signatures or not secret:
         return False
-    if abs((now if now is not None else time.time()) - int(timestamp)) > SIGNATURE_TOLERANCE_SECONDS:
+    try:
+        timestamp = int(timestamps[0])
+    except ValueError:
+        return False
+    if abs((now if now is not None else time.time()) - timestamp) > SIGNATURE_TOLERANCE_SECONDS:
         return False
     expected = hmac.new(secret.encode(), f"{timestamp}.".encode() + raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    return any(hmac.compare_digest(expected, signature) for signature in signatures)
 
 
 class StripeGateway(PaymentGateway):

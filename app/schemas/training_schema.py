@@ -842,7 +842,7 @@ class AssessmentSubmitCreate(BaseModel):
             ]
         ],
     )
-    started_at: str | None = Field(None, description="ISO timestamp when assessment was started — required when time_limit_minutes is set")
+    started_at: str | None = Field(None, description="ISO 8601 time the learner opened the quiz, for example 2026-10-26T07:22:00Z (milliseconds, Z, +00:00 or any offset are all fine; no offset is read as UTC). Required when time_limit_minutes is set. A submit up to ASSESSMENT_SUBMIT_GRACE_SECONDS (default 60) after the limit is still accepted, so an auto-submit at the end of the countdown works")
 
 
 class AssessmentSubmitResponse(BaseModel):

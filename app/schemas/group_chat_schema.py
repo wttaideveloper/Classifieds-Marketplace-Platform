@@ -364,6 +364,16 @@ class QuotedMessage(BaseModel):
     is_hidden: bool = False
 
 
+class ReadSummary(BaseModel):
+    """How many people have read one of the viewer's own messages. Counts are for the whole group at the time of the request."""
+    available: bool = Field(..., description="false when the counts are not shown for this message; `reason` says why.")
+    read_count: int | None = Field(None, description="Recipients who have read the group up to this message. null when not available.")
+    recipient_count: int | None = Field(None, description="Active members other than the sender who can see this message. null when not available.")
+    all_read: bool | None = Field(None, description="read_count equals recipient_count. false when there are no recipients. null when not available.")
+    reason: Literal["not_your_message", "system_message", "hidden", "not_shown_to_patients"] | None = Field(
+        None, description="Why `available` is false. null when available.")
+
+
 class GroupMessageResponse(BaseModel):
     id: UUID
     conversation_id: UUID
@@ -385,6 +395,9 @@ class GroupMessageResponse(BaseModel):
     reactions: dict[str, int] = Field(default_factory=dict)
     my_reactions: list[str] = Field(default_factory=list)
     read_by: list[UUID] | None = Field(None, description="Care groups only. null in a program group.")
+    read_summary: ReadSummary | None = Field(
+        None, description="Read counts for the viewer's own messages (care group: any member; program group: providers only). "
+                          "Other messages, system lines, hidden messages and patients in a program group get `available: false` with a `reason`.")
     created_at: datetime
 
 

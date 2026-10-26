@@ -180,6 +180,15 @@ def test_stripe_signature_checks_the_body_the_secret_and_the_age():
     assert verify_signature(stripe_header(body), body, "") is False
 
 
+def test_stripe_signature_accepts_any_of_several_v1_values_while_a_secret_is_rolled():
+    body = b'{"id": "evt_1"}'
+    header = stripe_header(body)
+    assert verify_signature(f"{header},v1={'0' * 64}", body, "whsec_x") is True
+    assert verify_signature(f"{header.split(',')[0]},v1={'0' * 64},v1={header.split('v1=')[1]}", body, "whsec_x") is True
+    assert verify_signature(f"{header.split(',')[0]},v1={'0' * 64}", body, "whsec_x") is False
+    assert verify_signature("t=notanumber,v1=abc", body, "whsec_x") is False
+
+
 def test_stripe_form_encoding_nests_the_way_stripe_expects():
     assert form({"amount": 1000, "metadata": {"payment_id": "p1"}, "automatic_payment_methods": {"enabled": True}, "expand": ["a", "b"], "skip": None}) == {
         "amount": 1000, "metadata[payment_id]": "p1", "automatic_payment_methods[enabled]": "true", "expand": ["a", "b"]}

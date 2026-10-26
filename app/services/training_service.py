@@ -626,6 +626,18 @@ def add_assessment_question_service(db: Session, tid: UUID, aid: str, data):
                         for q in assessment["questions"] if q["id"] == new_q["id"])
     raise HTTPException(status_code=404, detail="Assessment not found")
 
+def _parse_started_at(value) -> "datetime":
+    """An ISO 8601 time as naive UTC. `Z`, `+00:00` or any other offset is converted; a time with no offset is read as UTC."""
+    from datetime import datetime, timezone
+    try:
+        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00").replace("z", "+00:00"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid started_at for timed assessment. Use an ISO 8601 time such as 2026-10-26T07:22:00Z")
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, participant_email: str = "user@example.com"):
     import uuid as _uuid
     import copy
@@ -654,15 +666,15 @@ def submit_assessment_service(db: Session, tid: UUID, aid: str, payload, partici
             started_at = payload.get("started_at")
         if started_at:
             from datetime import datetime, timedelta
-            try:
-                start = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
-                limit = int(target.get("time_limit_minutes"))
-                if datetime.utcnow() > start + timedelta(minutes=limit):
-                    raise HTTPException(status_code=400, detail=f"Time limit exceeded ({limit} minutes)")
-            except HTTPException:
-                raise
-            except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail="Invalid started_at for timed assessment")
+            from app.core.config import settings as _settings
+            start = _parse_started_at(started_at)
+            limit = int(target.get("time_limit_minutes"))
+            now = datetime.utcnow()
+            if start > now + timedelta(minutes=5):
+                raise HTTPException(status_code=400, detail="started_at is in the future. Check the device clock")
+            grace = max(int(_settings.ASSESSMENT_SUBMIT_GRACE_SECONDS), 0)
+            if now > start + timedelta(minutes=limit, seconds=grace):
+                raise HTTPException(status_code=400, detail=f"Time limit exceeded ({limit} minutes)")
         else:
             raise HTTPException(status_code=400, detail="started_at required for timed assessments")
     # scheduled publication
