@@ -168,6 +168,9 @@ async def startup():
     from app.realtime.loop_bridge import set_main_loop
 
     set_main_loop(asyncio.get_running_loop())
+    from app.realtime.room_sync import start_listener
+
+    start_listener()          # applies group room joins / leaves published by other processes (no-op without SOCKETIO_REDIS_URL)
     from app.utils.public_urls import canonical_https_origin
 
     if settings.force_https_media_urls and canonical_https_origin() is None:

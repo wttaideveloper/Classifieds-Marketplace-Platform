@@ -37,6 +37,18 @@ async def _emit_error(sid, event: str, detail: str):
     await sio.emit("error", {"event": event, "detail": detail}, to=sid)
 
 
+def _is_group(db, conversation_id) -> bool:
+    from app.repository import chat_repo
+
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    return conversation is not None and conversation.conversation_type == "group"
+
+
+def _group_extra(db, conversation_id) -> dict:
+    """`conversation_type: "group"` for a group's events; a 1:1 chat's events stay exactly as they were."""
+    return {"conversation_type": "group"} if _is_group(db, conversation_id) else {}
+
+
 def _run_with_db(handler):
     async def wrapper(sid, data=None):
         if data is None:
@@ -135,8 +147,9 @@ async def send_message(sid, data, db, user):
         ),
     )
 
-    await emit_new_message(conv_id, message_data)
-    await emit_conversation_updated(conv_id, conversation_data)
+    extra = _group_extra(db, conv_id)
+    await emit_new_message(conv_id, message_data, extra=extra)
+    await emit_conversation_updated(conv_id, conversation_data, extra=extra)
     await notify_participants_new_message(
         db,
         conv_id,
@@ -157,7 +170,7 @@ async def typing_start(sid, data, db, user):
 
     conv_id = UUID(str(conversation_id))
     process_typing(db, user, conv_id, True)
-    await emit_typing(conv_id, user["id"], True, skip_sid=sid)
+    await emit_typing(conv_id, user["id"], True, skip_sid=sid, extra=_group_extra(db, conv_id))
 
 
 @sio.on("typing_stop")
@@ -170,7 +183,7 @@ async def typing_stop(sid, data, db, user):
 
     conv_id = UUID(str(conversation_id))
     process_typing(db, user, conv_id, False)
-    await emit_typing(conv_id, user["id"], False, skip_sid=sid)
+    await emit_typing(conv_id, user["id"], False, skip_sid=sid, extra=_group_extra(db, conv_id))
 
 
 @sio.on("mark_read")
@@ -178,6 +191,11 @@ async def typing_stop(sid, data, db, user):
 async def mark_read(sid, data, db, user):
     message_id = data.get("message_id")
     conversation_id = data.get("conversation_id")
+
+    if conversation_id and not message_id and _is_group(db, UUID(str(conversation_id))):
+        from app.services import group_chat_messages
+
+        return serialize(group_chat_messages.mark_read(db, user, UUID(str(conversation_id))))      # tells only who may see receipts: `group_read`
 
     read_data, conv_id = process_mark_read(
         db,

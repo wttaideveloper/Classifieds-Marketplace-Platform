@@ -652,6 +652,7 @@ def mark_message_read_service(db: Session, current_user: dict, message_id: UUID)
     message = chat_repo.get_message_by_id(db, message_id)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
+    _refuse_if_group(db, message.conversation_id)       # a group's read receipts follow its own privacy rules: POST /groups/{id}/read
     if not chat_repo.is_participant(db, message.conversation_id, user_id):
         raise HTTPException(status_code=403, detail="Not authorized")
 

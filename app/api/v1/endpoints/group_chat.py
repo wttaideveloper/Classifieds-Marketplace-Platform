@@ -443,10 +443,7 @@ def send_message(group_id: UUID, payload: SendGroupMessage, db: Session = Depend
 
 @router.post("/{group_id}/read", summary="Mark the group as read")
 def mark_read(group_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from app.services.chat_service import mark_conversation_read_service
-
-    messages_ok = service.common.load_group(db, group_id)  # 404 for anything that is not a group
-    return mark_conversation_read_service(db, current_user, messages_ok.id)
+    return messages.mark_read(db, current_user, group_id)
 
 
 @router.get("/{group_id}/pinned", response_model=GroupMessagesResponse, summary="Pinned messages")

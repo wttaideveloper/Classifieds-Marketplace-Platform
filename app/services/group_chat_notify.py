@@ -152,7 +152,8 @@ def emit_group(conversation_id, event: str, payload: dict) -> None:
         from app.realtime.rooms import conversation_room, serialize
         from app.realtime.server import sio
 
-        run_coroutine(sio.emit(event, serialize({"conversation_id": str(conversation_id), **payload}), room=conversation_room(conversation_id)))
+        run_coroutine(sio.emit(event, serialize({"conversation_id": str(conversation_id), "conversation_type": "group", **payload}),
+                               room=conversation_room(conversation_id)))
     except Exception:
         logger.exception("group realtime emit %s failed", event)
 
@@ -164,28 +165,35 @@ def emit_user(user_id, event: str, payload: dict) -> None:
         from app.realtime.rooms import serialize, user_room
         from app.realtime.server import sio
 
-        run_coroutine(sio.emit(event, serialize(payload), room=user_room(user_id)))
+        run_coroutine(sio.emit(event, serialize({**payload, "conversation_type": "group"}), room=user_room(user_id)))
     except Exception:
         logger.exception("group realtime emit %s failed", event)
 
 
-async def _sync_rooms(user_id: str, conversation_id: str, join: bool) -> None:
-    from app.realtime.rooms import conversation_room, user_room
-    from app.realtime.server import sio
-
-    for sid, _eio_sid in list(sio.manager.get_participants("/", user_room(user_id))):
-        if join:
-            await sio.enter_room(sid, conversation_room(conversation_id))
-        else:
-            await sio.leave_room(sid, conversation_room(conversation_id))
-
-
 def sync_rooms(user_id, conversation_id, *, join: bool) -> None:
     """Put a person's connected devices into the group's room (they accepted) or take them out (removed / left), so a
-    removed member stops receiving messages straight away, even with the app open."""
+    removed member stops receiving messages straight away, even with the app open. With Redis configured the change is
+    published so whichever process holds their connection applies it (app/realtime/room_sync.py)."""
     try:
         from app.realtime.loop_bridge import run_coroutine
+        from app.realtime.room_sync import move
 
-        run_coroutine(_sync_rooms(str(user_id), str(conversation_id), join))
+        run_coroutine(move(str(user_id), str(conversation_id), join))
     except Exception:
         logger.exception("could not sync socket rooms")
+
+
+def emit_read(db: Session, conversation: Conversation, reader_id: UUID, read_at) -> None:
+    """Tell the people who may see read receipts that `reader_id` has read the group up to `read_at`.
+
+    Same visibility as the read-status endpoint: in a care group every active member; in a program group only providers
+    (patients never learn who has read). The reader's own devices always get it, so another device can clear its unread count."""
+    try:
+        from app.services import group_chat_common as common
+
+        for member in common.active_members(db, conversation.id):
+            if member.user_id != reader_id and conversation.group_kind == "program" and member.member_kind != "provider":
+                continue
+            emit_user(member.user_id, "group_read", {"conversation_id": str(conversation.id), "user_id": str(reader_id), "read_at": read_at})
+    except Exception:
+        logger.exception("group read emit failed")

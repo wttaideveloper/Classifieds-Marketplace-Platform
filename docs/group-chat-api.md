@@ -131,7 +131,7 @@ Archiving a group for yourself uses the existing `PATCH /conversations/{id}/arch
 |---|---|---|---|
 | GET | /groups/{id}/messages | member | read messages. `cursor`, `limit` |
 | POST | /groups/{id}/messages | member | send. Supports `reply_to_id`, `mentions`, `mention_all` |
-| POST | /groups/{id}/read | member | mark the group read |
+| POST | /groups/{id}/read | member | mark the group read; sends `group_read` (section 6) |
 | PATCH | /groups/{id}/messages/{mid} | the author | edit, within 15 minutes |
 | POST | /groups/{id}/messages/{mid}/retract | the author | take my message out of the group |
 | POST | /groups/{id}/messages/{mid}/hide | owner, admin | remove any message, with a reason |
@@ -415,35 +415,83 @@ It never contains message text. Actions logged: `group_created`, `group_updated`
 
 ## 6. Realtime events (Socket.IO)
 
-Connect and authenticate as before. The server puts a person's connected devices into the group's room when they accept, and takes them out of the room when they are removed or leave, so a removed person stops receiving messages straight away even with the app open. (This works while the server runs as one process, which is how it runs today. See section 11 for a split deployment.)
+The group events use the same Socket.IO connection as 1:1 chat. A few event names are shared with 1:1 chat (`new_message`, `message_updated`, `typing`, `notification`). Every group event carries **`"conversation_type": "group"`**, so the app can tell the two apart. A 1:1 chat's events are unchanged and do not carry that field. Existing field names did not change; `conversation_type` is the only addition.
 
-To the group's room (`conversation:<id>`), every payload also has `conversation_id`:
+### Joining rooms and reconnecting
 
-| Event | When | Payload |
+- On connect the server puts the socket in the person's own room (`user:<id>`), nothing more. It does not join any group room.
+- **After every connect, reconnect and page refresh, send `join_room` with `{"conversation_id": "<group id>"}` for each group the app wants live updates for.**
+  - Success: `joined_room` with `{conversation_id, room, authorized: true}`.
+  - Failure: an `error` event with `{event: "join_room", detail: "..."}`. For example "Not authorized to join this conversation" (not an active member), "conversation_id is required", "Not authenticated".
+  - `leave_room` works the same way and answers with `left_room`.
+- Accepting an invitation puts that person's connected devices into the group's room straight away. Being removed or leaving takes them out. A device that connects later still has to send `join_room`.
+- Nothing is replayed after a disconnect. On reconnect, rejoin the rooms and refetch over REST: the message list from the last message the app holds, `GET /groups/{id}/members`, the group details and the group list (which has the unread counts). Events have no id or sequence number: dedupe `new_message` by `message.id`, and replace state by `message.id` on `message_updated` and `message_hidden`. `reaction_updated` carries the full counts, so overwrite.
+- The sender also receives the event for their own REST action, if their socket joined the room.
+
+### Events to the group's room (`conversation:<id>`)
+
+Every payload has `conversation_id` and `conversation_type: "group"`, plus:
+
+| Event | When | Other fields |
 |---|---|---|
-| `new_message` | a message was sent | `message` (the same for every reader: ids, text, `reply_to_id`, `mentions`, no names) |
-| `message_updated` | a message was edited | `message` |
-| `message_hidden` | retracted or removed by an admin | `message_id`, `status`, `placeholder` |
+| `new_message` | a message was sent | `message`: `id`, `conversation_id`, `sender_id`, `content`, `message_type`, `attachment_id`, `reply_to_id`, `mentions`, `mentions_all`, `is_deleted` (false), `is_edited` (false), `edited_at` (null), `created_at`, `read_by` (empty). The same for every reader; no names |
+| `message_updated` | a message was edited | `message`: the same fields, with `is_edited: true` and `edited_at` |
+| `message_hidden` | retracted or removed by an admin | `message_id`, `status` (`retracted` or `removed_by_admin`), `placeholder` |
 | `message_pinned` | pinned or unpinned | `message_id`, `pinned` |
-| `reaction_updated` | a reaction was added or removed | `message_id`, `reactions` |
+| `reaction_updated` | a reaction was added or removed | `message_id`, `reactions` (the new counts) |
 | `member_joined` | someone accepted | `user_id`, `role`, `kind` |
-| `member_left` | someone left | `user_id` |
+| `member_left` | someone left or withdrew consent | `user_id` |
 | `member_removed` | someone was removed | `user_id` |
-| `member_role_changed` | admin or owner changed | `user_id`, `role` |
-| `group_updated` | name, description, picture or the posting setting changed | the changed fields |
-| `group_closed`, `group_reopened` | closed or reopened | |
-| `typing` | care groups only | `user_id`, `is_typing` |
+| `member_role_changed` | admin or owner changed, ownership transferred or reassigned | `user_id`, `role` (`owner`, `admin` or `member`) |
+| `group_updated` | name, description or picture edited | `name`, `description`, `avatar_url` |
+| `group_updated` | the posting setting changed | `admins_only_posting` |
+| `group_closed` | closed | `closed_at` |
+| `group_reopened` | reopened | |
+| `typing` | care groups | `user_id`, `is_typing` |
 
-To one person's own room (`user:<id>`):
+Sending through the socket `send_message` event also works for a group, and then also sends `conversation_updated` (with `conversation_type: "group"`). REST is preferred for groups.
 
-| Event | When |
-|---|---|
-| `group_invitation` | they were invited (`conversation_id`) |
-| `member_removed` | they were removed (use it to close the open screen and drop the group from the list) |
-| `posting_muted`, `posting_unmuted` | an admin muted or unmuted them (`until` when timed) |
+### Events to one person's room (`user:<id>`)
+
+Also with `conversation_type: "group"`:
+
+| Event | When | Fields |
+|---|---|---|
+| `group_invitation` | they were invited | `conversation_id` |
+| `member_removed` | they were removed. Use it to close the open screen and drop the group from the list | `conversation_id`, `user_id` |
+| `posting_muted` | an admin muted them | `conversation_id`, `until` (null when not timed) |
+| `posting_unmuted` | an admin unmuted them | `conversation_id` |
+| `group_read` | someone read the group (below) | `conversation_id`, `user_id`, `read_at` |
+
+### Read receipts: `group_read`
+
+`POST /groups/{id}/read` (and the socket `mark_read` event with a group's `conversation_id`) marks the group read for the caller and sends `group_read` to each person who may see read receipts:
+
+```json
+{ "conversation_id": "…", "conversation_type": "group", "user_id": "<who read>", "read_at": "2026-10-26T09:30:00" }
+```
+
+- `user_id` has read **every message sent up to `read_at`** (that is, messages with `created_at` up to `read_at`). It is not a single message, so update every message you hold that is that old.
+- Who receives it follows the read-status rules:
+  - **Care group:** every active member.
+  - **Program group:** only providers. Patients never receive it, and never learn who has read.
+  - The reader's own devices always receive it, so another device of theirs can clear its unread count.
+- It goes to each person's own room (`user:<id>`), not the group room. The app does not need to have joined the group room to receive it.
+- The REST response of `POST /groups/{id}/read` is unchanged. For a message-by-message count use `GET /groups/{id}/messages/{mid}/read-status`.
+- A group's messages cannot be marked read one by one through the generic `PATCH /messages/{id}/read` or the socket `mark_read` with a `message_id`: both refuse a group with 409.
+- Unread counts are not pushed. They come from the message list and the group list.
 
 Messages carry no sender names because each person may see a different name for the same sender. The app takes names from `GET /groups/{id}/members`, which it should refresh on `member_joined`, `member_left`, `member_removed` and `member_role_changed`.
 
+### Running the REST API and Socket.IO as separate processes
+
+Set `SOCKETIO_REDIS_URL` (the same Redis) on **both** the REST process and the Socket.IO process. Then:
+
+- Events sent from a REST route travel through Redis to the process holding each connection.
+- Joining and leaving group rooms (accepting an invitation, being removed or leaving) is published on the Redis channel `classifieds:group-room-sync`. Every process listens on it at startup and the one holding that person's sockets moves them. This means a removed person stops receiving messages straight away even when the removal is made on another process.
+- Without `SOCKETIO_REDIS_URL` everything is assumed to run in one process, and an event or room change made by a different process will not reach the sockets.
+- If Redis is down, the REST call still succeeds (events are best effort), the listener reconnects with a growing delay, and the app should refetch over REST after a reconnect.
+- Use `scripts/entrypoint-api.sh` (several workers, REST only) and `scripts/entrypoint-socket.sh` (one worker) for a split deployment. The combined `scripts/entrypoint.sh` is one process and refuses more than one socket worker.
 
 ## 7. Notifications
 
@@ -535,7 +583,7 @@ These come from the same specification but are outside what an API can do, or wa
 | Saved messages reaching the real clinical record | the API stores a snapshot (`GET /groups/{id}/clinical-records`). Sending it to a health-record system is an integration, if one is planned |
 | Deleting data when the retention period ends | nothing is ever deleted by the API. `retention_until` is the date a clean-up job can use, and `legal_hold` stops it |
 | "Read-only until reassigned" when an owner cannot be reached | compliance can close the group, reassign it, and reopen it |
-| Socket rooms in a split (multi-server) deployment | rooms are managed on the server that holds the connection. With Redis and several servers, a removed person on another server stays in the room until they disconnect. Their sends and reads are still refused |
+| Socket rooms in a split (multi-server) deployment | needs `SOCKETIO_REDIS_URL` on every process (section 6). The room changes are published over Redis; this has been tested with a fake Redis client only, not a live Redis |
 | Name checks for a health condition | the name is checked against the people in the group and the configured blocked words, not by understanding the text |
 | Appointment series and care episodes existing | a program link is checked against the programs table. An appointment series or care episode has no table in this service yet, so only its type is checked |
 

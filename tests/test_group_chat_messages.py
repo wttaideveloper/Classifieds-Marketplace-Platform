@@ -278,7 +278,7 @@ def test_the_realtime_notification_event_is_generic_too(world, care):
 
     assert {u for u, _ in captured} == {p.mehta["id"], p.priya["id"]}
     for _, payload in captured:
-        assert payload == {"type": "group_message", "conversation_id": care["id"], "title": "New message", "body": ""}
+        assert payload == {"type": "group_message", "conversation_id": care["id"], "conversation_type": "group", "title": "New message", "body": ""}
 
 
 def test_the_realtime_notification_skips_people_who_are_not_active_members(world):

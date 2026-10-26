@@ -4,11 +4,11 @@ from app.realtime.rooms import conversation_room, serialize, user_room
 from app.realtime.server import sio
 
 
-async def emit_new_message(conversation_id, message: dict, *, skip_sid: str | None = None):
+async def emit_new_message(conversation_id, message: dict, *, skip_sid: str | None = None, extra: dict | None = None):
     payload = serialize(message)
     await sio.emit(
         "new_message",
-        {"conversation_id": str(conversation_id), "message": payload},
+        {"conversation_id": str(conversation_id), **(extra or {}), "message": payload},
         room=conversation_room(conversation_id),
         skip_sid=skip_sid,
     )
@@ -23,11 +23,12 @@ async def emit_message_read(conversation_id, read_payload: dict, *, skip_sid: st
     )
 
 
-async def emit_typing(conversation_id, user_id, is_typing: bool, *, skip_sid: str | None = None):
+async def emit_typing(conversation_id, user_id, is_typing: bool, *, skip_sid: str | None = None, extra: dict | None = None):
     await sio.emit(
         "typing",
         serialize({
             "conversation_id": str(conversation_id),
+            **(extra or {}),
             "user_id": str(user_id),
             "is_typing": is_typing,
         }),
@@ -54,10 +55,10 @@ async def emit_message_deleted(conversation_id, message_id, *, skip_sid: str | N
     )
 
 
-async def emit_conversation_updated(conversation_id, conversation: dict):
+async def emit_conversation_updated(conversation_id, conversation: dict, *, extra: dict | None = None):
     await sio.emit(
         "conversation_updated",
-        serialize({"conversation_id": str(conversation_id), "conversation": conversation}),
+        serialize({"conversation_id": str(conversation_id), **(extra or {}), "conversation": conversation}),
         room=conversation_room(conversation_id),
     )
 
@@ -117,6 +118,7 @@ async def notify_participants_new_message(
             await emit_notification(participant_id, {
                 "type": "group_message",
                 "conversation_id": str(conversation_id),
+                "conversation_type": "group",
                 "title": "New message",
                 "body": "",
             })

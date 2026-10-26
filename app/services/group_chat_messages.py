@@ -119,6 +119,16 @@ def send_message(db: Session, current_user: dict, conversation_id: UUID, payload
     return render_one(db, conversation, member, message)
 
 
+def mark_read(db: Session, current_user: dict, conversation_id: UUID) -> dict:
+    """Mark the group read for the caller and tell the people who may see read receipts (`group_read`)."""
+    from app.services.chat_service import mark_conversation_read_service
+
+    conversation = common.load_group(db, conversation_id)         # 404 for anything that is not a group
+    result = mark_conversation_read_service(db, current_user, conversation.id)
+    notify.emit_read(db, conversation, common.user_uuid(current_user), result["read_at"])
+    return result
+
+
 def send_via_generic_path(db: Session, current_user: dict, data) -> dict:
     """POST /messages and the socket `send_message` event reach a group through here. The socket handler broadcasts
     the returned dict itself, so this does not emit."""
