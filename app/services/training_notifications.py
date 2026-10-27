@@ -422,6 +422,104 @@ def send_due_training_reminders(db, now_utc: datetime | None = None) -> dict:
     return sent
 
 
+# --- 8. "complete your training before the deadline" ------------------------------------------
+
+DEADLINE_TITLE = "Hurry up! Complete your training before the deadline"
+
+
+def deadline_reminder_days() -> list[int]:
+    """Days before the deadline on which a reminder goes out, from TRAINING_DEADLINE_REMINDER_DAYS (empty = none)."""
+    days = set()
+    for part in str(settings.TRAINING_DEADLINE_REMINDER_DAYS or "").split(","):
+        part = part.strip()
+        if part.isdigit() and int(part) > 0:
+            days.add(int(part))
+    return sorted(days, reverse=True)
+
+
+def _deadline_text(training, person: dict, days_left: int, deadline, percent: str | None, source: str) -> tuple[str, str]:
+    name = person.get("name") or person["email"]
+    when = "today" if days_left == 0 else "tomorrow" if days_left == 1 else f"in {days_left} days"
+    what = "Your access to" if source == "access" else ""
+    ends = f"{what} {training.title} ends {when} ({deadline:%d %b %Y})." if what else f"{training.title} ends {when} ({deadline:%d %b %Y})."
+    progress = f" You have completed {percent}% so far." if percent not in (None, "", "0", "0.0") else ""
+    return DEADLINE_TITLE, f"Hi {name}, {ends}{progress} Finish your remaining lessons before the deadline."
+
+
+def send_deadline_reminders(db, now_utc: datetime | None = None) -> dict:
+    """One scheduler tick for the deadline reminders. Each reminder goes by email AND as an in-app + push notification, once per
+    learner, per deadline date and per "days before" step, to learners who have not completed the training.
+
+    A learner's deadline is the training's end date or the end of their access, whichever is earlier. The end date itself is
+    already covered by the final-day notice, so day 0 is only used when the deadline is the end of the learner's access."""
+    from sqlalchemy import or_
+
+    from app.models.training_model import Training, TrainingEnrolment, TrainingProgress
+    from app.services.training_service import _all_lesson_ids
+
+    days = deadline_reminder_days()
+    sent = {"sent": 0}
+    if not days:
+        return sent
+    now_utc = now_utc or datetime.now(timezone.utc)
+    naive_now = now_utc.replace(tzinfo=None)
+    horizon = naive_now + timedelta(days=max(days) + 2)
+    rows = (
+        db.query(TrainingEnrolment, Training)
+        .join(Training, Training.id == TrainingEnrolment.training_id)
+        .filter(
+            Training.status == "published", Training.is_deleted.is_(False), TrainingEnrolment.status.in_(AUDIENCE_STATUSES),
+            or_(Training.end_date.between(naive_now - timedelta(days=1), horizon),
+                TrainingEnrolment.access_expires_at.between(naive_now - timedelta(days=1), horizon)),
+        )
+        .all()
+    )
+    if not rows:
+        return sent
+    progress = {}
+    for prog in db.query(TrainingProgress).filter(TrainingProgress.training_id.in_({t.id for _, t in rows})).all():
+        progress[(prog.training_id, (prog.participant_email or "").lower())] = prog
+    lessons = {}
+    for enrolment, training in rows:
+        email = (enrolment.participant_email or "").strip()
+        if not email:
+            continue
+        tz = _training_tz(training)
+        local_now = now_utc.astimezone(tz)
+        if local_now.hour < REMINDER_HOUR_LOCAL:
+            continue
+        if training.id not in lessons:
+            lessons[training.id] = bool(_all_lesson_ids(training))
+        if not lessons[training.id]:
+            continue                                         # nothing to finish: no lessons, so no "complete it" nudge
+        prog = progress.get((training.id, email.lower()))
+        if prog is not None and prog.completed_at is not None:
+            continue
+        candidates = []
+        if training.end_date:
+            candidates.append((training.end_date.date(), "training"))
+        if enrolment.access_expires_at:
+            candidates.append((enrolment.access_expires_at.replace(tzinfo=timezone.utc).astimezone(tz).date(), "access"))
+        if not candidates:
+            continue
+        deadline, source = min(candidates, key=lambda c: c[0])
+        days_left = (deadline - local_now.date()).days
+        if days_left < 0 or not (days_left in days or (days_left == 0 and source == "access")):
+            continue
+        if not _claim(db, training.id, email, f"deadline_{days_left}d", deadline.isoformat()):
+            continue
+        percent = getattr(prog, "overall_percent", None) if prog is not None else None
+        title, message = _deadline_text(training, _person(enrolment), days_left, deadline, percent, source)
+        deliver_to_participant(
+            tenant_id=training.tenant_id, email=email, user_id=getattr(enrolment, "user_id", None), title=title, message=message,
+            category="training_deadline_reminder", send_email=True, in_app=True,
+            metadata={"training_id": str(training.id), "kind": f"deadline_{days_left}d", "date": deadline.isoformat(),
+                      "days_left": days_left, "deadline_source": source, "percent_complete": percent},
+        )
+        sent["sent"] += 1
+    return sent
+
+
 def _scheduler_loop(interval_seconds: int) -> None:
     from app.db.database import SessionLocal
 
@@ -429,8 +527,9 @@ def _scheduler_loop(interval_seconds: int) -> None:
         try:
             with SessionLocal() as db:
                 result = send_due_training_reminders(db)
-            if any(result.values()):
-                logger.info("training reminders sent: %s", result)
+                deadline = send_deadline_reminders(db)
+            if any(result.values()) or deadline["sent"]:
+                logger.info("training reminders sent: %s, deadline reminders: %s", result, deadline["sent"])
         except Exception:
             logger.exception("training reminder tick failed")
         time.sleep(interval_seconds)

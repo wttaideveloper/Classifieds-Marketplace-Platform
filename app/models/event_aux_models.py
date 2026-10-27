@@ -217,3 +217,16 @@ class EventAudit(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     event = relationship("Event", backref="audit_logs")
+
+
+class EventWishlistItem(Base):
+    """An event a signed-in user saved for later (same pattern as TrainingWishlistItem)."""
+
+    __tablename__ = "event_wishlist_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "event_id", name="uq_event_wishlist_user_event"),)

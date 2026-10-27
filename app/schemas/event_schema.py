@@ -683,18 +683,40 @@ class EventListItemResponse(EventResponse):
     approved_reviews: int = Field(0, description="Number of approved reviews of this event (the ones in GET /events/{id}/reviews). 0 when there are none.")
     average_rating: float | None = Field(None, description="Mean of the approved reviews' ratings, rounded to 2 decimals. null when there are none - show \"No ratings yet\", never 0.0.")
     registration_status: bool = Field(False, description="True while the signed-in caller has a live registration (confirmed or attended) for this event. Always false for an anonymous request. (On the event detail, `registration_status` is the status text.)")
+    is_wishlisted: bool = Field(False, description="True while the signed-in caller has saved this event to their wishlist. Always false for an anonymous request.")
 
 
 class EventDetailResponse(EventResponse):
     enterprise_name: str | None = Field(None, description="Owning enterprise short name.")
     is_registered: bool = Field(False, description="True while the signed-in caller has a live registration (confirmed or attended). Always false for an anonymous request.")
     registration_status: str | None = Field(None, description="The signed-in caller's own registration status: confirmed|cancelled|attended|no_show|null (never registered, or anonymous request).")
+    is_wishlisted: bool = Field(False, description="True while the signed-in caller has saved this event to their wishlist. Always false for an anonymous request.")
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class EventPaginatedResponse(PaginatedResponse[EventListItemResponse]):
     pass
+
+
+class EventWishlistItemResponse(BaseModel):
+    id: str = Field(..., description="The wishlist entry id.")
+    event_id: str
+    title: str | None = None
+    primary_image: str | None = None
+    price: str | None = Field(None, description="As stored on the event, for example \"100.00\". null when the event has no price.")
+    currency: str | None = None
+    pricing_type: str | None = Field(None, description="free | paid ...")
+    start_at: str | None = Field(None, description="The event's start as a UTC instant, e.g. 2026-10-21T07:00:00Z. Show it in `time_zone` if you want the event's own clock.")
+    end_at: str | None = Field(None, description="The event's end as a UTC instant.")
+    time_zone: str | None = Field(None, description="The event's IANA time zone, e.g. Asia/Kolkata.")
+    delivery_mode: str | None = None
+    enterprise_name: str | None = None
+    location: str | None = Field(None, description="The venue city (or venue name, or the business location); null for an online event with none.")
+    average_rating: float | None = Field(None, description="Mean of the approved reviews, 2 decimals. null when there are none.")
+    reviews_count: int = 0
+    added_at: str = Field(..., description="When it was saved, UTC with a Z.")
+    status: str | None = Field(None, description="The event's status. The list only holds events the caller can still see.")
 
 
 class EventStatusUpdate(BaseModel):

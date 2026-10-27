@@ -599,6 +599,8 @@ def get_events_service(
     )
     # Management listings (admin queues) pass include_registration=False: the flag is about the caller as an attendee.
     registered = _registered_event_ids(db, (viewer.user or {}).get("email"), [e.id for e in items]) if include_registration else set()
+    from app.services.event_wishlist_service import wishlisted_ids
+    saved = wishlisted_ids(db, viewer.user, [e.id for e in items]) if include_registration else set()
     stats = _approved_review_stats(db, [e.id for e in items])
     return EventPaginatedResponse(
         items=[
@@ -606,6 +608,7 @@ def get_events_service(
                 {
                     **_redact_event_data(map_event_list_item(e, db), e, viewer),
                     "registration_status": e.id in registered,
+                    "is_wishlisted": e.id in saved,
                     "approved_reviews": stats.get(e.id, (None, 0))[1],
                     "average_rating": stats.get(e.id, (None, 0))[0],
                 }
@@ -687,6 +690,8 @@ def get_event_service(
         ).order_by(EventRegistration.created_at.desc()).first()
     detail["registration_status"] = registration.status if registration else None
     detail["is_registered"] = bool(registration) and registration.status in ("confirmed", "attended")
+    from app.services.event_wishlist_service import wishlisted_ids
+    detail["is_wishlisted"] = event_id in wishlisted_ids(db, current_user, [event_id])
     return EventDetailResponse.model_validate(_redact_event_data(detail, event, viewer))
 
 

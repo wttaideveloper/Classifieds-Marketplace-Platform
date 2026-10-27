@@ -1,7 +1,7 @@
 from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import (
@@ -56,6 +56,7 @@ from app.schemas.event_schema import (
     EventResponse,
     EventStatusUpdate,
     EventUpdate,
+    EventWishlistItemResponse,
 )
 from app.schemas.event_schema import (
     EventAnnouncementCreate,
@@ -278,6 +279,17 @@ def my_registrations(status: str | None = Query(None, description="Filter by reg
 
 
 @router.get(
+    "/my/wishlist",
+    response_model=list[EventWishlistItemResponse],
+    summary="My wishlist - events I saved",
+    description="Newest saved first. Only events the caller can still see are listed (published, or ones they registered for); an event that is unpublished or deleted drops out and returns if it comes back.",
+)
+def my_wishlist(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.event_wishlist_service import list_wishlist
+    return list_wishlist(db, current_user, access_token=extract_access_token(request))
+
+
+@router.get(
     "/my/waitlist",
     response_model=list[MyWaitlistResponse],
     summary="My waitlist entries — waiting/promoted/left"
@@ -454,6 +466,32 @@ def get_event(
     token = extract_access_token(request)
     viewer = build_event_viewer(db, current_user, access_token=token)
     return get_event_service(db, event_id, viewer=viewer, access_token=token, current_user=current_user)
+
+
+@router.post(
+    "/{event_id}/wishlist",
+    response_model=EventWishlistItemResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save event to my wishlist",
+    description="201 the first time, 200 with the same body when it was already saved. 404 for an event the caller cannot see. No body needed.",
+)
+def add_event_wishlist(request: Request, response: Response, event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.event_wishlist_service import add_wishlist
+    item, created = add_wishlist(db, current_user, event_id, access_token=extract_access_token(request))
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return item
+
+
+@router.delete(
+    "/{event_id}/wishlist",
+    summary="Remove event from my wishlist",
+    description="Always 200 `{\"ok\": true, \"is_wishlisted\": false}`, also when the event was not saved.",
+)
+def remove_event_wishlist(event_id: UUID = Path(..., description="Event ID"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from app.services.event_wishlist_service import remove_wishlist
+    remove_wishlist(db, current_user, event_id)
+    return {"ok": True, "is_wishlisted": False}
 
 
 @router.put("/{event_id}", response_model=EventResponse, status_code=status.HTTP_200_OK, summary="Update Event")

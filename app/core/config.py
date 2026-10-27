@@ -109,6 +109,9 @@ class Settings(BaseSettings):
     # beat is deployed). Unset = on in production, off in development; set explicitly to override.
     TRAINING_REMINDERS_ENABLED: bool | None = None
     TRAINING_REMINDER_INTERVAL_SECONDS: int = 900
+    # "Complete your training before the deadline" reminders go to learners who have not finished, this many days before their
+    # deadline (the training's end date, or the end of their access if that comes first). Comma separated; empty switches them off.
+    TRAINING_DEADLINE_REMINDER_DAYS: str = "7,3,1"
     # Public HTTPS origin used for every file/media link the API returns, e.g. https://chat.wisdomtooth.tech.
     # Mobile blocks cleartext http:// media, and links already stored with a bare-IP http:// host
     # (http://13.207.85.164/api/v1/trainings/upload/...) are rewritten to this origin when served.

@@ -66,6 +66,19 @@ Route on `category`; `training_id` is always present.
   workers or restarting never sends twice. Rescheduling a training to a new date re-arms its reminders.
 - `TRAINING_REMINDERS_ENABLED`: unset = **on in production, off in development**; set `true`/`false` to override.
 
+## Deadline reminders (8): "Hurry up! Complete your training before the deadline"
+
+For learners who have **not completed** the training. Each one goes **by email and as an in-app + push notification, together**, in the same delivery.
+
+- **Who.** Learners in the training (`enrolled` or `attended`) of a `published`, non-deleted training that has at least one lesson, and who have not finished it (their progress has no `completed_at`). A learner who completed it is never reminded. People who are pending, rejected, cancelled or on the waitlist are not.
+- **Their deadline** is the training's `end_date`, or the end of their own access (`access_expires_at`) if that comes first. Dates are judged in the training's `time_zone`, from 09:00 local.
+- **When.** On the days set in `TRAINING_DEADLINE_REMINDER_DAYS` before the deadline (default `7,3,1`; empty switches the reminders off). If the deadline is the end of the learner's access, the last day itself is also a step. The training's own end date is not, because the existing final-day notice (7) already goes out then.
+- **What they get.** Title `Hurry up! Complete your training before the deadline`. Message: `Hi Asha, Ergonomics 101 ends in 3 days (07 Oct 2026). You have completed 40% so far. Finish your remaining lessons before the deadline.` (for an access deadline it begins `Your access to ...`). The email has the same title as its subject and the same message as its body.
+- **Category** `training_deadline_reminder`. Metadata for opening the right screen: `training_id`, `kind` (`deadline_7d`, `deadline_3d`, `deadline_1d`, `deadline_0d`), `date` (the deadline), `days_left`, `deadline_source` (`training` or `access`), `percent_complete`.
+- **Once only.** Each step is claimed in `training_notification_log` (training + learner + `deadline_<n>d` + deadline date) before sending, so several workers or a restart never send it twice. If the deadline date changes, the steps start again for the new date.
+- It runs in the same scheduler as 6 and 7, so it follows `TRAINING_REMINDERS_ENABLED` and `TRAINING_REMINDER_INTERVAL_SECONDS`.
+- Not changed: the day-before reminder (6) and the final-day notice (7) still go to everyone in the training, as in-app and push only.
+
 ## Delivery rules
 
 - Email is sent directly over SMTP (`email_user` / `email_pass`) exactly once; the inbox pipeline is

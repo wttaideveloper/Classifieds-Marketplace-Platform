@@ -46,6 +46,7 @@ NotificationCategory = Literal[
     "training_answer",
     "training_reminder",
     "training_final_day",
+    "training_deadline_reminder",
     "review_submitted",
     "review_approved",
     "review_rejected",
