@@ -982,6 +982,36 @@ class AssessmentAttemptSummary(BaseModel):
     can_review: bool
 
 
+class AssessmentSubmissionItem(BaseModel):
+    submission_id: str = Field(..., description="The id of the attempt. The same id is `{sid}` of the staff review / grade endpoints and `attempt_id` of the learner's own attempt endpoint.")
+    attempt_id: str = Field(..., description="Same value as submission_id.")
+    learner_name: str | None = Field(None, description="The name on the learner's enrolment. null when no enrolment record is found.")
+    learner_email: str
+    attempt_number: int | None = Field(None, description="1 for the learner's first attempt of this assessment.")
+    status: Literal["pending", "evaluated"] = Field(..., description="pending = waiting for manual grading (or an old attempt whose result is unknown).")
+    needs_manual_grading: bool = Field(..., description="true while status is pending.")
+    score: int | None = Field(None, description="Points scored. While pending it is only the part that was marked automatically. null for old attempts.")
+    total_points: int | None = None
+    score_percent: int | None = Field(None, description="Whole number, rounded down. null when score or total is missing, or total is 0.")
+    passed: bool | None = Field(None, description="null while pending (the result is not final) and for old attempts.")
+    submitted_at: datetime = Field(..., description="UTC, no offset in the text (e.g. 2026-10-26T07:22:00).")
+    is_legacy: bool = Field(False, description="An attempt saved before result snapshots existed. Its grading status, total and score cannot be recovered.")
+
+
+class AssessmentSubmissionStatusCounts(BaseModel):
+    all: int
+    pending: int
+    evaluated: int
+
+
+class AssessmentSubmissionListResponse(BaseModel):
+    assessment_id: str
+    assessment_title: str | None = None
+    items: list[AssessmentSubmissionItem]
+    pagination: PaginationMeta
+    status_counts: AssessmentSubmissionStatusCounts = Field(..., description="Counts for the same search and dates, ignoring the status filter, for tab badges.")
+
+
 class AssessmentAttemptOption(BaseModel):
     id: str | None = None
     label: str

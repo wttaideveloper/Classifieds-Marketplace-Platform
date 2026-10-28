@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
@@ -8,7 +9,7 @@ from app.db.database import get_db
 from app.services.training_curriculum import save_builder_curriculum
 from app.schemas.training_schema import AssessmentAttemptSummary, AssessmentAttemptReview, TrainingEnrolmentResponse, TrainingEnrolWaitlistResponse, TrainingModerationHistoryItem, TrainingReviewModerateRequest
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
-from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonAttendanceBatchRequest, LessonAttendanceRosterResponse, LessonCreate, LessonProgressSaveRequest, LessonProgressSaveResponse, LessonQrCheckInRequest, LessonQrCheckInResponse, LessonReorderRequest, SectionReorderRequest, TrainingAssignmentResponse, TrainingProgressResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingSummaryResponse, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse
+from app.schemas.training_schema import AnnouncementCreate, AssessmentCreate, AssessmentQuestionCreate, AssessmentReviewResponse, AssessmentSubmitCreate, AssessmentSubmitResponse, AssignmentCreate, AssignmentSubmitCreate, AssignmentSubmitResponse, LessonAttendanceBatchRequest, LessonAttendanceRosterResponse, LessonCreate, LessonProgressSaveRequest, LessonProgressSaveResponse, LessonQrCheckInRequest, LessonQrCheckInResponse, LessonReorderRequest, SectionReorderRequest, TrainingAssignmentResponse, TrainingProgressResponse, SectionCreate, TopicCreate, TrainingBatchCheckInRequest, TrainingBatchCheckInResponse, TrainingCheckInPreviewItem, TrainingCheckInRequest, TrainingCompleteLessonRequest, TrainingCompleteLessonResponse, TrainingCreate, TrainingDetailResponse, TrainingEnrolCheckInRequest, TrainingEnrolCheckInResponse, TrainingEnrolUncheckInRequest, TrainingEnrolUncheckInResponse, TrainingLiveSessionCreate, TrainingPaginatedResponse, TrainingResponse, TrainingReviewCreate, TrainingReviewListResponse, TrainingReviewResponse, TrainingStatusUpdate, TrainingSummaryResponse, TrainingUpdate, TrainingValidateQrRequest, TrainingValidateQrResponse, TrainingWishlistItemResponse, AssessmentSubmissionListResponse
 from app.services.training_service import add_assessment_question_service, batch_mark_lesson_attendance_service, check_in_training_service, complete_lesson_service, create_assignment_service, create_live_session_service, create_training_announcement_service, create_training_service, delete_training_service, delete_training_assignment_service, duplicate_training_service, get_certificate_service, get_lesson_attendance_roster_service, get_live_sessions_service, get_training_admin_notes_service, get_training_progress_service, get_training_service, get_trainings_service, grade_assignment_service, qr_check_in_lesson_attendance_service, record_live_attendance_service, restore_training_service, submit_assessment_service, submit_assignment_service, update_training_service, update_training_status_service, publish_training_service, unpublish_training_service, suspend_training_service, cancel_training_service, delete_section_service, reorder_sections_service, reorder_lessons_service, get_lesson_service, list_lesson_topics_service, add_lesson_topic_service, update_lesson_topic_service, delete_lesson_topic_service, update_assessment_service, delete_assessment_service, delete_assessment_question_service, filter_assessments, get_secure_training_content_service, reply_discussion_service, get_moderation_history_service, list_training_announcements_service, get_live_attendance_service, export_live_attendance_service, approve_training_enrol_service, list_training_assignments_service
 from app.services.training_service import (
     add_training_wishlist_service,
@@ -814,6 +815,32 @@ def submit_assessment(training_id: UUID, aid: str, payload: AssessmentSubmitCrea
     from app.services.assessment_attempts import _context
     _context(db, training_id, aid, current_user)
     return submit_assessment_service(db, training_id, aid, payload, participant_email=email)
+
+@router.get(
+    "/{training_id}/assessments/{aid}/submissions", response_model=AssessmentSubmissionListResponse,
+    summary="List learners' attempts at a quiz or exam (staff)",
+    description=(
+        "For the training's Enterprise Admin or Provider (and a Super Admin): every attempt, any learner, newest first. "
+        "`status`: all | pending (waiting for manual grading) | evaluated. `search` matches the learner's name or email. "
+        "`from_date` / `to_date` are UTC ISO 8601 (`Z`, an offset, or a bare date that covers the whole day), inclusive. "
+        "`submission_id` is the `{sid}` of `.../submissions/{sid}/review` and `.../grade`."
+    ),
+)
+def list_assessment_submissions(
+    training_id: UUID, aid: str,
+    status: Literal["all", "pending", "evaluated"] = Query("all", description="all | pending | evaluated"),
+    search: str | None = Query(None, description="Learner name or email (partial, any case)."),
+    from_date: str | None = Query(None, description="Submitted at or after this UTC ISO 8601 time."),
+    to_date: str | None = Query(None, description="Submitted at or before this UTC ISO 8601 time."),
+    order: Literal["newest", "oldest"] = Query("newest", description="Sort by submission time."),
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db), current_user: dict = Depends(require_training_manager),
+):
+    from app.services import assessment_attempts as svc
+    from app.services.training_service import _get_training_or_404
+    return svc.list_submissions(db, _get_training_or_404(db, training_id), aid, status=status, search=search, from_date=from_date,
+                                to_date=to_date, order=order, page=page, page_size=page_size)
+
 
 @router.post("/{training_id}/assessments/{aid}/submissions/{sid}/grade", summary="Manual evaluation for written answers")
 def grade_assessment(training_id: UUID, aid: str, sid: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_training_manager)):

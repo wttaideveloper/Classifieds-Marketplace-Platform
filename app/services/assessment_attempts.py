@@ -140,3 +140,97 @@ def review(db, tid, aid, attempt_id, user):
                 pass_percent=saved.get("pass_percent") if data["can_review"] else None,
                 feedback=snap.get("feedback") if data["can_review"] else None, questions=questions)
     return data
+
+
+# ---------------------------------------------------------------- staff: every learner's attempts at one assessment
+
+def _utc_naive(value: str | None, field: str, *, end_of_range: bool = False):
+    """UTC ISO 8601 text -> naive UTC. `Z` or any offset is converted; no offset is read as UTC; a bare date covers the whole day."""
+    if value is None or not str(value).strip():
+        return None
+    text = str(value).strip().replace("Z", "+00:00").replace("z", "+00:00")
+    try:
+        if len(text) == 10:
+            day = datetime.fromisoformat(text)
+            return day.replace(hour=23, minute=59, second=59, microsecond=999999) if end_of_range else day
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise HTTPException(422, f"{field} must be an ISO 8601 UTC time such as 2026-10-26T07:22:00Z")
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo is not None else parsed
+
+
+def _like(text: str) -> str:
+    return "%" + text.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def list_submissions(db, training, aid, *, status="all", search=None, from_date=None, to_date=None, order="newest", page=1, page_size=20):
+    """Staff view: one row per attempt, any learner. Paginated in SQL; the name comes from the learner's enrolment."""
+    from sqlalchemy import func, or_
+
+    from app.models.training_model import TrainingEnrolment
+    from app.repository.query_utils import build_pagination_meta
+
+    assessment = next((a for a in training.assessments or [] if str(a.get("id")) == str(aid)), None)
+    if assessment is None:
+        raise HTTPException(404, "Assessment not found")
+    start, end = _utc_naive(from_date, "from_date"), _utc_naive(to_date, "to_date", end_of_range=True)
+    if start and end and start > end:
+        raise HTTPException(422, "from_date is after to_date")
+
+    S = TrainingAssessmentSubmission
+    names = (db.query(func.lower(TrainingEnrolment.participant_email).label("email"), func.max(TrainingEnrolment.participant_name).label("name"))
+             .filter(TrainingEnrolment.training_id == training.id).group_by(func.lower(TrainingEnrolment.participant_email)).subquery())
+    state = func.coalesce(S.review_snapshot["status"].as_string(), "pending")
+    base = (db.query(S, names.c.name).outerjoin(names, names.c.email == func.lower(S.participant_email))
+            .filter(S.training_id == training.id, S.assessment_id == str(aid)))
+    if search and search.strip():
+        pattern = _like(search)
+        base = base.filter(or_(names.c.name.ilike(pattern, escape="\\"), S.participant_email.ilike(pattern, escape="\\")))
+    if start:
+        base = base.filter(S.submitted_at >= start)
+    if end:
+        base = base.filter(S.submitted_at <= end)
+
+    evaluated = base.filter(state == "evaluated").count()
+    everything = base.count()
+    counts = {"all": everything, "pending": everything - evaluated, "evaluated": evaluated}
+
+    query = base
+    if status == "evaluated":
+        query = query.filter(state == "evaluated")
+    elif status == "pending":
+        query = query.filter(state != "evaluated")
+    total = counts[status]
+    newest = order != "oldest"
+    query = query.order_by(S.submitted_at.desc() if newest else S.submitted_at.asc(), S.id.desc() if newest else S.id.asc())
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    ordinals = {}
+    unnumbered = {r.participant_email for r, _ in rows if not (r.review_snapshot or {}).get("attempt_number")}
+    if unnumbered:
+        seen = {}
+        for r in (db.query(S).filter(S.training_id == training.id, S.assessment_id == str(aid), S.participant_email.in_(unnumbered))
+                  .order_by(S.submitted_at.asc(), S.id.asc()).all()):
+            seen[r.participant_email] = seen.get(r.participant_email, 0) + 1
+            ordinals[r.id] = seen[r.participant_email]
+
+    items = []
+    for row, name in rows:
+        snap = row.review_snapshot or {}
+        legacy = not snap
+        state_text = "evaluated" if snap.get("status") == "evaluated" else "pending"
+        total_points = snap.get("total_points")
+        try:
+            score = int(row.score) if not legacy and row.score is not None else None
+        except (TypeError, ValueError):
+            score = None
+        items.append({
+            "submission_id": str(row.id), "attempt_id": str(row.id), "learner_name": name, "learner_email": row.participant_email,
+            "attempt_number": snap.get("attempt_number") or ordinals.get(row.id), "status": state_text,
+            "needs_manual_grading": state_text == "pending", "score": score, "total_points": total_points,
+            "score_percent": int(score * 100 / total_points) if score is not None and total_points else None,
+            "passed": row.passed if state_text == "evaluated" and score is not None else None,
+            "submitted_at": row.submitted_at, "is_legacy": legacy,
+        })
+    return {"assessment_id": str(aid), "assessment_title": assessment.get("title"), "items": items,
+            "pagination": build_pagination_meta(total, page, page_size), "status_counts": counts}
