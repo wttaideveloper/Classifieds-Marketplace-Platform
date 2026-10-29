@@ -8,6 +8,8 @@ from app.schemas.common_schema import PaginatedResponse
 
 ConversationStatus = Literal["open", "closed", "archived"]
 ConversationType = Literal["standard", "preview", "booking", "group"]
+# What the inbox list says: every one-to-one chat (standard, preview or booking) is "direct". `conversation_subtype` keeps the stored type.
+InboxConversationType = Literal["direct", "group", "standard", "preview", "booking"]
 # What POST /conversations may create. A group is created with POST /groups (verified providers, consent, audit).
 ConversationCreateType = Literal["standard", "preview", "booking"]
 ParticipantRole = Literal["customer", "provider", "admin"]
@@ -111,10 +113,12 @@ class ConversationResponse(BaseModel):
 
 
 class ConversationLastMessageSummary(BaseModel):
-    """Minimal last-message fields for conversation list read receipts."""
+    """The last message of an inbox row: who sent it, a snippet, and (1:1 only) who has read it."""
 
-    sender_id: UUID
-    read_by: list[UUID] = Field(default_factory=list)
+    sender_id: UUID | None = Field(None, description="Who sent it. null for a system line of a group (\"Priya joined\").")
+    sender_name: str | None = Field(None, description="Display name for the inbox (\"Name: message\"). In a group it is the name this viewer is allowed to see. null for a system line or when it cannot be resolved. Never an email address.")
+    preview: str | None = Field(None, description="The same text as `last_message_preview`.")
+    read_by: list[UUID] | None = Field(default_factory=list, description="1:1: the people who have read it. null for a group (use `GET /groups/{id}/messages/{mid}/read-status`).")
 
 
 class ConversationListItemResponse(BaseModel):
@@ -122,7 +126,8 @@ class ConversationListItemResponse(BaseModel):
 
     id: UUID
     status: ConversationStatus
-    conversation_type: ConversationType
+    conversation_type: InboxConversationType = Field(..., description='In the inbox (`GET /conversations`): "direct" for every one-to-one chat, "group" for a group. The provider list still returns the stored type.')
+    conversation_subtype: str | None = Field(None, description='Inbox only: the stored type ("standard", "preview", "booking" or "group").')
     group_kind: Literal["care", "program"] | None = Field(None, description="Set for a group (conversation_type = group).")
     subject: str | None = None
     last_message_at: datetime | None = None
@@ -153,6 +158,9 @@ class ConversationListItemResponse(BaseModel):
     )
     archived_at: datetime | None = Field(None, description="When the authenticated user archived it, if they did.")
     updated_at: datetime
+    member_count: int | None = Field(None, description="Groups only: active members. null for a 1:1 chat.")
+    can_post: bool | None = Field(None, description="Groups only: whether the caller can post now (false when the group is closed, muted or limited to providers). null for a 1:1 chat.")
+    visibility_notice: str | None = Field(None, description="Groups only: the notice about who can see the group. null for a 1:1 chat.")
 
 
 _PROVIDER_CONVERSATION_LIST_ITEM_EXAMPLE = {

@@ -223,13 +223,14 @@ def get_user_conversations(
         if status:
             query = query.filter(Conversation.status == status)
     if search:
-        query = apply_ilike_search(
-            query,
-            [Conversation.subject, Conversation.last_message_preview],
-            search,
-        )
+        # a group is found by its name only: its stored last-message text may be a message a member later retracted
+        by_subject = apply_ilike_search(db.query(Conversation.id), [Conversation.subject], search).subquery()
+        by_preview = apply_ilike_search(db.query(Conversation.id), [Conversation.last_message_preview], search).subquery()
+        query = query.filter(or_(Conversation.id.in_(db.query(by_subject.c.id)),
+                                 and_(Conversation.conversation_type != "group", Conversation.id.in_(db.query(by_preview.c.id)))))
 
-    query = query.order_by(Conversation.updated_at.desc())
+    # latest activity first; a chat with no message yet goes last
+    query = query.order_by(Conversation.last_message_at.desc().nullslast(), Conversation.updated_at.desc())
     return paginate_query(query, page, page_size)
 
 
@@ -608,11 +609,11 @@ def search_conversations(
     if exclude_groups:
         query = query.filter(Conversation.conversation_type != "group")
     query = apply_soft_delete_filter(query, Conversation, False)
-    query = apply_ilike_search(
-        query,
-        [Conversation.subject, Conversation.last_message_preview],
-        search,
-    )
+    # a group is found by its name only: its stored last-message text may be a message a member later retracted
+    by_subject = apply_ilike_search(db.query(Conversation.id), [Conversation.subject], search).subquery()
+    by_preview = apply_ilike_search(db.query(Conversation.id), [Conversation.last_message_preview], search).subquery()
+    query = query.filter(or_(Conversation.id.in_(db.query(by_subject.c.id)),
+                             and_(Conversation.conversation_type != "group", Conversation.id.in_(db.query(by_preview.c.id)))))
 
     if provider_id:
         query = query.filter(Conversation.assigned_provider_id == provider_id)

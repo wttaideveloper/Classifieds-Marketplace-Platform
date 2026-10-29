@@ -629,13 +629,13 @@ def test_repeated_revocation_is_idempotent_and_the_list_excludes_revoked_records
 # groups alongside the existing 1:1 chat
 # =============================================================================================================
 
-def test_a_patients_normal_inbox_leaves_groups_to_the_groups_tab(world, care):
+def test_a_patients_inbox_includes_their_groups_and_the_groups_tab_still_works(world, care):
     p = world.people
 
     inbox = world.as_user(p.priya).get("/api/v1/conversations/").json()["items"]
     tab = world.as_user(p.priya).get(API).json()["items"]
 
-    assert inbox == [] and [g["id"] for g in tab] == [care["id"]]
+    assert [(i["id"], i["conversation_type"]) for i in inbox] == [(care["id"], "group")] and [g["id"] for g in tab] == [care["id"]]
 
 
 def test_a_provider_has_one_inbox_with_groups_labelled(world, care):

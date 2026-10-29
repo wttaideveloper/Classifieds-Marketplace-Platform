@@ -138,6 +138,9 @@ def _validate_references(db: Session, enterprise_id: UUID | None, location_id: U
 def _auto_meeting_link(delivery_mode: str | None, provider: str | None, existing: str | None) -> str | None:
     if existing:
         return existing
+    from app.services.meeting_service import placeholders_allowed
+    if not placeholders_allowed(provider):
+        return existing         # a real provider is set up: the link is created by the meeting service, never invented
     if delivery_mode in ("online", "hybrid") and provider:
         import uuid as _u, random, string
         p = (provider or "").lower()
@@ -827,6 +830,8 @@ def update_event_service(db: Session, event_id: UUID, update_data, current_user:
             notify_schedule_change(db, updated, changes)
         except Exception:
             pass
+    from app.services.meeting_service import on_event_updated
+    on_event_updated(db, updated, set(changes))
     return EventResponse.model_validate(map_event_write(updated))
 
 
@@ -835,6 +840,8 @@ def delete_event_service(db: Session, event_id: UUID, current_user: dict = None)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     _log_audit(db, event.id, "delete", {"status": event.status}, {"is_deleted": True}, changed_by=_actor_id(current_user), commit=False)
+    from app.services.meeting_service import on_event_deleted
+    on_event_deleted(db, event)            # deletes the generated meeting at the provider; a pasted link is left alone
     return delete_event(db, event)
 
 
@@ -850,6 +857,9 @@ def duplicate_event_service(db: Session, event_id: UUID, current_user: dict = No
     payload = {c.key: getattr(event, c.key) for c in event.__table__.columns if c.key not in ("id", "created_at", "updated_at")}
     payload["status"] = "draft"
     payload["is_deleted"] = False
+    from app.services.meeting_service import is_generated_link
+    if is_generated_link(db, event):
+        payload["meeting_link"] = None     # the copy must not share the original's generated meeting
     # The clone is a different Event: it gets its own default ticket id (only if the source offered one).
     had_default = payload.pop("default_ticket_type_id", None) is not None
     if had_default and _may_get_default_ticket(
@@ -967,6 +977,8 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
             notify_event_cancelled(db, event, previous)
         except Exception:
             pass
+    from app.services.meeting_service import on_event_status
+    on_event_status(db, event, previous, new_status)
     return EventResponse.model_validate(map_event_write(event))
 
 
@@ -1704,6 +1716,8 @@ def update_session_service(db: Session, event_id: UUID, session_id: str, payload
             db.commit()
             db.refresh(event)
             # return persisted version, not in-memory stale reference
+            from app.services.meeting_service import on_event_session_changed
+            on_event_session_changed(db, event, session_id)          # moves the session's meeting if it has one
             for updated in event.sessions:
                 if updated.get("id") == session_id:
                     return updated
@@ -1723,6 +1737,8 @@ def delete_session_service(db: Session, event_id: UUID, session_id: str):
     flag_modified(event, "sessions")
     db.commit()
     db.refresh(event)
+    from app.services.meeting_service import on_event_session_changed
+    on_event_session_changed(db, event, session_id, deleted=True)       # deletes the session's meeting at the provider
     return {"message": "Session deleted"}
 
 

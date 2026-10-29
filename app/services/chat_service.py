@@ -303,6 +303,52 @@ def create_conversation_service(
     )
 
 
+def _apply_inbox_fields(db: Session, items: list, rows: list[dict], current_user: dict | None, access_token: str | None, participants: dict) -> None:
+    """Make every row of the one inbox look the same: 1:1 chats and groups. Adds `sender_name` and `preview` to each last message, and for a
+    group replaces the generic fields with the group's own rules: what the caller is allowed to see (messages from before they joined, retracted
+    or removed ones), their unread count, the name they may see for the sender, and `member_count`, `can_post` and `visibility_notice`."""
+    from sqlalchemy import func
+
+    from app.services import group_chat_common as common
+    from app.services import group_chat_service as groups
+
+    group_ids = [c.id for c in items if c.conversation_type == "group"]
+    member_counts = dict(
+        db.query(ConversationParticipant.conversation_id, func.count(ConversationParticipant.id))
+        .filter(ConversationParticipant.conversation_id.in_(group_ids), ConversationParticipant.membership_status == "active")
+        .group_by(ConversationParticipant.conversation_id).all()
+    ) if group_ids else {}
+    senders = {r["last_message"]["sender_id"] for c, r in zip(items, rows) if c.conversation_type != "group" and r.get("last_message") and r["last_message"].get("sender_id")}
+    names = chat_user_names.resolve_display_names(
+        senders, tenant_ids=[c.tenant_id for c in items], current_user=current_user, access_token=access_token, db=db) if senders else {}
+    for conversation, row in zip(items, rows):
+        row["conversation_subtype"] = row["conversation_type"]
+        row["conversation_type"] = "group" if conversation.conversation_type == "group" else "direct"
+        if conversation.conversation_type != "group":
+            last = row.get("last_message")
+            if last is not None:
+                last["sender_name"], last["preview"] = names.get(str(last["sender_id"])), row.get("last_message_preview")
+            continue
+        member = participants.get(conversation.id)
+        if member is None:
+            continue
+        newest = groups._last_visible_message(db, conversation, member)
+        preview = chat_repo.message_list_preview(newest) if newest else None
+        row["last_message_at"], row["last_message_preview"] = (newest.created_at if newest else None), preview
+        if newest is None:
+            row["last_message"] = None
+        elif newest.message_type == "system":
+            row["last_message"] = {"sender_id": None, "sender_name": None, "preview": preview, "read_by": None}
+        else:
+            full = common.resolve_names(db, conversation, [newest.sender_id], current_user)
+            author = common.get_member(db, conversation.id, newest.sender_id)
+            name = common.name_for_viewer(conversation, member, author, full) if author is not None else full.get(str(newest.sender_id))
+            row["last_message"] = {"sender_id": newest.sender_id, "sender_name": name, "preview": preview, "read_by": None}
+        count = member_counts.get(conversation.id, 0)
+        row.update(unread_count=groups._unread_count(db, conversation, member), assigned_provider_id=None, other_participant_user_id=None, customer_name=None,
+                   member_count=count, can_post=bool(groups.permissions_for(conversation, member)["can_post"]), visibility_notice=common.visibility_notice(count))
+
+
 def list_conversations_service(
     db: Session,
     current_user: dict,
@@ -317,7 +363,6 @@ def list_conversations_service(
     chat_user_names.remember_display_name(db, current_user)
     items, total = chat_repo.get_user_conversations(
         db, user_id, status=status_filter, search=search, page=page, page_size=page_size,
-        exclude_groups=_is_patient(current_user),
     )
     item_ids = [item.id for item in items]
     latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
@@ -327,22 +372,22 @@ def list_conversations_service(
     participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
     unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
     customer_names = _customer_names(db, items, current_user, access_token)
+    rows = [
+        _map_conversation_list_item(
+            db,
+            item,
+            user_id,
+            latest_messages=latest_messages,
+            last_message_read_by=last_message_read_by,
+            participants=participants,
+            unread_counts=unread_counts,
+            customer_names=customer_names,
+        )
+        for item in items
+    ]
+    _apply_inbox_fields(db, items, rows, current_user, access_token, participants)
     return ConversationPaginatedResponse(
-        items=[
-            ConversationListItemResponse.model_validate(
-                _map_conversation_list_item(
-                    db,
-                    item,
-                    user_id,
-                    latest_messages=latest_messages,
-                    last_message_read_by=last_message_read_by,
-                    participants=participants,
-                    unread_counts=unread_counts,
-                    customer_names=customer_names,
-                )
-            )
-            for item in items
-        ],
+        items=[ConversationListItemResponse.model_validate(row) for row in rows],
         pagination=build_pagination_meta(total, page, page_size),
     )
 
@@ -508,7 +553,6 @@ def search_conversations_service(
     chat_user_names.remember_display_name(db, current_user)
     items, total = chat_repo.search_conversations(
         db, user_id, search=search, provider_id=provider_id, page=page, page_size=page_size,
-        exclude_groups=_is_patient(current_user),
     )
     item_ids = [item.id for item in items]
     latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
@@ -518,22 +562,16 @@ def search_conversations_service(
     participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
     unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
     customer_names = _customer_names(db, items, current_user, access_token)
+    rows = [
+        _map_conversation_list_item(
+            db, item, user_id, latest_messages=latest_messages, last_message_read_by=last_message_read_by,
+            participants=participants, unread_counts=unread_counts, customer_names=customer_names,
+        )
+        for item in items
+    ]
+    _apply_inbox_fields(db, items, rows, current_user, access_token, participants)
     return ConversationPaginatedResponse(
-        items=[
-            ConversationListItemResponse.model_validate(
-                _map_conversation_list_item(
-                    db,
-                    item,
-                    user_id,
-                    latest_messages=latest_messages,
-                    last_message_read_by=last_message_read_by,
-                    participants=participants,
-                    unread_counts=unread_counts,
-                    customer_names=customer_names,
-                )
-            )
-            for item in items
-        ],
+        items=[ConversationListItemResponse.model_validate(row) for row in rows],
         pagination=build_pagination_meta(total, page, page_size),
     )
 

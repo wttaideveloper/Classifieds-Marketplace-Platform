@@ -185,6 +185,29 @@ class Settings(BaseSettings):
     REFUND_SLA_HOURS: int = 72
     # A timed quiz that is auto-submitted when the countdown ends reaches the server a little late; this much lateness is accepted.
     ASSESSMENT_SUBMIT_GRACE_SECONDS: int = 60
+
+    # --- Virtual meeting providers (docs/meetings-api.md). Each business connects its own account over OAuth; these identify OUR app
+    # to the provider. A provider with no client id is "not configured" and cannot be connected. The Google client here is for
+    # Calendar / Meet and must be a different OAuth client from the sign-in one (GOOGLE_CLIENT_ID).
+    ZOOM_CLIENT_ID: str = ""
+    ZOOM_CLIENT_SECRET: str = ""
+    GOOGLE_MEET_CLIENT_ID: str = ""
+    GOOGLE_MEET_CLIENT_SECRET: str = ""
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_CLIENT_SECRET: str = ""
+    MICROSOFT_TENANT: str = "common"
+    # Key that encrypts stored provider tokens (any long random text). Falls back to a key derived from SECRET_KEY, but set its own
+    # so that rotating SECRET_KEY does not make every connection unreadable.
+    MEETING_TOKEN_ENCRYPTION_KEY: str = ""
+    # Public base of THIS API, used to build the OAuth redirect address registered at each provider
+    # (<base>/api/v1/meetings/oauth/callback/<provider>). Empty = PUBLIC_API_BASE_URL, then the request's own address.
+    MEETING_OAUTH_REDIRECT_BASE: str = ""
+    # Minutes before the start from which the Join button is active for a customer.
+    MEETING_JOIN_OPENS_MINUTES_BEFORE: int = 15
+    MEETING_GENERATION_MAX_ATTEMPTS: int = 5
+    MEETING_PROVIDER_TIMEOUT_SECONDS: int = 20
+    MEETING_JOBS_ENABLED: bool | None = None
+    MEETING_JOBS_INTERVAL_SECONDS: int = 600
     # Platform commission and gateway fee estimate used at settlement (a merchant's own commission overrides it).
     PLATFORM_COMMISSION_PERCENT: float = 10.0
     GATEWAY_FEE_PERCENT: float = 2.0

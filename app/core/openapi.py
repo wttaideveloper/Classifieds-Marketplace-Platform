@@ -229,6 +229,16 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "(approve / request changes / reject, with a reason) and manages categories."
         ),
     },
+    {
+        "name": "Virtual Meetings",
+        "description": (
+            "Zoom, Google Meet and Microsoft Teams links for online events. The platform creates and shares the link; it does not host the call. "
+            "**Super Admin:** `/meetings/admin/providers` switches a provider on or off. "
+            "**Enterprise Admin:** `/meetings/providers` connects a provider over OAuth, `/meetings/settings` sets the default and the automatic-link switch. "
+            "**Business (Admin / Provider):** `/meetings/events/{id}` chooses the provider, pastes a link, generates or deletes the meeting. "
+            "**Customer:** `GET /meetings/my/events/{id}` returns the link for an event they registered for."
+        ),
+    },
 ]
 
 SWAGGER_UI_PARAMETERS: dict = {

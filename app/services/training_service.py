@@ -274,6 +274,8 @@ def update_training_service(db: Session, tid: UUID, data, current_user: dict | N
 def delete_training_service(db: Session, tid: UUID):
     obj = get_training_by_id(db, tid)
     if not obj: raise HTTPException(status_code=404, detail="Training not found")
+    from app.services.meeting_service import on_training_deleted
+    on_training_deleted(db, obj)                       # deletes the generated meetings of its live sessions at the provider
     return delete_training(db, obj)
 
 def duplicate_training_service(db: Session, tid: UUID):
@@ -364,6 +366,8 @@ def update_training_status_service(db: Session, tid: UUID, st: str, current_user
             training_notifications.notify_new_training(obj, exclude_user_id=(current_user or {}).get("id"), access_token=access_token)
         except Exception:
             pass
+    from app.services.meeting_service import on_training_status
+    on_training_status(db, obj, previous_status, st)       # creates the live sessions' meetings on publish, deletes them when the training is withdrawn
     return TrainingResponse.model_validate(map_training_write(obj))
 
 
@@ -1139,6 +1143,9 @@ def create_live_session_service(db: Session, tid: UUID, data):
     _get_training_or_404(db, tid)
     obj = TrainingLiveSession(training_id=tid, title=data.title, description=data.description, scheduled_at=data.scheduled_at, duration_minutes=str(data.duration_minutes), meeting_link=data.meeting_link, meeting_provider=data.meeting_provider)
     db.add(obj); db.commit(); db.refresh(obj)
+    from app.services.meeting_service import on_training_session_created
+    on_training_session_created(db, _get_training_or_404(db, tid), obj)       # the platform creates the meeting when the training is published and automatic links are on
+    db.refresh(obj)
     return {"id": str(obj.id), "title": obj.title, "scheduled_at": obj.scheduled_at.isoformat(), "duration_minutes": int(obj.duration_minutes) if obj.duration_minutes else None, "meeting_link": obj.meeting_link, "meeting_provider": obj.meeting_provider, "status": obj.status, "recording_url": obj.recording_url}
 
 def get_live_sessions_service(db: Session, tid: UUID):

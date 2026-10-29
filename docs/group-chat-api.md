@@ -653,3 +653,37 @@ Errors look like `{"detail": "message"}`.
 1. Run the repository's full migration deployment command: `alembic upgrade heads`. The group-chat migration is `e5b2c7a9d1f3` (after `b6d1f3a8c2e4` and `d3a8f1c6e9b2`); `b3e7c1a9d5f4` follows it. The group migration adds the group columns and new tables without changing existing chats (every current participant becomes `active`).
 2. Add the verified providers (section 9) and set the settings you need (section 10).
 3. Set `GROUP_GRIEVANCE_OFFICER_*` and the retention period once legal has confirmed them.
+
+## 14. One inbox: 1:1 chats and groups in one list
+
+`GET /api/v1/conversations/` (the existing inbox, also `?status=archived`, `?search=`, `GET /conversations/archived`) returns **direct chats and the groups the caller has accepted** in the same `items` array, in the same shape. This now includes patients: it used to leave their groups to the Groups tab (`GET /groups` still works). Messages stay separate: a direct chat uses `/conversations/{id}/messages`, a group uses `/groups/{id}/messages` (the generic endpoint answers a group with 409).
+
+```json
+{
+  "items": [
+    { "id": "a1b2…", "status": "open", "conversation_type": "direct", "conversation_subtype": "standard", "subject": "Dr. James",
+      "last_message_at": "2026-10-29T10:15:00", "last_message_preview": "See you tomorrow",
+      "last_message": { "sender_id": "1111…", "sender_name": "Dr. James", "preview": "See you tomorrow", "read_by": [] },
+      "unread_count": 2, "assigned_provider_id": "2222…", "other_participant_user_id": "2222…", "is_archived": false, "archived_at": null,
+      "updated_at": "2026-10-29T10:15:00", "member_count": null, "can_post": null, "visibility_notice": null },
+    { "id": "46fc…", "status": "open", "conversation_type": "group", "conversation_subtype": "group", "group_kind": "care", "subject": "groupchat3",
+      "last_message_at": "2026-10-27T06:31:40", "last_message_preview": "fsdgsg",
+      "last_message": { "sender_id": "3c11…", "sender_name": "enzo provider", "preview": "fsdgsg", "read_by": null },
+      "unread_count": 23, "assigned_provider_id": null, "other_participant_user_id": null, "is_archived": false, "archived_at": null,
+      "updated_at": "2026-10-27T06:31:40", "member_count": 8, "can_post": false, "visibility_notice": "…" }
+  ],
+  "pagination": { "total": 2, "page": 1, "page_size": 20, "total_pages": 1 }
+}
+```
+
+- **`conversation_type`** is exactly `"direct"` (every one-to-one chat, whatever its stored type) or `"group"`. `conversation_subtype` keeps the stored type (`standard`, `preview`, `booking`, `group`). The provider list `GET /conversations/provider` is unchanged and still returns the stored type.
+- **Order:** newest `last_message_at` first, then the most recently updated; a chat with no message yet goes last.
+- **Only accepted groups.** An invitation not yet accepted, a group the person left, or one they were removed from is not listed. Pending invitations stay on `GET /groups/invitations`.
+- **A group row follows the group's own privacy rules,** the same as `GET /groups`:
+  - the last message is the newest one the caller may see: nothing from before they joined, and a retracted or admin-removed message is skipped, never shown;
+  - a system line ("Priya joined") has `sender_id: null` and `sender_name: null`;
+  - `sender_name` is the name this viewer is allowed to see for that person (in a program group a patient sees another patient's display name, not their real name);
+  - `unread_count` ignores the caller's own messages, hidden messages, system lines and what was said before they joined;
+  - `last_message.read_by` is `null` (use the read-status endpoint), `member_count`, `can_post` (false when the group is closed, the caller is muted, or only providers may post) and `visibility_notice` are set. For a direct chat those three are `null`.
+- **Search** finds a group by its name only (never by its last message text, which could be a retracted message), and a direct chat by name or last message.
+- `last_message.sender_name` for a direct chat is the sender's display name, never an email address. It is `null` when it cannot be resolved.

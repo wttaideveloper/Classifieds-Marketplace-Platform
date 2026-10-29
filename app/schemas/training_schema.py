@@ -1196,7 +1196,7 @@ class TrainingLiveSessionCreate(BaseModel):
     description: str | None = None
     scheduled_at: datetime = Field(..., description="Scheduled date/time")
     duration_minutes: int = Field(..., description="Duration in minutes")
-    meeting_link: str = Field(..., description="Meeting link (Zoom/Teams URL)")
+    meeting_link: str | None = Field(None, description="Meeting link (Zoom/Teams URL). Optional: leave it out to have the platform create the meeting (see docs/meetings-api.md), or paste a link later.")
     meeting_provider: str = Field("zoom", description="zoom|teams|meet|other")
 
 
@@ -1205,8 +1205,8 @@ class TrainingLiveSessionResponse(BaseModel):
     title: str
     scheduled_at: str
     duration_minutes: int
-    meeting_link: str
-    meeting_provider: str
+    meeting_link: str | None = None
+    meeting_provider: str | None = None
     status: str = "scheduled"
     recording_url: str | None = None
 

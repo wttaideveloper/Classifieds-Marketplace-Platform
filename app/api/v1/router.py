@@ -63,6 +63,9 @@ _safe_include("app.api.v1.endpoints.media", prefix="/media", tags=["Media"])
 # CMS — Blogs
 _safe_include("app.api.v1.endpoints.blog", prefix="/cms/blogs", tags=["CMS — Blogs"])
 
+# Virtual meeting providers (Zoom, Google Meet, Microsoft Teams)
+_safe_include("app.api.v1.endpoints.meeting", prefix="/meetings", tags=["Virtual Meetings"])
+
 # Payments, multi-currency, tax, invoices, refunds and merchant settlement
 _safe_include("app.api.v1.endpoints.currency", prefix="/currencies", tags=["Currency"])
 _safe_include("app.api.v1.endpoints.tax", prefix="/tax", tags=["Tax"])
