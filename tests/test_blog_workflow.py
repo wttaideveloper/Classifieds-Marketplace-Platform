@@ -312,7 +312,7 @@ def test_a_super_admin_can_publish_a_merchants_draft_directly_and_the_author_is_
     done = world.as_user(world.people.root).post(f"{API}/admin/posts/{post['id']}/publish")
 
     assert done.status_code == 200 and done.json()["status"] == "published"
-    assert len(notices_of(world, "blog_post_approved")) == 1
+    assert len(notices_of(world, "blog_post_published")) == 1 and not notices_of(world, "blog_post_approved")
 
 
 # --- editing a live post ---------------------------------------------------------------------------------------------------

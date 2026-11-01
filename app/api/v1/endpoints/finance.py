@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,8 @@ from app.models.payment_model import FinanceAuditLog, Invoice, Payment, Refund
 from app.schemas.settlement_schema import (
     AuditEntryResponse, AuditListResponse, ReconcileRequest, ReconItemResponse, ReconRunListResponse, ReconRunResponse, ResolveBody,
 )
-from app.services import finance_audit, payment_export, payment_jobs, reconciliation_service as recon
+from app.schemas.payment_report_schema import GatewayStatus
+from app.services import finance_audit, payment_export, payment_jobs, payment_overview, reconciliation_service as recon
 
 router = APIRouter(tags=["Finance"])
 
@@ -37,6 +38,14 @@ def audit_log(
     total = query.count()
     rows = query.order_by(FinanceAuditLog.created_at.desc(), FinanceAuditLog.id).offset((page - 1) * page_size).limit(page_size).all()
     return AuditListResponse(items=[AuditEntryResponse.model_validate(r) for r in rows], total=total, page=page, page_size=page_size)
+
+
+@router.get("/gateway-status", response_model=GatewayStatus, summary="Which payment gateway is active and whether it is set up (Super Admin, read-only)",
+            description="For the Payment Settings screen. Shows the active gateway, whether its keys and webhook secret are set, test or live mode (from the key prefix), the webhook address "
+                        "and events to register at the gateway, rate and tax set-up, and `warnings` to fix before real payments. It never returns a key or a secret. "
+                        "The gateway cannot be changed through the API (`editable: false`): it is set in the server's environment.")
+def gateway_status(request: Request, db: Session = Depends(get_db), _a: PayActor = Depends(require_super_admin)):
+    return payment_overview.gateway_status(db, str(request.base_url))
 
 
 @router.post("/reconciliation", response_model=ReconRunResponse, summary="Reconcile a gateway report (Super Admin)",

@@ -15,7 +15,8 @@ from sqlalchemy.pool import StaticPool
 from app.api.v1.endpoints import blog
 from app.core.catalog_access import CatalogAccess, get_catalog_access, get_optional_catalog_user
 from app.db.database import Base, get_db
-from app.models.blog_model import BlogCategory, BlogPost, BlogPostHistory
+from app.exceptions import problem as problem_errors
+from app.models.blog_model import BlogCategory, BlogFile, BlogForm, BlogFormAssignment, BlogFormVersion, BlogPost, BlogPostHistory
 from app.models.enterprise_model import Enterprise
 from app.models.notification_model import NotificationEventLog
 from app.services import blog_notifications
@@ -33,7 +34,7 @@ def person(name, role, tenant=None):
 def world(monkeypatch):
     monkeypatch.setattr(SQLiteTypeCompiler, "visit_JSONB", lambda *a, **kw: "JSON", raising=False)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[m.__table__ for m in (BlogCategory, BlogPost, BlogPostHistory, Enterprise, NotificationEventLog)])
+    Base.metadata.create_all(engine, tables=[m.__table__ for m in (BlogCategory, BlogPost, BlogPostHistory, BlogForm, BlogFormVersion, BlogFormAssignment, BlogFile, Enterprise, NotificationEventLog)])
     db = sessionmaker(bind=engine)()
 
     root = person("Platform Root", "super_admin")
@@ -67,6 +68,7 @@ def world(monkeypatch):
     monkeypatch.setattr("app.db.database.SessionLocal", session_factory)
 
     app = FastAPI()
+    problem_errors.install(app)
     app.include_router(blog.router, prefix=API)
     state = {"user": None}
 
@@ -115,8 +117,13 @@ BODY = "<p>Some <strong>useful</strong> words for readers.</p>"
 
 
 def draft(w, user, category, **extra):
-    body = {"kind": "blog", "title": "Five calm habits", "excerpt": "Small habits.", "content": BODY, "category_id": category["id"], **extra}
-    resp = w.as_user(user).post(f"{API}/my/posts", json=body)
+    """A draft with the default title; when the business already has a post with it, a number is added (titles are unique per business)."""
+    title = extra.pop("title", "Five calm habits")
+    for attempt in range(1, 20):
+        body = {"kind": "blog", "title": title if attempt == 1 else f"{title} {attempt}", "excerpt": "Small habits.", "content": BODY, "category_id": category["id"], **extra}
+        resp = w.as_user(user).post(f"{API}/my/posts", json=body)
+        if resp.status_code != 409:
+            break
     assert resp.status_code == 201, resp.text
     return resp.json()
 

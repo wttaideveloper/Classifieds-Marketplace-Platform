@@ -3,8 +3,11 @@ from typing import Literal
 from urllib.parse import urlparse
 from uuid import UUID
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.config import settings
 from app.schemas.common_schema import PaginatedResponse
 
 BlogKind = Literal["blog", "news"]
@@ -48,6 +51,51 @@ def _clean_tags(value):
     return tags
 
 
+def _web_or_path(value: str | None, *, allow_path: bool) -> str:
+    url = (value or "").strip()
+    parsed = urlparse(url)
+    if not url or len(url) > 2000 or url.startswith("//"):
+        raise ValueError("must be an address")
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        return url
+    if allow_path and parsed.scheme == "" and url.startswith("/"):
+        return url
+    raise ValueError("must be an http(s) address" + (" or a path on this site" if allow_path else ""))
+
+
+class ImageItem(BaseModel):
+    url: str = Field(..., description="Address of the picture; for an uploaded one, the `url` that POST /uploads returned")
+    alt: str | None = Field(None, max_length=200, description="Text for screen readers")
+    caption: str | None = Field(None, max_length=300)
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, value):
+        return _web_or_path(value, allow_path=True)
+
+
+class ReferenceLink(BaseModel):
+    url: str = Field(..., description="An http(s) address")
+    label: str | None = Field(None, max_length=150)
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, value):
+        return _web_or_path(value, allow_path=False)
+
+
+class DocumentItem(BaseModel):
+    url: str = Field(..., description="The `url` that POST /uploads returned for a document")
+    name: str | None = Field(None, max_length=255)
+    size: int | None = Field(None, ge=0)
+    content_type: str | None = Field(None, max_length=100)
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, value):
+        return _web_or_path(value, allow_path=True)
+
+
 class _PostFields(BaseModel):
     kind: BlogKind | None = Field(None, description="blog | news. Decides which list the post shows in")
     title: str | None = Field(None, max_length=TITLE_MAX)
@@ -57,6 +105,31 @@ class _PostFields(BaseModel):
     category_id: UUID | None = Field(None, description="An active category from GET /cms/blogs/categories")
     category: str | None = Field(None, max_length=100, description="Alternative to category_id: the name of an active category")
     tags: list[str] | None = Field(None, description="Optional, up to 10 short tags")
+    additional_images: list[ImageItem] | None = Field(None, description="More pictures for the post. Send the whole list; it replaces the old one")
+    reference_urls: list[ReferenceLink] | None = Field(None, description="Links to sources. Send the whole list")
+    supporting_documents: list[DocumentItem] | None = Field(None, description="Uploaded documents. Send the whole list")
+    custom_fields: dict[str, Any] | None = Field(None, description="Values of the form's custom fields, by field key. Only the keys sent are changed; send null or an empty value to clear one")
+
+    @field_validator("additional_images")
+    @classmethod
+    def _more_images(cls, value):
+        if value is not None and len(value) > settings.BLOG_MAX_ADDITIONAL_IMAGES:
+            raise ValueError(f"at most {settings.BLOG_MAX_ADDITIONAL_IMAGES} additional images")
+        return value
+
+    @field_validator("reference_urls")
+    @classmethod
+    def _more_links(cls, value):
+        if value is not None and len(value) > settings.BLOG_MAX_REFERENCE_URLS:
+            raise ValueError(f"at most {settings.BLOG_MAX_REFERENCE_URLS} reference links")
+        return value
+
+    @field_validator("supporting_documents")
+    @classmethod
+    def _more_documents(cls, value):
+        if value is not None and len(value) > settings.BLOG_MAX_DOCUMENTS:
+            raise ValueError(f"at most {settings.BLOG_MAX_DOCUMENTS} documents")
+        return value
 
     @field_validator("cover_image_url")
     @classmethod
@@ -81,6 +154,7 @@ class MerchantPostCreate(_PostFields):
 
 class MerchantPostUpdate(_PostFields):
     enterprise_id: UUID | None = None
+    base_version: int | None = Field(None, description="The `version` you loaded. If the post changed since, the answer is 409 VERSION_CONFLICT. The If-Match header does the same")
 
 
 class AdminPostCreate(_PostFields):
@@ -100,6 +174,7 @@ class AdminPostCreate(_PostFields):
 class AdminPostUpdate(_PostFields):
     slug: str | None = Field(None, max_length=255)
     author_name: str | None = Field(None, max_length=255)
+    base_version: int | None = Field(None, description="The `version` you loaded (or send If-Match)")
 
 
 class BlogStatusUpdate(BaseModel):
@@ -112,14 +187,17 @@ class ReviewRequest(BaseModel):
 
     action: ReviewAction
     reason: str | None = Field(None, max_length=500, description="Required for request_changes and reject; shown to the merchant")
+    base_version: int | None = Field(None, description="The `version` you reviewed (or send If-Match), so a decision is not made on a post that changed meanwhile")
 
 
 class ReasonRequest(BaseModel):
     reason: str | None = Field(None, max_length=500, description="Required when a Super Admin acts on a merchant's post")
+    base_version: int | None = None
 
 
 class PinRequest(BaseModel):
     pinned: bool = True
+    base_version: int | None = None
 
 
 class CategoryCreate(BaseModel):
@@ -179,11 +257,22 @@ class BlogListItemResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class PublicCustomField(BaseModel):
+    key: str
+    label: str
+    type: str
+    value: Any
+
+
 class BlogDetailResponse(BlogListItemResponse):
     content: str
     author_id: UUID | None = None
     created_by: str | None = None
     updated_by: str | None = None
+    additional_images: list[ImageItem] = Field(default_factory=list)
+    reference_urls: list[ReferenceLink] = Field(default_factory=list)
+    supporting_documents: list[DocumentItem] = Field(default_factory=list)
+    custom_fields: list[PublicCustomField] = Field(default_factory=list, description="Only the fields the form marks public, with their labels")
 
 
 class BlogPaginatedResponse(PaginatedResponse[BlogListItemResponse]):
@@ -200,6 +289,26 @@ class BlogLiveVersion(BaseModel):
     category: str | None = None
     category_id: UUID | None = None
     tags: list[str] | None = None
+    additional_images: list[ImageItem] = Field(default_factory=list)
+    reference_urls: list[ReferenceLink] = Field(default_factory=list)
+    supporting_documents: list[DocumentItem] = Field(default_factory=list)
+    custom_fields: dict[str, Any] = Field(default_factory=dict)
+
+
+class BlogFormRef(BaseModel):
+    """The form a post is written with. form_id is null and version 0 for the built-in Standard form."""
+    form_id: UUID | None = None
+    version: int = 0
+    name: str
+    mode: str
+    form_type: str
+    definition: dict[str, Any]
+
+
+class PendingRevisionInfo(BaseModel):
+    submitted_at: datetime | None = None
+    changed_fields: list[str] = Field(default_factory=list)
+    status: str = Field(..., description="The status the post is in because of the edit: pending_approval, changes_requested or rejected")
 
 
 class BlogManageItem(BlogListItemResponse):
@@ -209,7 +318,10 @@ class BlogManageItem(BlogListItemResponse):
     reviewer_note: str | None = Field(None, description="The Super Admin's reason (changes requested, rejected, or taken down)")
     reviewed_at: datetime | None = None
     submitted_at: datetime | None = None
-    actions: list[str] = Field(default_factory=list, description="What the caller may do with this post now: edit, submit, unpublish, delete, publish, review, pin, unpin")
+    actions: list[str] = Field(default_factory=list, description="What the caller may do with this post now: edit, submit, unpublish, delete, publish, review, pin, unpin, discard_changes")
+    version: int = Field(1, description="Goes up with every change to the post. Send it back as base_version or If-Match; the ETag header carries it too")
+    form_id: UUID | None = None
+    form_version: int | None = Field(None, description="The version of the form the post was written with; null for the built-in Standard form")
 
 
 class BlogManageDetail(BlogManageItem):
@@ -218,6 +330,12 @@ class BlogManageDetail(BlogManageItem):
     created_by: str | None = None
     updated_by: str | None = None
     live_version: BlogLiveVersion | None = Field(None, description="Only while an edit of a live post waits for approval; the top-level fields are then the edit")
+    pending_revision: PendingRevisionInfo | None = Field(None, description="Present while an edit of a live post is waiting or was sent back")
+    additional_images: list[ImageItem] = Field(default_factory=list)
+    reference_urls: list[ReferenceLink] = Field(default_factory=list)
+    supporting_documents: list[DocumentItem] = Field(default_factory=list)
+    custom_fields: dict[str, Any] = Field(default_factory=dict, description="Values by field key, for the form version below")
+    form: BlogFormRef | None = Field(None, description="The form (with its fields) this post is written with. A post that is not live follows the active form")
 
 
 class BlogManagePaginatedResponse(PaginatedResponse[BlogManageItem]):
@@ -235,9 +353,90 @@ class BlogHistoryEntry(BaseModel):
     actor_id: str | None = None
     actor_name: str | None = None
     actor_role: str | None = None
+    post_version: int | None = Field(None, description="The post's `version` after this change")
     created_at: datetime
 
 
 class BlogHistoryResponse(BaseModel):
     items: list[BlogHistoryEntry]
     total: int
+
+
+class BlogRevisionItem(BaseModel):
+    id: UUID
+    action: str
+    post_version: int | None = None
+    title: str | None = None
+    form_version: int | None = None
+    from_status: str | None = None
+    to_status: str | None = None
+    reason: str | None = None
+    actor_id: str | None = None
+    actor_name: str | None = None
+    actor_role: str | None = None
+    created_at: datetime
+
+
+class BlogRevisionList(BaseModel):
+    items: list[BlogRevisionItem]
+    total: int
+
+
+class BlogRevisionDetail(BlogRevisionItem):
+    snapshot: dict[str, Any] = Field(..., description="The content of the post after this change, in the shape of the post's own fields")
+
+
+class BlogPreviewResponse(BaseModel):
+    """How the post would look to a reader, plus whether it could be sent now."""
+    preview: bool = True
+    id: UUID | None = None
+    slug: str | None = None
+    status: str = "draft"
+    kind: BlogKind = "blog"
+    title: str = ""
+    excerpt: str | None = None
+    content: str = ""
+    cover_image_url: str | None = None
+    category: str | None = None
+    category_id: UUID | None = None
+    tags: list[str] = Field(default_factory=list)
+    author_name: str | None = None
+    author_type: BlogSource = "platform"
+    business_name: str | None = None
+    business_logo_url: str | None = None
+    additional_images: list[ImageItem] = Field(default_factory=list)
+    reference_urls: list[ReferenceLink] = Field(default_factory=list)
+    supporting_documents: list[DocumentItem] = Field(default_factory=list)
+    custom_fields: list[PublicCustomField] = Field(default_factory=list)
+    form: BlogFormRef | None = None
+    ready_to_submit: bool = Field(..., description="True when nothing required is missing")
+    problems: list[dict[str, Any]] = Field(default_factory=list, description="What is missing or wrong: {field, code, message}")
+
+
+class PreviewRequest(_PostFields):
+    """An unsaved post to preview. Nothing is stored."""
+    title: str | None = Field(None, max_length=TITLE_MAX)
+    enterprise_id: UUID | None = None
+
+
+class FileUploadResponse(BaseModel):
+    file_id: UUID
+    url: str = Field(..., description="Put this in cover_image_url, additional_images[].url or supporting_documents[].url")
+    name: str | None = None
+    size: int
+    content_type: str
+    purpose: Literal["cover_image", "image", "document"]
+    width: int | None = None
+    height: int | None = None
+    scan_status: str
+    created_at: datetime
+
+
+class UploadLimits(BaseModel):
+    image_max_mb: int
+    document_max_mb: int
+    image_types: list[str]
+    document_extensions: list[str]
+    max_additional_images: int
+    max_documents: int
+    max_reference_urls: int

@@ -144,6 +144,7 @@ How the tax is worked out: the customer's country and state decide which rules a
 
 Example rules for India: CGST 9 and SGST 9 with `condition: intra_state`, IGST 18 with `condition: inter_state`, all `country: IN`. **The rates in this system are whatever the Super Admin enters; nothing is pre-filled. Finance must confirm every rate before launch.**
 
+- **Tax class (products)**: a product's `tax_class` (for example `reduced`) now picks its tax rule. Create a rule whose `applies_to` is that class (case does not matter) and the product is taxed by it **instead of** the general rule (`all` or `product`). A class with no rule of its own falls back to the category rule, so nothing changes for products that have no class or whose class has no rule. `POST /tax/calculate` items and custom payment items accept an optional `tax_class` too. Each payment line returns the `tax_class` it was taxed with. There is no separate Tax Class API: the class name is just the `applies_to` of the rule, entered by the Super Admin.
 - **Exemption certificate**: once a Super Admin approves it, that customer pays no tax in that country (and state, if the certificate has one) until it expires or is revoked.
 - **Reverse charge**: for a business customer **abroad** (the merchant is in another country) with an **approved** GSTIN / VAT number, rules with `reverse_charge_allowed` charge nothing and the invoice says so.
 - A GSTIN is checked for its format and check character, a VAT number for its country's format. A number that passes is still `pending` until a Super Admin approves it, because a format check does not prove the business is registered (`TAX_ID_AUTO_APPROVE_VALID_FORMAT` changes that).
@@ -200,7 +201,30 @@ Commission is the platform's share of the **pre-tax** amount (the business's own
 
 ## 9. Reports and finance (`/payment-reports`, `/finance`)
 
-All reports take `date_from`, `date_to`, `format=json|csv`; a business sees its own figures, the Super Admin all (`tenant_id` narrows).
+### The Commerce overview
+
+`GET /payment-reports/overview` gives the dashboard numbers in one call (`date_from`, `date_to`, and `tenant_id` for the Super Admin; a business always sees its own). Money is in the base currency so currencies can be added up; leave the dates out for all time.
+
+```json
+{
+  "base_currency": "INR", "period": { "date_from": null, "date_to": null },
+  "payments": { "total": 40, "paid": 31, "waiting": 3, "failed": 4, "under_review": 1, "closed_unpaid": 1, "by_status": { "succeeded": 28, "partially_refunded": 2, "...": 0 },
+                "base_collected": "36580.00", "base_refunded": "1180.00", "base_net": "35400.00", "success_rate_percent": 77.5 },
+  "refunds": { "total": 5, "open": 2, "completed": 2, "failed": 0, "rejected": 1, "overdue": 1, "escalated": 1, "by_status": { "requested": 1, "completed": 2, "...": 0 },
+               "base_refunded": "1180.00", "base_open_amount": "800.00" },
+  "tax": { "base_collected": "5580.00", "base_refunded": "180.00", "base_net": "5400.00" },
+  "settlements": { "total": 3, "pending": 1, "paid": 2, "failed": 0, "on_hold": 0, "by_status": { "pending": 1, "paid": 2 },
+                   "by_currency": [ { "currency": "INR", "pending_net": "9484.00", "paid_net": "18000.00" } ], "awaiting_settlement": { "payments": 6, "base_amount": "7080.00" } },
+  "needs_attention": { "payments_under_review": 1, "payments_needing_reconciliation": 0, "refunds_overdue": 1, "refunds_failed": 0, "settlements_failed": 0,
+                       "settlements_on_hold": 0, "open_reconciliation_mismatches": 2 }
+}
+```
+
+`paid` counts succeeded, partially refunded and refunded payments. `waiting` is created, requires action, processing and authorized. `closed_unpaid` is cancelled and expired. `awaiting_settlement` is paid payments not in any settlement yet. `open_reconciliation_mismatches` is `null` for a business. `success_rate_percent` is `null` when there are no payments.
+
+### The reports
+
+All reports take `date_from`, `date_to`, `format=json|csv`; a business sees its own figures, the Super Admin all (`tenant_id` narrows). Every report response is typed in Swagger with a sample (`PaymentReportOut`, `RefundReportOut`, `SettlementReportOut`, `CurrencyReportOut`, `ExchangeRateReportOut`, `ReconciliationReportOut`, `TaxReportOut`). `format=csv` returns the same rows with `Content-Type: text/csv`. The JSON reports page with `page` and `page_size` (max 1000), and the `totals` cover every match, not just the page.
 
 | Report | Path |
 |---|---|
@@ -213,6 +237,8 @@ All reports take `date_from`, `date_to`, `format=json|csv`; a business sees its 
 | Reconciliation | `GET /payment-reports/reconciliation` (Super Admin) |
 
 Finance tools (Super Admin unless noted):
+
+- `GET /finance/gateway-status` is the read-only gateway status for the Payment Settings screen. It shows the active gateway (`test`, `razorpay` or `stripe`), whether each one is `configured` and in `test` or `live` mode (read from the key's prefix), whether the webhook secret is set, the webhook address and events to register at the gateway, the exchange-rate and tax set-up, the job and risk settings, and a `warnings` list of things to fix before real payments. It never returns a key or a secret. `editable` is always `false`: the gateway and its keys are set in the server's environment, and there is no API to change, test or assign them.
 
 - `POST /finance/reconciliation` sends the rows of the gateway's own report. Each is matched to our payment or refund and compared on currency, amount, status and fee. Differences (`missing_internal`, `missing_gateway`, `amount_mismatch`, `status_mismatch`, `fee_mismatch`, `currency_mismatch`, `duplicate`) are saved, listed with `GET /finance/reconciliation[/{id}]`, and resolved with a note.
 - `GET /finance/audit` is the audit log: who changed a tax rule, an exchange rate, a settlement setting, a refund decision, and when, with before and after. Entries cannot be edited or removed.
@@ -260,5 +286,6 @@ Webhook URL to give the gateway: `POST https://<api>/api/v1/payments/webhook/raz
 3. Event registrations create their order as `confirmed` today. To charge through this module, the registration flow has to create the order as `pending` and send the customer to `POST /payments`.
 4. Settlements are calculated here; the transfer to the merchant's bank is done by finance and recorded with `/settlements/{id}/pay`.
 5. Tax numbers (GSTIN, VAT) are checked for format only. Checking them against the GST portal or VIES is not connected.
-6. There is no rate limit on these endpoints yet; put one in front of `POST /payments` and the webhook at the gateway or proxy.
-7. Data residency: everything is stored in this system's database. If a rule requires financial data to stay in a country, host the database there.
+6. Central Payments covers product orders (`cart_order`), an existing event order (`event_order`) and `custom` payments. **Event and Training checkout, refunds and enrolments still use their own flows and do not create central payments**, so they do not appear in Commerce Transactions. Services have no booking or payment flow yet. Connecting Events and Trainings is a separate piece of work.
+7. There is no rate limit on these endpoints yet; put one in front of `POST /payments` and the webhook at the gateway or proxy.
+8. Data residency: everything is stored in this system's database. If a rule requires financial data to stay in a country, host the database there.

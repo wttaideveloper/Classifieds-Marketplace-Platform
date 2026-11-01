@@ -44,6 +44,7 @@ class TaxItemIn:
     category: str = "service"
     description: str = ""
     ref: str = ""
+    tax_class: str | None = None
 
 
 @dataclass
@@ -83,11 +84,16 @@ def rules_in_force(db: Session, country: str, at: datetime) -> list[TaxRule]:
     )
 
 
-def _applicable(rules: list[TaxRule], category: str, ctx: TaxContext) -> list[TaxRule]:
-    return [
-        r for r in rules
-        if (r.state is None or _same(r.state, ctx.customer_state)) and r.applies_to in ("all", category.lower()) and _fits_condition(r, ctx)
-    ]
+def _applicable(rules: list[TaxRule], category: str, ctx: TaxContext, tax_class: str | None = None) -> list[TaxRule]:
+    """The rules that tax one item. A tax class is the item's own more specific kind: when a rule exists for that class (applies_to equal to it)
+    those rules are used and the general ones (all, or the category) are not. Without such a rule the item is taxed by category as before."""
+    place = [r for r in rules if (r.state is None or _same(r.state, ctx.customer_state)) and _fits_condition(r, ctx)]
+    klass = (tax_class or "").strip().lower()
+    if klass:
+        specific = [r for r in place if (r.applies_to or "").lower() == klass]
+        if specific:
+            return specific
+    return [r for r in place if (r.applies_to or "").lower() in ("all", category.lower())]
 
 
 def calculate(db: Session, items: list[TaxItemIn], ctx: TaxContext) -> dict:
@@ -105,7 +111,7 @@ def calculate(db: Session, items: list[TaxItemIn], ctx: TaxContext) -> dict:
     for index, item in enumerate(items):
         ref = item.ref or f"line-{index + 1}"
         gross_or_net = quantize(to_decimal(item.unit_amount) * item.quantity, decimals)
-        chosen = [] if (exempt or seller_untaxed) else _applicable(rules, item.category, ctx)
+        chosen = [] if (exempt or seller_untaxed) else _applicable(rules, item.category, ctx, item.tax_class)
         charged = [r for r in chosen if not (reverse and r.reverse_charge_allowed)]
         reverse_charged = [r for r in chosen if reverse and r.reverse_charge_allowed]
         any_reverse = any_reverse or bool(reverse_charged)
@@ -137,7 +143,7 @@ def calculate(db: Session, items: list[TaxItemIn], ctx: TaxContext) -> dict:
                                                   "state": rule.state, "taxable_amount": Decimal(0), "tax_amount": Decimal(0)})
             row["taxable_amount"] += net
             row["tax_amount"] += amount
-        lines.append({"ref": ref, "description": item.description, "category": item.category, "quantity": item.quantity,
+        lines.append({"ref": ref, "description": item.description, "category": item.category, "tax_class": (item.tax_class or None), "quantity": item.quantity,
                       "unit_amount": quantize(to_decimal(item.unit_amount), decimals), "net_amount": net, "tax_amount": tax,
                       "gross_amount": net + tax, "taxes": taxes})
 

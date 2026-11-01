@@ -83,7 +83,7 @@ def build_pricing(db: Session, payable, billing: dict, charge_currency: str, pay
     country = (billing.get("country") or payable.country or "").upper()
     if not country:
         raise _err(422, "billing.country is required to work out the tax")
-    items = [tax_service.TaxItemIn(unit_amount=l.unit_amount, quantity=l.quantity, category=l.category, description=l.description, ref=f"line-{i + 1}")
+    items = [tax_service.TaxItemIn(unit_amount=l.unit_amount, quantity=l.quantity, category=l.category, description=l.description, ref=f"line-{i + 1}", tax_class=l.tax_class)
              for i, l in enumerate(payable.lines)]
     ctx = tax_service.build_context(
         db, currency=item_currency, customer_country=country, customer_state=billing.get("state") or payable.state, customer_tax_id=billing.get("tax_id"),
@@ -108,7 +108,7 @@ def build_pricing(db: Session, payable, billing: dict, charge_currency: str, pay
             row["taxable_amount"] += net_c
             row["tax_amount"] += amount_c
         lines.append({
-            "ref": line["ref"], "description": line["description"], "category": line["category"], "quantity": line["quantity"],
+            "ref": line["ref"], "description": line["description"], "category": line["category"], "tax_class": line.get("tax_class"), "quantity": line["quantity"],
             "unit_amount": line["unit_amount"], "net_amount": line["net_amount"], "tax_amount": line["tax_amount"], "gross_amount": line["gross_amount"],
             "charge_net_amount": net_c, "charge_tax_amount": tax_c, "charge_gross_amount": net_c + tax_c, "taxes": comps,
         })

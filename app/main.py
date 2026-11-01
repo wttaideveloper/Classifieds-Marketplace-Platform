@@ -140,6 +140,11 @@ async def notification_debug_status_middleware(request: Request, call_next):
     return response
 
 
+from app.exceptions import problem as _problem  # noqa: E402
+
+_problem.install(app)
+
+
 @app.exception_handler(CustomException)
 def custom_exception_handler(request, exc: CustomException):
     return JSONResponse(

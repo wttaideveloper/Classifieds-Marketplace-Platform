@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.payment_access import PayActor, get_pay_actor, require_merchant_or_admin, require_super_admin
 from app.db.database import get_db
+from app.schemas.payment_report_schema import TaxReportOut
 from app.schemas.tax_schema import (
     ExemptionCreate, ExemptionDecision, ExemptionListResponse, ExemptionResponse, MerchantTaxProfileBody, MerchantTaxProfileResponse,
     TaxCalcRequest, TaxCalcResponse, TaxHistoryResponse, TaxRuleBody, TaxRuleChange, TaxRuleListResponse, TaxRuleResponse,
@@ -73,7 +74,7 @@ def deactivate_tax_rule(request: Request, rule_id: UUID, reason: str | None = Qu
                          "breakdown by component (CGST / SGST / IGST / VAT ...), exemption and reverse charge.")
 def calculate_tax(payload: TaxCalcRequest = Body(...), db: Session = Depends(get_db), actor: PayActor = Depends(get_pay_actor)):
     currency_service.require_active_currency(db, payload.currency)
-    items = [svc.TaxItemIn(unit_amount=i.amount, quantity=i.quantity, category=i.category, description=i.description) for i in payload.items]
+    items = [svc.TaxItemIn(unit_amount=i.amount, quantity=i.quantity, category=i.category, description=i.description, tax_class=i.tax_class) for i in payload.items]
     ctx = svc.build_context(
         db, currency=payload.currency, customer_country=payload.customer.country, customer_state=payload.customer.state,
         customer_tax_id=payload.customer.tax_id, customer_is_business=payload.customer.is_business, tenant_id=payload.merchant_tenant_id,
@@ -96,7 +97,8 @@ def get_tax_history(
     return TaxHistoryResponse(items=[TaxTransactionResponse.model_validate(r) for r in rows], total=total, page=page, page_size=page_size)
 
 
-@router.get("/reports", summary="Tax report", description="FR-TAX-08. Tax collected, net of refunds, grouped by tax_type, country, state, name, month or day. `format=csv` downloads it.")
+@router.get("/reports", summary="Tax report", responses={200: {"model": TaxReportOut, "description": "Tax collected, net of refunds, grouped by `group_by`."}},
+            description="FR-TAX-08. Tax collected, net of refunds, grouped by tax_type, country, state, name, month or day. `format=csv` downloads it (Content-Type text/csv). A business sees its own, a Super Admin all (`tenant_id` narrows).")
 def get_tax_report(
     group_by: Literal["tax_type", "country", "state", "name", "month", "day"] = Query("tax_type"), tenant_id: UUID | None = Query(None, description="Super Admin only"),
     date_from: datetime | None = Query(None), date_to: datetime | None = Query(None), format: Literal["json", "csv"] = Query("json"),

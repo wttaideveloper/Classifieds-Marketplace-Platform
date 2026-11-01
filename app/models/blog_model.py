@@ -46,6 +46,13 @@ class BlogPost(Base):
     excerpt = Column(Text)                       # the short summary shown on the list card
     content = Column(Text, nullable=False)       # the body (formatted text)
     cover_image_url = Column(Text)
+    additional_images = Column(JSONB, default=list)        # [{url, alt, caption}]
+    reference_urls = Column(JSONB, default=list)           # [{url, label}]
+    supporting_documents = Column(JSONB, default=list)     # [{url, name, size, content_type}]
+    custom_values = Column(JSONB, default=dict)            # {field key: value}, checked against the form version below
+    form_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    form_version = Column(Integer, nullable=True)          # the version of the form the post was written with; null = the built-in standard form
+    version = Column(Integer, default=1, nullable=False)   # goes up with every change: the concurrent-edit check
     author_name = Column(String(255))
     author_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     business_name = Column(String(255))
@@ -104,4 +111,78 @@ class BlogPostHistory(Base):
     actor_id = Column(String(100))
     actor_name = Column(String(255))
     actor_role = Column(String(20))              # super_admin | merchant
+    post_version = Column(Integer)               # the post's version after this change
+    snapshot = Column(JSONB, nullable=True)      # the content of the post after this change (edits, approvals, publications)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class BlogForm(Base):
+    """A form Super Admin builds for blog and/or news posts. Edits go to `draft_definition`; publishing freezes them as a new version."""
+    __tablename__ = "cms_blog_forms"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(120), nullable=False)
+    name_key = Column(String(120), nullable=False, unique=True, index=True)
+    description = Column(Text)
+    form_type = Column(String(8), nullable=False, default="both")          # blog | news | both
+    mode = Column(String(12), nullable=False, default="standard")           # standard | configurable
+    scope = Column(String(10), nullable=False, default="global")            # global | selected
+    status = Column(String(10), nullable=False, default="draft", index=True)  # draft (never published) | published
+    is_active = Column(Boolean, nullable=False, default=False, index=True)
+    current_version = Column(Integer, nullable=False, default=0)            # the latest published version; 0 = none yet
+    draft_definition = Column(JSONB, nullable=False)
+    revision = Column(Integer, nullable=False, default=1)                    # goes up with every edit of the draft: the concurrent-edit check
+    has_unpublished_changes = Column(Boolean, nullable=False, default=True)
+    created_by = Column(String(100))
+    updated_by = Column(String(100))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BlogFormVersion(Base):
+    """One published version of a form. Never edited: posts keep the version they were written with."""
+    __tablename__ = "cms_blog_form_versions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    form_id = Column(UUID(as_uuid=True), ForeignKey("cms_blog_forms.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    name = Column(String(120), nullable=False)
+    form_type = Column(String(8), nullable=False)
+    mode = Column(String(12), nullable=False)
+    definition = Column(JSONB, nullable=False)
+    note = Column(String(500))
+    published_by = Column(String(100))
+    published_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (Index("uq_cms_blog_form_version", "form_id", "version", unique=True),)
+
+
+class BlogFormAssignment(Base):
+    """For a form with scope "selected": the businesses (by tenant) it is offered to."""
+    __tablename__ = "cms_blog_form_assignments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    form_id = Column(UUID(as_uuid=True), ForeignKey("cms_blog_forms.id"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (Index("uq_cms_blog_form_assignment", "form_id", "tenant_id", unique=True),)
+
+
+class BlogFile(Base):
+    """A file uploaded for a post: a cover or other image, or a supporting document."""
+    __tablename__ = "cms_blog_files"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    uploaded_by = Column(String(100), nullable=False)
+    purpose = Column(String(12), nullable=False)                           # cover_image | image | document
+    stored_name = Column(String(120), nullable=False, unique=True)
+    original_name = Column(String(255))
+    content_type = Column(String(100), nullable=False)
+    size = Column(Integer, nullable=False)
+    width = Column(Integer)
+    height = Column(Integer)
+    sha256 = Column(String(64))
+    scan_status = Column(String(12), nullable=False, default="skipped")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

@@ -208,6 +208,18 @@ class Settings(BaseSettings):
     MEETING_PROVIDER_TIMEOUT_SECONDS: int = 20
     MEETING_JOBS_ENABLED: bool | None = None
     MEETING_JOBS_INTERVAL_SECONDS: int = 600
+
+    # --- Blogs and news (docs/blogs-api.md)
+    BLOG_MAX_IMAGE_MB: int = 5
+    BLOG_MAX_DOCUMENT_MB: int = 10
+    BLOG_MAX_ADDITIONAL_IMAGES: int = 10
+    BLOG_MAX_REFERENCE_URLS: int = 10
+    BLOG_MAX_DOCUMENTS: int = 10
+    # Two live or draft posts of one kind in the same business cannot share a title (409 DUPLICATE_TITLE). Switch off to allow repeats.
+    BLOG_REQUIRE_UNIQUE_TITLES: bool = True
+    # Where a notification opens the post, for each kind of reader. {post_id} is replaced. Set these to the web app's own routes.
+    BLOG_DEEP_LINK_SUPER_ADMIN: str = "/admin/cms/posts/{post_id}"
+    BLOG_DEEP_LINK_ENTERPRISE: str = "/enterprise/cms/posts/{post_id}"
     # Platform commission and gateway fee estimate used at settlement (a merchant's own commission overrides it).
     PLATFORM_COMMISSION_PERCENT: float = 10.0
     GATEWAY_FEE_PERCENT: float = 2.0

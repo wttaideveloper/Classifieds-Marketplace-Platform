@@ -43,6 +43,7 @@ class CustomItem(BaseModel):
     amount: Decimal = Field(..., ge=0, description="Price of one unit, before tax unless prices_include_tax is set")
     quantity: int = Field(1, ge=1, le=100000)
     category: str = Field("service", max_length=30, description="The kind of item, for tax: service, product, event, training ...")
+    tax_class: str | None = Field(None, max_length=50, description="Optional tax class. A tax rule whose `applies_to` equals it is used instead of the category rule")
 
 
 class PaymentRequest(BaseModel):
@@ -100,6 +101,7 @@ class PaymentLineOut(BaseModel):
     ref: str
     description: str
     category: str
+    tax_class: str | None = Field(None, description="The item's tax class when it had one (a product's `tax_class`), lower case")
     quantity: int
     unit_amount: Money
     net_amount: Money

@@ -1,11 +1,17 @@
 """Blog / news notifications, on the existing platform feed and the generic Socket.IO ``notification`` event.
 
     blog_post_submitted          -> the Platform Super Admin(s)   a merchant sent a post (or an edit of a live post) for approval
-    blog_post_approved           -> the post's author             a Super Admin approved it, or published it
+    blog_post_approved           -> the post's author             a Super Admin approved it after review
+    blog_post_published          -> the post's author             a Super Admin published it directly, without a review step
     blog_post_changes_requested  -> the post's author             (metadata.reason)
     blog_post_rejected           -> the post's author             (metadata.reason)
     blog_post_unpublished        -> the post's author             a Super Admin took a live post down (metadata.reason)
     blog_post_deleted            -> the post's author             a Super Admin deleted it (metadata.reason)
+
+Every one carries: post_id, entity_type, entity_id, kind (the post type), title, slug, status, enterprise_id and business_name,
+author_id and author_name, tenant_id, reason (when there is one), occurred_at (UTC, ISO 8601) and deep_link, the page that
+opens the post for that reader: the Super Admin's page for blog_post_submitted, the Enterprise Admin's page for the rest
+(BLOG_DEEP_LINK_SUPER_ADMIN / BLOG_DEEP_LINK_ENTERPRISE).
 
 Sent after the change is committed, from a background thread, and never able to break the API call that triggered it.
 Each delivery is claimed first with a unique key (notification_idempotency), so a retry cannot send it twice. The reason
@@ -15,14 +21,17 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime
 from uuid import UUID
 
+from app.core.config import settings
 from app.services import notification_idempotency
 
 logger = logging.getLogger(__name__)
 
 DECISION_CATEGORY = {
     "approved": "blog_post_approved",
+    "published": "blog_post_published",
     "changes_requested": "blog_post_changes_requested",
     "rejected": "blog_post_rejected",
     "unpublished": "blog_post_unpublished",
@@ -62,11 +71,20 @@ def _deliver(db, *, recipients, category, title, message, metadata, dedupe_key):
         return None
 
 
-def _metadata(post, status: str, **extra) -> dict:
+def deep_link(role: str, post_id) -> str:
+    """Where the post opens for this reader: "super_admin" or "enterprise"."""
+    template = settings.BLOG_DEEP_LINK_SUPER_ADMIN if role == "super_admin" else settings.BLOG_DEEP_LINK_ENTERPRISE
+    return template.replace("{post_id}", str(post_id))
+
+
+def _metadata(post, status: str, *, reader: str, **extra) -> dict:
     return {
-        "post_id": str(post.id), "entity_type": "blog_post", "entity_id": str(post.id), "kind": post.kind,
+        "post_id": str(post.id), "entity_type": "blog_post", "entity_id": str(post.id), "kind": post.kind, "post_type": post.kind,
         "title": post.title, "slug": post.slug, "status": status, "business_name": post.business_name,
-        "enterprise_id": str(post.enterprise_id) if post.enterprise_id else None, **extra,
+        "enterprise_id": str(post.enterprise_id) if post.enterprise_id else None,
+        "tenant_id": str(post.tenant_id) if post.tenant_id else None,
+        "author_id": str(post.author_id) if post.author_id else None, "author_name": post.author_name,
+        "occurred_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z", "deep_link": deep_link(reader, post.id), **extra,
     }
 
 
@@ -99,7 +117,7 @@ def _deliver_submitted(post_id: str, access_token: str | None, is_edit: bool):
         recipients = recipients_of.resolve_platform_admin_user_ids(access_token)
         return _deliver(
             db, recipients=recipients, category="blog_post_submitted", title=title, message=message,
-            metadata=_metadata(post, "pending_approval", author_name=post.author_name, is_edit=is_edit),
+            metadata=_metadata(post, "pending_approval", reader="super_admin", is_edit=is_edit),
             dedupe_key=f"blog_post_submitted:{post_id}:{_stamp(post.submitted_at)}",
         )
 
@@ -107,7 +125,7 @@ def _deliver_submitted(post_id: str, access_token: str | None, is_edit: bool):
 # --- a Super Admin's decision -> the author ----------------------------------------------------------------------
 
 def notify_decision(post_id, outcome: str, *, reason: str | None = None) -> None:
-    """Call after a Super Admin's action on a merchant's post has been committed. `outcome` is approved,
+    """Call after a Super Admin's action on a merchant's post has been committed. `outcome` is approved, published,
     changes_requested, rejected, unpublished or deleted."""
     if outcome in DECISION_CATEGORY:
         _dispatch(_deliver_decision, str(post_id), outcome, reason)
@@ -124,6 +142,7 @@ def _deliver_decision(post_id: str, outcome: str, reason: str | None):
         shown = f'"{post.title}"'
         title, message = {
             "approved": ("Post approved", f"Your post {shown} was approved and is now live."),
+            "published": ("Post published", f"Your post {shown} was published."),
             "changes_requested": ("Changes requested", f"Changes were requested on your post {shown}."),
             "rejected": ("Post not approved", f"Your post {shown} was not approved."),
             "unpublished": ("Post taken down", f"Your post {shown} was taken down."),
@@ -133,6 +152,6 @@ def _deliver_decision(post_id: str, outcome: str, reason: str | None):
         version = _stamp(post.reviewed_at) or _stamp(post.deleted_at) or _stamp(post.updated_at)
         return _deliver(
             db, recipients=[post.author_id], category=category, title=title, message=message,
-            metadata=_metadata(post, post.status, reason=reason),
+            metadata=_metadata(post, post.status, reader="enterprise", reason=reason),
             dedupe_key=f"{category}:{post_id}:{version}",
         )

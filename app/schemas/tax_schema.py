@@ -103,6 +103,7 @@ class TaxItem(BaseModel):
     amount: Decimal = Field(..., ge=0, description="The price of one unit")
     quantity: int = Field(1, ge=1, le=100000)
     category: str = Field("service", max_length=30)
+    tax_class: str | None = Field(None, max_length=50, description="The item's own tax class (a product's `tax_class`). A tax rule whose `applies_to` equals it is used instead of the category rule")
 
 
 class TaxCustomer(BaseModel):

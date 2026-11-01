@@ -9,7 +9,9 @@ approve their own post.
 from dataclasses import dataclass
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, Request
+
+from app.exceptions.problem import problem
 
 from app.core.catalog_access import CatalogAccess, get_catalog_access, get_optional_catalog_user
 from app.core.dependencies import get_web_session_cookie_token
@@ -40,7 +42,7 @@ def _display_name(user: dict) -> str | None:
 
 def _actor(request: Request, access: CatalogAccess, user: dict | None, role: str) -> BlogActor:
     if user is None or not user.get("id"):
-        raise HTTPException(401, "Not authenticated")
+        raise problem(401, "Not authenticated", "UNAUTHENTICATED")
     return BlogActor(id=str(user["id"]), name=_display_name(user), role=role, tenant_id=access.tenant_id, token=_token(request))
 
 
@@ -48,9 +50,9 @@ def require_blog_super_admin(
     request: Request, access: CatalogAccess = Depends(get_catalog_access), user: dict | None = Depends(get_optional_catalog_user),
 ) -> BlogActor:
     if access.role == "public":
-        raise HTTPException(401, "Not authenticated")
+        raise problem(401, "Not authenticated", "UNAUTHENTICATED")
     if access.role != "super_admin":
-        raise HTTPException(403, "Only a Super Admin can manage platform content and approve posts")
+        raise problem(403, "Only a Super Admin can manage platform content and approve posts", "FORBIDDEN")
     return _actor(request, access, user, "super_admin")
 
 
@@ -58,7 +60,31 @@ def require_blog_merchant(
     request: Request, access: CatalogAccess = Depends(get_catalog_access), user: dict | None = Depends(get_optional_catalog_user),
 ) -> BlogActor:
     if access.role == "public":
-        raise HTTPException(401, "Not authenticated")
+        raise problem(401, "Not authenticated", "UNAUTHENTICATED")
     if access.role != "admin" or access.tenant_id is None:
-        raise HTTPException(403, "Only a business's Enterprise Admin can write posts for the business")
+        raise problem(403, "Only a business's Enterprise Admin can write posts for the business", "FORBIDDEN")
     return _actor(request, access, user, "merchant")
+
+
+def optional_blog_actor(
+    request: Request, access: CatalogAccess = Depends(get_catalog_access), user: dict | None = Depends(get_optional_catalog_user),
+) -> BlogActor | None:
+    """Whoever is signed in as a Super Admin or an Enterprise Admin, or nobody. For files that the public may also fetch."""
+    if user is None or not user.get("id") or access.role not in ("super_admin", "admin"):
+        return None
+    if access.role == "admin" and access.tenant_id is None:
+        return None
+    return _actor(request, access, user, "super_admin" if access.role == "super_admin" else "merchant")
+
+
+def require_blog_author(
+    request: Request, access: CatalogAccess = Depends(get_catalog_access), user: dict | None = Depends(get_optional_catalog_user),
+) -> BlogActor:
+    """A Super Admin or an Enterprise Admin: whoever may write posts."""
+    if access.role == "public":
+        raise problem(401, "Not authenticated", "UNAUTHENTICATED")
+    if access.role == "super_admin":
+        return _actor(request, access, user, "super_admin")
+    if access.role == "admin" and access.tenant_id is not None:
+        return _actor(request, access, user, "merchant")
+    raise problem(403, "Only a Super Admin or a business's Enterprise Admin can upload files for posts", "FORBIDDEN")
