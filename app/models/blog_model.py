@@ -37,6 +37,7 @@ class BlogPost(Base):
     enterprise_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
     # blog | news. Both use the same form; the kind decides which list the post shows in.
+    module = Column(String(12), nullable=False, default="general", index=True)    # events | trainings | products | services | general
     kind = Column(String(10), default="blog", nullable=False, index=True)
     # platform (written by a Super Admin) | merchant (written by a business, needs approval)
     source = Column(String(10), default="platform", nullable=False, index=True)
@@ -186,3 +187,30 @@ class BlogFile(Base):
     sha256 = Column(String(64))
     scan_status = Column(String(12), nullable=False, default="skipped")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+
+class BlogGovernance(Base):
+    """Whether Blogs & News is available for a module, platform-wide. A module with no row is enabled."""
+    __tablename__ = "cms_blog_governance"
+
+    module = Column(String(12), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    updated_by = Column(String(100))
+    updated_by_name = Column(String(255))
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class BlogGovernanceAudit(Base):
+    """Every real change to the settings. A request that changes nothing writes nothing."""
+    __tablename__ = "cms_blog_governance_audit"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    module = Column(String(12), nullable=False, index=True)
+    previous_value = Column(Boolean, nullable=False)
+    new_value = Column(Boolean, nullable=False)
+    action = Column(String(10), nullable=False)          # enable | disable | reset
+    actor_id = Column(String(100))
+    actor_name = Column(String(255))
+    actor_role = Column(String(20))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

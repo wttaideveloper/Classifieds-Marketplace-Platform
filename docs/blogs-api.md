@@ -462,3 +462,25 @@ These are in place now and are easy to change:
 5. A plain view count is returned on each post, with no dashboard.
 6. Only the business's Enterprise Admin (owner / tenant admin) can write posts. Providers (internal users) cannot.
 7. An unpublished merchant post that is sent again goes through approval again. Only a Super Admin can publish without it.
+
+## 20. Governance: Blogs & News per module (Super Admin)
+
+Platform-wide switches, one per module: `events`, `trainings`, `products`, `services`, `general`. A module with nothing stored is on. Web cache key: `["cms", "governance"]`.
+
+| Method and path | Who | What |
+|---|---|---|
+| `GET /governance` | anyone | the five switches, for the web app to decide which tabs, public feed filters and promo blocks to show |
+| `GET /admin/governance` | Super Admin | same, with `updated_at` / `updated_by` |
+| `PATCH /admin/governance/{module}` | Super Admin | body `{"enabled": false}`; answers the full configuration |
+| `POST /admin/governance/reset` | Super Admin | all five on; answers the full configuration |
+| `GET /admin/governance/audit?module=&page=&page_size=` | Super Admin | newest first, `{items, pagination}` |
+
+```json
+{ "modules": { "events": false, "trainings": true, "products": true, "services": true, "general": true },
+  "updated_at": "2026-11-02T10:30:00", "updated_by": { "id": "user-id", "name": "Super Admin" } }
+```
+Audit row: `{ "id", "module": "events", "previous_value": true, "new_value": false, "action": "disable", "actor_id", "actor_name", "actor_role": "super_admin", "created_at" }` (`action`: `enable`, `disable`, `reset`). Times are UTC without a `Z`.
+
+Behaviour: a post now has a `module` (default `general`, set on create, not changeable). While a module is off, creating a post for it is 409 `MODULE_DISABLED` (`module` in the body), for Enterprise Admins and Super Admins. Nothing else changes: existing posts, drafts, categories, forms and revisions stay, published posts stay in the lists and open by their URL, and drafts can still be edited and sent. `GET /cms/blogs?module=events` filters the public list. Hiding tabs, filters and promo blocks is for the web app, using `GET /governance`. Settings are platform-wide, not per business. Changes send no notifications.
+
+Errors: 401 `UNAUTHENTICATED`; 403 `FORBIDDEN` (Enterprise Admin, provider, customer); 422 `INVALID_MODULE` (with `allowed`) or a missing `enabled`; 500 `SAVE_FAILED` (nothing changed). Setting the value a module already has answers 200 and writes no audit row. Concurrent updates take a row lock (effective on PostgreSQL only); the last write wins and each real change gets its own audit row.

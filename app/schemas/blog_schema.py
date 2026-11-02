@@ -12,6 +12,7 @@ from app.schemas.common_schema import PaginatedResponse
 
 BlogKind = Literal["blog", "news"]
 BlogSource = Literal["platform", "merchant"]
+BlogModule = Literal["events", "trainings", "products", "services", "general"]
 BlogStatus = Literal["draft", "pending_approval", "changes_requested", "rejected", "published", "unpublished", "deleted"]
 # "archived" is the old name of "unpublished"; the status endpoint still accepts it.
 BlogStatusInput = Literal["draft", "published", "unpublished", "archived"]
@@ -149,6 +150,7 @@ class MerchantPostCreate(_PostFields):
         "cover_image_url": "/api/v1/uploads/blogs/stretch.jpg", "tags": ["wellness", "office"]}})
 
     title: str = Field(..., min_length=1, max_length=TITLE_MAX)
+    module: BlogModule = Field("general", description="The module the post is about. Refused (409 MODULE_DISABLED) while Blog governance has it switched off")
     enterprise_id: UUID | None = Field(None, description="Only when the business has more than one; defaults to its first")
 
 
@@ -164,6 +166,7 @@ class AdminPostCreate(_PostFields):
         "status": "published"}})
 
     title: str = Field(..., min_length=1, max_length=TITLE_MAX)
+    module: BlogModule = Field("general", description="The module the post is about. Refused (409 MODULE_DISABLED) while Blog governance has it switched off")
     slug: str | None = Field(None, max_length=255, description="URL slug; made from the title when omitted")
     author_name: str | None = Field(None, max_length=255, description="Shown as the author; defaults to the platform name")
     status: Literal["draft", "published"] = Field("draft", description="published makes it live straight away")
@@ -238,6 +241,7 @@ class BlogListItemResponse(BaseModel):
     title: str
     slug: str
     kind: BlogKind = "blog"
+    module: BlogModule = "general"
     excerpt: str | None = None
     cover_image_url: str | None = None
     author_name: str | None = None

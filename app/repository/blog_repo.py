@@ -25,7 +25,10 @@ def get_post_by_slug(db: Session, slug: str, include_deleted: bool = False) -> B
 def filter_posts(
     query: Query, *, search: str | None = None, kind: str | None = None, category: str | None = None, category_id: UUID | None = None,
     tag: str | None = None, tenant_id: UUID | None = None, enterprise_id: UUID | None = None, source: str | None = None,
+    module: str | None = None,
 ) -> Query:
+    if module:
+        query = query.filter(BlogPost.module == module)
     if kind:
         query = query.filter(BlogPost.kind == kind)
     if source:

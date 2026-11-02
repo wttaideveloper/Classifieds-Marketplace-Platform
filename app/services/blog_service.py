@@ -30,6 +30,7 @@ from app.schemas.blog_schema import (
 )
 from app.services import blog_form_rules as rules
 from app.services import blog_form_service as forms
+from app.services import blog_governance_service as governance
 from app.services import blog_notifications, blog_upload_service as uploads
 from app.utils.html_sanitize import clean_html
 
@@ -306,7 +307,7 @@ def _log(db: Session, post: BlogPost, action: str, actor: BlogActor | None, *, f
 
 def _public_dict(post: BlogPost) -> dict:
     return {
-        "id": post.id, "title": post.title, "slug": post.slug, "kind": post.kind, "excerpt": post.excerpt,
+        "id": post.id, "title": post.title, "slug": post.slug, "kind": post.kind, "module": post.module or "general", "excerpt": post.excerpt,
         "cover_image_url": post.cover_image_url, "author_name": post.author_name, "author_type": post.source,
         "business_name": post.business_name, "business_logo_url": post.business_logo_url, "tenant_id": post.tenant_id,
         "enterprise_id": post.enterprise_id, "category": post.category, "category_id": post.category_id,
@@ -502,11 +503,12 @@ def list_blogs_service(
     db: Session, *, search: str | None = None, status_filter: str | None = None, category: str | None = None,
     category_id: UUID | None = None, kind: str | None = None, tag: str | None = None, tenant_id: UUID | None = None,
     enterprise_id: UUID | None = None, source: str | None = None, page: int = 1, page_size: int = 20, public_only: bool = True,
+    module: str | None = None,
 ) -> BlogPaginatedResponse:
     """Live posts, pinned first and then newest first."""
     query = blog_repo.filter_posts(
         blog_repo.public_posts(db), search=search, kind=kind, category=category, category_id=category_id, tag=tag,
-        tenant_id=tenant_id, enterprise_id=enterprise_id, source=source,
+        tenant_id=tenant_id, enterprise_id=enterprise_id, source=source, module=module,
     ).order_by(BlogPost.is_pinned.desc(), BlogPost.published_at.desc().nullslast(), BlogPost.created_at.desc())
     total = query.count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
@@ -576,10 +578,11 @@ def admin_post_for_preview(db: Session, post_id: UUID) -> BlogPost:
 
 
 def create_my_post_service(db: Session, actor: BlogActor, payload) -> BlogManageDetail:
+    governance.assert_enabled(db, payload.module)
     enterprise = _business_for(db, actor, payload.enterprise_id)
     fields, form = _prepare(db, actor, None, payload, tenant_id=actor.tenant_id, source="merchant")
     post = BlogPost(
-        tenant_id=actor.tenant_id, source="merchant", status="draft", is_live=False, author_id=UUID(actor.id),
+        tenant_id=actor.tenant_id, source="merchant", module=payload.module, status="draft", is_live=False, author_id=UUID(actor.id),
         author_name=actor.name, created_by=actor.id, updated_by=actor.id, kind=fields.pop("kind", "blog"),
         slug=_unique_slug(db, fields["title"]), content="", tags=[], version=1,
     )
@@ -744,10 +747,11 @@ def _admin_post(db: Session, post_id: UUID, *, lock: bool = False) -> BlogPost:
 
 
 def create_blog_service(db: Session, payload, actor: BlogActor) -> BlogManageDetail:
+    governance.assert_enabled(db, payload.module)
     fields, form = _prepare(db, actor, None, payload, tenant_id=None, source="platform")
     slug = _explicit_slug(db, payload.slug) if payload.slug else _unique_slug(db, fields["title"])
     post = BlogPost(
-        tenant_id=payload.tenant_id, enterprise_id=payload.enterprise_id, source="platform", status="draft", is_live=False,
+        tenant_id=payload.tenant_id, enterprise_id=payload.enterprise_id, source="platform", module=payload.module, status="draft", is_live=False,
         author_id=UUID(actor.id), author_name=payload.author_name or actor.name or getattr(settings, "PLATFORM_NAME", None) or "Platform",
         created_by=actor.id, updated_by=actor.id, kind=fields.pop("kind", "blog"), slug=slug, content="", tags=[], version=1,
     )

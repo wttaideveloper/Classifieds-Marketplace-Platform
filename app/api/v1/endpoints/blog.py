@@ -8,18 +8,20 @@ from app.core.blog_access import BlogActor, optional_blog_actor, require_blog_au
 from app.db.database import get_db
 from app.exceptions.problem import problem
 from app.repository.query_utils import build_pagination_meta
+from app.schemas.blog_governance_schema import GovernanceAuditPage, GovernanceOut, GovernanceUpdate
 from app.schemas.blog_form_schema import (
     ActiveFormsForBusiness, FormAssign, FormCreate, FormDetail, FormItem, FormPage, FormPreview, FormPreviewRequest, FormPublish,
     FormScope, FormType, FormUpdate, FormVersionDetail, FormVersionList, ResolvedFormOut,
 )
 from app.schemas.blog_schema import (
     AdminPostCreate, AdminPostUpdate, BlogCategoryListResponse, BlogCategoryResponse, BlogDetailResponse, BlogHistoryResponse,
-    BlogKind, BlogManageDetail, BlogManagePaginatedResponse, BlogPaginatedResponse, BlogPreviewResponse, BlogRevisionDetail,
+    BlogKind, BlogModule, BlogManageDetail, BlogManagePaginatedResponse, BlogPaginatedResponse, BlogPreviewResponse, BlogRevisionDetail,
     BlogRevisionList, BlogSource, BlogStatusUpdate, CategoryCreate, CategoryReorder, CategoryUpdate, FileUploadResponse,
     MerchantPostCreate, MerchantPostUpdate, PinRequest, PreviewRequest, ReasonRequest, ReviewRequest, UploadLimits,
 )
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.services import blog_form_service as form_svc
+from app.services import blog_governance_service as gov_svc
 from app.services import blog_upload_service as upload_svc
 from app.services.blog_service import (
     admin_post_for_preview, admin_post_history_service, admin_post_revision_service, admin_post_revisions_service, approval_queue_service,
@@ -72,12 +74,20 @@ def list_public_blogs(
     category_id: UUID | None = Query(None), category: str | None = Query(None, description="Category name"),
     tag: str | None = Query(None), source: BlogSource | None = Query(None, description="platform | merchant"),
     tenant_id: UUID | None = Query(None), enterprise_id: UUID | None = Query(None),
+    module: BlogModule | None = Query(None, description="events | trainings | products | services | general"),
     page: int = PAGE, page_size: int = PAGE_SIZE, db: Session = Depends(get_db),
 ):
     return list_blogs_service(
         db, search=search, category=category, category_id=category_id, kind=kind, tag=tag, tenant_id=tenant_id,
-        enterprise_id=enterprise_id, source=source, page=page, page_size=page_size, public_only=True,
+        enterprise_id=enterprise_id, source=source, page=page, page_size=page_size, public_only=True, module=module,
     )
+
+
+@router.get("/governance", response_model=GovernanceOut, summary="Which modules have Blogs & News switched on (public)",
+            description="Read this to decide which Blogs & News tabs, public feed filters and promotional blocks to show. Platform-wide. Switching a module off never hides "
+                        "posts that are already published: they stay in the lists and open by their direct URL.")
+def public_governance(db: Session = Depends(get_db)):
+    return gov_svc.snapshot(db)
 
 
 @router.get(
@@ -223,6 +233,38 @@ def my_post_revisions(post_id: UUID, db: Session = Depends(get_db), actor: BlogA
 @router.get("/my/posts/{post_id}/revisions/{history_id}", response_model=BlogRevisionDetail, summary="One revision with its content (Enterprise Admin)")
 def my_post_revision(post_id: UUID, history_id: UUID, db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_merchant)):
     return my_post_revision_service(db, actor, post_id, history_id)
+
+
+# ---------------------------------------------------------------- Super Admin: governance (registered before /{slug})
+
+GOV_DOC = " Cache key for the web app: [\"cms\", \"governance\"]."
+
+
+@router.get("/admin/governance", response_model=GovernanceOut, summary="Blog governance settings (Super Admin)",
+            description="Which modules have Blogs & News switched on, who last changed it and when." + GOV_DOC)
+def get_governance(db: Session = Depends(get_db), _actor: BlogActor = Depends(require_blog_super_admin)):
+    return gov_svc.snapshot(db)
+
+
+@router.post("/admin/governance/reset", response_model=GovernanceOut, summary="Switch every module on (Super Admin)",
+             description="Sets all five modules to enabled. Posts, drafts, categories, forms and revisions are untouched. One audit row per module that actually changed; "
+                         "if all were on already, nothing is written." + GOV_DOC)
+def reset_governance(db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return gov_svc.reset(db, actor)
+
+
+@router.get("/admin/governance/audit", response_model=GovernanceAuditPage, summary="Who changed the governance settings (Super Admin)",
+            description="Newest first. `module` narrows it. Each row: module, previous_value, new_value, action (enable | disable | reset), actor_id, actor_name, actor_role, created_at.")
+def governance_audit(module: str | None = Query(None), page: int = PAGE, page_size: int = PAGE_SIZE, db: Session = Depends(get_db),
+                     _actor: BlogActor = Depends(require_blog_super_admin)):
+    return gov_svc.audit(db, module=module, page=page, page_size=page_size)
+
+
+@router.patch("/admin/governance/{module}", response_model=GovernanceOut, summary="Switch one module on or off (Super Admin)",
+              description="`module` is events, trainings, products, services or general (422 `INVALID_MODULE` otherwise). Setting the value it already has answers 200 and writes no audit row. "
+                          "While a module is off, new posts for it are refused (409 `MODULE_DISABLED`); existing posts, drafts, categories and forms are kept." + GOV_DOC)
+def update_governance(module: str, payload: GovernanceUpdate = Body(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return gov_svc.update_module(db, actor, module, payload.enabled)
 
 
 # ---------------------------------------------------------------- Super Admin: forms (registered before /{slug})
