@@ -225,6 +225,13 @@ async def startup():
     start_group_exports()
 
 
+@app.on_event("shutdown")
+async def shutdown():
+    from app.realtime.room_sync import stop_listener
+
+    await stop_listener()
+
+
 app.include_router(api_router, prefix="/api/v1")
 
 

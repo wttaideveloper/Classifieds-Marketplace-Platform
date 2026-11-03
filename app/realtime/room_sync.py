@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 CHANNEL = "classifieds:group-room-sync"
 _publisher = None
+_listener_task = None
+_listener_pubsub = None
 
 
 def _redis_url() -> str:
@@ -56,13 +58,18 @@ async def apply_message(raw) -> None:
 
 async def listen() -> None:
     """Runs for the life of the process. Reconnects after a Redis failure."""
+    global _listener_pubsub
     import redis.asyncio as aioredis
 
     delay = 1
     while True:
-        client = aioredis.from_url(_redis_url())
+        client = None
+        pubsub = None
+        retry_delay = None
         try:
+            client = aioredis.from_url(_redis_url())
             pubsub = client.pubsub()
+            _listener_pubsub = pubsub
             await pubsub.subscribe(CHANNEL)
             delay = 1
             async for message in pubsub.listen():
@@ -72,16 +79,58 @@ async def listen() -> None:
             raise
         except Exception:
             logger.exception("group room listener lost Redis; retrying in %ss", delay)
-            await asyncio.sleep(delay)
+            retry_delay = delay
             delay = min(delay * 2, 30)
         finally:
-            try:
-                await client.aclose()
-            except Exception:
-                pass
+            if pubsub is not None:
+                try:
+                    await pubsub.aclose()
+                except Exception:
+                    logger.exception("could not close group room listener PubSub")
+                finally:
+                    if _listener_pubsub is pubsub:
+                        _listener_pubsub = None
+            if client is not None:
+                try:
+                    await client.aclose()
+                except Exception:
+                    logger.exception("could not close group room listener Redis client")
+        if retry_delay is not None:
+            await asyncio.sleep(retry_delay)
 
 
 def start_listener() -> None:
     """Start once per process, when Redis is configured. Must be called from the running server loop."""
-    if _redis_url():
-        asyncio.get_running_loop().create_task(listen())
+    global _listener_task
+    if not _redis_url():
+        return
+    if _listener_task is not None and not _listener_task.done():
+        return
+    _listener_task = asyncio.get_running_loop().create_task(listen())
+
+
+async def stop_listener() -> None:
+    """Stop the listener and close Redis resources owned by this process."""
+    global _listener_task, _publisher
+
+    task = _listener_task
+    if task is not None:
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("group room listener stopped unexpectedly")
+        finally:
+            if _listener_task is task:
+                _listener_task = None
+
+    publisher = _publisher
+    if publisher is not None:
+        _publisher = None
+        try:
+            await publisher.aclose()
+        except Exception:
+            logger.exception("could not close group room publisher Redis client")

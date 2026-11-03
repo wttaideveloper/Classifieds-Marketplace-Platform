@@ -3,6 +3,7 @@ import os
 bind = os.environ.get("GUNICORN_BIND", "0.0.0.0:8000")
 workers = int(os.environ.get("WEB_CONCURRENCY", "1"))
 worker_class = "uvicorn.workers.UvicornWorker"
+control_socket_disable = True
 
 # Socket.IO long-polling and websocket connections. Also covers large file
 # uploads (e.g. 300 MB training videos) — 120s isn't enough headroom for a
