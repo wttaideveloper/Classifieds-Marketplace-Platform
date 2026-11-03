@@ -195,3 +195,24 @@ def test_the_message_apis_stay_separate(world):
 
     assert world.as_user(p.priya).get(f"{INBOX}{group['id']}/messages").status_code == 409                 # a group's messages are only at /groups
     assert world.as_user(p.priya).get(f"{API}/{group['id']}/messages").status_code == 200
+
+
+def test_a_groups_picture_is_in_the_invitation_the_inbox_the_archive_and_the_detail(world):
+    p = world.people
+    url = "https://cdn.example.test/groups/yoga.png"
+    pending = make_group(world, kind="care", invitees=[p.priya], avatar_url=url)
+    plain = make_group(world, kind="program", invitees=[p.priya], name="No picture")
+
+    invitations = world.as_user(p.priya).get("/api/v1/groups/invitations").json()["items"]
+    assert {i["conversation_id"]: i["avatar_url"] for i in invitations} == {pending["id"]: url, plain["id"]: None}
+    assert world.as_user(p.priya).get(f"/api/v1/groups/invitations/{pending['id']}").json()["avatar_url"] == url
+
+    accept(world, p.priya, pending["id"])
+    chat = direct_chat(world, p.priya, p.rao, "hello")
+    by_id = {i["id"]: i for i in inbox(world, p.priya)["items"]}
+    assert by_id[pending["id"]]["avatar_url"] == url and by_id[chat["id"]]["avatar_url"] is None       # one-to-one chats have no group picture
+    assert world.as_user(p.priya).get(f"/api/v1/conversations/{pending['id']}").json()["avatar_url"] == url
+
+    assert world.as_user(p.priya).patch(f"/api/v1/conversations/{pending['id']}/archive", json={"archived": True}).status_code == 200
+    archived = world.as_user(p.priya).get("/api/v1/conversations/archived").json()["items"]
+    assert [i["avatar_url"] for i in archived if i["id"] == pending["id"]] == [url]
