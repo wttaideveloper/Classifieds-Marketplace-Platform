@@ -104,6 +104,13 @@ class ConversationResponse(BaseModel):
             "(the client should show its own placeholder). Never an email address."
         ),
     )
+    avatar_url: str | None = Field(
+        None,
+        description=(
+            "Avatar / profile image URL for this conversation. For a group it is the group icon; "
+            "for a one-to-one chat it is null unless a profile image is available."
+        ),
+    )
     unread_count: int = 0
     is_archived: bool = Field(False, description="Whether the authenticated user has archived this conversation (their own state).")
     archived_at: datetime | None = Field(None, description="When the authenticated user archived it, if they did.")
@@ -147,6 +154,13 @@ class ConversationListItemResponse(BaseModel):
         description=(
             "Display name of the conversation's customer, for the inbox card. null when it cannot be "
             "resolved (the client should show its own placeholder). Never an email address."
+        ),
+    )
+    avatar_url: str | None = Field(
+        None,
+        description=(
+            "Avatar / profile image URL for this conversation. For a group it is the group icon; "
+            "for a one-to-one chat it is null unless a profile image is available."
         ),
     )
     is_archived: bool = Field(

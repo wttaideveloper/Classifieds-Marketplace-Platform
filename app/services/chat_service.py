@@ -128,6 +128,7 @@ def _map_conversation_detail(
             db, [conversation], current_user, access_token,
             fallback_ids=chat_repo.get_other_participant_ids_for_conversations(db, [conversation.id], user_id),
         ).get(conversation.id),
+        "avatar_url": conversation.avatar_url,
         "unread_count": unread,
         **_participant_archive_fields(participant),
         "participants": [
@@ -196,6 +197,7 @@ def _map_conversation_list_item(
         "unread_count": unread,
         "assigned_provider_id": conversation.assigned_provider_id,
         "customer_name": (customer_names or {}).get(conversation.id),
+        "avatar_url": conversation.avatar_url,
         **_participant_archive_fields(participant),
         "updated_at": conversation.updated_at,
     }

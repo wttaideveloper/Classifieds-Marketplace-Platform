@@ -341,6 +341,7 @@ class InvitationResponse(BaseModel):
     name: str
     kind: GroupKind
     description: str | None = None
+    avatar_url: str | None = None
     purpose: str
     invited_by_name: str | None = None
     provider_names: list[str] = Field(default_factory=list)
