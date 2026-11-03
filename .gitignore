@@ -8,3 +8,9 @@ __pycache__/
 *.sqlite3
 uploads/
 
+
+.freebuff/
+out.txt
+out2.txt
+temp.py
+
