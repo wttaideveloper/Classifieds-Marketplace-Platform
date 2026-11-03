@@ -90,6 +90,7 @@ class ConversationResponse(BaseModel):
     conversation_type: ConversationType
     is_read_only: bool
     subject: str | None = None
+    avatar_url: str | None = Field(None, description="The group's picture (the url set when the group was created or edited). null for a one-to-one chat or a group without a picture.")
     context_type: str | None = None
     context_id: UUID | None = None
     assigned_provider_id: UUID | None = None
@@ -130,6 +131,7 @@ class ConversationListItemResponse(BaseModel):
     conversation_subtype: str | None = Field(None, description='Inbox only: the stored type ("standard", "preview", "booking" or "group").')
     group_kind: Literal["care", "program"] | None = Field(None, description="Set for a group (conversation_type = group).")
     subject: str | None = None
+    avatar_url: str | None = Field(None, description="The group's picture (the url set when the group was created or edited). null for a one-to-one chat or a group without a picture.")
     last_message_at: datetime | None = None
     last_message_preview: str | None = None
     last_message: ConversationLastMessageSummary | None = None

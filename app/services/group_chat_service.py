@@ -348,7 +348,7 @@ def _invitation_dict(db: Session, conversation: Conversation, member: Conversati
         kind_text = f"the learners of the training \"{title}\"" if title else "the learners of one training"
     return {
         "conversation_id": conversation.id, "name": conversation.subject or "", "kind": conversation.group_kind or "program",
-        "description": conversation.description,
+        "description": conversation.description, "avatar_url": conversation.avatar_url,
         "purpose": f"This is a {conversation.group_kind} group for {kind_text}.",
         "invited_by_name": inviter_name, "provider_names": provider_names,
         "member_count": len(active), "visibility_notice": common.visibility_notice(len(active)),
