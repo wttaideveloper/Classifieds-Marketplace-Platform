@@ -164,6 +164,22 @@ def _link_files(db: Session, actor: BlogActor, out: dict, errors: list) -> None:
                     item.setdefault("content_type", row.content_type)
 
 
+def _link_custom_files(db: Session, actor: BlogActor, definition: dict, custom: dict, sent: dict, errors: list) -> None:
+    """Pictures sent in image / media_upload custom fields follow the same rule as the built-in image slots."""
+    for field in rules.fields_of(definition):
+        if field["kind"] != "custom" or field["type"] not in rules.MEDIA_TYPES or field["key"] not in sent:
+            continue
+        value = custom.get(field["key"])
+        urls = [value] if isinstance(value, str) else list(value or [])
+        found = uploads.owned_files(db, urls, actor)
+        path = f"custom_fields.{field['key']}"
+        for url in urls:
+            if "/cms/blogs/files/" in url and url not in found:
+                errors.append(rules.err(path, "FILE_NOT_FOUND", "That file was not uploaded by your business, or it no longer exists"))
+            elif url in found and found[url].purpose not in ("cover_image", "image"):
+                errors.append(rules.err(path, "WRONG_FILE_KIND", f"A {found[url].purpose.replace('_', ' ')} upload cannot be used here"))
+
+
 def _incoming(db: Session, payload, current_category: UUID | None, actor: BlogActor, errors: list) -> dict:
     """The fields the caller sent, cleaned. Only the content fields; nothing the caller did not send. Problems go to `errors`."""
     data = payload.model_dump(exclude_unset=True)
@@ -237,6 +253,7 @@ def _prepare(db: Session, actor: BlogActor, post: BlogPost | None, payload, *, t
         custom, custom_errors = rules.clean_custom(form.definition, data["custom_fields"], enterprise_post=enterprise, current=current.get("custom_values"))
         errors += custom_errors
         if not custom_errors:
+            _link_custom_files(db, actor, form.definition, custom, data["custom_fields"] or {}, errors)
             changes["custom_values"] = custom
     changed_core = {key: changes[attr] for key, attr in CORE_ATTR.items() if attr in changes}
     errors += rules.check_core(form.definition, changed_core, enterprise_post=enterprise)
@@ -485,6 +502,8 @@ def preview_payload_service(db: Session, actor: BlogActor, payload) -> BlogPrevi
     if "custom_fields" in data:
         custom, custom_errors = rules.clean_custom(form.definition, data["custom_fields"], enterprise_post=source == "merchant")
         errors += custom_errors
+        if not custom_errors:
+            _link_custom_files(db, actor, form.definition, custom, data["custom_fields"] or {}, errors)
         content["custom_values"] = custom
     errors += rules.check_core(form.definition, {k: changes[a] for k, a in CORE_ATTR.items() if a in changes}, enterprise_post=source == "merchant")
     if errors:

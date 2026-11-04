@@ -25,7 +25,8 @@ CORE_FIELDS = {
     "supporting_documents": ("documents", "Supporting documents"),
 }
 ALWAYS_REQUIRED = ("title", "content", "category")
-CUSTOM_TYPES = ("text", "textarea", "number", "date", "select", "multiselect", "checkbox", "url", "email")
+CUSTOM_TYPES = ("text", "textarea", "number", "date", "select", "multiselect", "checkbox", "url", "email", "image", "media_upload")
+MEDIA_TYPES = ("image", "media_upload")        # image: one picture; media_upload: one or several (a URL, or a list of URLs)
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 MAX_SECTIONS, MAX_FIELDS, MAX_OPTIONS = 20, 60, 50
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -149,6 +150,8 @@ def _custom_rules(ftype: str, raw, path: str, errors: list) -> dict:
                     errors.append(err(f"{path}.validation.{name}", "INVALID_RULE", f"{name} must be a date like 2026-01-31"))
     elif ftype == "multiselect":
         out = _limits({k: raw.pop(k) for k in ("max_items",) if k in raw}, {"max_items": (1, MAX_OPTIONS)}, path, errors)
+    elif ftype == "media_upload":
+        out = _limits({k: raw.pop(k) for k in ("max_items",) if k in raw}, {"max_items": (1, settings.BLOG_MAX_ADDITIONAL_IMAGES)}, path, errors)
     else:
         out = {}
     for left in raw:
@@ -368,6 +371,21 @@ def clean_custom_value(field: dict, value, path: str, errors: list):
         if url is None:
             errors.append(err(path, "INVALID_FORMAT", f"{label} must be a web address starting with http:// or https://"))
         return url
+    if ftype in MEDIA_TYPES:
+        many = ftype == "media_upload" and isinstance(value, list)
+        if isinstance(value, list) and ftype == "image":
+            errors.append(err(path, "INVALID_TYPE", f"{label} takes one picture. Use a media_upload field for several"))
+            return None
+        items = value if many else [value]
+        urls = [_check_http(v, allow_relative=True) if isinstance(v, str) else None for v in items]
+        if any(u is None for u in urls):
+            errors.append(err(path, "INVALID_FORMAT", f"{label} must be the web address of an uploaded file" + (", or a list of them" if ftype == "media_upload" else "")))
+            return None
+        urls = list(dict.fromkeys(urls))
+        limit = rules.get("max_items", settings.BLOG_MAX_ADDITIONAL_IMAGES)
+        if len(urls) > limit:
+            errors.append(err(path, "TOO_MANY", f"{label}: at most {limit}"))
+        return urls if many else urls[0]
     if ftype == "email":
         text = str(value).strip()
         if not EMAIL.match(text) or len(text) > 254:

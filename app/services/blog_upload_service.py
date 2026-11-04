@@ -156,7 +156,7 @@ def is_used_by_live_post(db: Session, file_id: UUID) -> bool:
     return db.query(BlogPost.id).filter(
         BlogPost.is_live.is_(True), BlogPost.is_deleted.is_(False),
         or_(BlogPost.cover_image_url.like(needle), BlogPost.content.like(needle), cast(BlogPost.additional_images, String).like(needle),
-            cast(BlogPost.supporting_documents, String).like(needle)),
+            cast(BlogPost.supporting_documents, String).like(needle), cast(BlogPost.custom_values, String).like(needle)),
     ).first() is not None
 
 

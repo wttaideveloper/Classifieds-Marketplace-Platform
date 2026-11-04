@@ -605,3 +605,86 @@ def test_a_document_is_attached_with_its_name_and_downloaded(world, uploads_dir)
     assert public["supporting_documents"][0]["name"] == "Annual report.pdf" and public["additional_images"][0]["alt"] == "Pic"
     download = world.as_user(None).get(f"{API}/files/{doc['file_id']}")
     assert download.status_code == 200 and download.headers["content-disposition"].startswith("attachment") and download.content == b"%PDF-1.4\nbody"
+
+
+# --- media custom fields (image, media_upload) -----------------------------------------------------------------------------------------
+
+MEDIA_DEFINITION = {"sections": [
+    {"key": "basics", "title": "Basics", "fields": [{"key": "title"}, {"key": "category"}, {"key": "excerpt"}, {"key": "content"}]},
+    {"key": "media", "title": "Images", "fields": [
+        {"key": "field_media_upload_2779", "type": "media_upload", "label": "Additional Images", "validation": {"max_items": 2}},
+        {"key": "hero", "type": "image", "label": "Hero picture"}]},
+]}
+
+
+def media_form(world):
+    publish_form(world, make_form(world, definition=MEDIA_DEFINITION))
+
+
+def test_media_fields_keep_their_type_in_the_form_and_in_the_public_post(world, uploads_dir):
+    media_form(world)
+    cat = make_category(world)
+    asha = world.people.asha
+    first = upload(world, asha, "a.png", png(), "image/png", "image").json()
+    second = upload(world, asha, "b.png", png((30, 30)), "image/png", "image").json()
+
+    types = {f["key"]: f["type"] for s in my_form(world)["definition"]["sections"] for f in s["fields"]}
+    assert types["field_media_upload_2779"] == "media_upload" and types["hero"] == "image"
+
+    post = draft(world, asha, cat, custom_fields={"field_media_upload_2779": [first["url"], second["url"]], "hero": first["url"]})
+    assert post["custom_fields"] == {"field_media_upload_2779": [first["url"], second["url"]], "hero": first["url"]}
+    assert world.as_user(asha).get(f"{API}/my/posts/{post['id']}").json()["custom_fields"]["hero"] == first["url"]
+
+    submit(world, asha, post)
+    live = review(world, post, "approve").json()
+    public = world.as_user(None).get(f"{API}/{live['slug']}").json()
+    assert {f["key"]: (f["type"], f["value"]) for f in public["custom_fields"]} == {
+        "field_media_upload_2779": ("media_upload", [first["url"], second["url"]]), "hero": ("image", first["url"])}
+    assert world.as_user(None).get(f"{API}/files/{second['file_id']}").status_code == 200           # a live post makes its custom pictures public
+
+
+def test_a_media_upload_field_takes_one_url_or_a_list_and_an_image_field_takes_one(world, uploads_dir):
+    media_form(world)
+    cat = make_category(world)
+    asha = world.people.asha
+    mine = upload(world, asha, "a.png", png(), "image/png", "image").json()
+    post = draft(world, asha, cat)
+
+    def patch(values):
+        return world.as_user(asha).patch(f"{API}/my/posts/{post['id']}", json={"custom_fields": values})
+
+    assert patch({"field_media_upload_2779": mine["url"]}).json()["custom_fields"]["field_media_upload_2779"] == mine["url"]
+    assert patch({"field_media_upload_2779": [mine["url"], mine["url"]]}).json()["custom_fields"]["field_media_upload_2779"] == [mine["url"]]
+    too_many = patch({"field_media_upload_2779": ["https://x.test/1.png", "https://x.test/2.png", "https://x.test/3.png"]})
+    assert too_many.status_code == 422 and too_many.json()["errors"][0]["code"] == "TOO_MANY"
+    assert patch({"hero": [mine["url"]]}).json()["errors"][0]["code"] == "INVALID_TYPE"
+    assert patch({"hero": "not a url"}).json()["errors"][0]["code"] == "INVALID_FORMAT"
+    assert patch({"field_media_upload_2779": [mine["url"], 5]}).json()["errors"][0]["code"] == "INVALID_FORMAT"
+    assert patch({"hero": None}).status_code == 200
+
+
+def test_pictures_in_a_media_field_must_be_the_businesss_own_and_an_image(world, uploads_dir):
+    media_form(world)
+    cat = make_category(world)
+    asha, bela = world.people.asha, world.people.bela
+    cover = upload(world, asha, "a.png", png(), "image/png", "image").json()
+    pdf = upload(world, asha, "r.pdf", b"%PDF-1.4\n%%EOF\n", "application/pdf", "document")
+    post = draft(world, bela, cat)
+
+    stolen = world.as_user(bela).patch(f"{API}/my/posts/{post['id']}", json={"custom_fields": {"hero": cover["url"]}})
+    assert stolen.status_code == 422 and stolen.json()["errors"][0]["code"] == "FILE_NOT_FOUND"
+    assert pdf.status_code == 201, pdf.text
+    wrong = world.as_user(asha).patch(f"{API}/my/posts/{draft(world, asha, cat)['id']}", json={"custom_fields": {"hero": pdf.json()["url"]}})
+    assert wrong.json()["errors"][0]["code"] == "WRONG_FILE_KIND"
+
+
+def test_the_form_builder_accepts_the_media_types_and_their_rules(world):
+    bad = {"sections": [{"key": "s", "title": "S", "fields": [
+        {"key": "title"}, {"key": "category"}, {"key": "content"},
+        {"key": "pics", "type": "media_upload", "label": "Pictures", "validation": {"max_items": 99}},
+        {"key": "pic", "type": "image", "label": "Picture", "validation": {"max_items": 2}}]}]}
+
+    resp = root(world).post(f"{API}/admin/forms", json={"name": "Media", "mode": "configurable", "definition": bad})
+
+    assert resp.status_code == 422
+    assert {e["field"] for e in resp.json()["errors"]} >= {"definition.sections[0].fields[3].validation.max_items", "definition.sections[0].fields[4].validation.max_items"}

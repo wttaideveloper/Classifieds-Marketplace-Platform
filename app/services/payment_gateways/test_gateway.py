@@ -29,6 +29,17 @@ ORDERS: dict[str, dict] = {}
 FEE_PERCENT = 2
 
 
+def _known(request: GatewayRequest) -> dict | None:
+    """The fake gateway's order. Orders live in this process's memory, so with more than one worker (or after a restart) the worker that
+    gets /verify may not be the one that created the order. A test order is rebuilt from the request, which carries what it needs."""
+    order_id = request.gateway_order_id or ""
+    order = ORDERS.get(order_id)
+    if order is None and order_id.startswith("test_order_"):
+        order = ORDERS[order_id] = {"status": REQUIRES_PAYMENT_METHOD, "gateway_payment_id": None, "amount_minor": request.amount_minor,
+                                    "currency": request.currency, "refunded_minor": 0, "token": None, "capture_method": request.capture_method}
+    return order
+
+
 class TestGateway(PaymentGateway):
     __test__ = False   # not a pytest class
     name = "test"
@@ -50,7 +61,7 @@ class TestGateway(PaymentGateway):
 
     def confirm(self, request: GatewayRequest, client_data: dict[str, Any]) -> GatewayResult:
         token = client_data.get("test_token") or client_data.get("token")
-        order = ORDERS.get(request.gateway_order_id or "")
+        order = _known(request)
         if order is None:
             raise GatewayError("The gateway does not know this payment", code="order_not_found")
         if token is None and order.get("token"):
@@ -104,7 +115,7 @@ class TestGateway(PaymentGateway):
         )
 
     def fetch(self, request: GatewayRequest) -> GatewayResult:
-        if request.gateway_order_id not in ORDERS:
+        if _known(request) is None:
             return GatewayResult(status=FAILED, gateway_order_id=request.gateway_order_id, failure_code="not_found",
                                  failure_message="The gateway has no record of this payment")
         return self._result(request.gateway_order_id)
