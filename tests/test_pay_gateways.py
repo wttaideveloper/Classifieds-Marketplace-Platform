@@ -327,3 +327,19 @@ def test_the_test_gateway_is_refused_in_production(monkeypatch):
     monkeypatch.setattr(settings, "PAYMENT_ALLOW_TEST_GATEWAY", True)
     assert get_gateway("test").name == "test"
     assert get_gateway("stripe").name == "stripe"
+
+
+def test_verify_works_when_another_worker_created_the_test_order():
+    """With several workers the order may have been created in another process: the test gateway rebuilds it from the request."""
+    from app.services.payment_gateways import base as gw
+    from app.services.payment_gateways import test_gateway as tg
+
+    gateway = tg.TestGateway()
+    request = gw.GatewayRequest(payment_id="p", amount_minor=1000, currency="INR", gateway_order_id="test_order_abcdef0123456789")
+    tg.ORDERS.pop(request.gateway_order_id, None)
+    result = gateway.confirm(request, {"test_token": "tok_success"})
+    assert result.status == tg.SUCCEEDED and result.gateway_order_id == request.gateway_order_id
+    assert gateway.fetch(gw.GatewayRequest(payment_id="p", amount_minor=1, currency="INR", gateway_order_id="test_order_00000000000000ff")).status != tg.FAILED
+    import pytest
+    with pytest.raises(gw.GatewayError):
+        gateway.confirm(gw.GatewayRequest(payment_id="p", amount_minor=1, currency="INR", gateway_order_id="rzp_order_1"), {"test_token": "tok_success"})
