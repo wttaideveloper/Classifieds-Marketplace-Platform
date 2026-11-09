@@ -16,6 +16,10 @@ class EventRegistration(Base):
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False, index=True)
     custom_fields = Column(JSONB, default=dict)
+    # The registrant's platform user id (what Event Group Chat invites). NULL = not known yet: it is saved when the registrant
+    # registers themselves (verified identity), then recovered by email (app/services/event_registration_identity.py). Walk-ins
+    # and group members registered by someone else stay NULL. Never taken from request input.
+    user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     ticket_type_id = Column(String(100))
     status = Column(String(20), default="confirmed", index=True)  # confirmed|cancelled|attended|no_show..
     qr_code = Column(String(255), unique=True, index=True)

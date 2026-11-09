@@ -13,7 +13,7 @@ A group is one conversation with several people, a name, and a group admin. In a
 
 1. Only a **verified provider** or a **clinic admin** can create a group. A patient cannot.
 2. **Nobody is added without agreeing.** An invited person sees nothing in the group until they accept.
-3. Every group is **linked to a program, an appointment series, a care episode or a training**. There are no free-form groups. Training groups have their own document: `group-chat-training.md`.
+3. Every group is **linked to a program, an appointment series, a care episode, a training or an event**. There are no free-form groups. Training groups have their own document: `group-chat-training.md`; event groups: `group-chat-event.md`.
 
 There are two kinds of group:
 

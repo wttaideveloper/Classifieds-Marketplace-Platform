@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import extract_access_token, get_current_user
 from app.db.database import get_db
 from app.schemas.group_chat_schema import (
+    EventAttendeesResponse, EventProvidersResponse, EventsForGroupsResponse, InviteRegistered,
     InviteEnrolled, InviteEnrolledResponse, TrainingLearnersResponse, TrainingProvidersResponse, TrainingsForGroupsResponse,
     AcceptInvitation, AuditResponse, CloseGroup, ClinicalRecordResponse, ConsentsResponse, DataRequestCreate,
     DataRequestResponse, DeclineInvitation, EditGroupMessage, GrievanceOfficerResponse, GroupCreate, GroupListResponse,
@@ -23,6 +24,7 @@ from app.schemas.group_chat_schema import (
 )
 from app.services import group_chat_compliance as compliance
 from app.services import group_chat_messages as messages
+from app.services import group_chat_event as event_service
 from app.services import group_chat_service as service
 from app.services import group_chat_training as training_service
 
@@ -124,6 +126,73 @@ def group_training_providers(
 )
 def group_training_groups(request: Request, training_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return training_service.training_groups(db, current_user, training_id, token(request))
+
+
+# ---- event groups: pick an event, pick the registrants, create the group (docs/group-chat-event.md)
+
+_EVENT_FORBIDDEN = "403 unless the caller is the Enterprise Admin of the enterprise that owns the event (Providers, speakers, the Super Admin and attendees never manage an event group)."
+
+
+@router.get(
+    "/events", response_model=EventsForGroupsResponse, summary="Events I can start a group for",
+    description=(
+        "Step 1 of creating an event group. The Enterprise Admin's own enterprise's events (never another enterprise's), with the number "
+        "of online registrants (confirmed or attended) and of groups each already has. `can_create_group` is true for a published or "
+        "completed event. 403 for anyone who is not an Enterprise Admin."
+    ),
+)
+def group_events(
+    request: Request, q: str | None = Query(None, max_length=200), status_filter: str | None = Query(None, alias="status"),
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return event_service.manageable_events(db, current_user, token(request), q=q, status=status_filter, page=page, page_size=page_size)
+
+
+@router.get(
+    "/events/{event_id}/attendees", response_model=EventAttendeesResponse, summary="Registrants of an event to invite (searchable, paged)",
+    description=(
+        "Step 2. Each row has the platform `user_id` to invite (null = no chat account found, `can_invite` false), the registration and "
+        "payment status, `can_invite` with a `reason`, and `group_state` (none | invited | member | declined | left | removed). "
+        "Eligible = online registration `confirmed` or `attended`, payment `paid` or `free`, with an account, one per person. Walk-ins are "
+        "never listed (`walk_in_excluded` counts them). `q` searches name and email. By default only people who can be invited are listed; "
+        "`eligible_only=false`, `registration_status` or `payment_status` shows the others with the reason. `not_in_group=true` hides "
+        "everyone already in or invited to a group of this event (or to `group_id`). Without `group_id` the list is for a NEW group "
+        "(`can_invite` ignores other groups); with `group_id` it is about that group (`already_member` / `already_invited`). " + _EVENT_FORBIDDEN
+    ),
+)
+def group_event_attendees(
+    request: Request, event_id: UUID, q: str | None = Query(None, max_length=200), eligible_only: bool = True,
+    registration_status: str | None = Query(None, pattern="^(confirmed|attended|cancelled|no_show)$"),
+    payment_status: str | None = Query(None, pattern="^(free|paid|unpaid|pending|failed|cancelled|refund_requested|refunded)$"),
+    not_in_group: bool = False, group_id: UUID | None = None,
+    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return event_service.list_attendees(
+        db, current_user, event_id, token(request), q=q, eligible_only=eligible_only, registration_status=registration_status,
+        payment_status=payment_status, not_in_group=not_in_group, group_id=group_id, page=page, page_size=page_size,
+    )
+
+
+@router.get(
+    "/events/{event_id}/providers", response_model=EventProvidersResponse, summary="Verified Providers I can add to an event group",
+    description=("Step 3. The enterprise's verified Providers, who join as ordinary members (never admins). Speakers and organisers typed into "
+                 "the event form are text only: nobody is added from them. " + _EVENT_FORBIDDEN),
+)
+def group_event_providers(
+    request: Request, event_id: UUID, q: str | None = Query(None, max_length=200),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return event_service.list_providers(db, current_user, event_id, token(request), q=q)
+
+
+@router.get(
+    "/events/{event_id}/groups", response_model=GroupListResponse, summary="Groups already made for an event",
+    description="Every group of this event, open and closed (details only, never messages of a group the caller is not in). " + _EVENT_FORBIDDEN,
+)
+def group_event_groups(request: Request, event_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return event_service.event_groups(db, current_user, event_id, token(request))
 
 
 @router.get("/invitations", response_model=InvitationsResponse, summary="My pending group invitations")
@@ -320,6 +389,22 @@ def invite_members(request: Request, group_id: UUID, payload: InviteMembers, db:
 )
 def invite_enrolled(request: Request, group_id: UUID, payload: InviteEnrolled, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return service.invite_enrolled(db, current_user, group_id, payload, token(request))
+
+
+@router.post(
+    "/{group_id}/members/invite-registered", response_model=InviteEnrolledResponse, status_code=status.HTTP_201_CREATED,
+    summary="Event groups: invite registrants without sending every id",
+    description=(
+        "Owner of a group linked to an event (the Enterprise Admin of the owning enterprise; checked again on every call). Send `user_ids` "
+        "(each must have an eligible registration for the event, or be a verified Provider of the enterprise; otherwise 422 `INVITEE_NOT_ELIGIBLE` "
+        "with `invalid_user_ids` and a `reasons` entry for each) or `all_eligible: true` (everyone eligible, one per person, who is not in or "
+        "invited to this group, oldest registration first, up to the free places). Someone already a member or already invited is skipped "
+        "(`skipped`), never invited twice. `not_invited_group_full` counts the people left out because the group is full: make another group "
+        "for them. A full group refuses new named invitations (409). Use it again later to invite people who registered afterwards."
+    ),
+)
+def invite_registered(request: Request, group_id: UUID, payload: InviteRegistered, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return service.invite_registered(db, current_user, group_id, payload, token(request))
 
 
 @router.delete("/{group_id}/members/{user_id}", summary="Remove a member (or cancel an invitation)",

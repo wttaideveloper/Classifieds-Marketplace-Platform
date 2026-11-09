@@ -271,10 +271,15 @@ def list_events(
         "(a review or a feedback form), false otherwise. A review a Super Admin deleted does not count."
     ),
 )
-def my_registrations(status: str | None = Query(None, description="Filter by registration status: confirmed|attended|cancelled"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def my_registrations(request: Request, status: str | None = Query(None, description="Filter by registration status: confirmed|attended|cancelled"), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     email = current_user.get("email")
     if not email:
         raise HTTPException(status_code=400, detail="Email not found in token")
+    try:   # the caller's own older registrations get their platform user id (Event Group Chat invites by it)
+        from app.services.event_registration_identity import link_caller_registrations
+        link_caller_registrations(db, current_user, extract_access_token(request))
+    except Exception:
+        db.rollback()
     return my_registrations_service(db, email, status, user_id=_caller_user_uuid(current_user))
 
 
@@ -607,8 +612,8 @@ def list_registrations(event_id: UUID, db: Session = Depends(get_db), current_us
         409: {"description": "Already registered", "content": {"application/json": {"example": {"detail": "Already registered for this event."}}}},
     },
 )
-def register(event_id: UUID, payload: EventRegistrationCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return create_registration_service(db, event_id, payload)
+def register(request: Request, event_id: UUID, payload: EventRegistrationCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_registration_service(db, event_id, payload, current_user, extract_access_token(request))
 
 
 @router.delete("/{event_id}/registrations/{reg_id}", summary="Cancel Registration")
@@ -826,8 +831,8 @@ def checkout_quote(event_id: UUID, payload: EventCheckoutQuoteRequest, db: Sessi
 
 
 @router.post("/{event_id}/checkout", response_model=EventOrderResponse, status_code=status.HTTP_201_CREATED, summary="Checkout — Paid Registration")
-def checkout(event_id: UUID, payload: EventCheckoutRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return create_event_checkout_service(db, event_id, payload)
+def checkout(request: Request, event_id: UUID, payload: EventCheckoutRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_event_checkout_service(db, event_id, payload, current_user, extract_access_token(request))
 
 
 @router.get("/{event_id}/orders", summary="List Orders")

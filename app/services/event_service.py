@@ -1232,7 +1232,7 @@ def _cancel_registration_and_release_seat(db: Session, event, reg, *, actor: str
         logger.exception("Waitlist promotion failed after seat release for event %s", event.id)
 
 
-def create_registration_service(db: Session, event_id: UUID, payload):
+def create_registration_service(db: Session, event_id: UUID, payload, current_user: dict | None = None, access_token: str | None = None):
     from datetime import datetime
     from decimal import Decimal
     event = _get_event_or_404(db, event_id)
@@ -1370,6 +1370,8 @@ def create_registration_service(db: Session, event_id: UUID, payload):
         meal_selections=meal_selections,
         accommodation_selections=accommodation_selections,
     )
+    from app.services.event_registration_identity import stamp_registration
+    stamp_registration(reg, current_user, access_token)   # the registrant's platform user id, when the caller is the registrant
     db.add(reg)
     db.flush()
 
@@ -2522,7 +2524,7 @@ def _ticket_effective_price(ticket: dict, event) -> str:
         return str(ticket["promo_price"])
     return str(ticket.get("price", event.price or "0"))
 
-def create_event_checkout_service(db: Session, event_id: UUID, payload):
+def create_event_checkout_service(db: Session, event_id: UUID, payload, current_user: dict | None = None, access_token: str | None = None):
     import uuid
     from app.models.event_aux_models import EventOrder, EventRegistration, EventWaitlist
     from app.models.event_model import Event
@@ -2670,6 +2672,8 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload):
             meal_selections=[line.option_id for line in priced_options.meal_lines] or None,
             accommodation_selections=[line.option_id for line in priced_options.accommodation_lines] or None,
         )
+        from app.services.event_registration_identity import stamp_registration
+        stamp_registration(reg, current_user, access_token)
         db.add(reg)
         db.flush()
 

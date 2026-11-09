@@ -190,7 +190,9 @@ def require_admin(member: ConversationParticipant, what: str = "do this") -> Non
         raise HTTPException(status_code=403, detail=f"Only the group owner or an admin can {what}")
 
 
-def max_members(kind: str | None) -> int:
+def max_members(kind: str | None, context_type: str | None = None) -> int:
+    if context_type == "event":
+        return settings.GROUP_MAX_MEMBERS_EVENT
     return settings.GROUP_MAX_MEMBERS_CARE if kind == "care" else settings.GROUP_MAX_MEMBERS_PROGRAM
 
 
