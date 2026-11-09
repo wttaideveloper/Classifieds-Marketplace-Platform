@@ -248,6 +248,9 @@ def publish_configuration_service(db: Session, config_id: UUID, current_user: di
     draft = _get_draft_version(db, config_id)
     if not draft:
         raise HTTPException(status_code=400, detail="No draft version to publish")
+    from app.services.form_common_write import assert_reviewed_if_required
+
+    assert_reviewed_if_required(draft)
     sections = normalize_sections(draft.sections or [], assign_ids=False)
     validate_settings(sections)
     validate_sections_for_publish(sections, scope=config.scope)
@@ -703,15 +706,31 @@ def validate_custom_values(custom_values, sections: list[dict], core_data: dict 
             raise HTTPException(status_code=400, detail=f"Duplicate custom value for field_id {real_id}")
         seen.add(real_id)
         if visible.get(real_id):
-            validate_constraints(field_def, value)
-            _validate_custom_value(field_def, value)
-            validate_media_value(field_def, value)
+            if field_def.get("field_type"):
+                value = _checked_value(field_def, value)
+            else:
+                validate_constraints(field_def, value)
+                _validate_custom_value(field_def, value)
+                validate_media_value(field_def, value)
         normalized.append({"field_id": real_id, "value": value})
 
     for field in _iter_custom_fields(sections):
         if field.get("required") and visible.get(field["id"]) and field["id"] not in seen:
             raise HTTPException(status_code=400, detail=f"Required custom field missing: {field.get('label')}")
     return normalized
+
+
+def _checked_value(field_def: dict, value):
+    """A value of a field made in the common form builder (it has a `field_type`), checked and cleaned by the shared rules."""
+    from app.form_builder.fields import is_empty
+    from app.services.form_common_view import spec
+    from app.services.form_common_write import check_value
+
+    if is_empty(value):
+        if field_def.get("required"):
+            raise HTTPException(status_code=400, detail=f"Required custom field '{field_def.get('label')}' is empty")
+        return value
+    return check_value(field_def, value, spec("training"))
 
 
 def _validate_custom_value(field_def: dict, value) -> None:
@@ -864,10 +883,14 @@ def apply_form_configuration_to_training_data(db: Session, training_data, curren
     core = training_data.to_model_data() if hasattr(training_data, "to_model_data") else training_data.model_dump()
     validate_form_required_core_fields(training_data, sections, values_map(raw_custom))
     custom_values = validate_custom_values(raw_custom, sections, core)
+    from app.services.form_common_write import split_private
+
+    custom_values, private_values = split_private(custom_values, sections)       # Enterprise Admin only values never sit in the public column
     return {
         "form_configuration_id": config.id,
         "form_configuration_version_id": version.id,
         "custom_values": custom_values,
+        "private_custom_values": private_values,
         "tenant_id": tenant_uuid,
         "enterprise_id": enterprise_id,
     }
@@ -886,7 +909,9 @@ def apply_form_configuration_to_training_update(db: Session, training, update_da
             for section in sections for f in section.get("fields", []) if f.get("core_key")}
     changes = update_data.to_model_data() if hasattr(update_data, "to_model_data") else update_data.model_dump(exclude_unset=True)
     core.update(changes)
-    custom = raw if raw is not None else training.custom_values
+    custom = raw if raw is not None else list(training.custom_values or []) + list(getattr(training, "private_custom_values", None) or [])
+    from app.services.form_common_write import split_private
     from app.services.training_form_rules import custom_map
     validate_form_required_core_fields(core, sections, custom_map(custom))
-    return {"custom_values": validate_custom_values(custom, sections, core)}
+    public, private = split_private(validate_custom_values(custom, sections, core), sections, getattr(training, "private_custom_values", None))
+    return {"custom_values": public, "private_custom_values": private}

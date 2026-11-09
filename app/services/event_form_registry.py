@@ -55,6 +55,15 @@ CUSTOM_RENDERERS = {
     "select",
     "multi_select",
     "checkbox",
+    "rich_text_editor",      # renderers of the field types made in the common form builder (docs/form-builder-api.md)
+    "radio_group",
+    "time_picker",
+    "image_uploader",
+    "document_uploader",
+    "video_input",
+    "tag_input",
+    "datetime_picker",
+    "switch",
 }
 
 # Domain-required core keys — publish validation must keep these enabled & present

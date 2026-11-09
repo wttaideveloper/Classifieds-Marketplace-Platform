@@ -85,6 +85,8 @@ def normalize_sections(raw_sections: list, *, assign_ids: bool = True) -> list[d
             "is_enabled": bool(section.get("is_enabled", True)),
             "fields": [],
         }
+        if section.get("visibility"):
+            sec["visibility"] = section["visibility"]
         fields = []
         for field in sorted(section.get("fields") or [], key=lambda f: int(f.get("position") or 0)):
             if not field.get("is_enabled", True):
@@ -121,6 +123,10 @@ def normalize_sections(raw_sections: list, *, assign_ids: bool = True) -> list[d
             }
             if source == "core" and core_key in COMPOSITE_CORE_KEYS:
                 entry["composite_config"] = normalize_composite_config(core_key, field.get("composite_config"))
+            if field.get("field_type"):            # set by the common form builder; absent on older fields
+                entry["field_type"] = field["field_type"]
+            if field.get("visibility"):
+                entry["visibility"] = field["visibility"]
             fields.append(entry)
         sec["fields"] = fields
         normalized.append(sec)
@@ -371,6 +377,9 @@ def publish_configuration_service(db: Session, config_id: UUID, current_user: di
     draft = _get_draft_version(db, config_id)
     if not draft:
         raise HTTPException(status_code=400, detail="No draft version to publish")
+    from app.services.form_common_write import assert_reviewed_if_required
+
+    assert_reviewed_if_required(draft)
     sections = normalize_sections(draft.sections or [], assign_ids=False)
     validate_sections_for_publish(sections, scope=config.scope)
 
@@ -1050,12 +1059,28 @@ def validate_custom_values(custom_values: list | None, sections: list[dict]) -> 
         field_def = field_map.get(fid)
         if not field_def:
             raise HTTPException(status_code=400, detail=f"Unknown custom field_id: {fid}")
-        _validate_custom_value(field_def, value)
+        if field_def.get("field_type"):
+            value = _checked_value(field_def, value)
+        else:
+            _validate_custom_value(field_def, value)
         normalized.append({"field_id": fid, "value": value})
     for field in _iter_custom_fields(sections):
         if field.get("required") and field["id"] not in seen:
             raise HTTPException(status_code=400, detail=f"Required custom field missing: {field.get('label')}")
     return normalized
+
+
+def _checked_value(field_def: dict, value):
+    """A value of a field made in the common form builder (it has a `field_type`), checked and cleaned by the shared rules."""
+    from app.form_builder.fields import is_empty
+    from app.services.form_common_view import spec
+    from app.services.form_common_write import check_value
+
+    if is_empty(value):
+        if field_def.get("required"):
+            raise HTTPException(status_code=400, detail=f"Required custom field '{field_def.get('label')}' is empty")
+        return value
+    return check_value(field_def, value, spec("event"))
 
 
 def _validate_custom_value(field_def: dict, value) -> None:
@@ -1196,10 +1221,14 @@ def apply_form_configuration_to_event_data(db: Session, event_data, current_user
     sections = normalize_sections(version.sections or [], assign_ids=False)
     validate_form_required_core_fields(event_data, sections)
     custom_values = validate_custom_values(getattr(event_data, "custom_values", None), sections)
+    from app.services.form_common_write import split_private
+
+    custom_values, private_values = split_private(custom_values, sections)       # Enterprise Admin only values never sit in the public column
     return {
         "form_configuration_id": config.id,
         "form_configuration_version_id": version.id,
         "custom_values": custom_values,
+        "private_custom_values": private_values,
         "tenant_id": tenant_id,
         "enterprise_id": event_data.enterprise_id,
     }
@@ -1221,4 +1250,7 @@ def apply_form_configuration_to_event_update(db: Session, event, update_data, cu
         for section in sections:
             for field in section.get("fields") or []:
                 field["required"] = False
-    return {"custom_values": validate_custom_values(update_data.custom_values, sections)}
+    from app.services.form_common_write import split_private
+
+    public, private = split_private(validate_custom_values(update_data.custom_values, sections), sections, getattr(event, "private_custom_values", None))
+    return {"custom_values": public, "private_custom_values": private}

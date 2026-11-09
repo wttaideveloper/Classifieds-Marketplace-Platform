@@ -44,6 +44,14 @@ _safe_include(
 # Events
 # Before the Events router: /events/media/... must not be read as /events/{event_id}/...
 _safe_include("app.api.v1.endpoints.event_media", prefix="/events/media", tags=["Event Media"])
+# Event and Training forms in the common form contract (read only; full paths): before the Events and Trainings routers
+_form_common = __import__("app.api.v1.endpoints.form_common", fromlist=["router"])
+api_router.include_router(_form_common.router)
+
+# Event Discussions: before the Events router so /events/{event_id}/discussion/... is read as a discussion path
+_discussion = __import__("app.api.v1.endpoints.event_discussion", fromlist=["router"])
+api_router.include_router(_discussion.router, prefix="/events/{event_id}/discussion", tags=["Event Discussions"])
+api_router.include_router(_discussion.overview_router, prefix="/event-discussions", tags=["Event Discussions"])
 _safe_include("app.api.v1.endpoints.event", prefix="/events", tags=["Events"])
 _safe_include("app.api.v1.endpoints.event_category", prefix="/event-categories", tags=["Event Categories"])
 _safe_include("app.api.v1.endpoints.event_type", prefix="/event-types", tags=["Event Types"])

@@ -216,6 +216,10 @@ async def startup():
 
     start_meeting_jobs()
 
+    from app.services.event_discussion_jobs import start_scheduler as start_discussion_jobs
+
+    start_discussion_jobs()
+
     from app.services.payment_jobs import start_scheduler as start_payment_jobs
 
     start_payment_jobs()

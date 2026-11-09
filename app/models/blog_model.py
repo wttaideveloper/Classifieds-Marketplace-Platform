@@ -134,6 +134,8 @@ class BlogForm(Base):
     draft_definition = Column(JSONB, nullable=False)
     revision = Column(Integer, nullable=False, default=1)                    # goes up with every edit of the draft: the concurrent-edit check
     has_unpublished_changes = Column(Boolean, nullable=False, default=True)
+    review_status = Column(String(10), nullable=False, default="draft")             # draft | submitted (reviewed and ready to publish)
+    reviewed_revision = Column(Integer, nullable=True)                              # the draft revision that was submitted; any later edit makes it stale
     created_by = Column(String(100))
     updated_by = Column(String(100))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -177,7 +179,7 @@ class BlogFile(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     uploaded_by = Column(String(100), nullable=False)
-    purpose = Column(String(12), nullable=False)                           # cover_image | image | document
+    purpose = Column(String(12), nullable=False)                           # cover_image | image | document | video
     stored_name = Column(String(120), nullable=False, unique=True)
     original_name = Column(String(255))
     content_type = Column(String(100), nullable=False)
@@ -186,6 +188,9 @@ class BlogFile(Base):
     height = Column(Integer)
     sha256 = Column(String(64))
     scan_status = Column(String(12), nullable=False, default="skipped")
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    deleted_at = Column(DateTime, nullable=True)
+    replaced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -214,3 +219,21 @@ class BlogGovernanceAudit(Base):
     actor_name = Column(String(255))
     actor_role = Column(String(20))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class BlogFormAudit(Base):
+    """Everything done to a form, kept after the form is deleted (so there is no foreign key)."""
+    __tablename__ = "cms_blog_form_audit"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    form_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    form_name = Column(String(120))
+    version = Column(Integer)                                # the published version the action concerns, if any
+    revision = Column(Integer)                               # the draft revision after the action
+    action = Column(String(30), nullable=False, index=True)
+    summary = Column(String(500), nullable=False)
+    detail = Column(JSONB)
+    actor_id = Column(String(100))
+    actor_name = Column(String(255))
+    actor_role = Column(String(20))
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

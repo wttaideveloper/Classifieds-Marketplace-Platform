@@ -16,7 +16,7 @@ from app.api.v1.endpoints import blog
 from app.core.catalog_access import CatalogAccess, get_catalog_access, get_optional_catalog_user
 from app.db.database import Base, get_db
 from app.exceptions import problem as problem_errors
-from app.models.blog_model import BlogCategory, BlogFile, BlogForm, BlogFormAssignment, BlogFormVersion, BlogGovernance, BlogGovernanceAudit, BlogPost, BlogPostHistory
+from app.models.blog_model import BlogCategory, BlogFile, BlogForm, BlogFormAssignment, BlogFormAudit, BlogFormVersion, BlogGovernance, BlogGovernanceAudit, BlogPost, BlogPostHistory
 from app.models.enterprise_model import Enterprise
 from app.models.notification_model import NotificationEventLog
 from app.services import blog_notifications
@@ -34,7 +34,7 @@ def person(name, role, tenant=None):
 def world(monkeypatch):
     monkeypatch.setattr(SQLiteTypeCompiler, "visit_JSONB", lambda *a, **kw: "JSON", raising=False)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[m.__table__ for m in (BlogCategory, BlogPost, BlogPostHistory, BlogForm, BlogFormVersion, BlogFormAssignment, BlogFile, BlogGovernance, BlogGovernanceAudit, Enterprise, NotificationEventLog)])
+    Base.metadata.create_all(engine, tables=[m.__table__ for m in (BlogCategory, BlogPost, BlogPostHistory, BlogForm, BlogFormVersion, BlogFormAssignment, BlogFormAudit, BlogFile, BlogGovernance, BlogGovernanceAudit, Enterprise, NotificationEventLog)])
     db = sessionmaker(bind=engine)()
 
     root = person("Platform Root", "super_admin")

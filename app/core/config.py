@@ -209,14 +209,43 @@ class Settings(BaseSettings):
     MEETING_JOBS_ENABLED: bool | None = None
     MEETING_JOBS_INTERVAL_SECONDS: int = 600
 
+    # --- Event Discussions (docs/event-discussions-api.md)
+    # openai = the OpenAI moderation endpoint (needs OPENAI_API_KEY); rules = only the word lists below; off = no AI, so nothing is ever published.
+    EVENT_DISCUSSION_MODERATION: str = "openai"
+    EVENT_DISCUSSION_MODERATION_TIMEOUT_SECONDS: int = 8
+    EVENT_DISCUSSION_FLAG_THRESHOLD: float = 0.4          # any category score at or above this sends the message to review
+    EVENT_DISCUSSION_BLOCK_THRESHOLD: float = 0.85        # a severe category at or above this blocks the message
+    # Extra words for languages or slang the AI may miss (Tamil, Tanglish), comma separated, matched as whole words, case-insensitive.
+    EVENT_DISCUSSION_FLAG_WORDS: str = ""
+    EVENT_DISCUSSION_BLOCK_WORDS: str = ""
+    EVENT_DISCUSSION_MAX_CHARS: int = 2000
+    EVENT_DISCUSSION_JOBS_ENABLED: bool | None = None
+    EVENT_DISCUSSION_JOBS_INTERVAL_SECONDS: int = 300
+    EVENT_DISCUSSION_UNREAD_NUDGE_HOURS: int = 12          # an unread reply is nudged once after this long
+    EVENT_DISCUSSION_PENDING_NUDGE_HOURS: int = 24         # flagged messages waiting this long are nudged, then again after the same wait
+    EVENT_DISCUSSION_PENDING_NUDGE_MAX: int = 3
+    EVENT_DISCUSSION_QUIET_START_HOUR: int = -1            # UTC hour quiet time starts (0-23); -1 = no quiet hours
+    EVENT_DISCUSSION_QUIET_END_HOUR: int = -1
+    # Where a notification opens. {event_id} and {message_id} are replaced. The web and mobile teams must confirm the real routes.
+    EVENT_DISCUSSION_LINK_PARTICIPANT: str = "/events/{event_id}/discussion?message={message_id}"
+    EVENT_DISCUSSION_LINK_ADMIN_MESSAGE: str = "/enterprise/events/{event_id}/discussion?message={message_id}"
+    EVENT_DISCUSSION_LINK_ADMIN_FLAGGED: str = "/enterprise/events/{event_id}/discussion/flagged?message={message_id}"
+    EVENT_DISCUSSION_LINK_ADMIN_QUEUE: str = "/enterprise/events/{event_id}/discussion/flagged"
+
     # --- Blogs and news (docs/blogs-api.md)
     BLOG_MAX_IMAGE_MB: int = 5
     BLOG_MAX_DOCUMENT_MB: int = 10
+    BLOG_MAX_VIDEO_MB: int = 100                       # a video is read into memory to be checked and scanned: keep this modest
+    BLOG_SIGNED_URL_SECONDS: int = 900                 # how long a signed download link works
     BLOG_MAX_ADDITIONAL_IMAGES: int = 10
     BLOG_MAX_REFERENCE_URLS: int = 10
     BLOG_MAX_DOCUMENTS: int = 10
     # Two live or draft posts of one kind in the same business cannot share a title (409 DUPLICATE_TITLE). Switch off to allow repeats.
     BLOG_REQUIRE_UNIQUE_TITLES: bool = True
+    # Publishing a form needs it to be reviewed and submitted first (POST /admin/forms/{id}/submit) with no edit since. Off: publish straight from the draft.
+    BLOG_FORM_REQUIRE_REVIEW: bool = False
+    # The same for Event and Training forms: publishing needs POST .../common/submit with no edit since.
+    FORM_REQUIRE_REVIEW: bool = False
     # Where a notification opens the post, for each kind of reader. {post_id} is replaced. Set these to the web app's own routes.
     BLOG_DEEP_LINK_SUPER_ADMIN: str = "/admin/cms/posts/{post_id}"
     BLOG_DEEP_LINK_ENTERPRISE: str = "/enterprise/cms/posts/{post_id}"
