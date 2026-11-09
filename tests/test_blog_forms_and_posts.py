@@ -244,10 +244,9 @@ def test_enterprise_only_fields_are_not_for_platform_posts_and_internal_ones_sta
     live = live_merchant_post(world, cat, custom_fields={"event_date": "2026-12-01", "audience": "adults", "partner": "Acme", "editor_note": "Check the date"})
     public = world.as_user(None).get(f"{API}/{live['slug']}").json()
     assert public["custom_fields"] == [
-        {"key": "event_date", "label": "Event date", "type": "date", "value": "2026-12-01"},
-        {"key": "audience", "label": "Audience", "type": "select", "value": "adults"},
-        {"key": "partner", "label": "Partner", "type": "text", "value": "Acme"}]                         # the editors' note is internal
-    assert "Check the date" not in str(public)
+        {"key": "event_date", "label": "Event date", "type": "date", "renderer": "date_picker", "value": "2026-12-01"},
+        {"key": "audience", "label": "Audience", "type": "dropdown", "renderer": "select", "value": "adults"}]    # Partner and the editors' note are Enterprise Admin only
+    assert "Check the date" not in str(public) and "Acme" not in str(public)
     for private in ("reviewer_note", "pending_revision", "form", "version", "form_id", "actions", "is_live"):
         assert private not in public
     assert public["supporting_documents"] == []                                                          # the form marks documents internal
@@ -401,7 +400,7 @@ def test_a_preview_shows_what_a_reader_would_see_and_what_is_still_missing(world
         "title": "Unsaved", "category_id": cat["id"], "content": "<p>Hello</p><script>x()</script>", "excerpt": "e",
         "custom_fields": {"audience": "kids", "editor_note": "internal"}}).json()
     assert unsaved["preview"] is True and unsaved["id"] is None and unsaved["content"] == "<p>Hello</p>" and unsaved["business_name"] == "Calm Clinic"
-    assert unsaved["custom_fields"] == [{"key": "audience", "label": "Audience", "type": "select", "value": "kids"}]
+    assert unsaved["custom_fields"] == [{"key": "audience", "label": "Audience", "type": "dropdown", "renderer": "select", "value": "kids"}]
     assert unsaved["ready_to_submit"] is False and unsaved["problems"] == [{"field": "custom_fields.event_date", "code": "REQUIRED", "message": "Event date is required"}]
     assert world.as_user(asha).get(f"{API}/my/posts").json()["pagination"]["total"] == 0                       # nothing was stored
     assert world.as_user(asha).post(f"{API}/my/posts/preview", json={"custom_fields": {"nope": 1}}).status_code == 422
@@ -621,6 +620,10 @@ def media_form(world):
     publish_form(world, make_form(world, definition=MEDIA_DEFINITION))
 
 
+def urls_of(value):
+    return [item["url"] for item in value]
+
+
 def test_media_fields_keep_their_type_in_the_form_and_in_the_public_post(world, uploads_dir):
     media_form(world)
     cat = make_category(world)
@@ -629,21 +632,22 @@ def test_media_fields_keep_their_type_in_the_form_and_in_the_public_post(world, 
     second = upload(world, asha, "b.png", png((30, 30)), "image/png", "image").json()
 
     types = {f["key"]: f["type"] for s in my_form(world)["definition"]["sections"] for f in s["fields"]}
-    assert types["field_media_upload_2779"] == "media_upload" and types["hero"] == "image"
+    assert types["field_media_upload_2779"] == "additional_images" and types["hero"] == "additional_images"       # the older image / media_upload names became the explicit type
 
     post = draft(world, asha, cat, custom_fields={"field_media_upload_2779": [first["url"], second["url"]], "hero": first["url"]})
-    assert post["custom_fields"] == {"field_media_upload_2779": [first["url"], second["url"]], "hero": first["url"]}
-    assert world.as_user(asha).get(f"{API}/my/posts/{post['id']}").json()["custom_fields"]["hero"] == first["url"]
+    assert urls_of(post["custom_fields"]["field_media_upload_2779"]) == [first["url"], second["url"]] and urls_of(post["custom_fields"]["hero"]) == [first["url"]]
 
     submit(world, asha, post)
     live = review(world, post, "approve").json()
     public = world.as_user(None).get(f"{API}/{live['slug']}").json()
-    assert {f["key"]: (f["type"], f["value"]) for f in public["custom_fields"]} == {
-        "field_media_upload_2779": ("media_upload", [first["url"], second["url"]]), "hero": ("image", first["url"])}
+    by_key = {f["key"]: f for f in public["custom_fields"]}
+    assert by_key["hero"]["type"] == "additional_images" and by_key["hero"]["renderer"] == "image_uploader"
+    assert urls_of(by_key["field_media_upload_2779"]["value"]) == [first["url"], second["url"]]
+    assert "file_id" not in str(public["custom_fields"])
     assert world.as_user(None).get(f"{API}/files/{second['file_id']}").status_code == 200           # a live post makes its custom pictures public
 
 
-def test_a_media_upload_field_takes_one_url_or_a_list_and_an_image_field_takes_one(world, uploads_dir):
+def test_a_media_field_takes_one_url_or_a_list_up_to_its_limit(world, uploads_dir):
     media_form(world)
     cat = make_category(world)
     asha = world.people.asha
@@ -653,12 +657,13 @@ def test_a_media_upload_field_takes_one_url_or_a_list_and_an_image_field_takes_o
     def patch(values):
         return world.as_user(asha).patch(f"{API}/my/posts/{post['id']}", json={"custom_fields": values})
 
-    assert patch({"field_media_upload_2779": mine["url"]}).json()["custom_fields"]["field_media_upload_2779"] == mine["url"]
-    assert patch({"field_media_upload_2779": [mine["url"], mine["url"]]}).json()["custom_fields"]["field_media_upload_2779"] == [mine["url"]]
+    assert urls_of(patch({"field_media_upload_2779": mine["url"]}).json()["custom_fields"]["field_media_upload_2779"]) == [mine["url"]]
+    dup = patch({"field_media_upload_2779": [mine["url"], mine["url"]]})
+    assert dup.status_code == 422 and dup.json()["errors"][0]["code"] == "DUPLICATE_ITEM"
     too_many = patch({"field_media_upload_2779": ["https://x.test/1.png", "https://x.test/2.png", "https://x.test/3.png"]})
     assert too_many.status_code == 422 and too_many.json()["errors"][0]["code"] == "TOO_MANY"
-    assert patch({"hero": [mine["url"]]}).json()["errors"][0]["code"] == "INVALID_TYPE"
-    assert patch({"hero": "not a url"}).json()["errors"][0]["code"] == "INVALID_FORMAT"
+    assert patch({"hero": ["https://x.test/1.png", "https://x.test/2.png"]}).json()["errors"][0]["code"] == "TOO_MANY"          # the old `image` takes one
+    assert patch({"hero": "not a url"}).json()["errors"][0]["code"] == "INVALID" and patch({"hero": "javascript:alert(1)"}).json()["errors"][0]["code"] == "UNSAFE_SCHEME"
     assert patch({"field_media_upload_2779": [mine["url"], 5]}).json()["errors"][0]["code"] == "INVALID_FORMAT"
     assert patch({"hero": None}).status_code == 200
 
@@ -681,10 +686,10 @@ def test_pictures_in_a_media_field_must_be_the_businesss_own_and_an_image(world,
 def test_the_form_builder_accepts_the_media_types_and_their_rules(world):
     bad = {"sections": [{"key": "s", "title": "S", "fields": [
         {"key": "title"}, {"key": "category"}, {"key": "content"},
-        {"key": "pics", "type": "media_upload", "label": "Pictures", "validation": {"max_items": 99}},
-        {"key": "pic", "type": "image", "label": "Picture", "validation": {"max_items": 2}}]}]}
+        {"key": "pics", "type": "additional_images", "label": "Pictures", "validation": {"max_items": 99}},
+        {"key": "docs", "type": "supporting_document", "label": "Documents", "validation": {"allowed_types": ["exe"]}}]}]}
 
     resp = root(world).post(f"{API}/admin/forms", json={"name": "Media", "mode": "configurable", "definition": bad})
 
     assert resp.status_code == 422
-    assert {e["field"] for e in resp.json()["errors"]} >= {"definition.sections[0].fields[3].validation.max_items", "definition.sections[0].fields[4].validation.max_items"}
+    assert {e["field"] for e in resp.json()["errors"]} >= {"definition.sections[0].fields[3].validation.max_items", "definition.sections[0].fields[4].validation.allowed_types"}

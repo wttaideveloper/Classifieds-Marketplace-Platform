@@ -164,20 +164,33 @@ def _link_files(db: Session, actor: BlogActor, out: dict, errors: list) -> None:
                     item.setdefault("content_type", row.content_type)
 
 
+MEDIA_PURPOSES = {"additional_images": ("cover_image", "image"), "supporting_document": ("document",), "video": ("video",)}   # what an upload may have been made for
+
+
 def _link_custom_files(db: Session, actor: BlogActor, definition: dict, custom: dict, sent: dict, errors: list) -> None:
-    """Pictures sent in image / media_upload custom fields follow the same rule as the built-in image slots."""
+    """Files and pictures in image, document and video custom fields follow the same rule as the built-in slots: the business's own uploads, of the right kind.
+    A document's name, size and type are filled in from the upload."""
     for field in rules.fields_of(definition):
-        if field["kind"] != "custom" or field["type"] not in rules.MEDIA_TYPES or field["key"] not in sent:
+        if field["kind"] != "custom" or field["type"] not in MEDIA_PURPOSES or field["key"] not in sent:
             continue
-        value = custom.get(field["key"])
-        urls = [value] if isinstance(value, str) else list(value or [])
-        found = uploads.owned_files(db, urls, actor)
+        items = [i for i in (custom.get(field["key"]) or []) if isinstance(i, dict)]
+        found = uploads.owned_files(db, [i["url"] for i in items], actor)
         path = f"custom_fields.{field['key']}"
-        for url in urls:
-            if "/cms/blogs/files/" in url and url not in found:
+        for item in items:
+            url, row = item["url"], found.get(item["url"])
+            if "/cms/blogs/files/" in url and row is None:
                 errors.append(rules.err(path, "FILE_NOT_FOUND", "That file was not uploaded by your business, or it no longer exists"))
-            elif url in found and found[url].purpose not in ("cover_image", "image"):
-                errors.append(rules.err(path, "WRONG_FILE_KIND", f"A {found[url].purpose.replace('_', ' ')} upload cannot be used here"))
+            elif row is not None and row.purpose not in MEDIA_PURPOSES[field["type"]]:
+                errors.append(rules.err(path, "WRONG_FILE_KIND", f"A {row.purpose.replace('_', ' ')} upload cannot be used here"))
+            elif row is not None:
+                # the real file, not what the client says about it, is checked against the field's own limits
+                limits = field.get("validation") or {}
+                extension = row.stored_name.rsplit(".", 1)[-1].lower()
+                if limits.get("max_file_size_mb") and row.size > limits["max_file_size_mb"] * 1024 * 1024:
+                    errors.append(rules.err(path, "FILE_TOO_LARGE", f"{field['label']}: a file can be at most {limits['max_file_size_mb']} MB"))
+                elif limits.get("allowed_types") and extension not in limits["allowed_types"]:
+                    errors.append(rules.err(path, "FILE_TYPE_NOT_ALLOWED", f"{field['label']}: allowed file types are {', '.join(limits['allowed_types'])}"))
+                item["name"], item["size"], item["content_type"] = row.original_name, row.size, row.content_type    # always the stored file's own facts
 
 
 def _incoming(db: Session, payload, current_category: UUID | None, actor: BlogActor, errors: list) -> dict:
@@ -339,7 +352,7 @@ def _public_extras(form: forms.ResolvedForm, content: dict) -> dict:
     out: dict = {}
     for key in ("additional_images", "reference_urls", "supporting_documents"):
         field = by_key.get(key)
-        shown = field is not None and field.get("visible", True) and field.get("visibility") == "public"
+        shown = field is not None and field.get("enabled", True) and field.get("visibility") == "published"
         out[key] = list(content.get(key) or []) if shown else []
     out["custom_fields"] = rules.public_custom(form.definition, content.get("custom_values"))
     return out
@@ -383,8 +396,13 @@ def _pending_info(post: BlogPost) -> dict | None:
     return {"submitted_at": post.submitted_at, "changed_fields": changed, "status": post.status}
 
 
-def _form_ref(form: forms.ResolvedForm) -> dict:
-    return {"form_id": form.form_id, "version": form.version, "name": form.name, "mode": form.mode, "form_type": form.form_type, "definition": form.definition}
+def _audience(actor: BlogActor) -> str:
+    return "enterprise_admin" if actor.role == "merchant" else "super_admin"
+
+
+def _form_ref(form: forms.ResolvedForm, actor: BlogActor) -> dict:
+    """The form as the caller may see it: an Enterprise Admin gets the enabled fields to write with, a Super Admin everything."""
+    return form.summary(_audience(actor)) | {}
 
 
 def _view(content: dict) -> dict:
@@ -411,7 +429,7 @@ def _manage_dict(db: Session, post: BlogPost, actor: BlogActor, *, detail: bool)
                      "additional_images": view["additional_images"], "reference_urls": view["reference_urls"],
                      "supporting_documents": view["supporting_documents"], "custom_fields": view["custom_fields"],
                      "pending_revision": _pending_info(post),
-                     "form": _form_ref(_form_for(db, post, working["kind"], post.tenant_id, post.source))})
+                     "form": _form_ref(_form_for(db, post, working["kind"], post.tenant_id, post.source), actor)})
         main = _view(_main_content(post))
         base["live_version"] = (
             {**main, "category": post.category, "content": main["content"] or ""} if post.pending_revision and post.is_live else None
@@ -470,13 +488,13 @@ def _statuses_filter(query, status_filter: str | None):
 
 # ---------------------------------------------------------------- previews
 
-def _preview(db: Session, *, content: dict, form: forms.ResolvedForm, source: str, meta: dict) -> BlogPreviewResponse:
+def _preview(db: Session, *, content: dict, form: forms.ResolvedForm, source: str, meta: dict, actor: BlogActor) -> BlogPreviewResponse:
     problems = rules.recheck(form.definition, _core_values(content), content.get("custom_values"), enterprise_post=source == "merchant")
     view = _public_extras(form, content)
     return BlogPreviewResponse.model_validate({
         **meta, "kind": content.get("kind") or "blog", "title": content.get("title") or "", "excerpt": content.get("excerpt"),
         "content": content.get("content") or "", "cover_image_url": content.get("cover_image_url"), "tags": content.get("tags") or [],
-        "category_id": content.get("category_id"), **view, "form": _form_ref(form), "ready_to_submit": not problems, "problems": problems,
+        "category_id": content.get("category_id"), **view, "form": _form_ref(form, actor), "ready_to_submit": not problems, "problems": problems,
         "author_type": source,
     })
 
@@ -487,7 +505,7 @@ def preview_post_service(db: Session, actor: BlogActor, post: BlogPost) -> BlogP
     form = _form_for(db, post, working["kind"], post.tenant_id, post.source)
     meta = {"id": post.id, "slug": post.slug, "status": post.status, "author_name": post.author_name, "business_name": post.business_name,
             "business_logo_url": post.business_logo_url, "category": _category_name(db, post, working["category_id"])}
-    return _preview(db, content=working, form=form, source=post.source, meta=meta)
+    return _preview(db, content=working, form=form, source=post.source, meta=meta, actor=actor)
 
 
 def preview_payload_service(db: Session, actor: BlogActor, payload) -> BlogPreviewResponse:
@@ -513,7 +531,7 @@ def preview_payload_service(db: Session, actor: BlogActor, payload) -> BlogPrevi
     meta = {"status": "draft", "author_name": actor.name, "category": row.name if row else None,
             "business_name": (enterprise.business_short_name or enterprise.business_legal_name) if enterprise else None,
             "business_logo_url": enterprise.logo_url if enterprise else None}
-    return _preview(db, content=content, form=form, source=source, meta=meta)
+    return _preview(db, content=content, form=form, source=source, meta=meta, actor=actor)
 
 
 # ---------------------------------------------------------------- public

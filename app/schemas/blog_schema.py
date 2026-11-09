@@ -264,7 +264,8 @@ class BlogListItemResponse(BaseModel):
 class PublicCustomField(BaseModel):
     key: str
     label: str
-    type: str
+    type: str = Field(..., description="The explicit field type, for example short_text, dropdown, date, video, additional_images")
+    renderer: str | None = Field(None, description="Which control draws it, for example text_input, select, image_uploader")
     value: Any
 
 
@@ -429,16 +430,41 @@ class FileUploadResponse(BaseModel):
     name: str | None = None
     size: int
     content_type: str
-    purpose: Literal["cover_image", "image", "document"]
+    purpose: Literal["cover_image", "image", "document", "video"]
     width: int | None = None
     height: int | None = None
     scan_status: str
     created_at: datetime
 
 
+class FileUsage(BaseModel):
+    post_id: UUID
+    title: str
+    status: str
+    is_live: bool
+
+
+class FileDetail(FileUploadResponse):
+    sha256: str | None = None
+    replaced_at: datetime | None = Field(None, description="When its content was last replaced; the address stays the same")
+    used_by: list[FileUsage] = Field(default_factory=list, description="Every post that still uses the file, in any state")
+
+
+class FilePage(PaginatedResponse[FileUploadResponse]):
+    pass
+
+
+class SignedUrl(BaseModel):
+    url: str = Field(..., description="Works without signing in until `expires_at`. Anyone holding it can read the file")
+    expires_at: datetime
+
+
 class UploadLimits(BaseModel):
     image_max_mb: int
     document_max_mb: int
+    video_max_mb: int = 0
+    video_extensions: list[str] = Field(default_factory=list)
+    signed_url_seconds: int = 0
     image_types: list[str]
     document_extensions: list[str]
     max_additional_images: int

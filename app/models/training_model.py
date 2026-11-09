@@ -95,6 +95,7 @@ class Training(Base):
     form_configuration_id = Column(UUID(as_uuid=True), ForeignKey("training_form_configurations.id"), nullable=True, index=True)
     form_configuration_version_id = Column(UUID(as_uuid=True), ForeignKey("training_form_configuration_versions.id"), nullable=True, index=True)
     custom_values = Column(JSONB, default=list)
+    private_custom_values = Column(JSONB, default=list)   # values of fields the form marks enterprise_admin_only: never in a public answer
 
     status = Column(String(20), default="draft", nullable=False, index=True)
     moderation_status = Column(String(20), default="draft")  # draft|pending|approved|rejected|changes_requested

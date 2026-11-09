@@ -18,6 +18,15 @@ CUSTOM_RENDERERS = {
     "image",
     "document",
     "video",
+    "rich_text_editor",      # renderers of the field types made in the common form builder (docs/form-builder-api.md)
+    "radio_group",
+    "time_picker",
+    "image_uploader",
+    "document_uploader",
+    "video_input",
+    "tag_input",
+    "datetime_picker",
+    "switch",
 }
 
 # Seed + publish defaults — title/category required by domain; price optional but present
@@ -276,6 +285,8 @@ def normalize_sections(sections: list[dict], *, assign_ids: bool = True) -> list
                     "options": field.get("options") or [],
                     "validation": field.get("validation") or {},
                     "composite_config": field.get("composite_config"),
+                    **({"field_type": field["field_type"]} if field.get("field_type") else {}),      # set by the common form builder; absent on older fields
+                    **({"visibility": field["visibility"]} if field.get("visibility") else {}),
                 }
             )
         fields_out.sort(key=lambda f: f["position"])
@@ -287,6 +298,7 @@ def normalize_sections(sections: list[dict], *, assign_ids: bool = True) -> list
                 "description": section.get("description"),
                 "position": int(section.get("position") or idx),
                 "is_enabled": section.get("is_enabled", True) is not False,
+                **({"visibility": section["visibility"]} if section.get("visibility") else {}),
                 "fields": fields_out,
             }
         )

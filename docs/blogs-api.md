@@ -295,30 +295,23 @@ A **form** says which fields a post has and how each behaves. A form has a **typ
 
 ### 9.2 The definition
 
-```json
-{
-  "sections": [
-    { "key": "basics", "title": "Basics", "description": null, "fields": [
-        { "key": "title", "help_text": "Keep it short", "validation": { "max_length": 80 } },
-        { "key": "category" },
-        { "key": "excerpt", "required": true } ] },
-    { "key": "details", "title": "Event details", "fields": [
-        { "key": "event_date", "type": "date", "label": "Event date", "required": true },
-        { "key": "audience", "type": "select", "label": "Audience", "options": [ { "value": "kids", "label": "Kids" }, { "value": "adults", "label": "Adults" } ] },
-        { "key": "editor_note", "type": "textarea", "label": "Note for editors", "visibility": "internal" },
-        { "key": "partner", "type": "text", "label": "Partner", "enterprise_only": true } ] }
-  ]
-}
-```
+Blog forms use the shared form model described in `docs/form-builder-api.md`: **14 explicit field types** (`short_text`, `rich_text`, `long_text`, `dropdown`, `radio`, `checkbox`,
+`number`, `date`, `time`, `reference_url`, `additional_images`, `supporting_document`, `video`, `tags`), each with its `renderer`, and every field has `id`, `key`, `label`, `type`,
+`renderer`, `placeholder`, `help_text`, `required`, `enabled`, `order`, `validation`, `options`, `visibility` (`published` or `enterprise_admin_only`) and `system`.
+Fields can be added, edited, duplicated, moved, reordered and deleted one at a time, and so can sections (section 9.5). The whole definition can still be saved at once with `PATCH /admin/forms/{id}`.
 
-The order of sections and of fields in the lists is their order. What comes back is the cleaned version, every field with all its settings: `key`, `kind` (`core` | `custom`), `type`, `label`, `required`, `visible`, `visibility` (`public` | `internal`), `enterprise_only`, `help_text`, `placeholder`, `options`, `validation`.
+Blog specifics:
+- The nine built-in fields (`title`, `excerpt`, `content`, `category`, `tags`, `cover_image`, `additional_images`, `reference_urls`, `supporting_documents`) have `kind: "core"` and live in the post's own columns.
+  Their types: title `short_text`, summary `long_text`, body `rich_text`, category `dropdown` (choices come from the categories, `options_source: "blog_categories"`), tags `tags`, cover image and
+  additional images `additional_images`, reference links `reference_url`, supporting documents `supporting_document`.
+- **Title, body and category are protected (`system: true`)**: they cannot be deleted, switched off, made optional or taken out of the published content. The other built-in fields can be switched
+  off (`enabled: false`) or made optional but not deleted (409 `CORE_FIELD`). Other fields have `kind: "custom"`; their values are saved under their key in `custom_fields`.
+- `enterprise_admin_only` fields exist only on posts an Enterprise Admin writes; a platform post with such a value is 422 `UNKNOWN_FIELD`. Their values never appear in a public answer.
+- A Standard form is always the built-in layout and cannot be built on (409 `STANDARD_FORM_FIXED`).
+- Older names are accepted when a definition is sent and are turned into the explicit types: `text` to `short_text`, `textarea` to `long_text`, `select` to `dropdown`, `multiselect` to `checkbox`, `url` to
+  `reference_url`, `email` to `short_text` with `format: email`, `image` and `media_upload` to `additional_images`; the old yes/no `checkbox` becomes a `radio` with Yes and No; `visible` is `enabled`; `public` is
+  `published` and `internal` (or `enterprise_only`) is `enterprise_admin_only`. They are never returned.
 
-- **Built-in (core) fields**, by key: `title`, `excerpt`, `content` (the body), `category`, `tags`, `cover_image`, `additional_images`, `reference_urls`, `supporting_documents`. Their type is fixed. You can set `label`, `required`, `visible`, `help_text`, `placeholder` and limits: `title` (`min_length`, `max_length` up to 150), `excerpt` (up to 300), `content` (up to 100,000 characters of text), `tags` (`max_items` up to 10), and `max_items` for the three lists (capped by the server limits). `title`, `content` and `category` must be in the form and are always shown, required and public. A built-in field left out of the form is simply not offered.
-- **Custom fields**, any other key (2 to 40 lowercase letters, digits or underscores, starting with a letter): `type` is `text`, `textarea`, `number`, `date`, `select`, `multiselect`, `checkbox`, `url`, `email`, `image` or `media_upload`. Rules in `validation`: text and textarea `min_length`, `max_length`, `pattern` (a regular expression); number `min`, `max`, `integer`; date `min`, `max` (YYYY-MM-DD); multiselect `max_items`; media_upload `max_items` (up to the extra-image limit, 10 by default). `image` holds one picture: its value is the address returned by `POST /cms/blogs/uploads` (a list is refused). `media_upload` holds one address or a list of addresses, saved and returned exactly as sent (a string stays a string, a list stays a list; repeats are dropped). A file uploaded through `/cms/blogs/uploads` must belong to the author's business (`FILE_NOT_FOUND` otherwise) and be an image (`WRONG_FILE_KIND` otherwise); other web addresses are accepted as they are. Files used by a live post's media fields can be opened by anyone, like its cover image. The field's `type` comes back in `GET /my/form` (the definition) and in the public post's `custom_fields` list (`key`, `label`, `type`, `value`); the author's `GET /my/posts/{id}` keeps `custom_fields` as a map of key to value, so read the type from the form. `select` and `multiselect` need `options` (up to 50).
-- `visible: false` hides a field from the form. `required` only counts while it is visible. `enterprise_only: true` means only an Enterprise Admin's posts have the field, not platform posts. `visibility: "internal"` keeps a custom field, `additional_images`, `reference_urls` or `supporting_documents` off the public page (admins still see it).
-- A **Standard** form is always the built-in layout: `definition` is ignored when you create it, and a different one is 422 `STANDARD_FORM_FIXED`. Up to 20 sections and 60 fields.
-
-A bad definition is 422 `INVALID_FORM` with an `errors` entry for each problem (`field` is a path such as `definition.sections[1].fields[0].options`).
 
 ### 9.3 Which form a post gets
 
@@ -339,33 +332,71 @@ Send them in `custom_fields` as an object of key to value on create and edit. On
 
 Core fields work the same: a field the form made `required` is needed to submit, and a limit set on it (`max_length: 80` on the title) is checked on every save.
 
-## 10. Uploads
+### 9.5 Building a form, one change at a time
 
-`POST /uploads` (Super Admin or Enterprise Admin), `multipart/form-data`:
+All Super Admin only; each changes the **draft**, raises its `revision`, withdraws a submitted review and is audited. Send `base_revision` to refuse a change over someone else's (409 `VERSION_CONFLICT`).
+Answers are the updated draft plus `change` (`action`, `summary`, and for a new field `field_id`).
 
-| Part | |
+| Method and path | What |
 |---|---|
-| `file` | the file |
-| `purpose` | `cover_image` or `image` (a picture), or `document` |
+| `GET /admin/form-field-types` | the types, their renderers, options support, file types and every rule they accept |
+| `POST /admin/forms/{id}/sections`, `PATCH`, `DELETE ...?move_to=`, `PUT .../sections/order` | add, edit, delete and reorder sections |
+| `POST /admin/forms/{id}/fields` | `{section_id, position?, field}`; `change.field_id` is the new field |
+| `PATCH /admin/forms/{id}/fields/{field_id}` | `{patch}`; by id or key; key and type never change |
+| `DELETE /admin/forms/{id}/fields/{field_id}` | delete (409 `PROTECTED_FIELD`, `CORE_FIELD`) |
+| `POST /admin/forms/{id}/fields/{field_id}/duplicate` | a copy after the original: key `<key>_copy`, label `<label> (copy)` |
+| `POST /admin/forms/{id}/fields/{field_id}/move` | `{section_id, position?}` |
+| `PUT /admin/forms/{id}/sections/{section_id}/fields/order` | `{ids}` every field of the section once |
+| `GET /admin/forms/{id}/review` | is the draft ready? `problems`, `warnings`, and `changes` against the published version |
+| `POST /admin/forms/{id}/submit` | the review checkpoint (422 `FORM_NOT_READY`); `review_status: submitted` until the next edit |
+| `GET /admin/forms/{id}/audit?action=` | the audit history |
 
-| | Images | Documents |
-|---|---|---|
-| Types | JPEG, PNG, WebP, GIF (read from the content; SVG is not accepted) | PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, CSV (read from the content; must agree with the extension) |
-| Size | 5 MB (`BLOG_MAX_IMAGE_MB`), and the picture's size limits | 10 MB (`BLOG_MAX_DOCUMENT_MB`) |
-| Counts | 1 cover, up to 10 `additional_images` | up to 10 `supporting_documents`, up to 10 `reference_urls` |
+Publishing a form is unchanged (`POST .../publish`). With `BLOG_FORM_REQUIRE_REVIEW` on, it needs a submitted draft (409 `REVIEW_REQUIRED`); it is off by default.
 
-`GET /uploads/limits` returns all of these, so the form can check before it uploads. Every file also goes through the virus scan when the server has one. The answer (201):
+Three views of a form: Super Admin `GET /admin/forms/{id}` (everything, including disabled fields and `system`), Enterprise Admin `GET /my/form?kind=` and the form in `GET /my/posts/{id}` (enabled fields
+including Enterprise Admin only ones, with placeholders, help, rules and `required`), and public/mobile `GET /forms/public?kind=` (enabled `published` fields only: id, key, label, type, renderer, order, options).
+
+## 10. Uploads and files
+
+Super Admin and Enterprise Admin. An Enterprise Admin manages only their own business's files (another business's file is 404 `FILE_NOT_FOUND`); a Super Admin manages all.
+
+`POST /uploads`, `multipart/form-data`: `file` and `purpose` (`cover_image` or `image` for a picture, `document`, or `video`).
+
+| | Images | Documents | Videos |
+|---|---|---|---|
+| Types | JPEG, PNG, WebP, GIF (SVG is not accepted) | PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, CSV | MP4, MOV, WebM |
+| Checked by | the picture is decoded; its size limits apply | the file's content must agree with the extension | the file header must agree with the extension (an MP4 named `.mov` is refused) |
+| Size | 5 MB (`BLOG_MAX_IMAGE_MB`) | 10 MB (`BLOG_MAX_DOCUMENT_MB`) | 100 MB (`BLOG_MAX_VIDEO_MB`); a video is read into memory to be checked and scanned, so keep this modest |
+| Stored | as uploaded | as uploaded | as uploaded: **no transcoding and no thumbnail** |
+
+Every file is checked by its content, not its name, and goes through the virus scan when the server has one. A picture or video whose `Content-Type` says it is a different kind of file is 415 `MIME_MISMATCH`.
+`GET /uploads/limits` returns the limits and types. The answer (201):
 
 ```json
 { "file_id": "…", "url": "https://api.example.com/api/v1/cms/blogs/files/9d1c…", "name": "cover.png", "size": 48210,
   "content_type": "image/png", "purpose": "cover_image", "width": 1200, "height": 630, "scan_status": "clean", "created_at": "2026-10-21T09:00:00" }
 ```
 
-Put `url` in `cover_image_url`, `additional_images[].url` or `supporting_documents[].url` (`name`, `size` and `content_type` of a document are filled in for you). A cover or extra image must be an image upload and a document a document upload (422 `WRONG_FILE_KIND`); a file uploaded by another business is 422 `FILE_NOT_FOUND`.
+Put `url` in a post's `cover_image_url`, in `additional_images[].url` or `supporting_documents[].url`, or in a custom field of the right type (`additional_images`, `supporting_document`, `video`). The file's own name, size and
+type are filled in from the stored file and cannot be overridden. A picture must be a picture upload, a document a document upload and a video a video upload (422 `WRONG_FILE_KIND`); another business's file is 422 `FILE_NOT_FOUND`.
+A field's own limits (`max_file_size_mb`, `allowed_types`) are checked against the **real stored file** (422 `FILE_TOO_LARGE`, `FILE_TYPE_NOT_ALLOWED`).
 
-`GET /files/{file_id}`: images show inline, documents download. A file is **public only while a live post uses it** (cover, extra images, documents or an image in the body). Before that, and after the post is taken down, only the business that uploaded it and the Super Admins can fetch it (send the token); anyone else gets 404 `FILE_NOT_FOUND`. Responses carry `X-Content-Type-Options: nosniff`. Uploaded files are kept after a post is deleted; there is no clean-up job yet.
+| Method and path | What |
+|---|---|
+| `GET /uploads?purpose=&page=&page_size=` | my files, newest first |
+| `GET /uploads/{id}` | the file's facts (size, type, picture size, checksum, scan status, `replaced_at`) and `used_by`: every post that uses it, in any state, with its status |
+| `PUT /uploads/{id}` | **replace** the content: `multipart/form-data` with `file`. Checked like a new upload of the same purpose; the `file_id` and `url` stay the same. 409 `FILE_IN_USE_LIVE` while a published post uses it (that would change a published post without approval: upload a new file and edit the post, which goes through approval) |
+| `DELETE /uploads/{id}` | **delete**: only a file no post uses (409 `FILE_IN_USE` with `used_by`). The bytes are removed, the record is kept |
+| `POST /uploads/{id}/signed-url` | a temporary link, `{url, expires_at}`, valid `BLOG_SIGNED_URL_SECONDS` (15 minutes) |
+| `GET /files/{id}` | read the file |
 
-Upload errors: 413 `FILE_TOO_LARGE` (`max_mb`), 415 `UNSUPPORTED_TYPE`, 422 `EMPTY_FILE`, `INVALID_FILE` (not decodable, too many pixels), `VIRUS_DETECTED`, 503 `SCANNER_UNAVAILABLE`, 401 / 403 for the wrong caller.
+What a draft saved about a replaced file (its name, size and type) is refreshed the next time the post is saved.
+
+**Who can read a file** (`GET /files/{id}`): the business that uploaded it and Super Admins (send the token); anyone, **while a live post uses it**; and anyone holding a valid **signed link** (`?expires=&signature=`) until it
+expires. The link is for one file, is not stored, and cannot be revoked before it expires: whoever has it can read the file. Everyone else gets 404 `FILE_NOT_FOUND`. Pictures and videos are shown inline, documents download;
+videos answer `Range` requests (206 with `Content-Range`), so a player can start and skip. Responses carry `X-Content-Type-Options: nosniff`. A file a deleted post used is kept (there is no clean-up job yet).
+
+Upload errors: 413 `FILE_TOO_LARGE` (`max_mb`), 415 `UNSUPPORTED_TYPE` or `MIME_MISMATCH`, 422 `EMPTY_FILE`, `INVALID_FILE` (not decodable, too many pixels), `VIRUS_DETECTED`, 503 `SCANNER_UNAVAILABLE`, 401 / 403 for the wrong caller.
 
 ## 11. Changing a post at the same time as someone else
 

@@ -4,19 +4,22 @@ from fastapi import APIRouter, Body, Depends, File, Form, Header, Path, Query, R
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.form_builder.concurrency import ETagRoute
 from app.core.blog_access import BlogActor, optional_blog_actor, require_blog_author, require_blog_merchant, require_blog_super_admin
 from app.db.database import get_db
 from app.exceptions.problem import problem
 from app.repository.query_utils import build_pagination_meta
 from app.schemas.blog_governance_schema import GovernanceAuditPage, GovernanceOut, GovernanceUpdate
 from app.schemas.blog_form_schema import (
-    ActiveFormsForBusiness, FormAssign, FormCreate, FormDetail, FormItem, FormPage, FormPreview, FormPreviewRequest, FormPublish,
-    FormScope, FormType, FormUpdate, FormVersionDetail, FormVersionList, ResolvedFormOut,
+    ActiveFormsForBusiness, AuditPage, FieldCreate, FieldEdit, FieldMove, FieldTypeInfo, FormAssign, FormChange, FormCreate, FormDetail, FormItem, FormPage,
+    FormPreview, FormPreviewRequest, FormPublish, FormReview, FormScope, FormType, FormUpdate, FormVersionDetail, FormVersionList, OrderBody,
+    ResolvedFormOut, SectionCreate, SectionEdit,
 )
+from app.form_builder.fields import describe_types
 from app.schemas.blog_schema import (
     AdminPostCreate, AdminPostUpdate, BlogCategoryListResponse, BlogCategoryResponse, BlogDetailResponse, BlogHistoryResponse,
     BlogKind, BlogModule, BlogManageDetail, BlogManagePaginatedResponse, BlogPaginatedResponse, BlogPreviewResponse, BlogRevisionDetail,
-    BlogRevisionList, BlogSource, BlogStatusUpdate, CategoryCreate, CategoryReorder, CategoryUpdate, FileUploadResponse,
+    BlogRevisionList, BlogSource, BlogStatusUpdate, CategoryCreate, CategoryReorder, CategoryUpdate, FileDetail, FilePage, FileUploadResponse, SignedUrl,
     MerchantPostCreate, MerchantPostUpdate, PinRequest, PreviewRequest, ReasonRequest, ReviewRequest, UploadLimits,
 )
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
@@ -33,7 +36,7 @@ from app.services.blog_service import (
     update_blog_status_service, update_category_service, update_my_post_service,
 )
 
-router = APIRouter(tags=["CMS — Blogs"])
+router = APIRouter(tags=["CMS — Blogs"], route_class=ETagRoute)
 
 PAGE = Query(DEFAULT_PAGE, ge=1)
 PAGE_SIZE = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE)
@@ -100,15 +103,16 @@ def list_public_categories(kind: BlogKind | None = Query(None), db: Session = De
 
 @router.get(
     "/files/{file_id}", summary="An uploaded image or document",
-    description="Public while a live post uses the file. Otherwise only the business that uploaded it and Super Admins can fetch it (sign in); anyone else gets 404 `FILE_NOT_FOUND`. "
-                "Images are shown inline, documents download.",
+    description="Public while a live post uses the file. Otherwise only the business that uploaded it and Super Admins can fetch it (sign in), or anyone with a signed URL (`POST /uploads/{id}/signed-url`) until it expires; "
+                "anyone else gets 404 `FILE_NOT_FOUND`. Images and videos are shown inline (videos support `Range` requests, so they can be played and skipped through), documents download.",
     responses={200: {"content": {"image/*": {}, "application/pdf": {}}}},
 )
-def get_file(file_id: UUID = Path(...), db: Session = Depends(get_db), actor: BlogActor | None = Depends(optional_blog_actor)):
-    path, row = upload_svc.open_file(db, file_id, actor)
-    is_image = row.content_type.startswith("image/")
+def get_file(file_id: UUID = Path(...), expires: str | None = Query(None, description="From a signed URL"), signature: str | None = Query(None, description="From a signed URL"),
+             db: Session = Depends(get_db), actor: BlogActor | None = Depends(optional_blog_actor)):
+    path, row = upload_svc.open_file(db, file_id, actor, expires=expires, signature=signature)
+    inline = row.content_type.startswith(("image/", "video/"))
     return FileResponse(path=str(path), media_type=row.content_type, filename=row.original_name or path.name,
-                        content_disposition_type="inline" if is_image else "attachment",
+                        content_disposition_type="inline" if inline else "attachment",
                         headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"})
 
 
@@ -120,27 +124,71 @@ def upload_limits(_actor: BlogActor = Depends(require_blog_author)):
     return upload_svc.limits()
 
 
+@router.get("/uploads", response_model=FilePage, summary="My uploaded files (Super Admin, Enterprise Admin)",
+            description="The business's own uploads, newest first (a Super Admin sees all). Filter with `purpose`. Deleted files are not listed.")
+def list_uploads(purpose: str | None = Query(None, pattern="^(cover_image|image|document|video)$"), page: int = PAGE, page_size: int = PAGE_SIZE,
+                 db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_author)):
+    items, total = upload_svc.list_files(db, actor, purpose=purpose, page=page, page_size=page_size)
+    return FilePage(items=items, pagination=build_pagination_meta(total, page, page_size))
+
+
 @router.post(
-    "/uploads", response_model=FileUploadResponse, status_code=status.HTTP_201_CREATED, summary="Upload a cover image, an image or a document",
+    "/uploads", response_model=FileUploadResponse, status_code=status.HTTP_201_CREATED, summary="Upload a cover image, an image, a document or a video",
     description=(
         "`multipart/form-data` with `file` and `purpose`: `cover_image` or `image` (JPEG, PNG, WebP or GIF, up to BLOG_MAX_IMAGE_MB, default 5 MB) or "
-        "`document` (PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT or CSV, up to BLOG_MAX_DOCUMENT_MB, default 10 MB). The type is read from the content. "
+        "`document` (PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT or CSV, up to BLOG_MAX_DOCUMENT_MB, default 10 MB) or `video` (MP4, MOV or WebM, up to BLOG_MAX_VIDEO_MB, default 100 MB; stored as it is, no thumbnail). "
+        "The type is read from the content, and a file that says it is a different kind (`Content-Type`) is 415 `MIME_MISMATCH`. "
         "Use the returned `url` in `cover_image_url`, `additional_images[].url` or `supporting_documents[].url`. Errors: 413 `FILE_TOO_LARGE`, 415 `UNSUPPORTED_TYPE`, "
         "422 `EMPTY_FILE` / `INVALID_FILE` / `VIRUS_DETECTED`, 503 `SCANNER_UNAVAILABLE`."
     ),
 )
-def upload_file(file: UploadFile = File(...), purpose: str = Form(..., description="cover_image | image | document"),
+def upload_file(file: UploadFile = File(...), purpose: str = Form(..., description="cover_image | image | document | video"),
                 db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_author)):
     return upload_svc.store(db, actor, file, purpose)
+
+
+@router.get("/uploads/{file_id}", response_model=FileDetail, summary="About an uploaded file (Super Admin, Enterprise Admin)",
+            description="Size, type, picture size, checksum, scan status, when it was replaced, and `used_by`: every post that still uses it. Another business's file is 404 `FILE_NOT_FOUND`.")
+def upload_detail(file_id: UUID = Path(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_author)):
+    return upload_svc.detail(db, actor, file_id)
+
+
+@router.put("/uploads/{file_id}", response_model=FileUploadResponse, summary="Replace a file's content (Super Admin, Enterprise Admin)",
+            description="`multipart/form-data` with `file`. The new content is checked like a new upload of the same purpose and keeps the same `file_id` and `url`. 409 `FILE_IN_USE_LIVE` while a published post uses the file "
+                        "(that would change a published post without approval: upload a new file and edit the post instead).")
+def replace_upload(file_id: UUID = Path(...), file: UploadFile = File(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_author)):
+    return upload_svc.replace_file(db, actor, file_id, file)
+
+
+@router.delete("/uploads/{file_id}", summary="Delete an uploaded file (Super Admin, Enterprise Admin)",
+               description="Only a file no post uses: 409 `FILE_IN_USE` (with `used_by`) otherwise. The file's bytes are removed; its record is kept.")
+def delete_upload(file_id: UUID = Path(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_author)):
+    upload_svc.delete_file(db, actor, file_id)
+    return {"message": "File deleted"}
+
+
+@router.post("/uploads/{file_id}/signed-url", response_model=SignedUrl, summary="A temporary download link (Super Admin, Enterprise Admin)",
+             description="A link to the file that works without a token for BLOG_SIGNED_URL_SECONDS (15 minutes). Use it where the token cannot be sent (an image or video tag, a mobile player). "
+                         "Anyone who has the link can read the file until it expires; it is not stored.")
+def upload_signed_url(file_id: UUID = Path(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_author)):
+    return upload_svc.signed_url(db, actor, file_id)
 
 
 # ---------------------------------------------------------------- merchant: the form, and the business's own posts
 
 @router.get("/my/form", response_model=ResolvedFormOut, summary="The form to write a post with (Enterprise Admin)",
-            description="The active form assigned to the caller's business for this kind of post, with its sections and fields. A form assigned to the business wins over a global one. "
+            description="The active form assigned to the caller's business for this kind of post, with its sections and fields: every enabled field, including Enterprise Admin only ones, with placeholders, "
+                        "help text, rules and the required flag; never a switched-off field or a builder-only setting. A form assigned to the business wins over a global one. "
                         "`form_id: null` and `version: 0` mean the built-in Standard form.")
 def my_form(kind: BlogKind = Query(..., description="blog | news"), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_merchant)):
-    return form_svc.resolve_active(db, kind, actor.tenant_id).summary()
+    return form_svc.resolve_active(db, kind, actor.tenant_id).summary("enterprise_admin")
+
+
+@router.get("/forms/public", response_model=ResolvedFormOut, summary="The published fields of the active form (public, mobile)",
+            description="What the public and mobile apps may know about the form for this kind of post: only fields that are enabled and `published`, with their explicit type and renderer, "
+                        "label, order and options. No placeholders, help, rules or Enterprise Admin only fields. Platform posts use global forms.")
+def public_form(kind: BlogKind = Query(..., description="blog | news"), db: Session = Depends(get_db)):
+    return form_svc.public_form(db, kind)
 
 
 @router.get("/my/posts", response_model=BlogManagePaginatedResponse, summary="My posts (Enterprise Admin)",
@@ -272,7 +320,7 @@ def update_governance(module: str, payload: GovernanceUpdate = Body(...), db: Se
 @router.get("/admin/forms", response_model=FormPage, summary="Forms (Super Admin)",
             description="Newest edit first. Filter by `form_type`, `status` (draft | published), `is_active`, `scope`, `tenant_id` (forms that business can get) and `search` (name).")
 def list_forms(
-    form_type: FormType | None = Query(None), status_filter: str | None = Query(None, alias="status", pattern="^(draft|published)$"),
+    form_type: FormType | None = Query(None), status_filter: str | None = Query(None, alias="status", pattern="^(draft|published|retired)$"),
     is_active: bool | None = Query(None), scope: FormScope | None = Query(None), tenant_id: UUID | None = Query(None), search: str | None = Query(None),
     page: int = PAGE, page_size: int = PAGE_SIZE, db: Session = Depends(get_db), _actor: BlogActor = Depends(require_blog_super_admin),
 ):
@@ -292,6 +340,12 @@ def create_form(payload: FormCreate = Body(...), db: Session = Depends(get_db), 
              description="Checks a definition and returns it cleaned and in order, as the writer would see it. Nothing is stored.")
 def preview_unsaved_form(payload: FormPreviewRequest = Body(...), db: Session = Depends(get_db), _actor: BlogActor = Depends(require_blog_super_admin)):
     return form_svc.preview(db, None, payload.definition, payload.mode, payload.name)
+
+
+@router.get("/admin/forms/diagnostics", summary="Form builder diagnostics (Super Admin)",
+            description="Numbers for monitoring and for checking a migration or a rollback: forms by lifecycle, definitions still in the older format, posts pinned to a missing form version, files by scan status and kind.")
+def form_diagnostics(db: Session = Depends(get_db), _actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.diagnostics(db)
 
 
 @router.get("/admin/forms/active", response_model=ActiveFormsForBusiness, summary="The active forms a business gets (Super Admin)",
@@ -335,6 +389,17 @@ def deactivate_form(form_id: UUID, db: Session = Depends(get_db), actor: BlogAct
     return form_svc.set_active(db, actor, form_id, False)
 
 
+@router.post("/admin/forms/{form_id}/retire", response_model=FormDetail, summary="Retire a form (Super Admin)",
+             description="Withdraws an inactive published form for good: it is not offered and cannot be activated (409 `FORM_RETIRED`). Records written with it keep their version and stay readable. 409 `FORM_ACTIVE` while it is active.")
+def retire_form(form_id: UUID, db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.retire_form(db, actor, form_id)
+
+
+@router.post("/admin/forms/{form_id}/restore", response_model=FormDetail, summary="Restore a retired form (Super Admin)", description="Published again and inactive: activate it to offer it.")
+def restore_form(form_id: UUID, db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.restore_form(db, actor, form_id)
+
+
 @router.get("/admin/forms/{form_id}/preview", response_model=FormPreview, summary="Preview a form's draft (Super Admin)")
 def preview_form(form_id: UUID, db: Session = Depends(get_db), _actor: BlogActor = Depends(require_blog_super_admin)):
     return form_svc.preview(db, form_id, None, None, None)
@@ -354,9 +419,106 @@ def form_version(form_id: UUID, version: int = Path(..., ge=1), db: Session = De
 
 @router.delete("/admin/forms/{form_id}", summary="Delete a form (Super Admin)",
                description="Refused with 409 `FORM_IN_USE` (and `post_count`) while any post was written with it. Deactivate it instead.")
-def delete_form(form_id: UUID, db: Session = Depends(get_db), _actor: BlogActor = Depends(require_blog_super_admin)):
-    form_svc.delete_form(db, form_id)
+def delete_form(form_id: UUID, db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    form_svc.delete_form(db, form_id, actor)
     return {"message": "Form deleted"}
+
+
+# ---------------------------------------------------------------- Super Admin: the builder (sections and fields of the draft)
+
+BUILD_DOC = (" Changes the draft only (posts keep using the published version until you publish). Send `base_revision` (the form's `revision` you loaded) to refuse a change over "
+             "someone else's: 409 `VERSION_CONFLICT`. Every change raises the revision, withdraws a submitted review and is written to the audit history. A Standard form cannot be changed (409).")
+
+
+@router.get("/admin/form-field-types", response_model=list[FieldTypeInfo], summary="The field types a form can have (Super Admin)",
+            description="Each type with its `renderer`, whether it takes options, the file types it can be limited to, and every validation rule it accepts with its kind and bounds. Build the field editor from this.")
+def field_types(_actor: BlogActor = Depends(require_blog_super_admin)):
+    return describe_types()
+
+
+@router.post("/admin/forms/{form_id}/sections", response_model=FormChange, status_code=status.HTTP_201_CREATED, summary="Add a section (Super Admin)", description="At `position` or at the end." + BUILD_DOC)
+def add_section(form_id: UUID, payload: SectionCreate = Body(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.add_section(db, actor, form_id, payload.base_revision, title=payload.title, description=payload.description, position=payload.position, visibility=payload.visibility)
+
+
+@router.put("/admin/forms/{form_id}/sections/order", response_model=FormChange, summary="Reorder the sections (Super Admin)",
+            description="Send every section id once, in the new order (422 `INVALID_ORDER` otherwise)." + BUILD_DOC)
+def reorder_sections(form_id: UUID, payload: OrderBody = Body(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.reorder_sections(db, actor, form_id, payload.base_revision, payload.ids)
+
+
+@router.patch("/admin/forms/{form_id}/sections/{section_id}", response_model=FormChange, summary="Edit a section's title or description (Super Admin)", description=BUILD_DOC.strip())
+def edit_section(form_id: UUID, section_id: str, payload: SectionEdit = Body(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.edit_section(db, actor, form_id, payload.base_revision, section_id, title=payload.title, description=payload.description, visibility=payload.visibility, enabled=payload.enabled)
+
+
+@router.delete("/admin/forms/{form_id}/sections/{section_id}", response_model=FormChange, summary="Delete a section (Super Admin)",
+               description="An empty section is deleted. A section with fields needs `move_to` (the id of the section they move to): 409 `SECTION_NOT_EMPTY` otherwise, or `SECTION_HAS_PROTECTED_FIELDS` "
+                           "when it holds a system field. The last section cannot be deleted." + BUILD_DOC)
+def delete_section(form_id: UUID, section_id: str, move_to: str | None = Query(None), base_revision: int | None = Query(None), db: Session = Depends(get_db),
+                   actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.delete_section(db, actor, form_id, base_revision, section_id, move_to=move_to)
+
+
+@router.post("/admin/forms/{form_id}/fields", response_model=FormChange, status_code=status.HTTP_201_CREATED, summary="Add a field to a section (Super Admin)",
+             description="The field gets an `id` (never changes) and its `renderer` from its `type`. The key must be new (409 `DUPLICATE_KEY`; a built-in blog key is 409 `KEY_RESERVED`) and the label unused in "
+                         "the section (409 `DUPLICATE_LABEL`). `change.field_id` is the new field." + BUILD_DOC)
+def add_field(form_id: UUID, payload: FieldCreate = Body(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.add_field(db, actor, form_id, payload.base_revision, section_id=payload.section_id, field=payload.field, position=payload.position)
+
+
+@router.patch("/admin/forms/{form_id}/fields/{field_id}", response_model=FormChange, summary="Edit a field (Super Admin)",
+              description="Send only what changes in `patch`. The key and the type never change (422 `KEY_IMMUTABLE` / `TYPE_IMMUTABLE` in `errors`). A system field (title, body, category) cannot be switched off, made "
+                          "optional or taken out of the published content: 409 `PROTECTED_FIELD`. The field can be addressed by id or by key." + BUILD_DOC)
+def edit_field(form_id: UUID, field_id: str, payload: FieldEdit = Body(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.edit_field(db, actor, form_id, payload.base_revision, field_id, payload.patch)
+
+
+@router.delete("/admin/forms/{form_id}/fields/{field_id}", response_model=FormChange, summary="Delete a field (Super Admin)",
+               description="A system field is 409 `PROTECTED_FIELD`; a built-in blog field is 409 `CORE_FIELD` (switch it off instead). Values already saved under the key stay with the posts but are no longer "
+                           "shown or checked." + BUILD_DOC)
+def delete_field(form_id: UUID, field_id: str, base_revision: int | None = Query(None), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.delete_field(db, actor, form_id, base_revision, field_id)
+
+
+@router.post("/admin/forms/{form_id}/fields/{field_id}/duplicate", response_model=FormChange, status_code=status.HTTP_201_CREATED, summary="Duplicate a field (Super Admin)",
+             description="A copy right after the original, with a new id, the key `<key>_copy` (then `_copy2`...) and the label `<label> (copy)`. A copy of a system field is an ordinary field." + BUILD_DOC)
+def duplicate_field(form_id: UUID, field_id: str, base_revision: int | None = Query(None), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.duplicate_field(db, actor, form_id, base_revision, field_id)
+
+
+@router.put("/admin/forms/{form_id}/sections/{section_id}/fields/order", response_model=FormChange, summary="Reorder the fields of a section (Super Admin)",
+            description="Send every field id of the section once, in the new order." + BUILD_DOC)
+def reorder_fields(form_id: UUID, section_id: str, payload: OrderBody = Body(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.reorder_fields(db, actor, form_id, payload.base_revision, section_id, payload.ids)
+
+
+@router.post("/admin/forms/{form_id}/fields/{field_id}/move", response_model=FormChange, summary="Move a field to another section (Super Admin)",
+             description="To `section_id`, at `position` (1-based) or the end. 409 `DUPLICATE_LABEL` when that section already has a field with the label." + BUILD_DOC)
+def move_field(form_id: UUID, field_id: str, payload: FieldMove = Body(...), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.move_field(db, actor, form_id, payload.base_revision, field_id, section_id=payload.section_id, position=payload.position)
+
+
+@router.get("/admin/forms/{form_id}/review", response_model=FormReview, summary="Review the draft before publishing (Super Admin)",
+            description="Is it ready? Every problem is listed in `problems`, plus warnings and what the draft changes compared with the published version (`changes`: fields added, removed and changed). Nothing is saved.")
+def review_form(form_id: UUID, db: Session = Depends(get_db), _actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.review_form(db, form_id)
+
+
+@router.post("/admin/forms/{form_id}/submit", response_model=FormDetail, summary="Submit the reviewed draft for publishing (Super Admin)",
+             description="The review checkpoint: 422 `FORM_NOT_READY` (with `errors`) if the draft has problems, otherwise `review_status` becomes `submitted`. Any edit afterwards withdraws it. "
+                         "With BLOG_FORM_REQUIRE_REVIEW on, publishing needs a submitted draft (409 `REVIEW_REQUIRED`); with it off (the default) submitting is optional.")
+def submit_form(form_id: UUID, payload: FormPublish = Body(default_factory=FormPublish), db: Session = Depends(get_db), actor: BlogActor = Depends(require_blog_super_admin)):
+    return form_svc.submit_form(db, actor, form_id, payload.base_revision)
+
+
+@router.get("/admin/forms/{form_id}/audit", response_model=AuditPage, summary="Audit history of a form (Super Admin)",
+            description="Everything done to the form, newest first: created, updated, section and field changes, submitted, published, activated, deactivated, assigned, deleted. Who (id, name, role), when, "
+                        "a summary and details. Kept after the form is deleted. Filter with `action`.")
+def form_audit(form_id: UUID, action: str | None = Query(None), page: int = PAGE, page_size: int = PAGE_SIZE, db: Session = Depends(get_db),
+               _actor: BlogActor = Depends(require_blog_super_admin)):
+    rows, total = form_svc.list_audit(db, form_id, action=action, page=page, page_size=page_size)
+    return AuditPage(items=rows, pagination=build_pagination_meta(total, page, page_size))
 
 
 # ---------------------------------------------------------------- Super Admin: posts and categories

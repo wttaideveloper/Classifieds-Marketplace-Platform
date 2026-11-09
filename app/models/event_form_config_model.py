@@ -40,6 +40,9 @@ class EventFormConfigurationVersion(Base):
     version = Column(Integer, nullable=False)
     status = Column(String(20), nullable=False, default="draft")  # draft|published|retired
     sections = Column(JSONB, default=list, nullable=False)
+    reviewed_hash = Column(String(64), nullable=True)      # the draft's content hash when it was submitted for review; an edit afterwards makes it stale
+    reviewed_at = Column(DateTime, nullable=True)
+    reviewed_by = Column(String(255), nullable=True)
     created_by = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     published_at = Column(DateTime)
