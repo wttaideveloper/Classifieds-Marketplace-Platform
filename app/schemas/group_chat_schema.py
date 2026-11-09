@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 GroupKind = Literal["care", "program"]
-GroupLinkType = Literal["program", "appointment_series", "care_episode", "training"]
+GroupLinkType = Literal["program", "appointment_series", "care_episode", "training", "event"]
 GroupRole = Literal["owner", "admin", "member"]
 MemberKind = Literal["provider", "patient"]
 MembershipStatus = Literal["invited", "active", "declined", "removed", "left"]
@@ -58,14 +58,24 @@ class GroupCreate(BaseModel):
         description="Training groups only: also invite every eligible enrolled learner of the training, up to the group limit "
                     "(the people in `invitees` come first). The answer is the group; `GET /groups/{id}/members` shows who was invited.",
     )
-    exclude_user_ids: list[UUID] = Field(default_factory=list, description="With invite_all_enrolled: people to leave out.")
+    invite_all_registered: bool = Field(
+        False,
+        description="Event groups only: also invite every eligible registrant of the event (confirmed or attended online registration, "
+                    "paid or free, one per person), up to the group limit (the people in `invitees` come first). The answer is the group; "
+                    "`GET /groups/{id}/members` shows who was invited.",
+    )
+    exclude_user_ids: list[UUID] = Field(default_factory=list, description="With invite_all_enrolled / invite_all_registered: people to leave out.")
 
     @model_validator(mode="after")
     def _training_rules(self):
         if self.context_type == "training" and self.kind != "program":
             raise ValueError("A training group is a program group: send kind = program")
+        if self.context_type == "event" and self.kind != "program":
+            raise ValueError("An event group is a program group: send kind = program")
         if self.invite_all_enrolled and self.context_type != "training":
             raise ValueError("invite_all_enrolled works for training groups only")
+        if self.invite_all_registered and self.context_type != "event":
+            raise ValueError("invite_all_registered works for event groups only")
         return self
 
     _avatar = field_validator("avatar_url")(_check_avatar_url)
@@ -99,6 +109,19 @@ class InviteEnrolled(BaseModel):
     """Invite learners of a training group's training without sending thousands of ids."""
     user_ids: list[UUID] | None = Field(None, description="Invite exactly these enrolled learners (and verified providers).")
     all_eligible: bool = Field(False, description="Invite every eligible enrolled learner who is not already in or invited to this group, up to the free places.")
+    exclude_user_ids: list[UUID] = Field(default_factory=list, description="With all_eligible: people to leave out.")
+
+    @model_validator(mode="after")
+    def _one_way(self):
+        if self.all_eligible == bool(self.user_ids):
+            raise ValueError("Send either user_ids or all_eligible = true")
+        return self
+
+
+class InviteRegistered(BaseModel):
+    """Invite registrants of an event group's event without sending thousands of ids."""
+    user_ids: list[UUID] | None = Field(None, description="Invite exactly these registrants (and verified providers).")
+    all_eligible: bool = Field(False, description="Invite every eligible registrant who is not already in or invited to this group, up to the free places.")
     exclude_user_ids: list[UUID] = Field(default_factory=list, description="With all_eligible: people to leave out.")
 
     @model_validator(mode="after")
@@ -275,7 +298,7 @@ class GroupResponse(BaseModel):
     avatar_url: str | None = None
     context_type: str | None = None
     context_id: UUID | None = None
-    context_name: str | None = Field(None, description="Training groups: the title of the linked training.")
+    context_name: str | None = Field(None, description="Training and event groups: the title of the linked training or event.")
     tenant_id: UUID | None = None
     status: Literal["open", "closed"]
     admins_only_posting: bool
@@ -608,6 +631,75 @@ class InviteEnrolledResponse(BaseModel):
     not_invited_group_full: int = Field(0, description="Eligible learners left out because the group reached its limit. Make another group for them.")
     no_account: int = Field(0, description="Eligible enrolments with no chat account (no user id could be found).")
     free_places: int = Field(..., description="Places left in the group after these invitations.")
+
+
+# ---------------------------------------------------------------- event groups
+
+class EventForGroupResponse(BaseModel):
+    id: UUID
+    title: str | None = None
+    status: str | None = None
+    delivery_mode: str | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    registered_count: int = Field(0, description="Confirmed or attended online registrations (walk-ins excluded). Payment is checked in the attendees list, not here.")
+    group_count: int = Field(0, description="Open and closed groups already linked to this event.")
+    can_create_group: bool = Field(..., description="true for a published or completed event.")
+    reason: str | None = Field(None, description="Why can_create_group is false: event_not_open.")
+
+
+class EventsForGroupsResponse(BaseModel):
+    items: list[EventForGroupResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+EventInviteReason = Literal[
+    "registration_cancelled", "registration_no_show", "registration_not_active", "payment_unpaid", "payment_pending",
+    "payment_failed", "payment_cancelled", "payment_refund_requested", "payment_refunded",
+    "no_account", "duplicate_registration", "already_member", "already_invited",
+]
+
+
+class EventAttendeeCandidate(BaseModel):
+    registration_id: UUID
+    name: str | None = None
+    email: str | None = Field(None, description="For the enterprise's staff, as in the attendee list.")
+    registration_status: str | None = Field(None, description="confirmed | attended | cancelled | no_show")
+    payment_status: str | None = Field(None, description="free | paid | unpaid | pending | failed | cancelled | refund_requested | refunded (derived from the paired order).")
+    user_id: UUID | None = Field(None, description="The registrant's platform user id: the id to invite. null = no chat account found, `can_invite` false.")
+    can_invite: bool
+    reason: EventInviteReason | None = Field(None, description="Why can_invite is false.")
+    group_state: Literal["none", "invited", "member", "declined", "left", "removed"] = "none"
+    group_ids: list[UUID] = Field(default_factory=list, description="Groups of this event the person is invited to or a member of.")
+    registered_at: datetime | None = None
+
+
+class EventAttendeesResponse(BaseModel):
+    event_id: UUID
+    event_title: str | None = None
+    event_status: str | None = None
+    items: list[EventAttendeeCandidate]
+    total: int
+    page: int
+    page_size: int
+    eligible_total: int = Field(..., description="Registrations of the event that could be invited, whatever the filters.")
+    walk_in_excluded: int = Field(0, description="Walk-in registrations: never part of Event Group Chat, never listed.")
+    max_members: int = Field(..., description="The group limit, owner and pending invitations included.")
+
+
+class EventProviderResponse(BaseModel):
+    user_id: UUID
+    name: str | None = None
+    registration_number: str | None = None
+    is_me: bool = False
+
+
+class EventProvidersResponse(BaseModel):
+    event_id: UUID
+    items: list[EventProviderResponse]
+    total: int
 
 
 class ProviderCandidateResponse(BaseModel):

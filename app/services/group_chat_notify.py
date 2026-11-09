@@ -52,11 +52,18 @@ def notify(
 
 
 def notify_invitation(db: Session, conversation: Conversation, invitees: list[UUID], invited_by_name: str | None) -> None:
-    notify(
-        db, category="group_invitation", user_ids=invitees, title="You have been invited to a group",
-        message="Open the invitation to see what the group is for and who is in it. You see nothing until you accept.",
-        metadata={"conversation_id": str(conversation.id), "group_kind": conversation.group_kind}, tenant_id=conversation.tenant_id,
-    )
+    title = "You have been invited to a group"
+    message = "Open the invitation to see what the group is for and who is in it. You see nothing until you accept."
+    metadata = {"conversation_id": str(conversation.id), "group_kind": conversation.group_kind}
+    if conversation.context_type == "event" and conversation.context_id:   # an event group says which event, so the app can open it
+        from app.services.group_chat_event import context_names
+
+        event_title = context_names(db, [conversation]).get(conversation.id)
+        title = "You have been invited to an event group"
+        message = (f"You are invited to the group for the event \"{event_title}\". " if event_title else "You are invited to an event group. ") + (
+            "Open the invitation to see who is in it. You see nothing until you accept.")
+        metadata.update({"context_type": "event", "context_id": str(conversation.context_id)})
+    notify(db, category="group_invitation", user_ids=invitees, title=title, message=message, metadata=metadata, tenant_id=conversation.tenant_id)
 
 
 def notify_removed(db: Session, conversation: Conversation, user_id: UUID) -> None:

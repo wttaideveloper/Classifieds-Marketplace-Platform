@@ -186,7 +186,7 @@ def list_groups_for_compliance(
         .group_by(ConversationParticipant.conversation_id).all()
     ) if ids else {}
     from app.services.group_chat_service import group_dict
-    from app.services.group_chat_training import context_names
+    from app.services.group_chat_service import context_names
 
     titles = context_names(db, rows)
     return {"items": [group_dict(db, c, None, active_count=counts.get(c.id, 0), context_name=titles.get(c.id), compliance=True) for c in rows], "total": total}

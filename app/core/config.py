@@ -130,6 +130,9 @@ class Settings(BaseSettings):
     # they can change without a release. Items marked "confirm" are waiting on legal / compliance.
     GROUP_MAX_MEMBERS_CARE: int = 15  # confirm
     GROUP_MAX_MEMBERS_PROGRAM: int = 50  # confirm
+    # Event groups (context_type "event"): owner and pending invitations included. Its own setting, so changing the program
+    # limit never changes Events.
+    GROUP_MAX_MEMBERS_EVENT: int = 50
     GROUP_MAX_ADMINS: int = 3
     # Training groups: a Provider may create / manage a group for a training only when they are its assigned instructor
     # (Training.instructor_id). Set to false to let every verified Provider of the clinic use every training of the
