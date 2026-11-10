@@ -863,8 +863,8 @@ def list_waitlist(event_id: UUID, db: Session = Depends(get_db), current_user: d
         409: {"description": "Already on waitlist", "content": {"application/json": {"example": {"detail": "Already on the waitlist for this event."}}}},
     },
 )
-def join_waitlist(event_id: UUID, payload: EventRegistrationCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return create_waitlist_entry_service(db, event_id, payload)
+def join_waitlist(request: Request, event_id: UUID, payload: EventRegistrationCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_waitlist_entry_service(db, event_id, payload, current_user, extract_access_token(request))
 
 
 @router.delete("/{event_id}/waitlist/{entry_id}", summary="Leave Waitlist")

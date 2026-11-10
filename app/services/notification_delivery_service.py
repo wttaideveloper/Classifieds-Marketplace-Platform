@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Metadata keys that are delivered to the in-app feed and the realtime event but never put in the
 # push `data` block.
-PUSH_OMITTED_METADATA_KEYS = frozenset({"reason", "comment"})
+PUSH_OMITTED_METADATA_KEYS = frozenset({"reason", "comment", "collapse_key"})
 
 
 def _emit_realtime_notification(user_id: UUID, payload: dict) -> None:
@@ -81,11 +81,15 @@ def deliver_notification_to_users(
                 if device.is_active
             ]
             if prefs.push_enabled and tokens:
+                # `collapse_key` in the metadata (for example "event_reminder:<event id>") makes a newer push replace an older
+                # one with the same key on the phone (Android collapse key + tag, iOS thread id). It is not sent as data.
+                collapse = (metadata or {}).get("collapse_key")
                 result = send_push_to_tokens(
                     tokens,
                     title=title,
                     body=body,
                     data=payload_data or None,
+                    **({"collapse_key": str(collapse)} if collapse else {}),
                 )
                 status = "sent" if result.sent_count > 0 else "failed"
                 error = result.credentials_error or (

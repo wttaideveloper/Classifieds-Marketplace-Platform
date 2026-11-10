@@ -104,11 +104,11 @@ They use the existing notification feed and push, and are sent after the change 
 |---|---|---|---|---|
 | `event_discussion_reply` | the author of the message replied to (not yourself) | a reply is published | "Someone replied to your discussion message." (to an Enterprise Admin: "A participant replied to your discussion.") | the exact reply (participant link, or the admin discussion link) |
 | `event_discussion_announcement` | participants known to the discussion | an announcement is published | "New announcement in your event discussion." | the announcement |
-| `event_discussion_message_approved` | the sender | an Enterprise Admin approved it | "Your discussion message has been approved." | the message |
-| `event_discussion_message_deleted` | the sender | an Enterprise Admin deleted it | "Your discussion message was not approved." | the message's status |
+| `event_discussion_approved` | the sender | an Enterprise Admin approved it | "Your discussion message has been approved." | the message |
+| `event_discussion_deleted` | the sender | an Enterprise Admin deleted it | "Your discussion message was not approved." | the message's status |
 | `event_discussion_flagged` | the event's Enterprise Admins | the AI flagged a message, or an appeal arrived (`metadata.is_appeal`) | "A discussion message requires your review." | the exact flagged message |
 | `event_discussion_pending_review` | the event's Enterprise Admins | a nudge (section 5) | "You have N flagged discussion messages waiting for review." | the event's flagged list |
-| `event_discussion_unread_reply` | the author of the message replied to | a nudge (section 5) | "You have an unread reply in your event discussion." | the exact reply |
+| `event_discussion_reply_nudge` | the author of the message replied to | a nudge (section 5) | "You have an unread reply in your event discussion." | the exact reply |
 
 The links are set on the server and **the web and mobile teams must confirm the real routes**, they are placeholders until then (`{event_id}` and `{message_id}` are replaced):
 

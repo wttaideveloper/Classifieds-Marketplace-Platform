@@ -220,7 +220,7 @@ def test_a_flagged_message_is_hidden_and_reaches_the_enterprise_admin_who_approv
     approved = as_user(env, p.admin).post(f"{base(env)}/messages/{mid}/decision", json={"action": "approve", "note": "Fine in context"})
     assert approved.status_code == 200 and approved.json()["message"]["status"] == "published"
     assert [m["body"] for m in as_user(env, p.ravi).get(f"{base(env)}/messages").json()["items"]] == ["This is a badword moment"]
-    [ok] = kinds(env, "event_discussion_message_approved")
+    [ok] = kinds(env, "event_discussion_approved")
     assert ok["message"] == "Your discussion message has been approved." and str(ok["user_ids"][0]) == p.priya["id"]
     assert as_user(env, p.admin).get(f"{base(env)}/moderation/queue").json()["pending_count"] == 0
     assert as_user(env, p.admin).post(f"{base(env)}/messages/{mid}/decision", json={"action": "delete"}).json()["code"] == "INVALID_STATUS"
@@ -236,7 +236,7 @@ def test_deleting_a_flagged_message_means_it_is_never_published(env):
     assert as_user(env, p.ravi).get(f"{base(env)}/messages").json()["items"] == []
     gone = as_user(env, p.ravi).get(f"{base(env)}/messages/{mid}")
     assert gone.status_code == 404 and gone.json()["detail"] == "This message is no longer available."
-    [note] = kinds(env, "event_discussion_message_deleted")
+    [note] = kinds(env, "event_discussion_deleted")
     assert note["message"] == "Your discussion message was not approved." and note["metadata"]["status"] == "deleted"
     mine = as_user(env, p.priya).get(f"{base(env)}/messages/{mid}").json()
     assert mine["status"] == "deleted" and mine["status_message"] == "Your message was not approved."          # the sender still sees what happened
@@ -440,7 +440,7 @@ def test_an_unread_reply_is_nudged_once_and_never_after_it_was_opened(env):
 
     assert jobs.nudge_unread_replies(env.db, now + timedelta(hours=1)) == 0                       # too early
     assert jobs.nudge_unread_replies(env.db, now + timedelta(hours=13)) == 1
-    [nudge] = kinds(env, "event_discussion_unread_reply")
+    [nudge] = kinds(env, "event_discussion_reply_nudge")
     assert nudge["message"] == "You have an unread reply in your event discussion." and nudge["metadata"]["message_id"] == unread["id"] and nudge["metadata"]["nudge"] is True
     assert jobs.nudge_unread_replies(env.db, now + timedelta(days=3)) == 0                        # once only
 
@@ -486,3 +486,54 @@ def test_pending_flagged_messages_nudge_the_enterprise_admin_a_limited_number_of
 
 def test_run_all_runs_every_job(env):
     assert jobs.run_all(env.db) == {"moderated": 0, "unread_nudges": 0, "pending_nudges": 0}
+
+
+# --- the mobile contract: entity fields, registered recipients, access at send time ------------------------------------------------------
+
+def test_participant_pushes_carry_the_event_entity_and_the_renamed_categories(env):
+    p = env.people
+    opened(env, p.priya)
+    top = say(env, p.priya, "Parking?").json()["message"]
+    reply = say(env, p.ravi, "Gate 2", parent_id=top["id"]).json()["message"]
+
+    [note] = kinds(env, "event_discussion_reply")
+    meta = note["metadata"]
+    assert meta["category"] == "event_discussion_reply" and meta["entity_type"] == "event" and meta["entity_id"] == str(env.event.id) == meta["event_id"]
+    assert meta["message_id"] == reply["id"] and meta["parent_id"] == top["id"] and meta["event_name"] == "Health Harmony Summit"
+    assert {"event_discussion_approved", "event_discussion_deleted", "event_discussion_reply_nudge"} <= set(__import__("typing").get_args(
+        __import__("app.schemas.notification_schema", fromlist=["NotificationCategory"]).NotificationCategory))
+
+
+def test_an_announcement_reaches_registered_people_who_never_opened_the_discussion_but_not_cancelled_ones(env):
+    p = env.people
+    quiet = person_with_account(env, "quiet@example.com")                      # registered, has an account, never opened the discussion
+    gone = person_with_account(env, "gone@example.com", status="cancelled")
+    opened(env, p.priya)
+    opened(env, p.admin)
+
+    say(env, p.admin, "Doors open at 9 am", is_announcement=True)
+
+    [sent] = kinds(env, "event_discussion_announcement")
+    ids = {str(u) for u in sent["user_ids"]}
+    assert str(quiet) in ids and p.priya["id"] in ids and str(gone) not in ids and p.admin["id"] not in ids
+    assert sent["metadata"]["entity_type"] == "event" and sent["metadata"]["message_id"]
+
+
+def person_with_account(env, email, status="confirmed"):
+    user_id = uuid4()
+    make_registration(env.db, env.event, email, status=status, user_id=user_id)
+    return user_id
+
+
+def test_nothing_is_pushed_to_someone_who_lost_access_before_it_was_sent(env):
+    from app.models.event_aux_models import EventRegistration
+
+    p = env.people
+    opened(env, p.priya)
+    top = say(env, p.priya, "Parking?").json()["message"]
+    env.db.query(EventRegistration).filter_by(participant_email="priya@example.com").update({"status": "cancelled"})
+    env.db.commit()
+
+    say(env, p.ravi, "Gate 2", parent_id=top["id"])
+
+    assert kinds(env, "event_discussion_reply") == []                            # she can no longer read the discussion: safe not to send

@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     # beat is deployed). Unset = on in production, off in development; set explicitly to override.
     TRAINING_REMINDERS_ENABLED: bool | None = None
     TRAINING_REMINDER_INTERVAL_SECONDS: int = 900
+    # Event reminders (push + in-app): hours before the start, comma separated ("" = none). On in production, off elsewhere, unless set.
+    EVENT_REMINDERS_ENABLED: bool | None = None
+    EVENT_REMINDER_HOURS: str = "24,1"
+    EVENT_REMINDER_INTERVAL_SECONDS: int = 300
     # "Complete your training before the deadline" reminders go to learners who have not finished, this many days before their
     # deadline (the training's end date, or the end of their access if that comes first). Comma separated; empty switches them off.
     TRAINING_DEADLINE_REMINDER_DAYS: str = "7,3,1"
@@ -289,6 +293,12 @@ class Settings(BaseSettings):
     def training_reminders_enabled(self) -> bool:
         if self.TRAINING_REMINDERS_ENABLED is not None:
             return self.TRAINING_REMINDERS_ENABLED
+        return self.ENVIRONMENT == "production"
+
+    @property
+    def event_reminders_enabled(self) -> bool:
+        if self.EVENT_REMINDERS_ENABLED is not None:
+            return self.EVENT_REMINDERS_ENABLED
         return self.ENVIRONMENT == "production"
 
     @property

@@ -1,14 +1,19 @@
 """Event Discussion notifications, on the existing platform feed and Socket.IO ``notification`` event.
 
     event_discussion_reply             -> the author of the message replied to      someone replied to your message
-    event_discussion_announcement      -> the event's known participants            an Enterprise Admin posted an announcement
-    event_discussion_message_approved  -> the sender                                an Enterprise Admin approved the flagged message
-    event_discussion_message_deleted   -> the sender                                an Enterprise Admin deleted it (never published)
-    event_discussion_flagged           -> the event's Enterprise Admins             the AI flagged a message (or an appeal came in: metadata.is_appeal)
-    event_discussion_pending_review    -> the event's Enterprise Admins             flagged messages are still waiting (a nudge)
-    event_discussion_unread_reply      -> the author of the message replied to      a reply is still unread (a nudge)
+    event_discussion_announcement      -> everyone registered for the event          an Enterprise Admin posted an announcement
+    event_discussion_approved          -> the sender                                an Enterprise Admin approved the flagged message
+    event_discussion_deleted           -> the sender                                an Enterprise Admin deleted it (never published)
+    event_discussion_reply_nudge       -> the author of the message replied to      a reply is still unread (a nudge)
+    event_discussion_flagged           -> the event's Enterprise Admins             the AI flagged a message (or an appeal came in: metadata.is_appeal)  [web only]
+    event_discussion_pending_review    -> the event's Enterprise Admins             flagged messages are still waiting (a nudge)                          [web only]
 
-Every one carries event_id, event_name, message_id, parent_id (when a reply), status, occurred_at and `deep_link`, the screen it opens for
+(the three participant names were event_discussion_message_approved / _message_deleted / _unread_reply before the mobile contract)
+
+A participant is only notified while they still have access when it is sent (an active registration, or the event's Enterprise Admin): a person whose
+registration was cancelled meanwhile gets nothing.
+
+Every one carries category, event_id, event_name, entity_type = "event", entity_id (= event_id), message_id, parent_id (when a reply), status, occurred_at and `deep_link`, the screen it opens for
 that reader (the settings EVENT_DISCUSSION_LINK_*), so a tap goes to the exact message or review screen and not the Home page. The AI's
 reason is only in what the Enterprise Admin gets, and is left out of push text. Sent after the change is committed, from a background
 thread, never able to break the call that caused it; each delivery is claimed with a key so a retry cannot send it twice.
@@ -67,7 +72,7 @@ def _deliver(db, *, recipients, category, title, message, metadata, dedupe_key, 
 
 def _meta(event, message, status: str | None = None, **extra) -> dict:
     return {
-        "entity_type": "event_discussion_message", "event_id": str(event.id), "event_name": getattr(event, "title", None) or getattr(event, "name", None),
+        "entity_type": "event", "entity_id": str(event.id), "event_id": str(event.id), "event_name": getattr(event, "title", None) or getattr(event, "name", None),
         "message_id": str(message.id) if message else None, "parent_id": str(message.parent_id) if message and message.parent_id else None,
         "status": status or (message.status if message else None), "occurred_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z", **extra,
     }
@@ -86,6 +91,46 @@ def _admin_ids(db, event, access_token=None) -> list[str]:
     except Exception:
         logger.debug("could not list the Enterprise Admins of event %s", event.id, exc_info=True)
     return sorted(ids)
+
+
+def _can_read(db, event, user_id) -> bool:
+    """Does this person have access to the discussion right now? The event's Enterprise Admin, or someone with an active registration."""
+    from sqlalchemy import func, or_
+
+    from app.models.event_aux_models import EventRegistration
+    from app.models.event_discussion_model import EventDiscussionMember
+
+    uid = str(user_id)
+    if uid in set(_admin_ids(db, event)):
+        return True
+    member = db.query(EventDiscussionMember).filter_by(event_id=event.id, user_id=uid).first()
+    clauses = []
+    try:
+        clauses.append(EventRegistration.user_id == UUID(uid))
+    except (ValueError, TypeError):
+        pass
+    if member is not None and member.email:
+        clauses.append(func.lower(EventRegistration.participant_email) == member.email.strip().lower())
+    if not clauses:
+        return False
+    return db.query(EventRegistration.id).filter(EventRegistration.event_id == event.id, EventRegistration.status.in_(("confirmed", "attended")), or_(*clauses)).first() is not None
+
+
+def _participants(db, event, exclude) -> list[str]:
+    """Everyone registered for the event who can read the discussion now: the people who opened it and still have an active registration, plus
+    registered people with an account who have not opened it yet."""
+    from app.models.event_aux_models import EventRegistration
+    from app.models.event_discussion_model import EventDiscussionMember
+    from app.services.event_notifications import _user_for
+
+    regs = db.query(EventRegistration).filter(EventRegistration.event_id == event.id, EventRegistration.status.in_(("confirmed", "attended"))).all()
+    active_emails = {(r.participant_email or "").strip().lower() for r in regs}
+    users = {str(u) for u in (_user_for(db, r.participant_email, r.user_id) for r in regs) if u}
+    for m in db.query(EventDiscussionMember).filter_by(event_id=event.id, role="participant").all():
+        if (m.email or "").strip().lower() in active_emails:
+            users.add(str(m.user_id))
+    users.discard(str(exclude))
+    return sorted(users)
 
 
 def _load(db, message_id):
@@ -113,7 +158,7 @@ def _deliver_published(message_id: str):
         if message is None or event is None or message.status != "published":
             return None
         if message.is_announcement:
-            members = [m.user_id for m in db.query(EventDiscussionMember).filter_by(event_id=event.id, role="participant").all() if m.user_id != message.author_id]
+            members = _participants(db, event, message.author_id)
             return _deliver(
                 db, recipients=members, category="event_discussion_announcement", title="New announcement",
                 message="New announcement in your event discussion.", metadata=_meta(event, message, deep_link=link(settings.EVENT_DISCUSSION_LINK_PARTICIPANT, event.id, message.id),
@@ -122,6 +167,8 @@ def _deliver_published(message_id: str):
             )
         if message.parent_id and message.recipient_id and message.recipient_id != message.author_id:
             admin = message.recipient_id in set(_admin_ids(db, event))
+            if not _can_read(db, event, message.recipient_id):
+                return None                                             # no longer registered: safe not to send
             template = settings.EVENT_DISCUSSION_LINK_ADMIN_MESSAGE if admin else settings.EVENT_DISCUSSION_LINK_PARTICIPANT
             text = "A participant replied to your discussion." if admin else "Someone replied to your discussion message."
             return _deliver(
@@ -166,7 +213,9 @@ def _deliver_decision(message_id: str, outcome: str):
         if message is None or event is None:
             return None
         approved = outcome == "approved"
-        category = "event_discussion_message_approved" if approved else "event_discussion_message_deleted"
+        category = "event_discussion_approved" if approved else "event_discussion_deleted"
+        if not _can_read(db, event, message.author_id):
+            return None
         return _deliver(
             db, recipients=[message.author_id], category=category, title="Message approved" if approved else "Message not approved",
             message="Your discussion message has been approved." if approved else "Your discussion message was not approved.",
@@ -178,12 +227,14 @@ def _deliver_decision(message_id: str, outcome: str):
 # ---- nudges ---------------------------------------------------------------------------------------------------------------
 
 def nudge_unread_reply(db, message, event) -> bool:
+    if not _can_read(db, event, message.recipient_id):
+        return False
     admin = message.recipient_id in set(_admin_ids(db, event))
     template = settings.EVENT_DISCUSSION_LINK_ADMIN_MESSAGE if admin else settings.EVENT_DISCUSSION_LINK_PARTICIPANT
     return bool(_deliver(
-        db, recipients=[message.recipient_id], category="event_discussion_unread_reply", title="Unread reply",
+        db, recipients=[message.recipient_id], category="event_discussion_reply_nudge", title="Unread reply",
         message="You have an unread reply in your event discussion.", metadata=_meta(event, message, deep_link=link(template, event.id, message.id), nudge=True),
-        dedupe_key=f"event_discussion_unread_reply:{message.id}",
+        dedupe_key=f"event_discussion_reply_nudge:{message.id}",
     ))
 
 
