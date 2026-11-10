@@ -235,8 +235,12 @@ def send_push_to_tokens(
     body: str,
     data: dict | None = None,
     conversation_id: str | None = None,
+    collapse_key: str | None = None,
 ) -> PushSendResult:
-    """Send FCM push notifications (``conversation_id``: chat message pushes only, see build_push_message)."""
+    """Send FCM push notifications (``conversation_id``: chat message pushes only, see build_push_message).
+
+    ``collapse_key``: a newer push with the same key replaces the older one on the phone (for example one reminder per event).
+    It becomes the same Android collapse key / tag and iOS thread id, but is a separate argument so chat grouping stays chat-only."""
     ready, project_id, init_error = _ensure_firebase()
     result = PushSendResult(firebase_project_id=project_id, credentials_error=init_error)
 
@@ -269,7 +273,7 @@ def send_push_to_tokens(
         try:
             messaging.send(
                 build_push_message(
-                    token, title=title, body=body, payload_data=payload_data, conversation_id=conversation_id
+                    token, title=title, body=body, payload_data=payload_data, conversation_id=conversation_id or collapse_key
                 )
             )
             result.sent_count += 1

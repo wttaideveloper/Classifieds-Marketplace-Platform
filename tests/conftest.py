@@ -31,3 +31,13 @@ def _no_background_review_notifications(monkeypatch):
     from app.services import review_notifications
 
     monkeypatch.setattr(review_notifications, "_dispatch", lambda fn, *args, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_background_event_notifications(monkeypatch):
+    """Event push notifications are delivered from a background thread that opens its own database session. Tests that register,
+    cancel or update an event must not start it (a test that swaps in one shared session would race with it); the tests that care about
+    these notifications (tests/test_event_notifications.py) run the delivery synchronously and record what would be sent."""
+    from app.services import event_notifications
+
+    monkeypatch.setattr(event_notifications, "_dispatch", lambda fn, *args, **kwargs: None)
