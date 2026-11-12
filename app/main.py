@@ -212,10 +212,6 @@ async def startup():
 
     start_reminder_scheduler()
 
-    from app.services.event_notifications import start_reminder_scheduler as start_event_reminders
-
-    start_event_reminders()
-
     from app.services.meeting_service import start_scheduler as start_meeting_jobs
 
     start_meeting_jobs()

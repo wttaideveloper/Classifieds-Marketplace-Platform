@@ -80,7 +80,8 @@ def test_the_chat_message_dispatch_uses_the_conversation_id_not_message_or_sende
 
     kwargs = send.call_args.kwargs
     assert kwargs["conversation_id"] == str(conversation_id) != str(message_id)
-    assert kwargs["data"] == {"type": "chat_message", "conversationId": str(conversation_id), "messageId": str(message_id)}
+    assert kwargs["data"] == {"type": "chat_message", "category": "chat_message", "conversationId": str(conversation_id), "conversation_id": str(conversation_id),
+                              "messageId": str(message_id), "message_id": str(message_id)}   # camelCase kept for older app versions
     assert kwargs["title"] == "Title" and kwargs["body"] == "Body"
 
 

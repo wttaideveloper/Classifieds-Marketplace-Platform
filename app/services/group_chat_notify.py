@@ -2,9 +2,11 @@
 
 Privacy rules that shape this module (docs/group-chat-api.md):
 
-* A message notification shows only "New message": no group name, no sender, no text. The app opens the group from
-  `metadata.conversation_id`. Email and SMS are not used for group messages at all, because they would carry text
-  outside the app.
+* A message notification in a PROGRAM group (which includes training and event groups) shows the group name, the sender's display name (a
+  patient by display name, never a full name) and a preview of what was sent (chat_notification_content.py). In a CARE group, or when
+  GROUP_NOTIFICATION_PREVIEW_ENABLED is off, it shows only "New message": no group name, no sender, no text, because a care team's messages are
+  clinical and a preview would put them on a lock screen (GROUP_CARE_NOTIFICATION_PREVIEW_ENABLED turns it on for care groups too). The app opens the
+  group from `metadata.conversation_id`. Email and SMS are not used for group messages at all, because they would carry text outside the app.
 * An @-tag notifies the tagged person directly (still without the message text) and, in a care group, even when they
   muted the group.
 * Everything here is best effort and runs after the change is saved: a problem sending never fails the API call.
@@ -107,14 +109,50 @@ def notify_report(db: Session, conversation: Conversation, recipients: list[UUID
 
 # ---------------------------------------------------------------- a new message
 
+def previews_enabled(conversation: Conversation) -> bool:
+    from app.core.config import settings
+
+    if not settings.GROUP_NOTIFICATION_PREVIEW_ENABLED:
+        return False
+    return conversation.group_kind != "care" or settings.GROUP_CARE_NOTIFICATION_PREVIEW_ENABLED
+
+
+def sender_label(db: Session, conversation: Conversation, sender: ConversationParticipant | None, sender_id) -> str | None:
+    """The sender as the group shows them: a patient by display name ("Priya S."), a provider by full name. Never an e-mail address."""
+    from app.services import group_chat_common as common
+
+    full = common.resolve_names(db, conversation, [sender_id]).get(str(sender_id))
+    if sender is not None and sender.member_kind == "patient":
+        return sender.display_name or common.default_display_name(full) or "A member"
+    return full or (sender.display_name if sender is not None else None) or None
+
+
+def content_for(db: Session, conversation: Conversation, message, sender_id, sender: ConversationParticipant | None = None):
+    """What a new group message says (title, preview, data), or None when this group shows only "New message"."""
+    if not previews_enabled(conversation):
+        return None
+    from app.repository import chat_repo
+    from app.services import chat_notification_content as notice
+
+    attachment = chat_repo.get_attachment_by_id(db, message.attachment_id) if getattr(message, "attachment_id", None) else None
+    return notice.build(
+        notice.GROUP, title=conversation.subject or notice.GENERIC_TITLE, conversation_id=conversation.id, message=message,
+        attachment=attachment, sender_name=sender_label(db, conversation, sender, sender_id),
+    )
+
+
 def notify_new_message(
     db: Session, conversation: Conversation, message: Message, sender_id: UUID, members: list[ConversationParticipant],
 ) -> None:
-    """Tell the other active members. The lock screen only says "New message"."""
+    """Tell the other active members: group name, sender and preview in a program group; only "New message" in a care group."""
     try:
         from app.repository import chat_repo
         from app.services import chat_notification_service as cns
 
+        sender = next((m for m in members if m.user_id == sender_id), None)
+        content = content_for(db, conversation, message, sender_id, sender)
+        title = content.title if content else NEW_MESSAGE_TITLE
+        body = content.body if content else ""
         now = datetime.utcnow()
         mentioned = {str(u) for u in (message.mentions or [])}
         recipients: list[UUID] = []
@@ -130,16 +168,16 @@ def notify_new_message(
             prefs = chat_repo.get_notification_preferences(db, member.user_id)
             if prefs.in_app_enabled:
                 chat_repo.create_notification(
-                    db, user_id=member.user_id, notification_type="group_message", title=NEW_MESSAGE_TITLE, body="",
-                    data={"conversation_id": str(conversation.id), "message_id": str(message.id), "mentioned": tagged},
+                    db, user_id=member.user_id, notification_type="group_message", title=title, body=body,
+                    data={"conversation_id": str(conversation.id), "message_id": str(message.id), "mentioned": tagged, **(content.data if content else {})},
                 )
             if prefs.push_enabled:
-                cns._dispatch_push_notification(db, member.user_id, NEW_MESSAGE_TITLE, "", conversation.id, message.id, kind="group_message")
+                cns._dispatch_push_notification(db, member.user_id, title, body, conversation.id, message.id, kind="group_message", extra=content.data if content else None)
 
         if recipients:
             notify(
-                db, category="group_message", user_ids=recipients, title=NEW_MESSAGE_TITLE, message="",
-                metadata={"conversation_id": str(conversation.id), "message_id": str(message.id)},
+                db, category="group_message", user_ids=recipients, title=title, message=body,
+                metadata={"conversation_id": str(conversation.id), "message_id": str(message.id), **(content.data if content else {})},
                 tenant_id=conversation.tenant_id, channels=("in_app",),
             )
     except Exception:

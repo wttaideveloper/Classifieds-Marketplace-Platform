@@ -977,18 +977,6 @@ def update_event_status_service(db: Session, event_id: UUID, new_status: str, cu
             notify_event_cancelled(db, event, previous)
         except Exception:
             pass
-    if new_status == "published" and previous != "published":
-        try:
-            from app.services.event_notifications import notify_new_event
-            notify_new_event(event.id, exclude_user_id=(current_user or {}).get("id"), access_token=access_token)
-        except Exception:
-            logger.warning("event_new push failed for event %s", event.id, exc_info=True)
-    if new_status == "completed" and previous != "completed":
-        try:
-            from app.services.event_notifications import notify_feedback_request
-            notify_feedback_request(event.id)
-        except Exception:
-            logger.warning("event_feedback_request push failed for event %s", event.id, exc_info=True)
     from app.services.meeting_service import on_event_status
     on_event_status(db, event, previous, new_status)
     return EventResponse.model_validate(map_event_write(event))
@@ -1462,7 +1450,7 @@ def get_event_registrations_service(db: Session, event_id: UUID):
     return db.query(EventRegistration).filter(EventRegistration.event_id == event_id).all()
 
 
-def create_waitlist_entry_service(db: Session, event_id: UUID, payload, current_user: dict | None = None, access_token: str | None = None):
+def create_waitlist_entry_service(db: Session, event_id: UUID, payload):
     """Join event waitlist.
 
     Phase A hardening:
@@ -1537,20 +1525,9 @@ def create_waitlist_entry_service(db: Session, event_id: UUID, payload, current_
         participant_name=payload.participant_name,
         participant_email=norm_email,
     )
-    if current_user is not None:   # the person's platform user id, when the caller is the person joining (never from the payload)
-        try:
-            from app.services.training_learner_identity import resolve_enrolling_user_id
-            entry.user_id = resolve_enrolling_user_id(current_user, norm_email, access_token)
-        except Exception:
-            logger.exception("could not tell whose waitlist entry this is")
     db.add(entry)
     db.commit()
     db.refresh(entry)
-    try:
-        from app.services.event_notifications import notify_waitlist_joined
-        notify_waitlist_joined(event, entry)
-    except Exception:
-        logger.warning("Waitlist-joined push failed for %s", norm_email, exc_info=True)
     return entry
 
 
@@ -2730,11 +2707,6 @@ def create_event_checkout_service(db: Session, event_id: UUID, payload, current_
         notify_payment_success(db, event, order)
     except Exception as e:
         logger.warning(f"Failed to send checkout notification: {e}")
-    try:   # a paid registration is a confirmed registration: the phone gets event_registration_confirmed
-        from app.services.event_notifications import notify_registration_confirmed
-        notify_registration_confirmed(event, reg)
-    except Exception:
-        logger.warning("Registration-confirmed push failed for the checkout of event %s", event_id, exc_info=True)
 
     return order
 
@@ -3218,8 +3190,6 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event=None):
         # Notify the person of the payment offer (notify_generic never existed, so this used to be
         # silently skipped by the broad except below — the offer was made but nobody was told).
         try:
-            from app.services.event_notifications import notify_waitlist_promoted
-            notify_waitlist_promoted(event, next_in_line)   # first: it reads the objects as they are now
             from app.services.notification_triggers import _safe_notify
             _safe_notify(
                 db,
@@ -3229,8 +3199,7 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event=None):
                 event.tenant_id,
                 {"event_id": str(event_id), "waitlist_id": str(next_in_line.id)},
                 participant_email=next_in_line.participant_email,
-                channels=["email"],
-                deliver_app=False,   # the phone gets event_waitlist_promoted instead
+                channels=["in_app", "push", "email"],
             )
         except Exception:
             logger.warning("Waitlist offer notification failed for %s", next_in_line.participant_email, exc_info=True)
@@ -3241,7 +3210,6 @@ def _try_promote_from_waitlist(db: Session, event_id: UUID, event=None):
             event_id=event_id,
             participant_name=next_in_line.participant_name,
             participant_email=next_in_line.participant_email,
-            user_id=getattr(next_in_line, "user_id", None),   # the person's platform user id, saved when they joined the waitlist themselves
             status="confirmed",
             qr_code=str(uuid.uuid4())[:12].upper(),
         )
@@ -3307,12 +3275,6 @@ def auto_complete_past_events_service(
         updated += 1
     if updated:
         db.commit()
-        for ev in events:
-            try:
-                from app.services.event_notifications import notify_feedback_request
-                notify_feedback_request(ev.id)
-            except Exception:
-                logger.warning("event_feedback_request push failed for event %s", ev.id, exc_info=True)
     return {"auto_completed": updated}
 
 
