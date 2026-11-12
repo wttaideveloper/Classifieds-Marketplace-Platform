@@ -553,9 +553,9 @@ They use the existing notification feed (`GET /users/me/notifications`) and the 
 
 Privacy rules that the app can rely on:
 
-- A message notification says only **"New message"**. It has no group name, no sender and no text. The same is true of push, the in-app notification and the realtime event. Email and SMS are not used for group messages at all.
+- A message notification in a **program group** (training and event groups included) shows the **group name** as the title, and a **preview** of what was sent as the body, with the sender's display name in `data` (a patient by display name, never a full name). In a **care group** it still says only **"New message"**: no group name, no sender, no text (a care team's messages are clinical, so a preview would put them on a lock screen). The same holds for push, the in-app notification and the realtime event. Email and SMS are not used for group messages at all. Contract and settings: `chat-notifications.md`.
 - An invitation notification does not contain the group name either.
-- An @-tag notifies the tagged person with the same "New message" text (`mentioned: true` in the chat notification data). In a **care group** it reaches them even if they muted the group. In a program group a mute is always respected.
+- An @-tag notifies the tagged person with the same text as any other message in that group (`mentioned: true` in the chat notification data). In a **care group** it reaches them even if they muted the group. In a program group a mute is always respected.
 - Muting a group (`PATCH /groups/{id}/preferences`, with an optional `muted_until`) never removes access.
 
 

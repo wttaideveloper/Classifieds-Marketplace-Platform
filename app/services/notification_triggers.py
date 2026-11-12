@@ -227,15 +227,11 @@ def _safe_notify(
     participant_email: str | None = None,
     channels: list[str] | None = None,
     email_result: tuple[bool, str | None] | None = None,
-    deliver_app: bool = True,
 ):
     """Best-effort notification using an isolated database session for side effects.
 
     `email_result` is (sent, reason) for an email the caller already sent as part of a batch; the email is then
-    not sent again here, only recorded.
-
-    `deliver_app=False`: email and the audit row only. The in-app / push notification for the same action is sent by
-    app/services/event_notifications.py (with the mobile routing payload), so it must not be sent twice."""
+    not sent again here, only recorded."""
     channels = channels or ["in_app"]
     email_sent = False
     email_error: str | None = None
@@ -255,7 +251,7 @@ def _safe_notify(
     from app.db.database import SessionLocal
     with SessionLocal() as notif_db:
         # 2) Try to resolve a user_id for in-app/push pipeline
-        if participant_email and deliver_app:
+        if participant_email:
             resolved_id = _resolve_user_id_from_email(notif_db, participant_email)
             if resolved_id:
                 user_ids.append(resolved_id)
@@ -305,36 +301,23 @@ def _safe_notify(
     }
 
 
-def _push(name: str, *args) -> None:
-    """The in-app + push side of an Event notification (app/services/event_notifications.py). Never raises."""
-    try:
-        from app.services import event_notifications as push
-
-        fn = push.notify_event_cancelled if name == "notify_event_cancelled_event" else getattr(push, name)
-        fn(*args)
-    except Exception:
-        logger.warning("event push %s failed", name, exc_info=True)
-
-
 def notify_registration_confirmation(db: Session, event, reg):
     title = f"Registration Confirmed: {event.title}"
     msg = f"Hi {reg.participant_name}, your registration for {event.title} is confirmed. QR: {reg.qr_code}"
-    _push("notify_registration_confirmed", event, reg)   # first: it reads the objects as the caller left them
     _safe_notify(
         db, title, msg, "booking_confirmed", event.tenant_id,
         {"event_id": str(event.id), "registration_id": str(reg.id), "qr_code": reg.qr_code},
-        participant_email=reg.participant_email, channels=["email"], deliver_app=False,
+        participant_email=reg.participant_email, channels=["in_app", "push", "email", "sms"],
     )
 
 
 def notify_single_cancellation(db: Session, event, reg):
     title = f"Registration Cancelled: {event.title}"
     msg = f"Hi {reg.participant_name}, your registration for {event.title} has been cancelled."
-    _push("notify_registration_cancelled", event, reg)
     _safe_notify(
-        db, title, msg, "event_registration_cancelled", event.tenant_id,
+        db, title, msg, "event_cancelled", event.tenant_id,
         {"event_id": str(event.id), "registration_id": str(reg.id)},
-        participant_email=reg.participant_email, channels=["email"], deliver_app=False,
+        participant_email=reg.participant_email, channels=["in_app", "push", "email", "sms"],
     )
 
 
@@ -344,7 +327,7 @@ def notify_event_cancelled(db: Session, event, previous_status: str):
     _safe_notify(
         db, title, msg, "event_cancelled", event.tenant_id,
         {"event_id": str(event.id), "previous_status": previous_status},
-        channels=["email"], deliver_app=False,
+        channels=["in_app", "push", "email", "sms"],
     )
     try:
         from app.models.event_aux_models import EventRegistration
@@ -356,11 +339,10 @@ def notify_event_cancelled(db: Session, event, previous_status: str):
             _safe_notify(
                 db, title, f"Hi {r.participant_name}, {msg}", "event_cancelled", event.tenant_id,
                 {"event_id": str(event.id), "registration_id": str(r.id)},
-                participant_email=r.participant_email, channels=["email"], deliver_app=False,
+                participant_email=r.participant_email, channels=["in_app", "push", "email", "sms"],
             )
     except Exception as e:
         logger.warning("fan-out cancelled failed: %s", e)
-    _push("notify_event_cancelled_event", event.id)
 
 
 
@@ -370,7 +352,7 @@ def notify_payment_success(db: Session, event, order):
     _safe_notify(
         db, title, msg, "payment_success", event.tenant_id,
         {"event_id": str(event.id), "order_id": str(order.id), "amount": str(order.amount)},
-        participant_email=order.participant_email, channels=["email"], deliver_app=False,
+        participant_email=order.participant_email, channels=["in_app", "push", "email", "sms"],
     )
 
 
@@ -397,7 +379,6 @@ def _empty_bucket() -> dict:
 
 def notify_registrations(
     db: Session, event, regs: list, *, title: str, body_for, category: str, channels: list[str], metadata: dict | None = None,
-    deliver_app: bool = True,
 ) -> dict:
     """Notify a list of registrations (online and walk-in alike) and report what really happened.
 
@@ -437,7 +418,7 @@ def notify_registrations(
                 db, title, body_for(r), category, event.tenant_id,
                 {**(metadata or {}), "event_id": str(event.id), "registration_id": str(r.id)},
                 participant_email=email or None, channels=channels,
-                email_result=email_results.get(r.id), deliver_app=deliver_app,
+                email_result=email_results.get(r.id),
             ) or {}
             emailed = bool(outcome.get("email_sent"))
             if email_requested:
@@ -476,9 +457,8 @@ def notify_event_reminder(db: Session, event) -> dict:
     ).all()
     summary = notify_registrations(
         db, event, regs, title=title, body_for=lambda r: f"Hi {r.participant_name}, {msg}",
-        category="event_reminder", channels=["in_app", "push", "email", "sms"], deliver_app=False,
+        category="event_reminder", channels=["in_app", "push", "email", "sms"],
     )
-    _push("notify_manual_reminder", event.id)
     logger.info(
         "event reminder %s: total=%s emailed=%s failed=%s skipped=%s", getattr(event, "id", None),
         summary["total"], summary["emailed"], summary["failed"], summary["skipped"],
@@ -499,11 +479,10 @@ def notify_schedule_change(db: Session, event, changes: dict):
             _safe_notify(
                 db, title, f"Hi {r.participant_name}, {msg}", "event_schedule_change", event.tenant_id,
                 {"event_id": str(event.id), "changes": changes, "registration_id": str(r.id)},
-                participant_email=r.participant_email, channels=["email"], deliver_app=False,
+                participant_email=r.participant_email, channels=["in_app", "push", "email", "sms"],
             )
     except Exception as e:
         logger.warning("schedule change notify failed: %s", e)
-    _push("notify_event_updated", event.id, list(changes))
 
 
 def notify_refund_status(db: Session, event, order_or_reg, status: str):

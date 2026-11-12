@@ -86,6 +86,42 @@ async def emit_notification(user_id, notification: dict):
     )
 
 
+def _message_view(message: dict):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        id=message.get("id"), content=message.get("content"), message_type=message.get("message_type") or "text",
+        attachment_id=message.get("attachment_id"),
+    )
+
+
+def _group_content(db, conversation, message: dict, sender_id):
+    """The group message's title / preview / data for the socket `notification` event (None: this group shows only "New message")."""
+    try:
+        from app.services import group_chat_common as common
+        from app.services.group_chat_notify import content_for
+
+        view = _message_view(message)
+        sender = common.get_member(db, conversation.id, UUID(str(sender_id)))
+        return content_for(db, conversation, view, UUID(str(sender_id)), sender)
+    except Exception:
+        return None
+
+
+def _one_to_one_content(db, conversation, message: dict, sender_id):
+    try:
+        from app.repository import chat_repo
+        from app.services import chat_notification_content as notice
+
+        view = _message_view(message)
+        attachment = chat_repo.get_attachment_by_id(db, view.attachment_id) if view.attachment_id else None
+        name = notice.sender_name_for(db, conversation, UUID(str(sender_id)))
+        return notice.build(notice.ONE_TO_ONE, title=name or conversation.subject or notice.GENERIC_TITLE, conversation_id=conversation.id,
+                            message=view, attachment=attachment, sender_name=name)
+    except Exception:
+        return None
+
+
 async def notify_participants_new_message(
     db,
     conversation_id: UUID,
@@ -102,6 +138,8 @@ async def notify_participants_new_message(
         return
 
     is_group = conversation.conversation_type == "group"
+    group_content, group_content_tried = None, False
+    one_to_one = None if is_group else _one_to_one_content(db, conversation, message, sender_id)
     for participant in conversation.participants:
         participant_id = str(participant.user_id)
         if participant_id == sender_id or participant.membership_status != "active":
@@ -115,19 +153,23 @@ async def notify_participants_new_message(
             tagged = bool(message.get("mentions_all")) or participant_id in [str(x) for x in (message.get("mentions") or [])]
             if member_is_muted_now(participant) and not (tagged and conversation.group_kind == "care"):
                 continue
+            if group_content is None and not group_content_tried:
+                group_content, group_content_tried = _group_content(db, conversation, message, sender_id), True
             await emit_notification(participant_id, {
                 "type": "group_message",
                 "conversation_id": str(conversation_id),
                 "conversation_type": "group",
-                "title": "New message",
-                "body": "",
+                "title": group_content.title if group_content else "New message",
+                "body": group_content.body if group_content else "",
+                **(group_content.data if group_content else {}),
             })
             continue
 
         await emit_notification(participant_id, {
             "type": "new_message",
             "conversation_id": str(conversation_id),
-            "title": conversation.subject or "New message",
-            "body": preview,
+            "title": one_to_one.title if one_to_one else (conversation.subject or "New message"),
+            "body": one_to_one.body if one_to_one and one_to_one.body else preview,
             "message": message,
+            **(one_to_one.data if one_to_one else {}),
         })

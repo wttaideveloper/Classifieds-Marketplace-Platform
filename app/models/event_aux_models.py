@@ -82,7 +82,6 @@ class EventWaitlist(Base):
     event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False, index=True)
     participant_name = Column(String(255), nullable=False)
     participant_email = Column(String(255), nullable=False)
-    user_id = Column(UUID(as_uuid=True), nullable=True, index=True)  # the waitlisted person's platform user id, when they joined themselves (push notifications)
     status = Column(String(20), default="waiting", index=True)  # waiting|payment_pending|promoted|expired|left
     registration_id = Column(UUID(as_uuid=True), nullable=True)  # Linked registration if promoted
     payment_offer_expires_at = Column(DateTime, nullable=True)

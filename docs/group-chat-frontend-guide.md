@@ -369,7 +369,7 @@ Refreshing the member list on each membership event is the simplest way to keep 
 
 ## 7. Notifications and deep links
 
-Group notifications reveal nothing on the lock screen: the title is always **"New message"** and the body is empty. Do not add the group name, sender or text on the device unless the person chose that in the app's own settings.
+Program-group notifications (training and event groups included) show the group name as the title and a preview as the body; care-group notifications still reveal nothing (title **"New message"**, empty body). Show what the server sends and do not add anything else on the device. See `chat-notifications.md`.
 
 | Where | How to route |
 |---|---|
@@ -459,8 +459,8 @@ Notes for web:
 ## 10. Mobile: notes
 
 - Send the Bearer token on every call. On `401`, refresh the token the way the app already does and retry once.
-- **Push.** The payload for a message is `data: { type: "group_message", conversationId, messageId }` with title "New message" and an empty body. On tap, open the group chat. If the app is in the foreground, update the badge and the list instead of showing a banner for the group that is already open.
-- **Lock screen.** Keep the title "New message". Do not enrich the notification on the device with names or text.
+- **Push.** The payload for a message is `data: { category, type: "group_message", conversation_id, message_id, preview, sender_name, attachment_type }` (all strings; `conversationId` / `messageId` are still sent) with the group name as the title and the preview as the body (care group: title "New message", empty body, ids only). On tap, open the group chat. If the app is in the foreground, update the badge and the list instead of showing a banner for the group that is already open.
+- **Lock screen.** Show the title and body the server sends. Do not enrich the notification on the device with anything else.
 - **Offline.** Show unsent messages as pending in the app, but do not retry a send automatically after a timeout without first checking the list, because there is no idempotency key.
 - **Time.** Read times as UTC. On Android: `LocalDateTime.parse(value).atOffset(ZoneOffset.UTC)`. On iOS: an ISO 8601 formatter with fractional seconds and the time zone set to UTC.
 - **Screenshots.** When `screenshots_blocked` is true, set the window flag (Android `FLAG_SECURE`) and hide the content in the app switcher (iOS).

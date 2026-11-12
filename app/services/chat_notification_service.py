@@ -47,14 +47,23 @@ def remove_device_service(db: Session, current_user: dict, token: str):
     return {"message": "Device token removed successfully"}
 
 
-def _chat_message_push_data(conversation_id: UUID, message_id: UUID | None = None, kind: str = "chat_message") -> dict[str, str]:
-    """`kind` is "chat_message" for a 1:1 chat and "group_message" for a group, so the app opens the right screen."""
+def _chat_message_push_data(conversation_id: UUID, message_id: UUID | None = None, kind: str = "chat_message", extra: dict | None = None) -> dict[str, str]:
+    """`kind` is "chat_message" for a 1:1 chat and "group_message" for a group, so the app opens the right screen.
+
+    `category` = `type` = `kind`; `conversationId` / `messageId` are kept (older app versions read them) next to `conversation_id` / `message_id`.
+    `extra` (see chat_notification_content.data_for): preview, sender_name, attachment_type. Every value is a string."""
     data = {
         "type": kind,
+        "category": kind,
         "conversationId": str(conversation_id),
+        "conversation_id": str(conversation_id),
     }
     if message_id is not None:
         data["messageId"] = str(message_id)
+        data["message_id"] = str(message_id)
+    for key, value in (extra or {}).items():
+        if value is not None:
+            data[key] = str(value)
     return data
 
 
@@ -217,7 +226,10 @@ def create_message_notifications(
     message_id: UUID,
     title: str,
     body: str,
+    data: dict | None = None,
 ) -> None:
+    """`data`: the notification's content fields (chat_notification_content.data_for), put in the push `data`, the chat inbox row and
+    the platform inbox `metadata`. Without it the notification carries the ids only, as before."""
     conversation = chat_repo.get_conversation_by_id(db, conversation_id, with_participants=True)
     if not conversation:
         return
@@ -240,12 +252,13 @@ def create_message_notifications(
                 data={
                     "conversation_id": str(conversation_id),
                     "message_id": str(message_id),
+                    **(data or {}),
                 },
             )
             platform_recipient_ids.append(participant.user_id)
 
         if prefs.push_enabled:
-            _dispatch_push_notification(db, participant.user_id, title, body, conversation_id, message_id)
+            _dispatch_push_notification(db, participant.user_id, title, body, conversation_id, message_id, extra=data)
 
         if prefs.email_enabled:
             _dispatch_email_notification(participant.user_id, title, body, conversation_id)
@@ -272,6 +285,7 @@ def create_message_notifications(
             metadata={
                 "conversation_id": str(conversation_id),
                 "message_id": str(message_id),
+                **(data or {}),
             },
             channels=["in_app"],
         )
@@ -285,6 +299,7 @@ def _dispatch_push_notification(
     conversation_id: UUID,
     message_id: UUID,
     kind: str = "chat_message",
+    extra: dict | None = None,
 ) -> None:
     tokens = [device.token for device in chat_repo.get_active_device_tokens(db, user_id)]
     if not tokens:
@@ -293,7 +308,7 @@ def _dispatch_push_notification(
         tokens,
         title=title,
         body=body,
-        data=_chat_message_push_data(conversation_id, message_id, kind),
+        data=_chat_message_push_data(conversation_id, message_id, kind, extra),
         conversation_id=str(conversation_id),
     )
 

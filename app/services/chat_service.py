@@ -627,13 +627,23 @@ def send_message_service(db: Session, current_user: dict, data: MessageCreate):
     if conversation.conversation_type == "preview":
         chat_repo.increment_message_usage(db, user_id)
 
+    from app.services import chat_notification_content as notice
+
+    sender_name = notice.sender_name_for(db, conversation, user_id, current_user)
+    content = notice.build(
+        notice.ONE_TO_ONE, title=sender_name or conversation.subject or notice.GENERIC_TITLE,
+        conversation_id=data.conversation_id, message=message,
+        attachment=chat_repo.get_attachment_by_id(db, message.attachment_id) if message.attachment_id else None,
+        sender_name=sender_name,
+    )
     create_message_notifications(
         db,
         conversation_id=data.conversation_id,
         sender_id=user_id,
         message_id=message.id,
-        title=conversation.subject or "New message",
-        body=preview,
+        title=content.title,
+        body=content.body,
+        data=content.data,
     )
 
     return _map_message(db, message)
