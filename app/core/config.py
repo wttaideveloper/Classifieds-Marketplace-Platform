@@ -134,6 +134,8 @@ class Settings(BaseSettings):
     # training and event groups) show the group name, the sender's display name and a preview; a CARE group shows only "New message" with
     # no text unless GROUP_CARE_NOTIFICATION_PREVIEW_ENABLED is turned on: a care team's messages are clinical, and a preview puts them
     # on a lock screen. GROUP_NOTIFICATION_PREVIEW_ENABLED=false brings the earlier "New message" everywhere back for groups.
+    # Orders (docs/order-cancellation-and-refunds.md)
+    ORDER_REFUND_WINDOW_DAYS: int = 7                       # a customer can ask for a refund this long after delivery
     # Service bookings (docs/service-bookings.md)
     SERVICE_BOOKING_HOLD_MINUTES: int = 15                  # an unpaid booking holds its slot this long
     SERVICE_BOOKING_MIN_NOTICE_MINUTES: int = 60            # the earliest a slot can be booked, from now

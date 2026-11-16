@@ -15,7 +15,7 @@ from app.api.v1.endpoints import event as event_routes
 from app.core.dependencies import get_current_user, get_optional_current_user
 from app.db.database import Base, get_db
 from app.models.enterprise_model import Enterprise
-from app.models.event_aux_models import EventFeedback, EventOrder, EventRegistration
+from app.models.event_aux_models import EventFeedback, EventOrder, EventRegistration, EventWishlistItem
 from app.models.event_model import Event
 
 
@@ -23,7 +23,7 @@ from app.models.event_model import Event
 def setup(monkeypatch):
     monkeypatch.setattr(SQLiteTypeCompiler, "visit_JSONB", lambda *a, **kw: "JSON", raising=False)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Event.__table__, EventRegistration.__table__, EventOrder.__table__, EventFeedback.__table__])
+    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Event.__table__, EventRegistration.__table__, EventOrder.__table__, EventFeedback.__table__, EventWishlistItem.__table__])
     sessions = sessionmaker(bind=engine)
     eid = uuid4()
     with sessions() as db:
@@ -91,13 +91,18 @@ def test_signed_in_cancelled_registration_is_not_registered(setup):
     assert body["registration_status"] == "cancelled"
 
 
-def test_invalid_bearer_token_still_rejected_not_silently_anonymous(setup):
-    """get_optional_current_user must only skip auth when NO credentials are
-    supplied — a garbage/expired token must still fail loudly, not degrade
-    to an anonymous 200."""
+def test_invalid_token_grants_only_public_event_access(setup):
+    """Optional auth permits the published view but never authenticated registration or draft access."""
     sessions, client, eid = setup
-    resp = client.get(f"/api/v1/events/{eid}", headers={"Authorization": "Bearer not-a-real-token"})
-    assert resp.status_code == 401
+    headers = {"Authorization": "Bearer not-a-real-token"}
+    resp = client.get(f"/api/v1/events/{eid}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["is_registered"] is False
+    assert resp.json()["registration_status"] is None
+    with sessions() as db:
+        db.get(Event, eid).status = "draft"
+        db.commit()
+    assert client.get(f"/api/v1/events/{eid}", headers=headers).status_code == 404
 
 
 # --- GET /events/ — boolean registration_status on every list item ------------------------------------

@@ -62,6 +62,15 @@ def request_refund(db: Session, actor, body, *, access_token: str | None = None)
     manager = _manages(actor, payment.tenant_id)
     if not (payer or manager):
         raise _err(404, "Payment not found")
+    if payment.purchase_type == "cart_order" and not manager:
+        from app.services.cart_lifecycle import locked_order
+        from app.services.order_service import payment_of, refund_decision
+        order = locked_order(db, UUID(payment.purchase_id), user_id=actor.user_uuid)
+        db.refresh(payment)
+        _, latest = payment_of(db, order)
+        rule = refund_decision(db, order, payment, latest)
+        if not rule["allowed"]:
+            raise _err(409, rule["reason"])
     if payment.status not in ("succeeded", "partially_refunded"):
         raise _err(409, "Only a paid payment can be refunded" if payment.status != "refunded" else "This payment is already fully refunded")
     decimals = currency_service.decimals_for(db, payment.charge_currency)
@@ -123,6 +132,12 @@ def decide_refund(db: Session, actor, refund_id: UUID, action: str, reason: str 
 
 
 def _approve_and_process(db: Session, refund: Refund, payment: Payment, actor, *, note: str | None, access_token: str | None) -> None:
+    if payment.purchase_type == "cart_order" and refund.amount + to_decimal(payment.refunded_amount) >= to_decimal(payment.charge_total):
+        from app.models.cart_model import Order
+        from app.services.order_service import restock
+        order = db.query(Order).filter_by(id=UUID(payment.purchase_id)).with_for_update().first()
+        if order is not None and order.status in ("pending", "confirmed", "processing", "cancellation_requested", "cancelled"):
+            restock(db, order)
     refund.status, refund.approved_at, refund.decided_by, refund.decided_at, refund.decision_reason = "approved", _now(), actor.id, _now(), note
     refund.sla_due_at = _now() + timedelta(hours=settings.REFUND_SLA_HOURS)
     finance_audit.record(db, actor, "refund_approved", "refund", refund.id, after={"status": "approved", "amount": refund.amount, "destination": refund.destination},

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
 from app.db.database import get_db
-from app.schemas.cart_schema import CartAddRequest, CartResponse, CartUpdateRequest, CheckoutRequest, OrderResponse
+from app.schemas.cart_schema import CartAddRequest, OrderDetailResponse, CartResponse, CartUpdateRequest, CheckoutRequest, OrderResponse
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.services.cart_service import (
     add_to_cart_service,
@@ -121,7 +121,7 @@ def list_orders(
 
 @router.get(
     "/orders/{order_id}",
-    response_model=OrderResponse,
+    response_model=OrderDetailResponse,
     summary="Get Order By ID",
 )
 def get_order(
@@ -133,49 +133,59 @@ def get_order(
     return get_order_service(db, user_id, order_id)
 
 
-# ---- Order Status & Refund Endpoints ----
+from app.core.payment_access import PayActor, get_pay_actor, require_merchant_or_admin
+from app.schemas.cart_schema import OrderCancelRequest, OrderRefundRequest, OrderStatusUpdate
+from app.schemas.refund_schema import RefundCreate, RefundDecision, RefundResponse
+from app.services import cart_lifecycle, order_service, payment_view, refund_service
+from app.models.payment_model import Refund
 
-from app.schemas.cart_schema import OrderRefundRequest, OrderStatusUpdate
-from app.services.cart_service import update_order_status_service, request_order_refund_service, approve_order_refund_service
 
-
-@router.patch(
-    "/orders/{order_id}/status",
-    summary="Update Order Status",
-)
-def update_order_status(
-    order_id: UUID,
-    payload: OrderStatusUpdate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
+@router.post("/orders/{order_id}/cancel", response_model=OrderDetailResponse, summary="Cancel my order before shipment")
+def cancel_order(order_id: UUID, payload: OrderCancelRequest | None = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     user_id = UUID(str(current_user["id"]))
-    return update_order_status_service(db, user_id, order_id, payload)
+    order = cart_lifecycle.locked_order(db, order_id, user_id=user_id)
+    order_service.cancel_order(db, user_id, order.id, payload.reason if payload else None)
+    return get_order_service(db, user_id, order_id)
 
 
-@router.post(
-    "/orders/{order_id}/refund",
-    summary="Request Order Refund",
-)
-def request_refund(
-    order_id: UUID,
-    payload: OrderRefundRequest,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    user_id = UUID(str(current_user["id"]))
-    return request_order_refund_service(db, user_id, order_id, payload)
+@router.patch("/orders/{order_id}/status", summary="Change fulfillment status (Enterprise Admin / Super Admin)")
+def update_order_status(order_id: UUID, payload: OrderStatusUpdate, db: Session = Depends(get_db), actor: PayActor = Depends(require_merchant_or_admin)):
+    cart_lifecycle.locked_order(db, order_id, admin=actor)
+    order = order_service.change_status(db, _staff(actor), order_id, payload.status, payload.reason, payload.carrier, payload.tracking_number, payload.tracking_url)
+    return {"id": str(order.id), "status": order.status, "message": f"Order status updated to '{order.status}'"}
 
 
-@router.post(
-    "/orders/{order_id}/refund/approve",
-    summary="Approve or Reject Refund (Admin/Provider)",
-)
-def approve_refund(
-    order_id: UUID,
-    payload: OrderRefundRequest,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    user_id = UUID(str(current_user["id"]))
-    return approve_order_refund_service(db, user_id, order_id, payload)
+def _staff(actor):
+    from types import SimpleNamespace
+    return SimpleNamespace(id=actor.user_uuid, role="super_admin" if actor.is_super_admin else "admin", tenant_id=actor.tenant_id)
+
+
+@router.post("/orders/{order_id}/cancel/decision", response_model=OrderDetailResponse, summary="Approve or reject a cancellation request (admin only)")
+def cancellation_decision(order_id: UUID, payload: RefundDecision, db: Session = Depends(get_db), actor: PayActor = Depends(require_merchant_or_admin)):
+    cart_lifecycle.locked_order(db, order_id, admin=actor)
+    order = order_service.decide_cancellation(db, _staff(actor), order_id, payload.action == "approve", payload.reason)
+    return order_service.order_view(db, order)
+
+
+
+@router.post("/orders/{order_id}/refund", deprecated=True, response_model=RefundResponse, summary="Request refund (prefer POST /api/v1/refunds)")
+def request_refund(order_id: UUID, payload: OrderRefundRequest, db: Session = Depends(get_db), actor: PayActor = Depends(get_pay_actor)):
+    from fastapi import HTTPException
+    order = cart_lifecycle.locked_order(db, order_id, user_id=actor.user_uuid)
+    payment, _ = order_service.payment_of(db, order)
+    if not payment:
+        raise HTTPException(409, "No refundable payment")
+    refund = refund_service.request_refund(db, actor, RefundCreate(payment_id=payment.id, amount=payload.amount, reason=payload.reason), access_token=actor.token)
+    return payment_view.refund_response(db, refund, actor)
+
+
+@router.post("/orders/{order_id}/refund/approve", response_model=RefundResponse, summary="Decide a pending refund (Enterprise Admin / Super Admin)")
+def approve_refund(order_id: UUID, payload: RefundDecision, db: Session = Depends(get_db), actor: PayActor = Depends(require_merchant_or_admin)):
+    from fastapi import HTTPException
+    order = cart_lifecycle.locked_order(db, order_id, admin=actor)
+    payment, _ = order_service.payment_of(db, order)
+    pending = db.query(Refund).filter_by(payment_id=payment.id, status="requested").limit(2).all() if payment else []
+    if len(pending) != 1:
+        raise HTTPException(409, "Expected one pending refund; use the refund decision endpoint with its ID")
+    refund = refund_service.decide_refund(db, actor, pending[0].id, payload.action, payload.reason, access_token=actor.token)
+    return payment_view.refund_response(db, refund, actor)

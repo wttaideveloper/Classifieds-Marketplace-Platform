@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from app.db.database import Base
-from app.models.notification_model import Notification, NotificationLog, UserNotification
+from app.models.notification_model import Notification, NotificationEventLog, NotificationLog, UserNotification
 from app.services import event_notification_service as resolvers
 from tests.event_sql_support import (
     API, client_for, make_enterprise, make_event, make_session, reset_overrides, staff_user,
@@ -33,10 +33,10 @@ def world(monkeypatch):
     monkeypatch.setattr("app.services.event_template_mapping.validate_event_submission", lambda *a, **k: None)
 
     db = make_session()
-    Base.metadata.create_all(db.bind, tables=[Notification.__table__, UserNotification.__table__, NotificationLog.__table__])
+    Base.metadata.create_all(db.bind, tables=[Notification.__table__, UserNotification.__table__, NotificationLog.__table__, NotificationEventLog.__table__])
     enterprise = make_enterprise(db, TENANT)
 
-    seen = {"tenants": [], "users": []}
+    seen = {"super_admins": []}
     users = {
         PLATFORM_TENANT: [
             {"id": str(SUPER_ADMIN), "isSuperAdmin": True, "status": "active"},
@@ -45,16 +45,11 @@ def world(monkeypatch):
         TENANT: [{"id": str(OWNER), "tenant_role": "tenant_owner", "status": "active"}],
     }
 
-    def list_tenants(access_token=None):
-        seen["tenants"].append(access_token)
-        return [{"id": str(t)} for t in users]
+    def list_super_admins(access_token=None):
+        seen["super_admins"].append(access_token)
+        return users[PLATFORM_TENANT]
 
-    def list_tenant_users(tenant_id, access_token=None):
-        seen["users"].append(access_token)
-        return users.get(tenant_id, [])
-
-    monkeypatch.setattr(resolvers, "list_tenants", list_tenants)
-    monkeypatch.setattr(resolvers, "list_tenant_users", list_tenant_users)
+    monkeypatch.setattr(resolvers, "list_super_admins", list_super_admins)
 
     emitted = []
 
@@ -98,10 +93,11 @@ def test_resubmit_creates_event_submitted_for_the_super_admin(world):
     assert item["title"] == "Event submitted for approval"
     assert item["is_read"] is False
     assert item["metadata"]["event_id"] == str(event.id)
-    assert item["metadata"] == {
-        "event_id": str(event.id), "entity_type": "event", "entity_id": str(event.id),
-        "status": "pending_approval", "reason": None,
-    }
+    assert item["metadata"]["category"] == "event_submitted"
+    assert item["metadata"]["entity_type"] == "event"
+    assert item["metadata"]["entity_id"] == str(event.id)
+    assert item["metadata"]["status"] == "pending_approval"
+    assert not item["metadata"].get("reason")
 
 
 def test_the_realtime_event_is_emitted_after_the_row_exists(world):
@@ -143,13 +139,12 @@ def test_other_statuses_are_refused_and_notify_nobody(world, status):
 
 def test_the_callers_bearer_token_reaches_the_super_admin_lookup(world):
     resubmit(world, event_in(world), headers={"Authorization": "Bearer tok-owner"})
-    assert world.seen["tenants"] and set(world.seen["tenants"]) == {"tok-owner"}
-    assert set(world.seen["users"]) == {"tok-owner"}
+    assert world.seen["super_admins"] == ["tok-owner"]
 
 
 def test_without_a_token_the_lookup_is_made_as_before(world):
     resubmit(world, event_in(world))
-    assert set(world.seen["tenants"]) == {None}
+    assert world.seen["super_admins"] == [None]
 
 
 def test_when_no_super_admin_can_be_found_the_resubmit_succeeds_but_logs_why(world, caplog):

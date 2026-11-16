@@ -22,6 +22,9 @@ def paid(world, user=None, total="1000", currency=None, **extra):
     order = cart_order(world, user, total=total)
     payment = pay(world, user, order, currency=currency, **extra).json()
     assert payment["status"] == "succeeded", payment
+    order.status = "delivered"
+    order.delivered_at = datetime.utcnow()
+    world.db.commit()
     return order, payment
 
 
@@ -67,7 +70,7 @@ def test_a_customer_asks_for_a_partial_refund_and_the_business_approves_it(world
     paid_again = world.as_user(priya).get(f"/payments/{payment['id']}").json()
     assert paid_again["refunded_amount"] == "590.00" and paid_again["refundable_amount"] == "590.00" and paid_again["status"] == "partially_refunded"
     world.db.expire_all()
-    assert world.db.get(Order, order.id).status == "confirmed"                         # only a full refund changes the order
+    assert world.db.get(Order, order.id).status == "delivered"                         # only a full refund changes the order
 
 
 def test_the_credit_note_and_the_tax_reversal_follow_the_refund(world):
