@@ -61,3 +61,32 @@ delivered items were physically returned; it does not restock them.
 
 Apply the Alembic migrations before deploying the application. Historical order
 lines default to zero stock debit; cancelling an old order cannot inflate stock.
+
+## Enterprise Admin: orders list, detail, cancellation requests
+
+The same `/api/v1/cart/orders` routes serve the Enterprise Admin; the caller's role decides what they return.
+
+| Call | Customer | Enterprise Admin (tenant owner) | Super Admin |
+|---|---|---|---|
+| `GET /cart/orders` | their own orders (`id, user_id, status, total, currency, item_count, created_at`) | **every order of their tenant**, newest first, in the staff shape below | every tenant (`tenant_id` narrows it) |
+| `GET /cart/orders/{id}` | their own order | any order of their tenant | any order |
+| `GET /cart/orders/cancellation-requests` | 403 | orders in `cancellation_requested`, oldest request first | any tenant |
+
+An admin who also shops uses `GET /cart/orders?mine=true` for their own purchases. An order that is not yours and not your tenant's is a 404 (never another tenant's data).
+
+Staff list item: `id, status, payment_status, total, currency, created_at, customer {user_id, name, phone}, item_count, items_preview [first 3 product names], carrier, tracking_number,
+cancellation_requested_at, city`. Filters: `status` (comma list), `q` (customer name or phone, tracking number, order id prefix, product name), `enterprise_id` (orders that contain that
+enterprise's products), `date_from`, `date_to`, `page`, `page_size`; wrapped as `{ items, total, page, page_size }`.
+
+Order detail now also carries what the customer's tracking screen needs: `carrier`, `tracking_number`, `tracking_url`, `shipped_at`, `delivered_at`, `payment_status`, `cancellation`
+(`requested_at`, `reason`, `decision_reason`, `cancelled_at`, `cancelled_by_role`), `history` (`action`, `from_status`, `to_status`, `actor_role`, `reason`, `at`), `refund_currency`,
+`refund_window_days`; and for staff `customer` and `allowed_statuses` (what the order can be moved to now; empty while a cancellation request is waiting). `shipping_address` is
+returned as stored even when incomplete (an older order) instead of failing.
+
+### Telling the admins
+When a customer cancels (`order_cancelled`) or asks to cancel a paid order (`order_cancellation_requested`), the store's Enterprise Admins are notified. Finding them is an identity-service
+lookup that needs the **caller's bearer token**; the cancel call now passes the customer's token (and the status and decision calls the admin's), where before the token was left out
+and the lookup failed quietly. A failed or empty lookup is now logged as a warning (`order N: no Enterprise Admin found to notify` / `could not list the admins of order N`) instead of
+being hidden, and never fails the customer's call.
+
+Tests: `tests/test_cart_admin_orders.py` (9 tests: tenant isolation of the list and detail, filters, tracking visible to the customer, the request list, the token reaching the lookup).

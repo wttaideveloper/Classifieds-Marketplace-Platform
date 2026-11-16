@@ -53,6 +53,20 @@ class ShippingAddress(BaseModel):
     country: str = Field(..., min_length=1, max_length=100)
 
 
+class ShippingAddressOut(BaseModel):
+    """The address as stored, for answers. Every part is optional: an order placed before the address was compulsory (or by another path) can have an
+    incomplete one, and showing it must not turn the order into a 500. Checkout still requires the full ShippingAddress."""
+
+    full_name: str | None = None
+    phone: str | None = None
+    line1: str | None = None
+    line2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    zip: str | None = None
+    country: str | None = None
+
+
 class CheckoutRequest(BaseModel):
     shipping_address: ShippingAddress = Field(..., description="Shipping address object")
 
@@ -79,7 +93,7 @@ class OrderResponse(BaseModel):
     status: str
     total: float
     currency: str | None = "USD"
-    shipping_address: ShippingAddress | None = None
+    shipping_address: ShippingAddressOut | None = None
     items: list[OrderItemResponse] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -100,6 +114,20 @@ class OrderDetailResponse(OrderResponse):
     refund_id: UUID | None
     refund_status: str | None
     refund_amount: str | None = Field(description="Latest refund amount in payment currency")
+    refund_currency: str | None = None
+    refund_window_days: int | None = None
+    payment_status: str | None = None
+    # fulfilment: set when the store ships / delivers (the customer's tracking screen reads these)
+    carrier: str | None = None
+    tracking_number: str | None = None
+    tracking_url: str | None = None
+    shipped_at: datetime | None = None
+    delivered_at: datetime | None = None
+    cancellation: dict | None = Field(None, description="requested_at, reason, decision_reason, cancelled_at, cancelled_by_role")
+    history: list[dict] = Field(default_factory=list, description="Every status change: action, from_status, to_status, actor_role, reason, at")
+    # staff only (the Enterprise Admin / Super Admin viewing a customer's order)
+    allowed_statuses: list[str] | None = Field(None, description="The statuses the order can be moved to now. Staff only.")
+    customer: dict | None = Field(None, description="user_id, name and phone from the shipping address. Staff only.")
 
 
 class OrderListItemResponse(BaseModel):
