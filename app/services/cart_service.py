@@ -214,15 +214,18 @@ def _order_shipping_address(order) -> dict | None:
 
 
 def checkout_service(db: Session, user_id: UUID, payload: CheckoutRequest) -> OrderResponse:
-    cart = get_active_cart_with_items(db, user_id)
+    cart = db.query(Cart).filter(Cart.user_id == user_id, Cart.status == "active", Cart.is_deleted.is_(False)).with_for_update().first()
     if not cart or not cart.items:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cart is empty")
 
     total = 0.0
     currency = "USD"
     # re-validate stock + snapshot
+    products = {p.id: p for p in db.query(Product).filter(
+        Product.id.in_([it.product_id for it in cart.items])
+    ).order_by(Product.id).populate_existing().with_for_update().all()}
     for it in cart.items:
-        product = it.product or db.query(Product).filter(Product.id == it.product_id).first()
+        product = products.get(it.product_id)
         if not product or product.is_deleted:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Product {it.product_id} is not available")
         _check_stock(product, it.quantity)
@@ -239,10 +242,10 @@ def checkout_service(db: Session, user_id: UUID, payload: CheckoutRequest) -> Or
     db.flush()
 
     for it in cart.items:
-        product = it.product or db.query(Product).filter(Product.id == it.product_id).first()
+        product = products.get(it.product_id)
         prod_name = product.product_name if product else str(it.product_id)
         sku = product.sku if product else None
-        add_order_item(
+        line = add_order_item(
             db,
             order.id,
             it.product_id,
@@ -252,6 +255,11 @@ def checkout_service(db: Session, user_id: UUID, payload: CheckoutRequest) -> Or
             it.unit_price,
             it.currency,
         )
+
+        if product.stock_quantity is not None:
+            product.stock_quantity -= it.quantity
+            line.stock_debited = it.quantity
+            order.stock_reduced = True
 
     # mark cart converted and empty it
     cart.status = "converted"
@@ -325,96 +333,5 @@ def get_order_service(db: Session, user_id: UUID, order_id: UUID) -> OrderRespon
     order = get_order_by_id(db, order_id, user_id=user_id)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-    items = [
-        {
-            "id": oi.id,
-            "product_id": oi.product_id,
-            "product_name": oi.product_name,
-            "sku": oi.sku,
-            "quantity": oi.quantity,
-            "unit_price": oi.unit_price,
-            "line_total": oi.line_total,
-            "currency": oi.currency,
-        }
-        for oi in order.items
-    ]
-    return OrderResponse(
-        id=order.id,
-        user_id=order.user_id,
-        tenant_id=order.tenant_id,
-        status=order.status,
-        total=order.total,
-        currency=order.currency,
-        shipping_address=_order_shipping_address(order),  # type: ignore
-        items=items,  # type: ignore
-        created_at=order.created_at,
-        updated_at=order.updated_at,
-    )
-
-
-# ---- Order Status & Refund Services ----
-
-def update_order_status_service(db: Session, user_id: UUID, order_id: UUID, payload):
-    from app.models.cart_model import Order
-    VALID_TRANSITIONS = {
-        "pending": ["confirmed", "cancelled"],
-        "confirmed": ["shipped", "cancelled"],
-        "shipped": ["delivered", "cancelled"],
-        "delivered": ["completed"],
-        "completed": [],
-        "cancelled": [],
-    }
-    order = db.query(Order).filter(Order.id == order_id, Order.user_id == user_id, Order.is_deleted.is_(False)).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    new_status = payload.status
-    allowed = VALID_TRANSITIONS.get(order.status, [])
-    if new_status not in allowed:
-        raise HTTPException(status_code=400, detail=f"Cannot transition from '{order.status}' to '{new_status}'. Allowed: {allowed}")
-    order.status = new_status
-    db.commit()
-    db.refresh(order)
-    return {"id": str(order.id), "status": order.status, "message": f"Order status updated to '{new_status}'"}
-
-
-def request_order_refund_service(db: Session, user_id: UUID, order_id: UUID, payload):
-    from app.models.cart_model import Order
-    VALID_TRANSITIONS = {
-        "pending": ["confirmed", "cancelled"],
-        "confirmed": ["shipped", "cancelled"],
-        "shipped": ["delivered", "cancelled"],
-        "delivered": ["completed"],
-        "completed": [],
-        "cancelled": [],
-    }
-    order = db.query(Order).filter(Order.id == order_id, Order.user_id == user_id, Order.is_deleted.is_(False)).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    if order.status in ("cancelled",):
-        raise HTTPException(status_code=400, detail="Order already cancelled")
-    order.status = "refund_requested"
-    order.refund_reason = payload.reason if payload and hasattr(payload, 'reason') else None
-    db.commit()
-    db.refresh(order)
-    return {"id": str(order.id), "status": order.status, "message": "Refund requested", "refund_reason": order.refund_reason}
-
-
-def approve_order_refund_service(db: Session, user_id: UUID, order_id: UUID, payload):
-    from app.models.cart_model import Order
-    order = db.query(Order).filter(Order.id == order_id, Order.user_id == user_id, Order.is_deleted.is_(False)).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    if order.status != "refund_requested":
-        raise HTTPException(status_code=400, detail=f"Order is not in refund_requested state (current: {order.status})")
-    action = payload.action
-    if action == "approve":
-        order.status = "refunded"
-        message = "Refund approved"
-    elif action == "reject":
-        order.status = "confirmed"
-        message = "Refund rejected — order restored to confirmed"
-    else:
-        raise HTTPException(status_code=400, detail="action must be approve|reject")
-    db.commit()
-    db.refresh(order)
-    return {"id": str(order.id), "status": order.status, "message": message}
+    from app.services.order_service import order_view
+    return order_view(db, order)

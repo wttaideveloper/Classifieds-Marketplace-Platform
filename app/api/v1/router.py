@@ -28,6 +28,13 @@ _safe_include("app.api.v1.endpoints.product", prefix="/products", tags=["Product
 # Services
 _safe_include("app.api.v1.endpoints.service", prefix="/services", tags=["Services"])
 
+# Service bookings: slots and booking settings under /services, the bookings themselves, my bookings, an enterprise's bookings
+_service_booking = __import__("app.api.v1.endpoints.service_booking", fromlist=["router"])
+api_router.include_router(_service_booking.service_router, prefix="/services", tags=["Service Bookings"])
+api_router.include_router(_service_booking.router, prefix="/service-bookings", tags=["Service Bookings"])
+api_router.include_router(_service_booking.me_router, prefix="/users/me/service-bookings", tags=["Service Bookings"])
+api_router.include_router(_service_booking.enterprise_router, prefix="/enterprises", tags=["Service Bookings"])
+
 # Dynamic attributes
 _safe_include(
     "app.api.v1.endpoints.attribute",

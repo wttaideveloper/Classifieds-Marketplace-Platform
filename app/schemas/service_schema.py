@@ -1,9 +1,32 @@
 from datetime import datetime
 from uuid import UUID
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.services.review_common import edit_label, is_public, public_name, shown_reason, status_label
+
+DeliveryMode = Literal["in_person", "virtual", "hybrid"]
+
+
+class CancellationRules(BaseModel):
+    """The structured cancellation policy a booking follows (the free-text `cancellation_policy` stays as the wording shown to people)."""
+
+    free_cancellation_hours: int = Field(24, ge=0, le=24 * 90, description="A customer can cancel on their own up to this many hours before the start.")
+    refund_percent_before: int = Field(100, ge=0, le=100, description="Share refunded when cancelled inside the free window.")
+    refund_percent_after: int = Field(0, ge=0, le=100, description="Share refunded when an admin approves a cancellation requested after the window.")
+    allow_request_after_window: bool = Field(True, description="After the window a customer can still ask (an admin decides); false = not allowed.")
+
+
+def _check_time_zone(value):
+    if value is None:
+        return value
+    from app.utils.event_utils import is_valid_time_zone
+
+    if not is_valid_time_zone(value):
+        raise ValueError("time_zone must be an IANA name such as Asia/Kolkata")
+    return value.strip()
 
 from app.schemas.common_schema import (
     PaginationMeta,
@@ -81,6 +104,19 @@ class ServiceCreate(BaseModel):
     package_price: float | None = None
     cancellation_policy: str | None = None
     availability_schedule: list[AvailabilityScheduleEntry] | None = None
+    # booking settings (docs/service-bookings.md)
+    delivery_modes: list[DeliveryMode] | None = Field(None, description="in_person, virtual, hybrid (both venue and meeting). Several can be offered.")
+    booking_enabled: bool | None = Field(None, description="Customers can book this service (default true).")
+    requires_approval: bool | None = Field(None, description="A new booking waits for an admin to confirm it (default false: auto-confirm).")
+    time_zone: str | None = Field(None, description="IANA zone the weekly schedule is written in (default Asia/Kolkata).")
+    cancellation_rules: CancellationRules | None = None
+    venue_instructions: str | None = Field(None, max_length=1000, description="Arrival / check-in instructions for an in-person booking.")
+    meeting_url: str | None = Field(None, max_length=1000, description="The meeting link (Zoom, Google Meet, ...) shown to the customer shortly before the start.")
+    meeting_provider: str | None = Field(None, max_length=30)
+    meeting_passcode: str | None = Field(None, max_length=100)
+    meeting_instructions: str | None = Field(None, max_length=1000)
+
+    _tz = field_validator("time_zone")(_check_time_zone)
 
     @model_validator(mode="before")
     @classmethod
@@ -135,6 +171,16 @@ class ServiceCreate(BaseModel):
             "delivery_format": self.delivery_format,
             "package_price": self.package_price,
             "cancellation_policy": self.cancellation_policy,
+            "delivery_modes": list(self.delivery_modes) if self.delivery_modes else None,
+            "booking_enabled": True if self.booking_enabled is None else self.booking_enabled,
+            "requires_approval": bool(self.requires_approval),
+            "time_zone": self.time_zone or "Asia/Kolkata",
+            "cancellation_rules": self.cancellation_rules.model_dump() if self.cancellation_rules else None,
+            "venue_instructions": self.venue_instructions,
+            "meeting_url": self.meeting_url,
+            "meeting_provider": self.meeting_provider,
+            "meeting_passcode": self.meeting_passcode,
+            "meeting_instructions": self.meeting_instructions,
         }
 
 
@@ -168,6 +214,18 @@ class ServiceUpdate(BaseModel):
     package_price: float | None = None
     cancellation_policy: str | None = None
     availability_schedule: list[AvailabilityScheduleEntry] | None = None
+    delivery_modes: list[DeliveryMode] | None = None
+    booking_enabled: bool | None = None
+    requires_approval: bool | None = None
+    time_zone: str | None = None
+    cancellation_rules: CancellationRules | None = None
+    venue_instructions: str | None = Field(None, max_length=1000)
+    meeting_url: str | None = Field(None, max_length=1000)
+    meeting_provider: str | None = Field(None, max_length=30)
+    meeting_passcode: str | None = Field(None, max_length=100)
+    meeting_instructions: str | None = Field(None, max_length=1000)
+
+    _tz = field_validator("time_zone")(_check_time_zone)
 
     @model_validator(mode="before")
     @classmethod
@@ -254,6 +312,14 @@ class ServiceResponse(BaseModel):
     package_price: float | None = None
     cancellation_policy: str | None = None
     availability_schedule: list[AvailabilityScheduleEntry] | None = None
+    delivery_modes: list[DeliveryMode] | None = None
+    booking_enabled: bool | None = None
+    requires_approval: bool | None = None
+    time_zone: str | None = None
+    cancellation_rules: CancellationRules | None = None
+    venue_instructions: str | None = None
+    # meeting_url / meeting_provider / meeting_passcode / meeting_instructions are deliberately NOT here: this answer is the public catalog.
+    # Staff read them with GET /services/{id}/booking-settings; a customer gets them on their own booking, shortly before the start.
     created_at: datetime | None = None
 
 

@@ -85,6 +85,23 @@ class OrderResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class OrderCancelRequest(BaseModel):
+    reason: str | None = Field(None, max_length=500, description="Required for a paid order")
+
+
+class OrderDetailResponse(OrderResponse):
+    cancel_mode: str | None
+    refund_due: bool
+    can_cancel: bool
+    cancel_blocked_reason: str | None
+    can_refund: bool
+    refund_blocked_reason: str | None
+    payment_id: UUID | None
+    refund_id: UUID | None
+    refund_status: str | None
+    refund_amount: str | None = Field(description="Latest refund amount in payment currency")
+
+
 class OrderListItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -101,6 +118,9 @@ class OrderListItemResponse(BaseModel):
 # ---- Order Status & Refund Schemas ----
 
 class OrderStatusUpdate(BaseModel):
+    carrier: str | None = None
+    tracking_number: str | None = None
+    tracking_url: str | None = None
     status: str = Field(..., description="New status: confirmed|shipped|delivered|cancelled|completed")
     reason: str | None = Field(None, description="Reason for status change")
 

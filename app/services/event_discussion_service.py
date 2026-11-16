@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -443,7 +443,10 @@ def history(db: Session, event_id: UUID, user: dict, token: str | None, *, actio
     if message_id:
         query = query.filter(Hist.message_id == message_id)
     total = query.count()
-    rows = query.order_by(Hist.created_at.desc(), Hist.id).offset((page - 1) * page_size).limit(page_size).all()
+    # Submission and its moderation result may share a database timestamp.
+    # Present the result first instead of letting a random UUID reverse causality.
+    submission = case((Hist.action.in_(("submitted", "edited_resubmitted")), 1), else_=0)
+    rows = query.order_by(Hist.created_at.desc(), submission, Hist.id).offset((page - 1) * page_size).limit(page_size).all()
     return {"items": rows, "pagination": build_pagination_meta(total, page, page_size)}
 
 

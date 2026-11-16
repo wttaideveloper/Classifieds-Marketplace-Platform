@@ -104,7 +104,7 @@ def _uuid(value, what: str) -> UUID:
 def _cart_order(db: Session, actor, body) -> Payable:
     from app.models.cart_model import Order
 
-    order = db.query(Order).filter(Order.id == _uuid(body.purchase_id, "purchase_id"), Order.is_deleted.is_(False)).first()
+    order = db.query(Order).filter(Order.id == _uuid(body.purchase_id, "purchase_id"), Order.is_deleted.is_(False)).with_for_update().first()
     if order is None:
         raise _not_found("Order")
     if str(order.user_id) != actor.id and not actor.is_super_admin:

@@ -64,6 +64,9 @@ def _make_event(
 ):
     event = MagicMock(spec=Event)
     event.id = uuid4()
+    event.start_date = datetime.utcnow() + timedelta(days=1)
+    event.end_date = event.start_date + timedelta(hours=2)
+    event.time_zone = "UTC"
     event.status = status
     event.is_deleted = False
     event.registration_open_at = registration_open_at

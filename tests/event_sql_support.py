@@ -38,6 +38,7 @@ from app.models.event_aux_models import (
     EventSessionAttendance,
     EventTemplate,
     EventWaitlist,
+    EventWishlistItem,
 )
 from app.models.event_form_config_model import EventFormConfiguration, EventFormConfigurationVersion
 from app.models.event_model import Event
@@ -57,6 +58,7 @@ _TABLES = [
     EventSessionAttendance.__table__,
     EventOrder.__table__,
     EventWaitlist.__table__,
+    EventWishlistItem.__table__,
     EventTemplate.__table__,
     EventFeedback.__table__,
     EventAudit.__table__,
