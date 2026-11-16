@@ -60,18 +60,22 @@ def _deliver(db: Session, users, category: str, title: str, body: str, data: dic
         return False
 
 
-def _admins(db: Session, order) -> list:
+def _admins(db: Session, order, access_token: str | None = None) -> list:
+    """The Enterprise Admins of the order's tenant. The identity service needs the caller's bearer token for this lookup (the customer who cancelled, or the
+    admin who acted): without it the lookup fails and the admins are never told, so every caller passes the token it has."""
     try:
         from app.services.event_notification_service import resolve_enterprise_admin_user_ids
 
-        found, _tenant = resolve_enterprise_admin_user_ids(db, order)
+        found, _tenant = resolve_enterprise_admin_user_ids(db, order, access_token=access_token)
+        if not found:
+            logger.warning("order %s: no Enterprise Admin found to notify (tenant %s, token supplied: %s)", order.id, order.tenant_id, bool(access_token))
         return [str(u) for u in found]
     except Exception:
-        logger.debug("could not list the admins of order %s", order.id, exc_info=True)
+        logger.warning("could not list the admins of order %s (token supplied: %s)", order.id, bool(access_token), exc_info=True)
         return []
 
 
-def send(db: Session, order, kind: str, *, by_customer: bool = False) -> None:
+def send(db: Session, order, kind: str, *, by_customer: bool = False, access_token: str | None = None) -> None:
     stamp = (order.updated_at or order.created_at).replace(microsecond=0).isoformat()
     label = _label(order)
     if kind == "processing":
@@ -88,13 +92,13 @@ def send(db: Session, order, kind: str, *, by_customer: bool = False) -> None:
         category, title, body = "order_cancelled", "Order cancelled", f"Your {label} was cancelled."
         data = payload(order, category, reason=order.cancel_reason if order.cancelled_by_role != "customer" else None)
         if by_customer:
-            _deliver(db, _admins(db, order), category, "Order cancelled", f"A customer cancelled {label}.", payload(order, category), f"order_staff:{order.id}:{category}:{stamp}", order.tenant_id)
+            _deliver(db, _admins(db, order, access_token), category, "Order cancelled", f"A customer cancelled {label}.", payload(order, category), f"order_staff:{order.id}:{category}:{stamp}", order.tenant_id)
     elif kind == "cancellation_rejected":
         category, title, body = "order_cancellation_rejected", "Cancellation not approved", f"The store did not approve your request to cancel {label}."
         data = payload(order, category, reason=order.decision_reason)
     elif kind == "cancellation_requested":
         category = "order_cancellation_requested"
-        _deliver(db, _admins(db, order), category, "Cancellation requested", f"A customer asked to cancel {label}.", payload(order, category, reason=order.cancel_reason),
+        _deliver(db, _admins(db, order, access_token), category, "Cancellation requested", f"A customer asked to cancel {label}.", payload(order, category, reason=order.cancel_reason),
                  f"order_staff:{order.id}:{category}:{stamp}", order.tenant_id)
         return
     else:

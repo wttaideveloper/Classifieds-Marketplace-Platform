@@ -224,7 +224,7 @@ def order_view(db: Session, order: Order, *, staff: bool = False, detail: bool =
 
 # ---------------------------------------------------------------- customer cancels
 
-def cancel_order(db: Session, user_id: UUID, order_id: UUID, reason: str | None) -> Order:
+def cancel_order(db: Session, user_id: UUID, order_id: UUID, reason: str | None, access_token: str | None = None) -> Order:
     order = own_order(db, user_id, order_id)
     payment, _refund = payment_of(db, order)
     decision = cancel_decision(order, payment)
@@ -239,21 +239,21 @@ def cancel_order(db: Session, user_id: UUID, order_id: UUID, reason: str | None)
         _move(db, order, "cancellation_requested", "cancellation_requested", user_id, "customer", reason)
         db.commit()
         db.refresh(order)
-        _notify("cancellation_requested", db, order)
+        _notify("cancellation_requested", db, order, access_token=access_token)
         return order
     order.cancel_reason, order.cancelled_at, order.cancelled_by, order.cancelled_by_role = reason, now_utc(), user_id, "customer"
     restock(db, order)
     _move(db, order, "cancelled", "cancelled", user_id, "customer", reason)
     db.commit()
     db.refresh(order)
-    _notify("cancelled", db, order, by_customer=True)
+    _notify("cancelled", db, order, by_customer=True, access_token=access_token)
     return order
 
 
 # ---------------------------------------------------------------- staff: status, shipping, decisions
 
 def change_status(db: Session, actor, order_id: UUID, new_status: str, reason: str | None = None, carrier: str | None = None,
-                  tracking_number: str | None = None, tracking_url: str | None = None) -> Order:
+                  tracking_number: str | None = None, tracking_url: str | None = None, access_token: str | None = None) -> Order:
     order = staff_order(db, actor, order_id)
     if order.status == "cancellation_requested":
         raise _err(409, "DECIDE_THE_REQUEST", "This order has a cancellation request: approve or reject it")
@@ -277,11 +277,11 @@ def change_status(db: Session, actor, order_id: UUID, new_status: str, reason: s
     _move(db, order, new_status, new_status, actor.id, actor.role, reason, {"carrier": carrier, "tracking_number": tracking_number} if new_status == "shipped" else None)
     db.commit()
     db.refresh(order)
-    _notify({"processing": "processing", "shipped": "shipped", "delivered": "delivered", "cancelled": "cancelled"}.get(new_status, ""), db, order)
+    _notify({"processing": "processing", "shipped": "shipped", "delivered": "delivered", "cancelled": "cancelled"}.get(new_status, ""), db, order, access_token=access_token)
     return order
 
 
-def update_shipping(db: Session, actor, order_id: UUID, carrier: str | None, tracking_number: str | None, tracking_url: str | None) -> Order:
+def update_shipping(db: Session, actor, order_id: UUID, carrier: str | None, tracking_number: str | None, tracking_url: str | None, access_token: str | None = None) -> Order:
     order = staff_order(db, actor, order_id)
     if order.status != "shipped":
         raise _err(409, "NOT_SHIPPED", "Tracking can be changed while the order is shipped")
@@ -294,11 +294,11 @@ def update_shipping(db: Session, actor, order_id: UUID, carrier: str | None, tra
     log(db, order, "tracking_updated", actor.id, actor.role, detail={"carrier": carrier, "tracking_number": tracking_number})
     db.commit()
     db.refresh(order)
-    _notify("shipped", db, order)
+    _notify("shipped", db, order, access_token=access_token)
     return order
 
 
-def decide_cancellation(db: Session, actor, order_id: UUID, approve: bool, reason: str | None) -> Order:
+def decide_cancellation(db: Session, actor, order_id: UUID, approve: bool, reason: str | None, access_token: str | None = None) -> Order:
     order = staff_order(db, actor, order_id)
     if order.status != "cancellation_requested":
         raise _err(409, "NO_REQUEST", "There is no cancellation request waiting on this order")
@@ -309,7 +309,7 @@ def decide_cancellation(db: Session, actor, order_id: UUID, approve: bool, reaso
         _move(db, order, "cancelled", "cancellation_approved", actor.id, actor.role, reason)
         db.commit()
         db.refresh(order)
-        _notify("cancelled", db, order)
+        _notify("cancelled", db, order, access_token=access_token)
         return order
     if not reason or len(reason) < 3:
         raise _err(422, "REASON_REQUIRED", "A reason is required to reject a cancellation request (at least 3 characters)")
@@ -318,7 +318,7 @@ def decide_cancellation(db: Session, actor, order_id: UUID, approve: bool, reaso
     order.status_before_request = None
     db.commit()
     db.refresh(order)
-    _notify("cancellation_rejected", db, order)
+    _notify("cancellation_rejected", db, order, access_token=access_token)
     return order
 
 
@@ -381,12 +381,12 @@ def list_for_staff(db: Session, actor, *, status: str | None = None, q: str | No
 
 # ---------------------------------------------------------------- notifications (best effort, after the change is saved)
 
-def _notify(kind: str, db: Session, order: Order, by_customer: bool = False) -> None:
+def _notify(kind: str, db: Session, order: Order, by_customer: bool = False, access_token: str | None = None) -> None:
     if not kind:
         return
     try:
         from app.services import order_notifications
 
-        order_notifications.send(db, order, kind, by_customer=by_customer)
+        order_notifications.send(db, order, kind, by_customer=by_customer, access_token=access_token)
     except Exception:
         logger.exception("order notification %s failed", kind)
