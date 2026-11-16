@@ -116,12 +116,34 @@ def _can_read(db, event, user_id) -> bool:
     return db.query(EventRegistration.id).filter(EventRegistration.event_id == event.id, EventRegistration.status.in_(("confirmed", "attended")), or_(*clauses)).first() is not None
 
 
+def _user_for(db, email, user_id=None):
+    """The platform user for a registration: the saved id, the same email on another registration, then the email lookup."""
+    from sqlalchemy import func
+
+    from app.models.event_aux_models import EventRegistration
+
+    try:
+        if user_id:
+            return UUID(str(user_id))
+    except (ValueError, TypeError):
+        pass
+    clean = (email or "").strip().lower()
+    if "@" not in clean:
+        return None
+    row = (db.query(EventRegistration.user_id).filter(func.lower(EventRegistration.participant_email) == clean, EventRegistration.user_id.isnot(None))
+           .order_by(EventRegistration.created_at.desc()).first())
+    if row and row[0]:
+        return row[0]
+    from app.services.notification_triggers import _resolve_user_id_from_email
+
+    return _resolve_user_id_from_email(db, clean)
+
+
 def _participants(db, event, exclude) -> list[str]:
     """Everyone registered for the event who can read the discussion now: the people who opened it and still have an active registration, plus
     registered people with an account who have not opened it yet."""
     from app.models.event_aux_models import EventRegistration
     from app.models.event_discussion_model import EventDiscussionMember
-    from app.services.event_notifications import _user_for
 
     regs = db.query(EventRegistration).filter(EventRegistration.event_id == event.id, EventRegistration.status.in_(("confirmed", "attended"))).all()
     active_emails = {(r.participant_email or "").strip().lower() for r in regs}

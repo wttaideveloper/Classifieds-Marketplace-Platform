@@ -721,5 +721,11 @@ def _service_base_fields(service: Service) -> dict:
         "package_price": service.package_price,
         "cancellation_policy": service.cancellation_policy,
         "availability_schedule": service.availability_schedule,
+        "delivery_modes": service.delivery_modes,
+        "booking_enabled": service.booking_enabled,
+        "requires_approval": service.requires_approval,
+        "time_zone": service.time_zone,
+        "cancellation_rules": service.cancellation_rules,
+        "venue_instructions": service.venue_instructions,
         "created_at": service.created_at,
     }

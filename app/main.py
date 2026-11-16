@@ -212,6 +212,10 @@ async def startup():
 
     start_reminder_scheduler()
 
+    from app.services.service_booking_notifications import start_scheduler as start_service_booking_jobs
+
+    start_service_booking_jobs()
+
     from app.services.meeting_service import start_scheduler as start_meeting_jobs
 
     start_meeting_jobs()

@@ -134,6 +134,15 @@ class Settings(BaseSettings):
     # training and event groups) show the group name, the sender's display name and a preview; a CARE group shows only "New message" with
     # no text unless GROUP_CARE_NOTIFICATION_PREVIEW_ENABLED is turned on: a care team's messages are clinical, and a preview puts them
     # on a lock screen. GROUP_NOTIFICATION_PREVIEW_ENABLED=false brings the earlier "New message" everywhere back for groups.
+    # Service bookings (docs/service-bookings.md)
+    SERVICE_BOOKING_HOLD_MINUTES: int = 15                  # an unpaid booking holds its slot this long
+    SERVICE_BOOKING_MIN_NOTICE_MINUTES: int = 60            # the earliest a slot can be booked, from now
+    SERVICE_BOOKING_MAX_ADVANCE_DAYS: int = 60              # the furthest ahead a slot can be booked
+    SERVICE_BOOKING_JOIN_MINUTES_BEFORE: int = 10           # a virtual booking shows its meeting link this long before the start
+    SERVICE_BOOKING_DEMO_PAYMENT: bool | None = None        # lets a customer mark their own booking paid (no gateway yet): on outside production unless set
+    SERVICE_BOOKING_REMINDERS_ENABLED: bool | None = None   # on in production, off elsewhere, unless set
+    SERVICE_BOOKING_REMINDER_HOURS: str = "24,1"
+    SERVICE_BOOKING_REMINDER_INTERVAL_SECONDS: int = 300
     CHAT_NOTIFICATION_PREVIEW_CHARS: int = 100
     GROUP_NOTIFICATION_PREVIEW_ENABLED: bool = True
     GROUP_CARE_NOTIFICATION_PREVIEW_ENABLED: bool = False
@@ -296,6 +305,18 @@ class Settings(BaseSettings):
     def training_reminders_enabled(self) -> bool:
         if self.TRAINING_REMINDERS_ENABLED is not None:
             return self.TRAINING_REMINDERS_ENABLED
+        return self.ENVIRONMENT == "production"
+
+    @property
+    def service_booking_demo_payment(self) -> bool:
+        if self.SERVICE_BOOKING_DEMO_PAYMENT is not None:
+            return self.SERVICE_BOOKING_DEMO_PAYMENT
+        return self.ENVIRONMENT != "production"
+
+    @property
+    def service_booking_reminders_enabled(self) -> bool:
+        if self.SERVICE_BOOKING_REMINDERS_ENABLED is not None:
+            return self.SERVICE_BOOKING_REMINDERS_ENABLED
         return self.ENVIRONMENT == "production"
 
     @property
