@@ -1,0 +1,555 @@
+import logging
+import time
+
+import requests
+from fastapi import HTTPException, status
+from jose import ExpiredSignatureError, JWTError, jwk, jwt
+
+from mskit.settings import settings
+
+logger = logging.getLogger(__name__)
+
+_JWKS_CACHE: dict = {"keys": None, "fetched_at": 0.0}
+_JWKS_TTL_SECONDS = 300
+# Tolerance for clock skew between this server and the token issuer when
+# validating `exp`/`iat`/`nbf`. Keeps a few seconds of drift from producing a
+# spurious "Token expired" right at the boundary.
+_CLOCK_SKEW_LEEWAY_SECONDS = 10
+
+
+def _unverified_claims_for_log(token: str) -> dict:
+    """Best-effort, signature-unverified peek at non-secret claims for
+    diagnostic logging only — never used for auth decisions."""
+    try:
+        claims = jwt.get_unverified_claims(token)
+        header = jwt.get_unverified_header(token)
+        return {
+            "iss": claims.get("iss"),
+            "aud": claims.get("aud"),
+            "azp": claims.get("azp"),
+            "exp": claims.get("exp"),
+            "kid": header.get("kid"),
+            "alg": header.get("alg"),
+        }
+    except Exception:
+        return {}
+
+
+def _fetch_jwks(*, force_refresh: bool = False) -> dict:
+    now = time.time()
+    if (
+        not force_refresh
+        and _JWKS_CACHE["keys"] is not None
+        and now - _JWKS_CACHE["fetched_at"] < _JWKS_TTL_SECONDS
+    ):
+        return _JWKS_CACHE["keys"]
+
+    url = settings.keycloak_jwks_url
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    _JWKS_CACHE["keys"] = response.json()
+    _JWKS_CACHE["fetched_at"] = now
+    return _JWKS_CACHE["keys"]
+
+
+def _decode_local_token(token: str) -> dict:
+    return jwt.decode(
+        token,
+        settings.SECRET_KEY,
+        algorithms=[settings.ALGORITHM],
+        options={"leeway": _CLOCK_SKEW_LEEWAY_SECONDS},
+    )
+
+
+def _normalize_audience_list(aud) -> list[str]:
+    if aud is None:
+        return []
+    if isinstance(aud, str):
+        return [aud]
+    if isinstance(aud, (list, tuple)):
+        return [str(item) for item in aud]
+    return [str(aud)]
+
+
+def _validate_keycloak_audience(payload: dict) -> None:
+    """Accept tokens where aud or azp matches KEYCLOAK_AUDIENCE.
+
+    Keycloak access tokens often use aud=[account, broker, realm-management]
+    while azp identifies the OAuth client (e.g. invigorate-api).
+    """
+    expected = settings.KEYCLOAK_AUDIENCE.strip()
+    if not expected:
+        return
+
+    audiences = _normalize_audience_list(payload.get("aud"))
+    azp = payload.get("azp")
+    if expected in audiences or azp == expected:
+        return
+
+    message = f"Token audience mismatch: expected aud or azp '{expected}', got aud={audiences} azp={azp!r}"
+    logger.warning("Keycloak token rejected: %s", message)
+    raise JWTError(message)
+
+
+def _decode_keycloak_token(token: str) -> dict:
+    if not settings.keycloak_configured:
+        raise JWTError("Keycloak is not configured")
+
+    header = jwt.get_unverified_header(token)
+    kid = header.get("kid")
+    jwks = _fetch_jwks()
+    key_data = next((item for item in jwks.get("keys", []) if item.get("kid") == kid), None)
+    if key_data is None:
+        # Cached JWKS may be stale after a Keycloak key rotation — force one
+        # fresh fetch before giving up, instead of waiting out the TTL.
+        jwks = _fetch_jwks(force_refresh=True)
+        key_data = next((item for item in jwks.get("keys", []) if item.get("kid") == kid), None)
+    if key_data is None:
+        known_kids = [item.get("kid") for item in jwks.get("keys", [])]
+        logger.warning(
+            "Keycloak token rejected: no JWKS key matches kid=%r (known kids=%s, jwks_url=%s)",
+            kid, known_kids, settings.keycloak_jwks_url,
+        )
+        raise JWTError("Unable to find matching Keycloak signing key")
+
+    public_key = jwk.construct(key_data)
+    try:
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            issuer=settings.KEYCLOAK_ISSUER,
+            options={"verify_aud": False, "leeway": _CLOCK_SKEW_LEEWAY_SECONDS},
+        )
+    except JWTError as exc:
+        logger.warning(
+            "Keycloak token rejected: %s | expected_issuer=%r claims=%s",
+            exc, settings.KEYCLOAK_ISSUER, _unverified_claims_for_log(token),
+        )
+        raise
+    _validate_keycloak_audience(payload)
+    return payload
+
+
+def _normalize_slug(value: str | None) -> str | None:
+    if not value:
+        return None
+    return str(value).strip().lower().replace("-", "_")
+
+
+def _is_super_admin_claim(payload: dict) -> bool:
+    """Dedicated Platform Super Admin login sets isSuperAdmin on the Keycloak access token."""
+    for key in ("isSuperAdmin", "is_super_admin"):
+        value = payload.get(key)
+        if value is True:
+            return True
+        if isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}:
+            return True
+
+    nested_user = payload.get("user")
+    if isinstance(nested_user, dict):
+        for key in ("isSuperAdmin", "is_super_admin"):
+            value = nested_user.get(key)
+            if value is True:
+                return True
+            if isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}:
+                return True
+
+    # Some Keycloak clients put the flag under realm / client roles
+    roles: list[str] = []
+    realm_access = payload.get("realm_access") or {}
+    roles.extend(realm_access.get("roles") or [])
+    for client_roles in (payload.get("resource_access") or {}).values():
+        if isinstance(client_roles, dict):
+            roles.extend(client_roles.get("roles") or [])
+    normalized = {_normalize_slug(role) for role in roles if _normalize_slug(role)}
+    if normalized & {"super_admin", "superadmin", "platform_super_admin"}:
+        return True
+    return False
+
+
+def _map_keycloak_role(payload: dict) -> str | None:
+    if _is_super_admin_claim(payload):
+        return "super_admin"
+
+    explicit_role = _normalize_slug(payload.get("role"))
+    if explicit_role in {"admin", "super_admin", "provider", "customer"}:
+        return explicit_role
+
+    tenant_role = _normalize_slug(payload.get("tenant_role"))
+    user_role = _normalize_slug(payload.get("user_role"))
+    rbac_roles = {
+        _normalize_slug(role)
+        for role in (payload.get("tenant_rbac_roles") or [])
+        if _normalize_slug(role)
+    }
+
+    if tenant_role == "external_user":
+        return "customer"
+    if tenant_role == "tenant_owner":
+        return "admin"
+    if tenant_role in {"tenant_admin", "internal_user"}:
+        return "provider"
+
+    if user_role in {"admin", "super_admin", "provider", "customer", "patient", "external_user"}:
+        if user_role in {"patient", "external_user"}:
+            return "customer"
+        if user_role == "admin":
+            return "admin"
+        if user_role == "super_admin":
+            return "super_admin"
+        return user_role
+
+    if rbac_roles & {"tenant_owner"}:
+        return "admin"
+    if rbac_roles & {"tenant_admin", "contributor", "reviewer", "publisher"}:
+        return "provider"
+    # Auth labels a customer's RBAC role "customer"; checked last so any staff role above still wins.
+    if rbac_roles & {"customer", "external_user"}:
+        return "customer"
+
+    roles: list[str] = []
+    realm_access = payload.get("realm_access") or {}
+    roles.extend(realm_access.get("roles") or [])
+    for client_roles in (payload.get("resource_access") or {}).values():
+        roles.extend(client_roles.get("roles") or [])
+
+    normalized = {_normalize_slug(role) for role in roles if _normalize_slug(role)}
+    if "super_admin" in normalized:
+        return "super_admin"
+    if normalized & {"admin", "tenant_owner"}:
+        return "admin"
+    if normalized & {"provider", "tenant_admin", "internal_user", "staff"}:
+        return "provider"
+    if normalized & {"customer", "user", "patient", "external_user"}:
+        return "customer"
+    # No recognized application role among the realm/client roles — every
+    # Keycloak user carries infrastructure roles like offline_access,
+    # uma_authorization, default-roles-<realm>. Those must never be treated
+    # as the application role, so no match here means no role (None), not
+    # an arbitrary pick from that set.
+    return None
+
+
+def payload_to_user(payload: dict) -> dict:
+    # `id` (when present) is a locally-issued marketplace token's own
+    # application user id (dev tokens, chat tokens — see
+    # app.api.v1.endpoints.auth._issue_dev_token / create_chat_access_token,
+    # which always set id == sub to the application id directly). `sub` is
+    # the Keycloak identity and is used here only as a fallback/placeholder:
+    # for genuine Keycloak-issued tokens this value is NOT the application
+    # user id and is always overridden by a GET /api/v1/auth/me lookup in
+    # token_auth._build_current_user before it reaches domain code — see
+    # that function for the Auth team's confirmed identity contract.
+    user_id = payload.get("id") or payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    # Dedicated Platform Super Admin tokens set isSuperAdmin=true and may also carry
+    # unrelated role/tenant_role claims — always prefer the Super Admin flag.
+    if _is_super_admin_claim(payload):
+        role = "super_admin"
+    else:
+        explicit = _normalize_slug(payload.get("role"))
+        role = explicit if explicit in {"admin", "super_admin", "provider", "customer"} else None
+        role = role or _map_keycloak_role(payload)
+    # Standard OIDC claims (Keycloak includes these by default when the token
+    # request includes the "profile" scope, which this realm's clients do).
+    # Not authoritative like the application-id lookup below, but it's the
+    # only real display name available without an extra network round trip —
+    # used as the display-name fallback wherever a caller doesn't explicitly
+    # supply one (e.g. Training/Event enrolment participant_name).
+    full_name = payload.get("name")
+    if not full_name:
+        parts = [p for p in (payload.get("given_name"), payload.get("family_name")) if p]
+        full_name = " ".join(parts) if parts else None
+    user = {
+        "id": str(user_id),
+        "role": role,
+        "email": payload.get("email") or payload.get("preferred_username"),
+        "name": full_name or payload.get("preferred_username"),
+    }
+    if payload.get("sub"):
+        # Kept for diagnostics / internal lookups that key off the Keycloak
+        # subject specifically (e.g. fetch_internal_user_by_id) — never used
+        # as the application user id for domain queries.
+        user["keycloak_id"] = str(payload["sub"])
+
+    tenant_role = payload.get("tenant_role")
+    if tenant_role is not None:
+        user["tenant_role"] = tenant_role
+    user_role = payload.get("user_role")
+    if user_role is not None:
+        user["user_role"] = user_role
+    rbac_roles = payload.get("tenant_rbac_roles")
+    if rbac_roles is not None:
+        user["tenant_rbac_roles"] = rbac_roles
+
+    tenant_id = (
+        payload.get("tenant_id")
+        or payload.get("tenantId")
+        or payload.get("org_id")
+        or payload.get("organization_id")
+        or payload.get("organizationId")
+    )
+    if not tenant_id:
+        membership = payload.get("membership")
+        if isinstance(membership, dict):
+            tenant_id = (
+                membership.get("tenant_id")
+                or membership.get("tenantId")
+                or membership.get("organization_id")
+                or membership.get("organizationId")
+            )
+            if not tenant_id:
+                nested = membership.get("tenant") or membership.get("organization")
+                if isinstance(nested, dict):
+                    tenant_id = nested.get("id") or nested.get("tenant_id") or nested.get("tenantId")
+            if not tenant_id:
+                tenant_id = membership.get("id")
+    if tenant_id is not None:
+        user["tenant_id"] = str(tenant_id)
+
+    enterprise_id = payload.get("enterprise_id") or payload.get("enterpriseId")
+    if enterprise_id is not None:
+        user["enterprise_id"] = str(enterprise_id)
+
+    for passthrough in (
+        "membership",
+        "tenants",
+        "tenant_slug",
+        "tenant_id_claim",
+        "isSuperAdmin",
+        "is_super_admin",
+        "status",
+        "user",
+    ):
+        if payload.get(passthrough) is not None:
+            user[passthrough] = payload[passthrough]
+
+    return user
+
+
+def _decode_access_token_with_source(token: str) -> tuple[dict, bool]:
+    """Decode marketplace (HS256) or Keycloak (RS256) access tokens.
+
+    Returns ``(payload, is_keycloak_issued)``. ``is_keycloak_issued`` is True
+    only when the token was actually verified against the external Keycloak
+    JWKS — i.e. a genuine Invigorate/Keycloak access token, never a locally
+    minted marketplace token (dev token, chat token)."""
+    header = jwt.get_unverified_header(token)
+    algorithm = header.get("alg", settings.ALGORITHM)
+
+    # When Keycloak is configured, only RS256 is allowed (prevent alg confusion)
+    if settings.keycloak_configured:
+        if algorithm != "RS256":
+            raise JWTError(f"Invalid algorithm '{algorithm}' — expected RS256 when Keycloak is configured")
+        return _decode_keycloak_token(token), True
+
+    if algorithm == "HS256":
+        return _decode_local_token(token), False
+
+    if algorithm == "RS256":
+        return _decode_keycloak_token(token), True
+
+    return _decode_local_token(token), False
+
+
+def decode_access_token(token: str) -> dict:
+    """Decode marketplace (HS256) or Keycloak (RS256) access tokens."""
+    payload, _is_keycloak_issued = _decode_access_token_with_source(token)
+    return payload
+
+
+def _resolve_application_user_id(access_token: str, keycloak_id: str | None) -> str:
+    """Resolve the application (Postgres) user id for a genuine Keycloak
+    token via Invigorate GET /api/v1/auth/me, forwarding the same bearer
+    token from the incoming request. Never falls back to the Keycloak `sub`
+    — a failure here is an authentication failure, not a degraded identity."""
+    from mskit.auth.invigorate_auth_client import fetch_application_user_id
+
+    app_user_id = fetch_application_user_id(access_token)
+    if not app_user_id:
+        logger.warning(
+            "Auth /me did not return an application user id | keycloak_id=%s",
+            keycloak_id,
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="Unable to resolve application user identity",
+        )
+    return app_user_id
+
+
+def _fill_role_from_profile(user: dict, token: str) -> None:
+    """A genuine Keycloak token with no recognised role claim (typically a user who has not joined a
+    tenant) takes its role from the Auth service's /auth/me profile instead of being left as null —
+    null made Products/Services answer 403. A role present in the JWT always wins and never triggers
+    the extra lookup. If the profile has no usable role either, the role stays null (still denied)."""
+    if user.get("role"):
+        return
+    from mskit.auth.invigorate_auth_client import fetch_application_roles
+
+    roles = fetch_application_roles(token)
+    if not roles:
+        logger.warning(
+            "Role unresolved: the token carries no application role and the /auth/me profile gave no roles "
+            "(lookup failed, Auth unreachable, or the profile has no roles object) | user_id=%s. "
+            "GET /api/v1/auth/role-diagnostics with this login shows which.",
+            user.get("id"),
+        )
+        return
+    role = _map_keycloak_role({key: roles.get(key) for key in ("tenant_role", "user_role", "tenant_rbac_roles")})
+    if not role:
+        logger.warning(
+            "Role unresolved: the /auth/me profile roles are not ones the API recognises | user_id=%s "
+            "tenantRole=%r userRole=%r tenantRbacRoles=%r",
+            user.get("id"), roles.get("tenant_role"), roles.get("user_role"), roles.get("tenant_rbac_roles"),
+        )
+        return
+    user["role"] = role
+    for key in ("tenant_role", "user_role", "tenant_rbac_roles"):
+        if roles.get(key) is not None and user.get(key) is None:
+            user[key] = roles[key]
+
+
+def diagnose_role(token: str) -> dict:
+    """How the API reads the caller's OWN login: which roles the token carries, what the /auth/me profile adds,
+    the role it ends up with and what the catalog (Products/Services) does with it. Role names only: no e-mail,
+    no tokens, nothing about anyone else. Used by GET /api/v1/auth/role-diagnostics."""
+    from mskit.auth.roles import resolve_catalog_role
+    from mskit.auth import invigorate_auth_client as auth_client
+
+    payload, is_keycloak_issued = _decode_access_token_with_source(token)
+    claims_user = payload_to_user(payload)
+    realm_roles = list((payload.get("realm_access") or {}).get("roles") or [])
+    out: dict = {
+        "token_source": "keycloak" if is_keycloak_issued else "marketplace",
+        "claims": {
+            "role": payload.get("role"),
+            "tenant_role": payload.get("tenant_role"),
+            "user_role": payload.get("user_role"),
+            "tenant_rbac_roles": payload.get("tenant_rbac_roles"),
+            "is_super_admin": _is_super_admin_claim(payload),
+            "realm_roles": realm_roles,
+        },
+        "role_from_claims": claims_user.get("role"),
+    }
+    user = dict(claims_user)
+    if is_keycloak_issued and not user.get("role"):
+        profile = auth_client._cached_auth_me_profile(token)
+        if profile is None:
+            out["profile"] = {"lookup": "failed", "note": "Auth /auth/me did not answer (unreachable, 4xx/5xx or timeout)"}
+        else:
+            profile_roles = auth_client._extract_profile_roles(profile)
+            out["profile"] = {
+                "lookup": "ok",
+                "top_level_keys": sorted(profile.keys()),
+                "roles": profile_roles,
+                "has_roles_object": profile_roles is not None,
+            }
+        _fill_role_from_profile(user, token)
+        out["role_from_profile"] = user.get("role")
+    out["final_role"] = user.get("role")
+    out["tenant_role"] = user.get("tenant_role")
+    out["user_role"] = user.get("user_role")
+    catalog_role = resolve_catalog_role(user)
+    out["catalog_role"] = catalog_role
+    from mskit.settings import settings
+
+    if catalog_role:
+        out["catalog_decision"] = f"allowed as {catalog_role}"
+    elif settings.CATALOG_UNRECOGNIZED_ROLE_READ_ONLY:
+        out["catalog_decision"] = "no recognised role: read-only public view (CATALOG_UNRECOGNIZED_ROLE_READ_ONLY is on)"
+    else:
+        out["catalog_decision"] = "DENIED 403 Catalog access denied: no recognised role"
+    return out
+
+
+def _build_current_user(token: str) -> dict:
+    """Resolve the authenticated identity for an incoming request.
+
+    Auth team confirmed flow:
+        validated access token -> GET /api/v1/auth/me -> application user.id
+        -> current_user["id"] -> domain queries (Services/Products/Conversations)
+
+    JWT `sub` is the Keycloak identity, used for authentication/authorization
+    only. For a genuine Keycloak-issued (RS256) token it is NEVER treated as
+    the application user id — that id is always resolved from Invigorate
+    GET /api/v1/auth/me using the same bearer token. Locally issued
+    marketplace tokens (dev tokens, chat tokens) already carry the
+    application id directly in `id`/`sub` and skip the extra call.
+    """
+    payload, is_keycloak_issued = _decode_access_token_with_source(token)
+    user = payload_to_user(payload)
+    if is_keycloak_issued:
+        user["id"] = _resolve_application_user_id(token, user.get("keycloak_id"))
+        _fill_role_from_profile(user, token)
+    return user
+
+
+def resolve_user_from_token(token: str | None) -> dict | None:
+    if not token:
+        return None
+    try:
+        return _build_current_user(token)
+    except ExpiredSignatureError:
+        return None
+    except JWTError:
+        return None
+    except HTTPException:
+        return None
+
+
+def resolve_user_from_token_or_raise(token: str) -> dict:
+    try:
+        return _build_current_user(token)
+    except HTTPException:
+        raise
+    except ExpiredSignatureError as exc:
+        logger.warning("Token expired | claims=%s", _unverified_claims_for_log(token))
+        raise HTTPException(status_code=401, detail="Token expired") from exc
+    except JWTError as exc:
+        reason = str(exc) or exc.__class__.__name__
+        logger.warning(
+            "Token rejected: %s | claims=%s",
+            reason, _unverified_claims_for_log(token),
+        )
+        detail = f"Invalid token ({reason})"
+        if settings.keycloak_configured:
+            detail = (
+                f"Invalid token ({reason}). Verify issuer, signature, expiry, and that aud or azp "
+                f"matches KEYCLOAK_AUDIENCE ({settings.KEYCLOAK_AUDIENCE or 'not set'})."
+            )
+        raise HTTPException(status_code=401, detail=detail) from exc
+
+
+def resolve_chat_user_from_token_or_raise(token: str) -> dict:
+    """Resolve a regular access token or a correctly scoped chat token."""
+    try:
+        payload, is_keycloak_issued = _decode_access_token_with_source(token)
+        if payload.get("token_use") == "chat":
+            scopes = payload.get("scope") or []
+            if isinstance(scopes, str):
+                scopes = scopes.split()
+            if "chat" not in scopes:
+                raise HTTPException(status_code=403, detail="Chat token scope is invalid")
+        user = payload_to_user(payload)
+        if is_keycloak_issued:
+            user["id"] = _resolve_application_user_id(token, user.get("keycloak_id"))
+            _fill_role_from_profile(user, token)
+        return user
+    except HTTPException:
+        raise
+    except ExpiredSignatureError as exc:
+        raise HTTPException(status_code=401, detail="Token expired") from exc
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
+
+
+def is_chat_scoped_token(token: str) -> bool:
+    """Return true only for locally issued tokens explicitly marked for chat."""
+    try:
+        return decode_access_token(token).get("token_use") == "chat"
+    except (ExpiredSignatureError, JWTError, HTTPException):
+        return False

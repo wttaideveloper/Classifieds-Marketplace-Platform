@@ -1,0 +1,430 @@
+"""Shared authoring and read normalization for Training/Course curricula."""
+from copy import deepcopy
+from uuid import uuid4
+from urllib.parse import urlparse
+
+from fastapi import HTTPException
+
+ITEM_TYPES = {"topic", "video", "youtube", "live", "venue", "pdf", "notes", "quiz", "assignment", "ebook"}
+LEGACY_TYPES = {"text", "exam", "audio", "webpage", "presentation", "worksheet", "document"}
+STATE_FIELDS = {"is_locked", "is_completed", "completed_at", "is_submitted", "score", "score_percent", "passed", "feedback"}
+
+
+def strip_ebook_content(item: dict) -> dict:
+    """An eBook lesson's pages live in /ebook (published copy only). Whatever sits in the lesson's own content / detail fields is the
+    older way of saving the eBook as JSON, which may be an unfinished draft, so a learner never gets it from the course content."""
+    item["content"] = None
+    detail = item.get("detail")
+    if isinstance(detail, str) and detail.lstrip().startswith(("{", "[")):
+        item["detail"] = None
+    return item
+
+
+def real_content_url(value):
+    if not isinstance(value, str):
+        return None
+    url = urlparse(value)
+    if (url.hostname or "").lower() in {"youtube.com", "www.youtube.com", "m.youtube.com"} and url.path == "/results":
+        return None
+    return value
+
+
+def _decode_inline_data_uri(value: str):
+    """Parses a `data:<mime>;base64,<payload>` string into (raw_bytes, mime).
+    Returns None if value isn't a well-formed base64 data URI."""
+    import base64
+    import re
+
+    match = re.match(r"^data:([^;,]*)(;charset=[^;,]+)?(;base64)?,(.*)$", value, re.DOTALL)
+    if not match or not match.group(3):
+        return None
+    mime = (match.group(1) or "application/octet-stream").strip()
+    try:
+        raw = base64.b64decode(match.group(4), validate=False)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    return raw, mime
+
+
+def _persist_inline_media(value):
+    """Authoring-time guard against inline `data:` URIs in file/media fields.
+
+    A client that sends the raw file as a base64 data URI instead of
+    uploading it first (via POST /trainings/upload) and referencing the
+    returned URL would otherwise have those bytes stored verbatim in
+    Training.sections — and every future GET /content call would echo them
+    back as-is (this codebase has no read-time media transformation of any
+    kind; the response mapper is a pure pass-through). Decoded and written to
+    disk through the existing training upload storage exactly once, here, at
+    save time — never in a read path — so /content only ever needs to return
+    the short upload URL, not touch file bytes.
+    """
+    if not value or not isinstance(value, str) or not value.startswith("data:"):
+        return value
+    decoded = _decode_inline_data_uri(value)
+    if decoded is None:
+        raise HTTPException(400, "Invalid inline file data")
+    raw, mime = decoded
+
+    import mimetypes
+    ext = (mimetypes.guess_extension(mime) or "").lstrip(".")
+    if not ext:
+        raise HTTPException(400, f"Cannot determine a file extension for '{mime}'")
+
+    from learning_service.services.training_upload_service import save_training_upload
+    saved = save_training_upload(raw, f"upload.{ext}", mime, None)
+    return saved["url"]
+
+
+def _persist_inline_media_in_documents(documents):
+    if not documents:
+        return documents
+    return [
+        {**doc, "url": _persist_inline_media(doc.get("url"))} if isinstance(doc, dict) and doc.get("url") else doc
+        for doc in documents
+    ]
+
+
+def normalize_assessment(raw, *, strict=False):
+    value = deepcopy(raw)
+    value.setdefault("id", str(uuid4()))
+    for key in STATE_FIELDS:
+        value.pop(key, None)
+    value.setdefault("type", "quiz")
+    if strict:
+        value["score_unit"] = "points"
+    for question in value.get("questions") or []:
+        question.setdefault("id", str(uuid4()))
+        if question.get("question_type") in ("mcq", "multiple_choice"):
+            question["question_type"] = "single_choice"
+        options = question.get("options") or []
+        question["options"] = [
+            {"id": str(opt.get("id") or chr(97 + i)), "label": str(opt.get("label", opt.get("value", "")))}
+            if isinstance(opt, dict) else {"id": chr(97 + i), "label": str(opt)}
+            for i, opt in enumerate(options)
+        ]
+        if strict and question.get("question_type") in ("single_choice", "multiple_select") and len(options) < 2:
+            raise HTTPException(400, "Choice questions require at least two real options")
+    return value
+
+
+def normalize_curriculum(sections, assessments=None, assignments=None, *, strict=False):
+    exams, tasks = {}, {}
+    for raw in assessments or []:
+        if isinstance(raw, dict):
+            assessment = normalize_assessment(raw, strict=strict)
+            exams[str(assessment["id"])] = assessment
+    for raw in assignments or []:
+        if isinstance(raw, dict):
+            task = {k: deepcopy(v) for k, v in raw.items() if k not in STATE_FIELDS}
+            task.setdefault("id", str(uuid4()))
+            if "due_at" in task and "due_date" not in task:
+                task["due_date"] = task["due_at"]
+            tasks[str(task["id"])] = task
+    result = []
+    seen = set()
+    for index, raw in enumerate(sections or [], 1):
+        if not isinstance(raw, dict):
+            raise HTTPException(400, "Sections must be objects")
+        section = deepcopy(raw)
+        section.setdefault("id", str(uuid4()))
+        section["type"] = section.get("type") or "section"
+        section["order"] = index
+        section.pop("is_unlocked", None)
+        section.pop("unlock_hint", None)
+        section.setdefault("schedule", None)
+        for key in ("venue", "address", "meeting_link"):
+            section.setdefault(key, None)
+        if strict and "items" in raw and "lessons" in raw and raw["items"] != raw["lessons"]:
+            raise HTTPException(400, "items and lessons must agree when both are supplied")
+        items = section.pop("items", section.get("lessons", [])) or []
+        normalized = []
+        for order, raw_item in enumerate(items, 1):
+            item = deepcopy(raw_item)
+            if not isinstance(item, dict):
+                raise HTTPException(400, "Curriculum items must be objects")
+            item.setdefault("id", str(uuid4()))
+            if strict and item["id"] in seen:
+                raise HTTPException(400, "Curriculum item IDs must be unique")
+            seen.add(item["id"])
+            item["order"] = order
+            for key in STATE_FIELDS:
+                item.pop(key, None)
+            kind = item.get("type")
+            if not kind or kind == "other":
+                if item.get("assessment_id") or item.get("assessment"):
+                    kind = "quiz"
+                elif item.get("assignment_id") or item.get("assignment"):
+                    kind = "assignment"
+                elif item.get("video_url"):
+                    kind = "video"
+                elif item.get("meeting_link") or item.get("join_url"):
+                    kind = "live"
+                elif item.get("venue"):
+                    kind = "venue"
+                elif str(item.get("content_url") or "").split("?")[0].lower().endswith(".pdf"):
+                    kind = "pdf"
+                else:
+                    kind = "topic"
+            if strict and kind not in ITEM_TYPES | LEGACY_TYPES:
+                raise HTTPException(400, f"Unsupported curriculum item type: {kind}")
+            item["type"] = kind
+            item["detail"] = item.get("detail") or item.get("content")
+            item["content"] = item.get("content") or item.get("detail")
+            item["duration"] = item.get("duration") or item.get("duration_minutes")
+            item["meeting_link"] = item.get("meeting_link") or item.get("join_url")
+            item["join_url"] = item["meeting_link"]
+            url = item.get("content_url") or item.get("video_url")
+            if strict:
+                url = _persist_inline_media(url)
+                if item.get("videos"):
+                    item["videos"] = [_persist_inline_media(v) for v in item["videos"]]
+                if item.get("documents"):
+                    item["documents"] = _persist_inline_media_in_documents(item["documents"])
+            if strict and url and not real_content_url(url):
+                raise HTTPException(400, "Use a video/content URL, not a YouTube search URL")
+            item["content_url"] = real_content_url(url)
+            if kind in ("video", "youtube"):
+                item["video_url"] = item["content_url"]
+            for flag in ("is_preview", "is_mandatory", "is_downloadable"):
+                item[flag] = bool(item.get(flag, False))
+            if isinstance(item.get("assessment"), dict):
+                assessment = normalize_assessment(item["assessment"], strict=strict)
+                item["assessment_id"] = assessment["id"]
+                exams[str(assessment["id"])] = assessment
+            if isinstance(item.get("assignment"), dict):
+                assignment = {k: v for k, v in item["assignment"].items() if k not in STATE_FIELDS}
+                assignment.setdefault("id", str(uuid4()))
+                assignment.setdefault("title", item.get("title"))
+                if "due_at" in assignment and "due_date" not in assignment:
+                    assignment["due_date"] = assignment["due_at"]
+                item["assignment_id"] = assignment["id"]
+                tasks[str(assignment["id"])] = assignment
+            if kind == "assignment" and not item.get("assignment_id"):
+                match = next((a for a in tasks.values() if a.get("lesson_id") == item["id"]), None)
+                if match:
+                    item["assignment_id"] = match["id"]
+                elif strict:
+                    task_id = str(uuid4())
+                    tasks[task_id] = {"id": task_id, "title": item.get("title"), "kind": "text",
+                                      "instructions": item.get("content"), "lesson_id": item["id"], "section_id": section["id"]}
+                    item["assignment_id"] = task_id
+            item["assessment"] = deepcopy(exams.get(str(item.get("assessment_id"))))
+            item["assignment"] = deepcopy(tasks.get(str(item.get("assignment_id"))))
+            normalized.append(item)
+        section["lessons"] = normalized
+        quiz_count = sum(i["type"] in ("quiz", "exam") for i in normalized)
+        content_count = len(normalized) - quiz_count
+        parts = [f"{content_count} lesson{'s' if content_count != 1 else ''}"]
+        if quiz_count:
+            parts.append(f"{quiz_count} quiz{'zes' if quiz_count != 1 else ''}")
+        section["summary"] = section.get("summary") or " · ".join(parts)
+        section["items"] = deepcopy(normalized)
+        result.append(section)
+    return {"sections": result, "assessments": list(exams.values()), "assignments": list(tasks.values())}
+
+
+def normalize_authoring(payload, existing=None):
+    data = dict(payload)
+    if any(k in data for k in ("sections", "assessments", "assignments")):
+        curriculum = normalize_curriculum(*[
+            data.get(k, getattr(existing, k, None) if existing is not None else None)
+            for k in ("sections", "assessments", "assignments")
+        ], strict=True)
+        # Attendance is server-owned and must survive author edits.
+        attendance_by_id = {str(item.get("id")): deepcopy(item["attendance"])
+                            for section in (getattr(existing, "sections", None) or [])
+                            for item in (section.get("items", section.get("lessons", [])) or [])
+                            if "attendance" in item}
+        # Store one authoritative list. Read responses expose both aliases.
+        for section in curriculum["sections"]:
+            section.pop("items", None)
+            for item in section["lessons"]:
+                item.pop("assessment", None)
+                item.pop("assignment", None)
+                item.pop("attendance", None)
+                if str(item.get("id")) in attendance_by_id:
+                    item["attendance"] = attendance_by_id[str(item["id"])]
+        data.update(curriculum)
+    if data.get("documents"):
+        data["documents"] = _persist_inline_media_in_documents(data["documents"])
+    mode = data.get("delivery_mode", getattr(existing, "delivery_mode", None))
+    if mode in ("physical", "hybrid"):
+        data["check_in"] = True
+    elif mode in ("online", "recorded", "self_paced"):
+        data.update(check_in=False, pass_code=None, qr_payload=None, venue=None, address=None)
+        if mode in ("recorded", "self_paced"):
+            data.update(meeting_link=None, meeting_provider=None, meeting_id=None, meeting_passcode=None,
+                        start_date=None, end_date=None, start_time=None, end_time=None)
+    if mode == "physical":
+        data.update(meeting_link=None, meeting_provider=None, meeting_id=None, meeting_passcode=None)
+    if mode in ("recorded", "self_paced") and "sections" in data:
+        for section in data["sections"]:
+            section["schedule"] = None
+            if any(item["type"] in ("live", "venue") for item in section["lessons"]):
+                raise HTTPException(400, "Recorded training cannot contain live or venue items")
+    # Store https links only (primary_image, gallery, promo video, instructor photo, notes PDF,
+    # documents, lesson video/content/videos/documents/notes ...) — the read side repairs old rows.
+    from mskit.public_urls import deep_https
+
+    deep_https(data)
+    return data
+
+
+def save_builder_curriculum(db, training, section_id, item_id=None):
+    """Persist inline builder assessments/tasks with the same full-write contract."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    data = normalize_authoring({"sections": training.sections}, training)
+    for key, value in data.items():
+        setattr(training, key, value)
+        # Callers edit nested dictionaries in place. MutableList only tracks
+        # list operations; assigning an equal normalized copy may still look
+        # unchanged to SQLAlchemy. Explicitly mark the JSON columns as dirty.
+        if key in ("sections", "assessments", "assignments"):
+            flag_modified(training, key)
+    db.commit()
+    db.refresh(training)
+    section = next(s for s in normalize_curriculum(training.sections, training.assessments, training.assignments)["sections"] if s["id"] == section_id)
+    return next(i for i in section["lessons"] if i["id"] == item_id) if item_id else section
+
+
+def curriculum_preview(sections):
+    """Expose curriculum metadata and explicit preview content without join credentials."""
+    result = deepcopy(sections)
+    for section in result:
+        if isinstance(section.get("assessment"), dict):
+            section["assessment"] = {**section["assessment"], "questions": []}
+        for key in ("meeting_link", "join_url", "join_meta", "pass_code", "qr_code", "content_url", "content"):
+            section[key] = None
+        items = section.get("lessons", [])
+        for item in items:
+            item.pop("attendance", None)
+            preview = item.get("is_preview") and not item.get("is_draft")
+            for key in ("meeting_link", "join_url", "join_meta", "pass_code", "qr_code"):
+                item[key] = None
+            if not preview:
+                for key in ("content", "detail", "content_url", "video_url", "topics", "assignment", "videos", "documents", "notes"):
+                    item[key] = None
+            item["is_locked"] = not preview
+            if item.get("assessment"):
+                item["assessment"] = {**item["assessment"], "questions": []}
+            if item.get("type") == "ebook":
+                strip_ebook_content(item)
+        section["items"] = deepcopy(items)
+    return result
+
+
+def apply_mode_to_response(result):
+    mode = result.get("delivery_mode")
+    venue_mode = mode in ("physical", "hybrid", "blended", "instructor_led")
+    online_mode = mode in ("online", "hybrid", "blended", "instructor_led")
+    if not venue_mode:
+        result.update(venue=None, address=None, check_in=False, qr_payload=None, qr_image_base64=None, pass_code=None)
+    if not online_mode:
+        result.update(meeting_link=None, meeting_provider=None, meeting_id=None, meeting_passcode=None)
+    for section in result.get("sections") or []:
+        if mode in ("recorded", "self_paced"):
+            section["schedule"] = None
+        for item in section.get("lessons") or []:
+            item.pop("attendance", None)
+            if not online_mode or item["type"] != "live":
+                item.update(meeting_link=None, join_url=None, join_meta=None)
+            if not venue_mode or item["type"] != "venue":
+                item.update(venue=None, address=None, pass_code=None, qr_code=None)
+        section["items"] = deepcopy(section.get("lessons") or [])
+    return result
+
+
+def learning_response(result, curriculum, training, enrolment, assignment_submissions):
+    from learning_service.services.response_mappers import _qr_image_base64
+    mode = training.delivery_mode
+    venue_mode = mode in ("physical", "hybrid", "blended", "instructor_led")
+    online_mode = mode in ("online", "hybrid", "blended", "instructor_led")
+    recorded = mode in ("recorded", "self_paced")
+    qr = enrolment.qr_code if enrolment and venue_mode else None
+    source_sections = {s["id"]: s for s in curriculum["sections"]}
+    flat = []
+    for section in result["sections"]:
+        source = source_sections[section["id"]]
+        source_items = {item["id"]: item for item in source["lessons"]}
+        section["schedule"] = None if recorded else section["schedule"]
+        section["summary"] = source.get("summary") or section["summary"]
+        section["venue"] = source.get("venue") if venue_mode else None
+        section["address"] = source.get("address") if venue_mode else None
+        section["meeting_link"] = source.get("meeting_link") if online_mode and section["is_unlocked"] else None
+        for item in section["lessons"]:
+            raw = source_items[item["id"]]
+            kind, locked = item["type"], item["is_locked"]
+            if kind == "ebook":
+                strip_ebook_content(item)
+            # QR-based attendance applies to both venue (in-person) and live
+            # (which may still be scanned in for a hybrid/on-site session).
+            # Unique per lesson/day (enrolment code + this lesson's id) so admin
+            # scan can tell which lesson/day to mark — not the same code as the
+            # section- or training-level QR, or any other lesson's.
+            item["qr_code"] = f"{qr}:{item['id']}" if qr and kind in ("live", "venue") and not locked else None
+            item["qr_image_base64"] = _qr_image_base64(item["qr_code"]) if item["qr_code"] else None
+            item["schedule"] = None if recorded else raw.get("schedule") or section["schedule"]
+            # scheduled_at was already timezone-formatted upstream in
+            # _base_lesson_payload — only clear it here, never reassign from raw.
+            if recorded:
+                item["scheduled_at"] = None
+            if kind == "venue" and venue_mode:
+                item["venue"] = raw.get("venue") or source.get("venue") or getattr(training, "venue", None)
+                item["address"] = raw.get("address") or source.get("address") or getattr(training, "address", None)
+                section["venue"] = section["venue"] or item["venue"]
+                section["address"] = section["address"] or item["address"]
+            if kind != "venue" or not venue_mode:
+                item.update(venue=None, address=None, pass_code=None)
+            # check_in_window is the join/check-in window for BOTH venue and live
+            # lessons — it must not be bundled with the venue-only fields above,
+            # or every "live" lesson's check-in window gets wiped unconditionally.
+            if not ((kind == "venue" and venue_mode) or (kind == "live" and online_mode)):
+                item["check_in_window"] = None
+            if kind not in ("live", "venue") or not venue_mode:
+                item["qr_code"] = None
+                item["qr_image_base64"] = None
+            if kind != "live" or not online_mode or locked:
+                item.update(meeting_link=None, join_url=None, join_meta=None)
+            elif not item.get("meeting_link"):
+                link = source.get("meeting_link") or getattr(training, "meeting_link", None)
+                item.update(meeting_link=link, join_url=link)
+            if kind == "live" and not locked and online_mode:
+                section["meeting_link"] = section["meeting_link"] or item.get("meeting_link")
+            item.setdefault("assessment", None)
+            item["assignment"] = None
+            if kind == "assignment" and raw.get("assignment") and not locked:
+                assignment = raw["assignment"]
+                submitted = assignment_submissions.get(assignment["id"])
+                item["assignment"] = {
+                    "id": assignment["id"], "title": assignment.get("title"),
+                    "kind": assignment.get("kind", "text"), "instructions": assignment.get("instructions"),
+                    "due_at": assignment.get("due_at") or assignment.get("due_date"),
+                    "max_score": assignment.get("max_score"), "is_submitted": submitted is not None,
+                    "score": submitted.grade if submitted else None, "feedback": submitted.feedback if submitted else None,
+                    "files": [dict(f) for f in (submitted.files or [])] if submitted else [],
+                }
+                item["completed_at"] = submitted.submitted_at.isoformat() if submitted else None
+            flat.append(item)
+        section["items"] = deepcopy(section["lessons"])
+    result["qr_code"] = qr
+    result["notes_pdf_url"] = getattr(training, "notes_pdf_url", None) or f"/api/v1/trainings/{training.id}/notes.pdf"
+    documents = getattr(training, "documents", None)
+    result["documents"] = [deepcopy(d) for d in documents if isinstance(d, dict) and d.get("visibility", "enrolled") in ("enrolled", "public")] if isinstance(documents, list) else []
+    result["completed_items"] = sum(bool(i["is_completed"]) for i in flat)
+    result["total_items"] = len(flat)
+    required = [i for i in flat if i["is_mandatory"]]
+    result["total_required_items"] = len(required)
+    result["completed_required_items"] = sum(bool(i["is_completed"]) for i in required)
+    # progress_percent is set by the caller from completed_lessons/total_lessons
+    # (the same source of truth /my/enrolments and /progress use) and is
+    # intentionally left untouched here. Mandatory-only completion is a separate,
+    # legitimate business rule (see complete_lesson_service's completed_at /
+    # certificate_url logic) and stays exposed via completed_required_items /
+    # total_required_items instead of overwriting the headline percentage.
+    result["assessments"] = [i["assessment"] for i in flat if i.get("assessment")]
+    result["assignments"] = [i["assignment"] for i in flat if i.get("assignment")]
+    return result

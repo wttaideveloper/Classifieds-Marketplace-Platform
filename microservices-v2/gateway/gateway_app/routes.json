@@ -1,0 +1,8343 @@
+{
+ "generated_from": "app.main:app (monolith) + tools/ownership.json + tools/route_overrides.json",
+ "socketio_owner": "communication",
+ "default_service": "identity",
+ "routes": [
+  {
+   "index": 0,
+   "path": "/docs",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1,
+   "path": "/api/docs",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 2,
+   "path": "/redoc",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 3,
+   "path": "/api/redoc",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 4,
+   "path": "/api/openapi.json",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 5,
+   "path": "/openapi.json",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 6,
+   "path": "/api/v1/enterprises/",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 7,
+   "path": "/api/v1/enterprises/",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 8,
+   "path": "/api/v1/enterprises/{enterprise_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 9,
+   "path": "/api/v1/enterprises/{enterprise_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 10,
+   "path": "/api/v1/enterprises/{enterprise_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 11,
+   "path": "/api/v1/enterprises/{enterprise_id}/locations",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 12,
+   "path": "/api/v1/enterprises/{enterprise_id}/locations",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 13,
+   "path": "/api/v1/locations/{location_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 14,
+   "path": "/api/v1/locations/{location_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 15,
+   "path": "/api/v1/locations/{location_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 16,
+   "path": "/api/v1/products/",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 17,
+   "path": "/api/v1/products/",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 18,
+   "path": "/api/v1/products/{product_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 19,
+   "path": "/api/v1/products/{product_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 20,
+   "path": "/api/v1/products/{product_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 21,
+   "path": "/api/v1/products/{product_id}/reviews",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 22,
+   "path": "/api/v1/products/{product_id}/reviews",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 23,
+   "path": "/api/v1/products/{product_id}/reviews/me",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 24,
+   "path": "/api/v1/products/{product_id}/reviews/{review_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 25,
+   "path": "/api/v1/products/{product_id}/reviews/{review_id}/moderate",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 26,
+   "path": "/api/v1/services/",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 27,
+   "path": "/api/v1/services/",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 28,
+   "path": "/api/v1/services/{service_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 29,
+   "path": "/api/v1/services/{service_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 30,
+   "path": "/api/v1/services/{service_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 31,
+   "path": "/api/v1/services/{service_id}/reviews",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 32,
+   "path": "/api/v1/services/{service_id}/reviews",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 33,
+   "path": "/api/v1/services/{service_id}/reviews/me",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 34,
+   "path": "/api/v1/services/{service_id}/reviews/{review_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 35,
+   "path": "/api/v1/services/{service_id}/reviews/{review_id}/moderate",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 36,
+   "path": "/api/v1/services/{service_id}/available-slots",
+   "methods": [
+    "GET"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 37,
+   "path": "/api/v1/services/{service_id}/booking-settings",
+   "methods": [
+    "GET"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 38,
+   "path": "/api/v1/service-bookings",
+   "methods": [
+    "POST"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 39,
+   "path": "/api/v1/service-bookings/{booking_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 40,
+   "path": "/api/v1/service-bookings/{booking_id}/cancel",
+   "methods": [
+    "POST"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 41,
+   "path": "/api/v1/service-bookings/{booking_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 42,
+   "path": "/api/v1/service-bookings/{booking_id}/cancellation/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 43,
+   "path": "/api/v1/service-bookings/{booking_id}/cancellation/reject",
+   "methods": [
+    "POST"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 44,
+   "path": "/api/v1/service-bookings/{booking_id}/payment",
+   "methods": [
+    "POST"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 45,
+   "path": "/api/v1/service-bookings/{booking_id}/pay",
+   "methods": [
+    "POST"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 46,
+   "path": "/api/v1/service-bookings/{booking_id}/history",
+   "methods": [
+    "GET"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 47,
+   "path": "/api/v1/users/me/service-bookings",
+   "methods": [
+    "GET"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 48,
+   "path": "/api/v1/enterprises/{enterprise_id}/service-bookings/cancellation-requests",
+   "methods": [
+    "GET"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 49,
+   "path": "/api/v1/enterprises/{enterprise_id}/service-bookings",
+   "methods": [
+    "GET"
+   ],
+   "service": "booking"
+  },
+  {
+   "index": 50,
+   "path": "/api/v1/dynamic-attributes",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 51,
+   "path": "/api/v1/dynamic-attributes",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 52,
+   "path": "/api/v1/dynamic-attributes/{attribute_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 53,
+   "path": "/api/v1/dynamic-attributes/{attribute_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 54,
+   "path": "/api/v1/dynamic-attributes/{attribute_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 55,
+   "path": "/api/v1/attributes",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 56,
+   "path": "/api/v1/attributes",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 57,
+   "path": "/api/v1/attributes/{attribute_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 58,
+   "path": "/api/v1/attributes/{attribute_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 59,
+   "path": "/api/v1/attributes/{attribute_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 60,
+   "path": "/api/v1/events/media/policy",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 61,
+   "path": "/api/v1/events/media/",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 62,
+   "path": "/api/v1/events/media/{asset_file}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 63,
+   "path": "/api/v1/events/media/{asset_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 64,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 65,
+   "path": "/api/v1/events/form-configuration/public/active",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 66,
+   "path": "/api/v1/trainings/form-configuration/public/active",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 67,
+   "path": "/api/v1/events/form-configuration/active/common",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 68,
+   "path": "/api/v1/events/{event_id}/form/common",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 69,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 70,
+   "path": "/api/v1/trainings/form-configuration/active/common",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 71,
+   "path": "/api/v1/trainings/{training_id}/form/common",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 72,
+   "path": "/api/v1/events/form-configuration/admin/common/diagnostics",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 73,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/field-types",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 74,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/sections",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 75,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/sections/order",
+   "methods": [
+    "PUT"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 76,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/sections/{section_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 77,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/sections/{section_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 78,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/fields",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 79,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/fields/{field_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 80,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/fields/{field_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 81,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/fields/{field_id}/duplicate",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 82,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/fields/{field_id}/move",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 83,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/sections/{section_id}/fields/order",
+   "methods": [
+    "PUT"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 84,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/review",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 85,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/common/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 86,
+   "path": "/api/v1/trainings/form-configuration/admin/common/diagnostics",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 87,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/field-types",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 88,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/sections",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 89,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/sections/order",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 90,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/sections/{section_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 91,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/sections/{section_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 92,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/fields",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 93,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/fields/{field_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 94,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/fields/{field_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 95,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/fields/{field_id}/duplicate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 96,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/fields/{field_id}/move",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 97,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/sections/{section_id}/fields/order",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 98,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/review",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 99,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/common/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 100,
+   "path": "/api/v1/events/{event_id}/discussion/access",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 101,
+   "path": "/api/v1/events/{event_id}/discussion/messages",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 102,
+   "path": "/api/v1/events/{event_id}/discussion/messages",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 103,
+   "path": "/api/v1/events/{event_id}/discussion/messages/mine",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 104,
+   "path": "/api/v1/events/{event_id}/discussion/messages/{message_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 105,
+   "path": "/api/v1/events/{event_id}/discussion/messages/{message_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 106,
+   "path": "/api/v1/events/{event_id}/discussion/messages/{message_id}/appeal",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 107,
+   "path": "/api/v1/events/{event_id}/discussion/messages/{message_id}/decision",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 108,
+   "path": "/api/v1/events/{event_id}/discussion/moderation/queue",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 109,
+   "path": "/api/v1/events/{event_id}/discussion/moderation/history",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 110,
+   "path": "/api/v1/event-discussions/flagged",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 111,
+   "path": "/api/v1/event-discussions/activity",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 112,
+   "path": "/api/v1/events/",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 113,
+   "path": "/api/v1/events/",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 114,
+   "path": "/api/v1/events/my/registrations",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 115,
+   "path": "/api/v1/events/my/wishlist",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 116,
+   "path": "/api/v1/events/my/waitlist",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 117,
+   "path": "/api/v1/events/templates",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 118,
+   "path": "/api/v1/events/templates",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 119,
+   "path": "/api/v1/events/templates/{template_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 120,
+   "path": "/api/v1/events/templates/{template_id}/apply",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 121,
+   "path": "/api/v1/events/form-configuration/active",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 122,
+   "path": "/api/v1/events/{event_id}/registration-form",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 123,
+   "path": "/api/v1/events/{event_id}/form-configuration",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 124,
+   "path": "/api/v1/events/{event_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 125,
+   "path": "/api/v1/events/{event_id}/wishlist",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 126,
+   "path": "/api/v1/events/{event_id}/wishlist",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 127,
+   "path": "/api/v1/events/{event_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 128,
+   "path": "/api/v1/events/{event_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 129,
+   "path": "/api/v1/events/{event_id}/duplicate",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 130,
+   "path": "/api/v1/events/{event_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 131,
+   "path": "/api/v1/events/{event_id}/unpublish",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 132,
+   "path": "/api/v1/events/{event_id}/archive",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 133,
+   "path": "/api/v1/events/{event_id}/admin-notes",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 134,
+   "path": "/api/v1/events/{event_id}/resubmit",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 135,
+   "path": "/api/v1/events/{event_id}/registrations",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 136,
+   "path": "/api/v1/events/{event_id}/registrations",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 137,
+   "path": "/api/v1/events/{event_id}/registrations/{reg_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 138,
+   "path": "/api/v1/events/{event_id}/registrations/export",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 139,
+   "path": "/api/v1/events/{event_id}/registrations/{reg_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 140,
+   "path": "/api/v1/events/{event_id}/registrations/{reg_id}/meals",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 141,
+   "path": "/api/v1/events/{event_id}/registrations/{reg_id}/accommodation",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 142,
+   "path": "/api/v1/events/{event_id}/attendees",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 143,
+   "path": "/api/v1/events/{event_id}/dashboard",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 144,
+   "path": "/api/v1/events/{event_id}/fulfilment",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 145,
+   "path": "/api/v1/events/{event_id}/walk-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 146,
+   "path": "/api/v1/events/{event_id}/checkout/quote",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 147,
+   "path": "/api/v1/events/{event_id}/checkout",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 148,
+   "path": "/api/v1/events/{event_id}/orders",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 149,
+   "path": "/api/v1/events/{event_id}/registrations/{reg_id}/refund",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 150,
+   "path": "/api/v1/events/{event_id}/orders/{order_id}/refund",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 151,
+   "path": "/api/v1/events/{event_id}/waitlist",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 152,
+   "path": "/api/v1/events/{event_id}/waitlist",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 153,
+   "path": "/api/v1/events/{event_id}/waitlist/{entry_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 154,
+   "path": "/api/v1/events/{event_id}/sessions",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 155,
+   "path": "/api/v1/events/{event_id}/sessions",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 156,
+   "path": "/api/v1/events/{event_id}/sessions/{session_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 157,
+   "path": "/api/v1/events/{event_id}/sessions/{session_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 158,
+   "path": "/api/v1/events/{event_id}/sessions/{session_id}/check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 159,
+   "path": "/api/v1/events/{event_id}/sessions/{session_id}/uncheck-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 160,
+   "path": "/api/v1/events/{event_id}/sessions/{session_id}/check-out",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 161,
+   "path": "/api/v1/events/{event_id}/sessions/{session_id}/batch-check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 162,
+   "path": "/api/v1/events/{event_id}/check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 163,
+   "path": "/api/v1/events/{event_id}/uncheck-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 164,
+   "path": "/api/v1/events/{event_id}/check-out",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 165,
+   "path": "/api/v1/events/{event_id}/validate-qr",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 166,
+   "path": "/api/v1/events/{event_id}/registrations/{reg_id}/qr",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 167,
+   "path": "/api/v1/events/{event_id}/calendar.ics",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 168,
+   "path": "/api/v1/events/{event_id}/sessions/{session_id}/calendar.ics",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 169,
+   "path": "/api/v1/events/{event_id}/meeting-link",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 170,
+   "path": "/api/v1/events/{event_id}/meeting-links",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 171,
+   "path": "/api/v1/events/{event_id}/sessions/{session_id}/meeting-link",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 172,
+   "path": "/api/v1/events/{event_id}/contact",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 173,
+   "path": "/api/v1/events/{event_id}/attendance",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 174,
+   "path": "/api/v1/events/{event_id}/announcements",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 175,
+   "path": "/api/v1/events/{event_id}/remind",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 176,
+   "path": "/api/v1/events/{event_id}/feedback",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 177,
+   "path": "/api/v1/events/{event_id}/feedback",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 178,
+   "path": "/api/v1/events/{event_id}/reviews",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 179,
+   "path": "/api/v1/events/{event_id}/reviews/me",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 180,
+   "path": "/api/v1/events/{event_id}/reviews",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 181,
+   "path": "/api/v1/events/{event_id}/reviews/manage",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 182,
+   "path": "/api/v1/events/{event_id}/reviews/{review_id}/moderate",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 183,
+   "path": "/api/v1/events/{event_id}/reviews/{review_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 184,
+   "path": "/api/v1/events/{event_id}/reports",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 185,
+   "path": "/api/v1/events/reports/summary",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 186,
+   "path": "/api/v1/events/templates/{template_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 187,
+   "path": "/api/v1/events/templates/{template_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 188,
+   "path": "/api/v1/events/{event_id}/batch-check-in",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 189,
+   "path": "/api/v1/events/{event_id}/batch-check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 190,
+   "path": "/api/v1/events/auto-complete",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 191,
+   "path": "/api/v1/events/{event_id}/orders/{order_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 192,
+   "path": "/api/v1/events/{event_id}/orders/{order_id}/refund/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 193,
+   "path": "/api/v1/event-categories/",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 194,
+   "path": "/api/v1/event-categories/",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 195,
+   "path": "/api/v1/event-categories/{category_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 196,
+   "path": "/api/v1/event-categories/{category_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 197,
+   "path": "/api/v1/event-types/",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 198,
+   "path": "/api/v1/event-types/",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 199,
+   "path": "/api/v1/event-types/{event_type_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 200,
+   "path": "/api/v1/event-types/{event_type_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 201,
+   "path": "/api/v1/event-types/{event_type_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 202,
+   "path": "/api/v1/trainings/upload",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 203,
+   "path": "/api/v1/trainings/upload/{stored_name}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 204,
+   "path": "/api/v1/trainings/",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 205,
+   "path": "/api/v1/trainings/",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 206,
+   "path": "/api/v1/trainings/reports/summary",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 207,
+   "path": "/api/v1/trainings/form-configuration/active",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 208,
+   "path": "/api/v1/trainings/{training_id}/form-configuration",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 209,
+   "path": "/api/v1/trainings/{training_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 210,
+   "path": "/api/v1/trainings/{training_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 211,
+   "path": "/api/v1/trainings/{training_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 212,
+   "path": "/api/v1/trainings/{training_id}/duplicate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 213,
+   "path": "/api/v1/trainings/{training_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 214,
+   "path": "/api/v1/trainings/{training_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 215,
+   "path": "/api/v1/trainings/{training_id}/unpublish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 216,
+   "path": "/api/v1/trainings/{training_id}/suspend",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 217,
+   "path": "/api/v1/trainings/{training_id}/cancel",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 218,
+   "path": "/api/v1/trainings/{training_id}/archive",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 219,
+   "path": "/api/v1/trainings/{training_id}/restore",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 220,
+   "path": "/api/v1/trainings/{training_id}/moderation-history",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 221,
+   "path": "/api/v1/trainings/{training_id}/sections",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 222,
+   "path": "/api/v1/trainings/{training_id}/sections",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 223,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 224,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 225,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 226,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 227,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 228,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics/{topic_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 229,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics/{topic_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 230,
+   "path": "/api/v1/trainings/{training_id}/sections/reorder",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 231,
+   "path": "/api/v1/trainings/{training_id}/modules/reorder",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 232,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/reorder",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 233,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 234,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 235,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 236,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/media",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 237,
+   "path": "/api/v1/trainings/my/enrolments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 238,
+   "path": "/api/v1/trainings/my/wishlist",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 239,
+   "path": "/api/v1/trainings/{training_id}/enrol",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 240,
+   "path": "/api/v1/trainings/{training_id}/enroll",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 241,
+   "path": "/api/v1/trainings/{training_id}/reviews",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 242,
+   "path": "/api/v1/trainings/{training_id}/reviews",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 243,
+   "path": "/api/v1/trainings/{training_id}/reviews/me",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 244,
+   "path": "/api/v1/trainings/{training_id}/reviews/{review_id}/moderate",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 245,
+   "path": "/api/v1/trainings/{training_id}/reviews/{review_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 246,
+   "path": "/api/v1/trainings/{training_id}/wishlist",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 247,
+   "path": "/api/v1/trainings/{training_id}/wishlist",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 248,
+   "path": "/api/v1/trainings/{training_id}/enrolments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 249,
+   "path": "/api/v1/trainings/{training_id}/content",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 250,
+   "path": "/api/v1/trainings/{training_id}/downloads",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 251,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/download",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 252,
+   "path": "/api/v1/trainings/{training_id}/notes.pdf",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 253,
+   "path": "/api/v1/trainings/{training_id}/enrolments/{enrol_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 254,
+   "path": "/api/v1/trainings/{training_id}/enrolments/{enrol_id}/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 255,
+   "path": "/api/v1/trainings/{training_id}/enrolments/validate-qr",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 256,
+   "path": "/api/v1/trainings/{training_id}/enrolments/check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 257,
+   "path": "/api/v1/trainings/{training_id}/enrolments/uncheck-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 258,
+   "path": "/api/v1/trainings/{training_id}/enrolments/check-in-preview",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 259,
+   "path": "/api/v1/trainings/{training_id}/batch-check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 260,
+   "path": "/api/v1/trainings/{training_id}/checkout",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 261,
+   "path": "/api/v1/trainings/{training_id}/orders",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 262,
+   "path": "/api/v1/trainings/{training_id}/waitlist",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 263,
+   "path": "/api/v1/trainings/{training_id}/waitlist/{entry_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 264,
+   "path": "/api/v1/trainings/{training_id}/assessments",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 265,
+   "path": "/api/v1/trainings/{training_id}/assessments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 266,
+   "path": "/api/v1/trainings/{training_id}/assessments/{aid}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 267,
+   "path": "/api/v1/trainings/{training_id}/assessments/{aid}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 268,
+   "path": "/api/v1/trainings/{training_id}/assessments/{aid}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 269,
+   "path": "/api/v1/trainings/{training_id}/question-bank",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 270,
+   "path": "/api/v1/trainings/{training_id}/assessments/{aid}/questions",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 271,
+   "path": "/api/v1/trainings/{training_id}/assessments/{aid}/questions/{qid}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 272,
+   "path": "/api/v1/trainings/{training_id}/assessments/{aid}/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 273,
+   "path": "/api/v1/trainings/{training_id}/assessments/{aid}/submissions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 274,
+   "path": "/api/v1/trainings/{training_id}/assessments/{aid}/submissions/{sid}/grade",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 275,
+   "path": "/api/v1/trainings/{training_id}/assessments/{aid}/submissions/{sid}/review",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 276,
+   "path": "/api/v1/trainings/{training_id}/assignments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 277,
+   "path": "/api/v1/trainings/{training_id}/assignments/{aid}/attempts",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 278,
+   "path": "/api/v1/trainings/{training_id}/assignments/{aid}/attempts/{attempt_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 279,
+   "path": "/api/v1/trainings/{training_id}/assignments",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 280,
+   "path": "/api/v1/trainings/{training_id}/assignments/{aid}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 281,
+   "path": "/api/v1/trainings/{training_id}/assignments/{aid}/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 282,
+   "path": "/api/v1/trainings/{training_id}/assignments/{aid}/submissions/{sid}/grade",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 283,
+   "path": "/api/v1/trainings/{training_id}/progress/complete-lesson",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 284,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/progress",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 285,
+   "path": "/api/v1/trainings/{training_id}/live-sessions/{session_id}/attendance",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 286,
+   "path": "/api/v1/trainings/{training_id}/live-sessions/{session_id}/attendance/export",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 287,
+   "path": "/api/v1/trainings/{training_id}/live-sessions/{session_id}/attendance",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 288,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/attendance",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 289,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/attendance/roster",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 290,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/attendance/roster",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 291,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/attendance/scan",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 292,
+   "path": "/api/v1/trainings/{training_id}/certificate",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 293,
+   "path": "/api/v1/trainings/{training_id}/certificate.pdf",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 294,
+   "path": "/api/v1/trainings/{training_id}/progress",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 295,
+   "path": "/api/v1/trainings/{training_id}/dashboards/participant",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 296,
+   "path": "/api/v1/trainings/{training_id}/dashboards/provider",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 297,
+   "path": "/api/v1/trainings/{training_id}/reports",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 298,
+   "path": "/api/v1/trainings/{training_id}/check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 299,
+   "path": "/api/v1/trainings/{training_id}/live-sessions",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 300,
+   "path": "/api/v1/trainings/{training_id}/live-sessions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 301,
+   "path": "/api/v1/trainings/{training_id}/calendar.ics",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 302,
+   "path": "/api/v1/trainings/{training_id}/meeting-link",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 303,
+   "path": "/api/v1/trainings/{training_id}/discussions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 304,
+   "path": "/api/v1/trainings/{training_id}/discussions",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 305,
+   "path": "/api/v1/trainings/{training_id}/discussions/{discussion_id}/replies",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 306,
+   "path": "/api/v1/trainings/{training_id}/announcements",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 307,
+   "path": "/api/v1/trainings/{training_id}/announcements",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 308,
+   "path": "/api/v1/trainings/{training_id}/orders/{order_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 309,
+   "path": "/api/v1/trainings/{training_id}/orders/{order_id}/refund",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 310,
+   "path": "/api/v1/trainings/{training_id}/admin-notes",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 311,
+   "path": "/api/v1/trainings/{training_id}/resubmit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 312,
+   "path": "/api/v1/trainings/{training_id}/orders/{order_id}/refund/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 313,
+   "path": "/api/v1/trainings/{training_id}/enrolments/export",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 314,
+   "path": "/api/v1/training-categories/",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 315,
+   "path": "/api/v1/training-categories/",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 316,
+   "path": "/api/v1/training-categories/{category_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 317,
+   "path": "/api/v1/training-categories/{category_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 318,
+   "path": "/api/v1/courses/upload",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 319,
+   "path": "/api/v1/courses/upload/{stored_name}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 320,
+   "path": "/api/v1/courses/",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 321,
+   "path": "/api/v1/courses/",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 322,
+   "path": "/api/v1/courses/reports/summary",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 323,
+   "path": "/api/v1/courses/form-configuration/active",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 324,
+   "path": "/api/v1/courses/{training_id}/form-configuration",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 325,
+   "path": "/api/v1/courses/{training_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 326,
+   "path": "/api/v1/courses/{training_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 327,
+   "path": "/api/v1/courses/{training_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 328,
+   "path": "/api/v1/courses/{training_id}/duplicate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 329,
+   "path": "/api/v1/courses/{training_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 330,
+   "path": "/api/v1/courses/{training_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 331,
+   "path": "/api/v1/courses/{training_id}/unpublish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 332,
+   "path": "/api/v1/courses/{training_id}/suspend",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 333,
+   "path": "/api/v1/courses/{training_id}/cancel",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 334,
+   "path": "/api/v1/courses/{training_id}/archive",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 335,
+   "path": "/api/v1/courses/{training_id}/restore",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 336,
+   "path": "/api/v1/courses/{training_id}/moderation-history",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 337,
+   "path": "/api/v1/courses/{training_id}/sections",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 338,
+   "path": "/api/v1/courses/{training_id}/sections",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 339,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 340,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 341,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 342,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 343,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 344,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics/{topic_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 345,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/topics/{topic_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 346,
+   "path": "/api/v1/courses/{training_id}/sections/reorder",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 347,
+   "path": "/api/v1/courses/{training_id}/modules/reorder",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 348,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/reorder",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 349,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 350,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 351,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 352,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/media",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 353,
+   "path": "/api/v1/courses/my/enrolments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 354,
+   "path": "/api/v1/courses/my/wishlist",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 355,
+   "path": "/api/v1/courses/{training_id}/enrol",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 356,
+   "path": "/api/v1/courses/{training_id}/enroll",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 357,
+   "path": "/api/v1/courses/{training_id}/reviews",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 358,
+   "path": "/api/v1/courses/{training_id}/reviews",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 359,
+   "path": "/api/v1/courses/{training_id}/reviews/me",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 360,
+   "path": "/api/v1/courses/{training_id}/reviews/{review_id}/moderate",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 361,
+   "path": "/api/v1/courses/{training_id}/reviews/{review_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 362,
+   "path": "/api/v1/courses/{training_id}/wishlist",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 363,
+   "path": "/api/v1/courses/{training_id}/wishlist",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 364,
+   "path": "/api/v1/courses/{training_id}/enrolments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 365,
+   "path": "/api/v1/courses/{training_id}/content",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 366,
+   "path": "/api/v1/courses/{training_id}/downloads",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 367,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/download",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 368,
+   "path": "/api/v1/courses/{training_id}/notes.pdf",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 369,
+   "path": "/api/v1/courses/{training_id}/enrolments/{enrol_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 370,
+   "path": "/api/v1/courses/{training_id}/enrolments/{enrol_id}/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 371,
+   "path": "/api/v1/courses/{training_id}/enrolments/validate-qr",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 372,
+   "path": "/api/v1/courses/{training_id}/enrolments/check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 373,
+   "path": "/api/v1/courses/{training_id}/enrolments/uncheck-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 374,
+   "path": "/api/v1/courses/{training_id}/enrolments/check-in-preview",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 375,
+   "path": "/api/v1/courses/{training_id}/batch-check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 376,
+   "path": "/api/v1/courses/{training_id}/checkout",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 377,
+   "path": "/api/v1/courses/{training_id}/orders",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 378,
+   "path": "/api/v1/courses/{training_id}/waitlist",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 379,
+   "path": "/api/v1/courses/{training_id}/waitlist/{entry_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 380,
+   "path": "/api/v1/courses/{training_id}/assessments",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 381,
+   "path": "/api/v1/courses/{training_id}/assessments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 382,
+   "path": "/api/v1/courses/{training_id}/assessments/{aid}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 383,
+   "path": "/api/v1/courses/{training_id}/assessments/{aid}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 384,
+   "path": "/api/v1/courses/{training_id}/assessments/{aid}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 385,
+   "path": "/api/v1/courses/{training_id}/question-bank",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 386,
+   "path": "/api/v1/courses/{training_id}/assessments/{aid}/questions",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 387,
+   "path": "/api/v1/courses/{training_id}/assessments/{aid}/questions/{qid}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 388,
+   "path": "/api/v1/courses/{training_id}/assessments/{aid}/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 389,
+   "path": "/api/v1/courses/{training_id}/assessments/{aid}/submissions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 390,
+   "path": "/api/v1/courses/{training_id}/assessments/{aid}/submissions/{sid}/grade",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 391,
+   "path": "/api/v1/courses/{training_id}/assessments/{aid}/submissions/{sid}/review",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 392,
+   "path": "/api/v1/courses/{training_id}/assignments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 393,
+   "path": "/api/v1/courses/{training_id}/assignments/{aid}/attempts",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 394,
+   "path": "/api/v1/courses/{training_id}/assignments/{aid}/attempts/{attempt_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 395,
+   "path": "/api/v1/courses/{training_id}/assignments",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 396,
+   "path": "/api/v1/courses/{training_id}/assignments/{aid}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 397,
+   "path": "/api/v1/courses/{training_id}/assignments/{aid}/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 398,
+   "path": "/api/v1/courses/{training_id}/assignments/{aid}/submissions/{sid}/grade",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 399,
+   "path": "/api/v1/courses/{training_id}/progress/complete-lesson",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 400,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/progress",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 401,
+   "path": "/api/v1/courses/{training_id}/live-sessions/{session_id}/attendance",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 402,
+   "path": "/api/v1/courses/{training_id}/live-sessions/{session_id}/attendance/export",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 403,
+   "path": "/api/v1/courses/{training_id}/live-sessions/{session_id}/attendance",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 404,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/attendance",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 405,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/attendance/roster",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 406,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/attendance/roster",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 407,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/attendance/scan",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 408,
+   "path": "/api/v1/courses/{training_id}/certificate",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 409,
+   "path": "/api/v1/courses/{training_id}/certificate.pdf",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 410,
+   "path": "/api/v1/courses/{training_id}/progress",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 411,
+   "path": "/api/v1/courses/{training_id}/dashboards/participant",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 412,
+   "path": "/api/v1/courses/{training_id}/dashboards/provider",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 413,
+   "path": "/api/v1/courses/{training_id}/reports",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 414,
+   "path": "/api/v1/courses/{training_id}/check-in",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 415,
+   "path": "/api/v1/courses/{training_id}/live-sessions",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 416,
+   "path": "/api/v1/courses/{training_id}/live-sessions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 417,
+   "path": "/api/v1/courses/{training_id}/calendar.ics",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 418,
+   "path": "/api/v1/courses/{training_id}/meeting-link",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 419,
+   "path": "/api/v1/courses/{training_id}/discussions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 420,
+   "path": "/api/v1/courses/{training_id}/discussions",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 421,
+   "path": "/api/v1/courses/{training_id}/discussions/{discussion_id}/replies",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 422,
+   "path": "/api/v1/courses/{training_id}/announcements",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 423,
+   "path": "/api/v1/courses/{training_id}/announcements",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 424,
+   "path": "/api/v1/courses/{training_id}/orders/{order_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 425,
+   "path": "/api/v1/courses/{training_id}/orders/{order_id}/refund",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 426,
+   "path": "/api/v1/courses/{training_id}/admin-notes",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 427,
+   "path": "/api/v1/courses/{training_id}/resubmit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 428,
+   "path": "/api/v1/courses/{training_id}/orders/{order_id}/refund/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 429,
+   "path": "/api/v1/courses/{training_id}/enrolments/export",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 430,
+   "path": "/api/v1/programs/",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 431,
+   "path": "/api/v1/programs/",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 432,
+   "path": "/api/v1/programs/reports/summary",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 433,
+   "path": "/api/v1/programs/my/enrolments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 434,
+   "path": "/api/v1/programs/form-configuration/active",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 435,
+   "path": "/api/v1/programs/{program_id}/form-configuration",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 436,
+   "path": "/api/v1/programs/{program_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 437,
+   "path": "/api/v1/programs/{program_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 438,
+   "path": "/api/v1/programs/{program_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 439,
+   "path": "/api/v1/programs/{program_id}/duplicate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 440,
+   "path": "/api/v1/programs/{program_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 441,
+   "path": "/api/v1/programs/{program_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 442,
+   "path": "/api/v1/programs/{program_id}/unpublish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 443,
+   "path": "/api/v1/programs/{program_id}/suspend",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 444,
+   "path": "/api/v1/programs/{program_id}/cancel",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 445,
+   "path": "/api/v1/programs/{program_id}/archive",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 446,
+   "path": "/api/v1/programs/{program_id}/restore",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 447,
+   "path": "/api/v1/programs/{program_id}/phases",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 448,
+   "path": "/api/v1/programs/{program_id}/phases",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 449,
+   "path": "/api/v1/programs/{program_id}/phases/{phase_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 450,
+   "path": "/api/v1/programs/{program_id}/phases/{phase_id}/activities",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 451,
+   "path": "/api/v1/programs/{program_id}/phases/{phase_id}/activities/{activity_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 452,
+   "path": "/api/v1/programs/{program_id}/phases/{phase_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 453,
+   "path": "/api/v1/programs/{program_id}/phases/{phase_id}/activities/{activity_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 454,
+   "path": "/api/v1/programs/{program_id}/phases/{phase_id}/instructors",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 455,
+   "path": "/api/v1/programs/{program_id}/check-ins/{checkin_id}/feedback",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 456,
+   "path": "/api/v1/programs/{program_id}/phases/reorder",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 457,
+   "path": "/api/v1/programs/{program_id}/enrol",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 458,
+   "path": "/api/v1/programs/{program_id}/enrolments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 459,
+   "path": "/api/v1/programs/{program_id}/waitlist",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 460,
+   "path": "/api/v1/programs/{program_id}/waitlist",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 461,
+   "path": "/api/v1/programs/{program_id}/availability",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 462,
+   "path": "/api/v1/programs/{program_id}/content",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 463,
+   "path": "/api/v1/programs/{program_id}/meeting-link",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 464,
+   "path": "/api/v1/programs/{program_id}/check-ins/self",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 465,
+   "path": "/api/v1/programs/{program_id}/check-ins",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 466,
+   "path": "/api/v1/programs/{program_id}/check-ins",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 467,
+   "path": "/api/v1/programs/{program_id}/progress",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 468,
+   "path": "/api/v1/programs/{program_id}/dashboards/participant",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 469,
+   "path": "/api/v1/programs/{program_id}/dashboards/provider",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 470,
+   "path": "/api/v1/programs/{program_id}/goals",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 471,
+   "path": "/api/v1/programs/{program_id}/goals",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 472,
+   "path": "/api/v1/programs/{program_id}/certificate",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 473,
+   "path": "/api/v1/programs/{program_id}/enrolments/{enrol_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 474,
+   "path": "/api/v1/programs/{program_id}/surveys",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 475,
+   "path": "/api/v1/programs/{program_id}/surveys",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 476,
+   "path": "/api/v1/programs/{program_id}/surveys/{survey_id}/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 477,
+   "path": "/api/v1/programs/{program_id}/reviews",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 478,
+   "path": "/api/v1/programs/{program_id}/reviews",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 479,
+   "path": "/api/v1/programs/{program_id}/reports",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 480,
+   "path": "/api/v1/programs/{program_id}/enrolments/export",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 481,
+   "path": "/api/v1/programs/{program_id}/admin-notes",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 482,
+   "path": "/api/v1/programs/{program_id}/resubmit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 483,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 484,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 485,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/validate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 486,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/pages/reorder",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 487,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 488,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/withdraw",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 489,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 490,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/unpublish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 491,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/history",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 492,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/versions/{version}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 493,
+   "path": "/api/v1/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/versions/{version}/restore",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 494,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 495,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/progress",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 496,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/progress",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 497,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/progress/complete",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 498,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/bookmarks",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 499,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/bookmarks",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 500,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/bookmarks/{bookmark_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 501,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/notes",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 502,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/notes",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 503,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/notes/{note_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 504,
+   "path": "/api/v1/trainings/{training_id}/lessons/{lesson_id}/ebook/notes/{note_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 505,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 506,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 507,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/validate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 508,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/pages/reorder",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 509,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 510,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/withdraw",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 511,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 512,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/unpublish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 513,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/history",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 514,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/versions/{version}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 515,
+   "path": "/api/v1/courses/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/versions/{version}/restore",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 516,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 517,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/progress",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 518,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/progress",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 519,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/progress/complete",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 520,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/bookmarks",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 521,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/bookmarks",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 522,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/bookmarks/{bookmark_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 523,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/notes",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 524,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/notes",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 525,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/notes/{note_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 526,
+   "path": "/api/v1/courses/{training_id}/lessons/{lesson_id}/ebook/notes/{note_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 527,
+   "path": "/api/v1/admin/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 528,
+   "path": "/api/v1/admin/trainings/{training_id}/sections/{section_id}/lessons/{lesson_id}/ebook/review",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 529,
+   "path": "/api/v1/admin/ebooks/pending",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 530,
+   "path": "/api/v1/media/{asset_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 531,
+   "path": "/api/v1/media/{asset_id}/file",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 532,
+   "path": "/api/v1/media/{asset_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 533,
+   "path": "/api/v1/cms/blogs",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 534,
+   "path": "/api/v1/cms/blogs/governance",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 535,
+   "path": "/api/v1/cms/blogs/categories",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 536,
+   "path": "/api/v1/cms/blogs/files/{file_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 537,
+   "path": "/api/v1/cms/blogs/uploads/limits",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 538,
+   "path": "/api/v1/cms/blogs/uploads",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 539,
+   "path": "/api/v1/cms/blogs/uploads",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 540,
+   "path": "/api/v1/cms/blogs/uploads/{file_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 541,
+   "path": "/api/v1/cms/blogs/uploads/{file_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 542,
+   "path": "/api/v1/cms/blogs/uploads/{file_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 543,
+   "path": "/api/v1/cms/blogs/uploads/{file_id}/signed-url",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 544,
+   "path": "/api/v1/cms/blogs/my/form",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 545,
+   "path": "/api/v1/cms/blogs/forms/public",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 546,
+   "path": "/api/v1/cms/blogs/my/posts",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 547,
+   "path": "/api/v1/cms/blogs/my/posts",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 548,
+   "path": "/api/v1/cms/blogs/my/posts/preview",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 549,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 550,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}/preview",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 551,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 552,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 553,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}/unpublish",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 554,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}/discard-changes",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 555,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 556,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}/history",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 557,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}/revisions",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 558,
+   "path": "/api/v1/cms/blogs/my/posts/{post_id}/revisions/{history_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 559,
+   "path": "/api/v1/cms/blogs/admin/governance",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 560,
+   "path": "/api/v1/cms/blogs/admin/governance/reset",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 561,
+   "path": "/api/v1/cms/blogs/admin/governance/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 562,
+   "path": "/api/v1/cms/blogs/admin/governance/{module}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 563,
+   "path": "/api/v1/cms/blogs/admin/forms",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 564,
+   "path": "/api/v1/cms/blogs/admin/forms",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 565,
+   "path": "/api/v1/cms/blogs/admin/forms/preview",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 566,
+   "path": "/api/v1/cms/blogs/admin/forms/diagnostics",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 567,
+   "path": "/api/v1/cms/blogs/admin/forms/active",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 568,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 569,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 570,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/assignments",
+   "methods": [
+    "PUT"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 571,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 572,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/activate",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 573,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/deactivate",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 574,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/retire",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 575,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/restore",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 576,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/preview",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 577,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 578,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/versions/{version}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 579,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 580,
+   "path": "/api/v1/cms/blogs/admin/form-field-types",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 581,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/sections",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 582,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/sections/order",
+   "methods": [
+    "PUT"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 583,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/sections/{section_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 584,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/sections/{section_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 585,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/fields",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 586,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/fields/{field_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 587,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/fields/{field_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 588,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/fields/{field_id}/duplicate",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 589,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/sections/{section_id}/fields/order",
+   "methods": [
+    "PUT"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 590,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/fields/{field_id}/move",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 591,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/review",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 592,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/submit",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 593,
+   "path": "/api/v1/cms/blogs/admin/forms/{form_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 594,
+   "path": "/api/v1/cms/blogs/admin/queue",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 595,
+   "path": "/api/v1/cms/blogs/admin/posts",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 596,
+   "path": "/api/v1/cms/blogs/admin/posts",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 597,
+   "path": "/api/v1/cms/blogs/admin/posts/preview",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 598,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 599,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}/preview",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 600,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 601,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 602,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 603,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}/unpublish",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 604,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}/review",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 605,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}/pin",
+   "methods": [
+    "PUT"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 606,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 607,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}/history",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 608,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}/revisions",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 609,
+   "path": "/api/v1/cms/blogs/admin/posts/{post_id}/revisions/{history_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 610,
+   "path": "/api/v1/cms/blogs/admin/categories",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 611,
+   "path": "/api/v1/cms/blogs/admin/categories",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 612,
+   "path": "/api/v1/cms/blogs/admin/categories/order",
+   "methods": [
+    "PUT"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 613,
+   "path": "/api/v1/cms/blogs/admin/categories/{category_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 614,
+   "path": "/api/v1/cms/blogs/admin/categories/{category_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 615,
+   "path": "/api/v1/cms/blogs/{slug}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 616,
+   "path": "/api/v1/meetings/admin/providers",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 617,
+   "path": "/api/v1/meetings/admin/providers/{provider}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 618,
+   "path": "/api/v1/meetings/providers",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 619,
+   "path": "/api/v1/meetings/providers/{provider}/connect",
+   "methods": [
+    "POST"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 620,
+   "path": "/api/v1/meetings/oauth/callback/{provider}",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 621,
+   "path": "/api/v1/meetings/providers/{provider}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 622,
+   "path": "/api/v1/meetings/settings",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 623,
+   "path": "/api/v1/meetings/settings",
+   "methods": [
+    "PUT"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 624,
+   "path": "/api/v1/meetings/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 625,
+   "path": "/api/v1/meetings/events/{event_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 626,
+   "path": "/api/v1/meetings/events/{event_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 627,
+   "path": "/api/v1/meetings/events/{event_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 628,
+   "path": "/api/v1/meetings/events/{event_id}/generated",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 629,
+   "path": "/api/v1/meetings/events/{event_id}/sessions",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 630,
+   "path": "/api/v1/meetings/events/{event_id}/sessions/{session_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 631,
+   "path": "/api/v1/meetings/events/{event_id}/sessions/{session_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 632,
+   "path": "/api/v1/meetings/events/{event_id}/sessions/{session_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 633,
+   "path": "/api/v1/meetings/events/{event_id}/sessions/{session_id}/generated",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 634,
+   "path": "/api/v1/meetings/trainings/{training_id}/sessions",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 635,
+   "path": "/api/v1/meetings/trainings/{training_id}/sessions/{session_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 636,
+   "path": "/api/v1/meetings/trainings/{training_id}/sessions/{session_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 637,
+   "path": "/api/v1/meetings/trainings/{training_id}/sessions/{session_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 638,
+   "path": "/api/v1/meetings/trainings/{training_id}/sessions/{session_id}/generated",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 639,
+   "path": "/api/v1/meetings/my/events/{event_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 640,
+   "path": "/api/v1/meetings/my/trainings/{training_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "meetings"
+  },
+  {
+   "index": 641,
+   "path": "/api/v1/currencies",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 642,
+   "path": "/api/v1/currencies/admin/all",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 643,
+   "path": "/api/v1/currencies",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 644,
+   "path": "/api/v1/currencies/base",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 645,
+   "path": "/api/v1/currencies/rates",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 646,
+   "path": "/api/v1/currencies/rates",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 647,
+   "path": "/api/v1/currencies/rates/refresh",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 648,
+   "path": "/api/v1/currencies/rates/history",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 649,
+   "path": "/api/v1/currencies/convert",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 650,
+   "path": "/api/v1/currencies/preference",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 651,
+   "path": "/api/v1/currencies/preference",
+   "methods": [
+    "PUT"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 652,
+   "path": "/api/v1/currencies/{code}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 653,
+   "path": "/api/v1/tax/rules",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 654,
+   "path": "/api/v1/tax/rules",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 655,
+   "path": "/api/v1/tax/rules/{rule_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 656,
+   "path": "/api/v1/tax/rules/{rule_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 657,
+   "path": "/api/v1/tax/rules/{rule_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 658,
+   "path": "/api/v1/tax/calculate",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 659,
+   "path": "/api/v1/tax/history",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 660,
+   "path": "/api/v1/tax/reports",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 661,
+   "path": "/api/v1/tax/validate-exemption",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 662,
+   "path": "/api/v1/tax/exemptions",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 663,
+   "path": "/api/v1/tax/exemptions",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 664,
+   "path": "/api/v1/tax/exemptions/{exemption_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 665,
+   "path": "/api/v1/tax/merchant-profile",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 666,
+   "path": "/api/v1/tax/merchant-profile",
+   "methods": [
+    "PUT"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 667,
+   "path": "/api/v1/payments/quote",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 668,
+   "path": "/api/v1/payments",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 669,
+   "path": "/api/v1/payments/webhook/{provider}",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 670,
+   "path": "/api/v1/payments",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 671,
+   "path": "/api/v1/payments/{payment_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 672,
+   "path": "/api/v1/payments/{payment_id}/checkout",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 673,
+   "path": "/api/v1/payments/{payment_id}/verify",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 674,
+   "path": "/api/v1/payments/{payment_id}/retry",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 675,
+   "path": "/api/v1/payments/{payment_id}/cancel",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 676,
+   "path": "/api/v1/payments/{payment_id}/capture",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 677,
+   "path": "/api/v1/payments/{payment_id}/resolve",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 678,
+   "path": "/api/v1/payments/{payment_id}/transactions",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 679,
+   "path": "/api/v1/payment-methods",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 680,
+   "path": "/api/v1/payment-methods",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 681,
+   "path": "/api/v1/payment-methods/{method_id}/default",
+   "methods": [
+    "PUT"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 682,
+   "path": "/api/v1/payment-methods/{method_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 683,
+   "path": "/api/v1/invoices",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 684,
+   "path": "/api/v1/invoices/generate",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 685,
+   "path": "/api/v1/invoices/templates",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 686,
+   "path": "/api/v1/invoices/templates",
+   "methods": [
+    "PUT"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 687,
+   "path": "/api/v1/invoices/{invoice_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 688,
+   "path": "/api/v1/invoices/{invoice_id}/download",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 689,
+   "path": "/api/v1/invoices/{invoice_id}/email",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 690,
+   "path": "/api/v1/invoices/{invoice_id}/debit-notes",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 691,
+   "path": "/api/v1/refunds",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 692,
+   "path": "/api/v1/refunds",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 693,
+   "path": "/api/v1/refunds/{refund_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 694,
+   "path": "/api/v1/refunds/{refund_id}/decision",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 695,
+   "path": "/api/v1/refunds/{refund_id}/retry",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 696,
+   "path": "/api/v1/refunds/{refund_id}/complete-manual",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 697,
+   "path": "/api/v1/settlements/config",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 698,
+   "path": "/api/v1/settlements/config",
+   "methods": [
+    "PUT"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 699,
+   "path": "/api/v1/settlements/run",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 700,
+   "path": "/api/v1/settlements",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 701,
+   "path": "/api/v1/settlements/{settlement_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 702,
+   "path": "/api/v1/settlements/{settlement_id}/verify",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 703,
+   "path": "/api/v1/settlements/{settlement_id}/export",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 704,
+   "path": "/api/v1/settlements/{settlement_id}/pay",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 705,
+   "path": "/api/v1/settlements/{settlement_id}/fail",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 706,
+   "path": "/api/v1/settlements/{settlement_id}/cancel",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 707,
+   "path": "/api/v1/payment-reports/overview",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 708,
+   "path": "/api/v1/payment-reports/payments",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 709,
+   "path": "/api/v1/payment-reports/refunds",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 710,
+   "path": "/api/v1/payment-reports/settlements",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 711,
+   "path": "/api/v1/payment-reports/currency",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 712,
+   "path": "/api/v1/payment-reports/exchange-rates",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 713,
+   "path": "/api/v1/payment-reports/reconciliation",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 714,
+   "path": "/api/v1/finance/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 715,
+   "path": "/api/v1/finance/gateway-status",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 716,
+   "path": "/api/v1/finance/reconciliation",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 717,
+   "path": "/api/v1/finance/reconciliation",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 718,
+   "path": "/api/v1/finance/reconciliation/{run_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 719,
+   "path": "/api/v1/finance/reconciliation/items/{item_id}/resolve",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 720,
+   "path": "/api/v1/finance/jobs/run",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 721,
+   "path": "/api/v1/finance/export",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 722,
+   "path": "/api/v1/search/enterprises",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 723,
+   "path": "/api/v1/search/products",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 724,
+   "path": "/api/v1/search/services",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 725,
+   "path": "/api/v1/search/events",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 726,
+   "path": "/api/v1/search/trainings",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 727,
+   "path": "/api/v1/search/programs",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 728,
+   "path": "/api/v1/reviews/manage",
+   "methods": [
+    "GET"
+   ],
+   "service": "moderation"
+  },
+  {
+   "index": 729,
+   "path": "/api/v1/reviews/{module}/{review_id}/moderate",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "moderation"
+  },
+  {
+   "index": 730,
+   "path": "/api/v1/reviews/{module}/{review_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "moderation"
+  },
+  {
+   "index": 731,
+   "path": "/api/v1/reviews/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "moderation"
+  },
+  {
+   "index": 732,
+   "path": "/api/v1/onboarding-forms/",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 733,
+   "path": "/api/v1/onboarding-forms/",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 734,
+   "path": "/api/v1/onboarding-forms/{form_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 735,
+   "path": "/api/v1/onboarding-forms/{form_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 736,
+   "path": "/api/v1/onboarding-forms/{form_id}/publish",
+   "methods": [
+    "PUT"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 737,
+   "path": "/api/v1/onboarding-forms/{form_id}/unpublish",
+   "methods": [
+    "PUT"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 738,
+   "path": "/api/v1/onboarding-forms/{form_id}/duplicate",
+   "methods": [
+    "POST"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 739,
+   "path": "/api/v1/onboarding-forms/{form_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "catalog"
+  },
+  {
+   "index": 740,
+   "path": "/api/v1/conversations/",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 741,
+   "path": "/api/v1/conversations/",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 742,
+   "path": "/api/v1/conversations/archived",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 743,
+   "path": "/api/v1/conversations/provider",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 744,
+   "path": "/api/v1/conversations/provider/archived",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 745,
+   "path": "/api/v1/conversations/search",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 746,
+   "path": "/api/v1/conversations/{conversation_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 747,
+   "path": "/api/v1/conversations/{conversation_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 748,
+   "path": "/api/v1/conversations/{conversation_id}/close",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 749,
+   "path": "/api/v1/conversations/{conversation_id}/reopen",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 750,
+   "path": "/api/v1/conversations/{conversation_id}/archive",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 751,
+   "path": "/api/v1/groups",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 752,
+   "path": "/api/v1/groups",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 753,
+   "path": "/api/v1/groups/trainings",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 754,
+   "path": "/api/v1/groups/trainings/{training_id}/learners",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 755,
+   "path": "/api/v1/groups/trainings/{training_id}/providers",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 756,
+   "path": "/api/v1/groups/trainings/{training_id}/groups",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 757,
+   "path": "/api/v1/groups/events",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 758,
+   "path": "/api/v1/groups/events/{event_id}/attendees",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 759,
+   "path": "/api/v1/groups/events/{event_id}/providers",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 760,
+   "path": "/api/v1/groups/events/{event_id}/groups",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 761,
+   "path": "/api/v1/groups/invitations",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 762,
+   "path": "/api/v1/groups/invitations/{group_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 763,
+   "path": "/api/v1/groups/consents/me",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 764,
+   "path": "/api/v1/groups/data-requests",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 765,
+   "path": "/api/v1/groups/data-requests/me",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 766,
+   "path": "/api/v1/groups/data-requests/{request_id}/download",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 767,
+   "path": "/api/v1/groups/data-requests/{request_id}/retry",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 768,
+   "path": "/api/v1/groups/grievance-officer",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 769,
+   "path": "/api/v1/groups/verified-providers",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 770,
+   "path": "/api/v1/groups/verified-providers",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 771,
+   "path": "/api/v1/groups/verified-providers/candidates",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 772,
+   "path": "/api/v1/groups/verified-providers/{user_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 773,
+   "path": "/api/v1/groups/reports",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 774,
+   "path": "/api/v1/groups/reports/{report_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 775,
+   "path": "/api/v1/groups/compliance/groups",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 776,
+   "path": "/api/v1/groups/{group_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 777,
+   "path": "/api/v1/groups/{group_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 778,
+   "path": "/api/v1/groups/{group_id}/settings",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 779,
+   "path": "/api/v1/groups/{group_id}/preferences",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 780,
+   "path": "/api/v1/groups/{group_id}/accept",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 781,
+   "path": "/api/v1/groups/{group_id}/decline",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 782,
+   "path": "/api/v1/groups/{group_id}/consent/withdraw",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 783,
+   "path": "/api/v1/groups/{group_id}/leave",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 784,
+   "path": "/api/v1/groups/{group_id}/members",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 785,
+   "path": "/api/v1/groups/{group_id}/members",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 786,
+   "path": "/api/v1/groups/{group_id}/members/invite-enrolled",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 787,
+   "path": "/api/v1/groups/{group_id}/members/invite-registered",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 788,
+   "path": "/api/v1/groups/{group_id}/members/{user_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 789,
+   "path": "/api/v1/groups/{group_id}/members/{user_id}/role",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 790,
+   "path": "/api/v1/groups/{group_id}/members/{user_id}/mute-posting",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 791,
+   "path": "/api/v1/groups/{group_id}/members/{user_id}/mute-posting",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 792,
+   "path": "/api/v1/groups/{group_id}/members/{user_id}/share-history",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 793,
+   "path": "/api/v1/groups/{group_id}/history-sharing/consent",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 794,
+   "path": "/api/v1/groups/{group_id}/history-sharing/consent",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 795,
+   "path": "/api/v1/groups/{group_id}/transfer-ownership",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 796,
+   "path": "/api/v1/groups/{group_id}/reassign-owner",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 797,
+   "path": "/api/v1/groups/{group_id}/close",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 798,
+   "path": "/api/v1/groups/{group_id}/reopen",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 799,
+   "path": "/api/v1/groups/{group_id}/legal-hold",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 800,
+   "path": "/api/v1/groups/{group_id}/legal-hold",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 801,
+   "path": "/api/v1/groups/{group_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 802,
+   "path": "/api/v1/groups/{group_id}/reports",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 803,
+   "path": "/api/v1/groups/{group_id}/messages",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 804,
+   "path": "/api/v1/groups/{group_id}/messages",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 805,
+   "path": "/api/v1/groups/{group_id}/read",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 806,
+   "path": "/api/v1/groups/{group_id}/pinned",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 807,
+   "path": "/api/v1/groups/{group_id}/search",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 808,
+   "path": "/api/v1/groups/{group_id}/files",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 809,
+   "path": "/api/v1/groups/{group_id}/reactions",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 810,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 811,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}/retract",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 812,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}/hide",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 813,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}/pin",
+   "methods": [
+    "PUT"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 814,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}/pin",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 815,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}/reactions",
+   "methods": [
+    "PUT"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 816,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}/reactions",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 817,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}/read-status",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 818,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}/original",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 819,
+   "path": "/api/v1/groups/{group_id}/messages/{message_id}/save-to-record",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 820,
+   "path": "/api/v1/groups/{group_id}/clinical-records",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 821,
+   "path": "/api/v1/conversations/{conversation_id}/messages",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 822,
+   "path": "/api/v1/conversations/{conversation_id}/read",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 823,
+   "path": "/api/v1/conversations/{conversation_id}/typing",
+   "methods": [
+    "PUT"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 824,
+   "path": "/api/v1/conversations/{conversation_id}/typing",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 825,
+   "path": "/api/v1/messages/",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 826,
+   "path": "/api/v1/messages/search",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 827,
+   "path": "/api/v1/messages/{message_id}/read",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 828,
+   "path": "/api/v1/messages/{message_id}/read-status",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 829,
+   "path": "/api/v1/messages/{message_id}/transcribe",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 830,
+   "path": "/api/v1/messages/{message_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 831,
+   "path": "/api/v1/messages/{message_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 832,
+   "path": "/api/v1/attachments/upload",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 833,
+   "path": "/api/v1/attachments/{attachment_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 834,
+   "path": "/api/v1/attachments/{attachment_id}/transcribe",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 835,
+   "path": "/api/v1/attachments/{attachment_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 836,
+   "path": "/api/v1/uploads/",
+   "methods": [
+    "POST"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 837,
+   "path": "/api/v1/uploads/{folder}/{filename}",
+   "methods": [
+    "GET"
+   ],
+   "service": "content"
+  },
+  {
+   "index": 838,
+   "path": "/api/v1/notifications/channels",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 839,
+   "path": "/api/v1/notifications/test-push",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 840,
+   "path": "/api/v1/notifications/push-diagnostics",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 841,
+   "path": "/api/v1/notifications/unread-count",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 842,
+   "path": "/api/v1/notifications/preferences",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 843,
+   "path": "/api/v1/notifications/preferences",
+   "methods": [
+    "PUT"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 844,
+   "path": "/api/v1/notifications/history",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 845,
+   "path": "/api/v1/notifications/read-all",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 846,
+   "path": "/api/v1/notifications/conversation/{conversation_id}/read",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 847,
+   "path": "/api/v1/notifications/{notification_id}/read",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 848,
+   "path": "/api/v1/notifications",
+   "methods": [
+    "POST"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 849,
+   "path": "/api/v1/notifications",
+   "methods": [
+    "GET"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 850,
+   "path": "/api/v1/notifications/{notification_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 851,
+   "path": "/api/v1/notifications/{notification_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 852,
+   "path": "/api/v1/notifications/{notification_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 853,
+   "path": "/api/v1/notifications/send",
+   "methods": [
+    "POST"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 854,
+   "path": "/api/v1/notifications/schedule",
+   "methods": [
+    "POST"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 855,
+   "path": "/api/v1/notifications/send-to-tenant",
+   "methods": [
+    "POST"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 856,
+   "path": "/api/v1/notifications/send-to-users",
+   "methods": [
+    "POST"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 857,
+   "path": "/api/v1/notifications/send-to-groups",
+   "methods": [
+    "POST"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 858,
+   "path": "/api/v1/notifications/email-delivery-logs",
+   "methods": [
+    "GET"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 859,
+   "path": "/api/v1/users/me/notifications",
+   "methods": [
+    "GET"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 860,
+   "path": "/api/v1/users/me/notifications/{notification_id}/read",
+   "methods": [
+    "PUT"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 861,
+   "path": "/api/v1/users/me/notifications/read-all",
+   "methods": [
+    "PUT"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 862,
+   "path": "/api/v1/users/me/notifications/unread-count",
+   "methods": [
+    "GET"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 863,
+   "path": "/api/v1/notification-templates",
+   "methods": [
+    "POST"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 864,
+   "path": "/api/v1/notification-templates",
+   "methods": [
+    "GET"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 865,
+   "path": "/api/v1/notification-templates/{template_id}",
+   "methods": [
+    "PUT"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 866,
+   "path": "/api/v1/notification-templates/{template_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "notifications"
+  },
+  {
+   "index": 867,
+   "path": "/api/v1/devices/register",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 868,
+   "path": "/api/v1/devices/{token}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 869,
+   "path": "/api/v1/providers/assign",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 870,
+   "path": "/api/v1/providers/reassign",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 871,
+   "path": "/api/v1/providers/conversations/{conversation_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 872,
+   "path": "/api/v1/subscriptions/chat-eligibility",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 873,
+   "path": "/api/v1/subscriptions/remaining-messages",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 874,
+   "path": "/api/v1/subscriptions/monthly-limit",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 875,
+   "path": "/api/v1/presence/online",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 876,
+   "path": "/api/v1/presence/status",
+   "methods": [
+    "PUT"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 877,
+   "path": "/api/v1/presence/{user_id}/last-seen",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 878,
+   "path": "/api/v1/socket-io/diagnostics",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 879,
+   "path": "/api/v1/socket-io/connection-info",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 880,
+   "path": "/api/v1/socket-io/events",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 881,
+   "path": "/api/v1/socket-io/join-room",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 882,
+   "path": "/api/v1/socket-io/leave-room",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 883,
+   "path": "/api/v1/socket-io/send-message",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 884,
+   "path": "/api/v1/socket-io/typing-start",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 885,
+   "path": "/api/v1/socket-io/typing-stop",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 886,
+   "path": "/api/v1/socket-io/mark-read",
+   "methods": [
+    "POST"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 887,
+   "path": "/api/v1/admin/chat/dashboard",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 888,
+   "path": "/api/v1/admin/chat/conversations",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 889,
+   "path": "/api/v1/admin/chat/conversations/active",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 890,
+   "path": "/api/v1/admin/chat/conversations/closed",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 891,
+   "path": "/api/v1/admin/chat/conversations/archived",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 892,
+   "path": "/api/v1/admin/chat/conversations/{conversation_id}/export",
+   "methods": [
+    "GET"
+   ],
+   "service": "communication"
+  },
+  {
+   "index": 893,
+   "path": "/api/v1/admin/events/pending",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 894,
+   "path": "/api/v1/admin/events/{event_id}/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 895,
+   "path": "/api/v1/admin/events/{event_id}/reject",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 896,
+   "path": "/api/v1/admin/events/{event_id}/request-changes",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 897,
+   "path": "/api/v1/admin/events/{event_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 898,
+   "path": "/api/v1/admin/trainings/pending",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 899,
+   "path": "/api/v1/admin/trainings/{training_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 900,
+   "path": "/api/v1/admin/trainings/{training_id}/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 901,
+   "path": "/api/v1/admin/trainings/{training_id}/reject",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 902,
+   "path": "/api/v1/admin/trainings/{training_id}/request-changes",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 903,
+   "path": "/api/v1/admin/trainings/{training_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 904,
+   "path": "/api/v1/admin/courses/pending",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 905,
+   "path": "/api/v1/admin/courses/{training_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 906,
+   "path": "/api/v1/admin/courses/{training_id}/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 907,
+   "path": "/api/v1/admin/courses/{training_id}/reject",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 908,
+   "path": "/api/v1/admin/courses/{training_id}/request-changes",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 909,
+   "path": "/api/v1/admin/courses/{training_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 910,
+   "path": "/api/v1/admin/programs/pending",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 911,
+   "path": "/api/v1/admin/programs/{program_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 912,
+   "path": "/api/v1/admin/programs/{program_id}/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 913,
+   "path": "/api/v1/admin/programs/{program_id}/reject",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 914,
+   "path": "/api/v1/admin/programs/{program_id}/request-changes",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 915,
+   "path": "/api/v1/admin/programs/{program_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 916,
+   "path": "/api/v1/admin/event-categories",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 917,
+   "path": "/api/v1/admin/event-categories",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 918,
+   "path": "/api/v1/admin/event-categories/{category_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 919,
+   "path": "/api/v1/admin/event-audits/{event_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 920,
+   "path": "/api/v1/admin/notifications/email-diagnostics",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 921,
+   "path": "/api/v1/admin/notifications/diagnostics",
+   "methods": [
+    "GET"
+   ],
+   "service": "moderation"
+  },
+  {
+   "index": 922,
+   "path": "/api/v1/events/form-configuration/admin/field-registry",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 923,
+   "path": "/api/v1/events/form-configuration/admin/",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 924,
+   "path": "/api/v1/events/form-configuration/admin/",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 925,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 926,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 927,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 928,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 929,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/versions/{version_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 930,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 931,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/activate",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 932,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/deactivate",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 933,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/retire",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 934,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/assignments",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 935,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/assignments",
+   "methods": [
+    "PUT"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 936,
+   "path": "/api/v1/events/form-configuration/admin/{config_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 937,
+   "path": "/api/v1/admin/event-form-configurations/field-registry",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 938,
+   "path": "/api/v1/admin/event-form-configurations/",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 939,
+   "path": "/api/v1/admin/event-form-configurations/",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 940,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 941,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 942,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 943,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 944,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}/versions/{version_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 945,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 946,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}/activate",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 947,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}/deactivate",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 948,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}/retire",
+   "methods": [
+    "POST"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 949,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}/assignments",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 950,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}/assignments",
+   "methods": [
+    "PUT"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 951,
+   "path": "/api/v1/admin/event-form-configurations/{config_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "events"
+  },
+  {
+   "index": 952,
+   "path": "/api/v1/trainings/form-configuration/admin/field-registry",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 953,
+   "path": "/api/v1/trainings/form-configuration/admin/",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 954,
+   "path": "/api/v1/trainings/form-configuration/admin/",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 955,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 956,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 957,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 958,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 959,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/versions/{version_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 960,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 961,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/activate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 962,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/deactivate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 963,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/retire",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 964,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/assignments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 965,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/assignments",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 966,
+   "path": "/api/v1/trainings/form-configuration/admin/{config_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 967,
+   "path": "/api/v1/admin/training-form-configurations/field-registry",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 968,
+   "path": "/api/v1/admin/training-form-configurations/",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 969,
+   "path": "/api/v1/admin/training-form-configurations/",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 970,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 971,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 972,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 973,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 974,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}/versions/{version_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 975,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 976,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}/activate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 977,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}/deactivate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 978,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}/retire",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 979,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}/assignments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 980,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}/assignments",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 981,
+   "path": "/api/v1/admin/training-form-configurations/{config_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 982,
+   "path": "/api/v1/programs/form-configuration/admin/field-registry",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 983,
+   "path": "/api/v1/programs/form-configuration/admin/",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 984,
+   "path": "/api/v1/programs/form-configuration/admin/",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 985,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 986,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 987,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 988,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 989,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}/versions/{version_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 990,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 991,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}/activate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 992,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}/deactivate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 993,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}/retire",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 994,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}/assignments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 995,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}/assignments",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 996,
+   "path": "/api/v1/programs/form-configuration/admin/{config_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 997,
+   "path": "/api/v1/admin/program-form-configurations/field-registry",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 998,
+   "path": "/api/v1/admin/program-form-configurations/",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 999,
+   "path": "/api/v1/admin/program-form-configurations/",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1000,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1001,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1002,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1003,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1004,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}/versions/{version_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1005,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}/publish",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1006,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}/activate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1007,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}/deactivate",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1008,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}/retire",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1009,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}/assignments",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1010,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}/assignments",
+   "methods": [
+    "PUT"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1011,
+   "path": "/api/v1/admin/program-form-configurations/{config_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1012,
+   "path": "/api/v1/cart/",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1013,
+   "path": "/api/v1/cart/",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1014,
+   "path": "/api/v1/cart/items/{item_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1015,
+   "path": "/api/v1/cart/items/{item_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1016,
+   "path": "/api/v1/cart/",
+   "methods": [
+    "DELETE"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1017,
+   "path": "/api/v1/cart/checkout",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1018,
+   "path": "/api/v1/cart/orders",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1019,
+   "path": "/api/v1/cart/orders/cancellation-requests",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1020,
+   "path": "/api/v1/cart/orders/{order_id}",
+   "methods": [
+    "GET"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1021,
+   "path": "/api/v1/cart/orders/{order_id}/cancel",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1022,
+   "path": "/api/v1/cart/orders/{order_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1023,
+   "path": "/api/v1/cart/orders/{order_id}/cancel/decision",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1024,
+   "path": "/api/v1/cart/orders/{order_id}/refund",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1025,
+   "path": "/api/v1/cart/orders/{order_id}/refund/approve",
+   "methods": [
+    "POST"
+   ],
+   "service": "commerce"
+  },
+  {
+   "index": 1026,
+   "path": "/api/v1/addresses/",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1027,
+   "path": "/api/v1/addresses/",
+   "methods": [
+    "POST"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1028,
+   "path": "/api/v1/auth/chat-token",
+   "methods": [
+    "POST"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1029,
+   "path": "/api/v1/auth/integration",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1030,
+   "path": "/api/v1/auth/test-users",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1031,
+   "path": "/api/v1/auth/dev-token",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1032,
+   "path": "/api/v1/auth/dev-token",
+   "methods": [
+    "POST"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1033,
+   "path": "/api/v1/auth/tenants",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1034,
+   "path": "/api/v1/auth/session",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1035,
+   "path": "/api/v1/auth/role-diagnostics",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1036,
+   "path": "/api/v1/health",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1037,
+   "path": "/api/v1/inventory",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  },
+  {
+   "index": 1038,
+   "path": "/api/v1/me/trainings",
+   "methods": [
+    "GET"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1039,
+   "path": "/api/v1/me/trainings/{training_id}/qr-show",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1040,
+   "path": "/api/v1/me/trainings/{training_id}/wishlist",
+   "methods": [
+    "POST"
+   ],
+   "service": "learning"
+  },
+  {
+   "index": 1041,
+   "path": "/health",
+   "methods": [
+    "GET"
+   ],
+   "service": "identity"
+  }
+ ]
+}

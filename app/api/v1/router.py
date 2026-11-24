@@ -77,6 +77,8 @@ _safe_include("app.api.v1.endpoints.media", prefix="/media", tags=["Media"])
 
 # CMS — Blogs
 _safe_include("app.api.v1.endpoints.blog", prefix="/cms/blogs", tags=["CMS — Blogs"])
+# Blog engagement: likes, saves, comments, reports and their moderation (same prefix; registered after the blog router)
+_safe_include("app.api.v1.endpoints.blog_engagement", prefix="/cms/blogs", tags=["CMS — Blog engagement"])
 
 # Virtual meeting providers (Zoom, Google Meet, Microsoft Teams)
 _safe_include("app.api.v1.endpoints.meeting", prefix="/meetings", tags=["Virtual Meetings"])

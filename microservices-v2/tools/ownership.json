@@ -1,0 +1,832 @@
+{
+ "services": {
+  "identity": {
+   "port": 8101,
+   "jobs": [],
+   "socketio": false,
+   "owns_docs": true,
+   "description": "Authentication and identity (Invigorate/Keycloak token integration, dev tokens, chat tokens), saved addresses, system health/inventory, and the public API documentation."
+  },
+  "catalog": {
+   "port": 8102,
+   "jobs": [],
+   "socketio": false,
+   "owns_docs": false,
+   "description": "Enterprises and their locations, products, services, dynamic attributes, catalog search and onboarding form templates."
+  },
+  "booking": {
+   "port": 8103,
+   "jobs": [
+    "service_booking_jobs"
+   ],
+   "socketio": false,
+   "owns_docs": false,
+   "description": "Service bookings: availability slots, booking settings, bookings, holds and reminders."
+  },
+  "events": {
+   "port": 8104,
+   "jobs": [
+    "event_discussion_jobs"
+   ],
+   "socketio": false,
+   "owns_docs": false,
+   "description": "Events, event categories and types, event media, discussions, event form configuration and the common (event + training) form contract."
+  },
+  "learning": {
+   "port": 8105,
+   "jobs": [
+    "training_reminders"
+   ],
+   "socketio": false,
+   "owns_docs": false,
+   "description": "Trainings (also served as /courses), training categories, programs, eBooks, learning media, form configuration for trainings and programs, and the learner's own trainings (/me)."
+  },
+  "commerce": {
+   "port": 8106,
+   "jobs": [
+    "payment_jobs"
+   ],
+   "socketio": false,
+   "owns_docs": false,
+   "description": "Cart and orders, payments, payment methods, currencies, tax, invoices, refunds, settlements, payment reports and finance."
+  },
+  "communication": {
+   "port": 8107,
+   "jobs": [
+    "group_data_export"
+   ],
+   "socketio": true,
+   "owns_docs": false,
+   "description": "Chat: conversations, groups, messages, attachments, typing, presence, devices, chat notifications, provider assignment, subscriptions, chat admin and the Socket.IO real-time server."
+  },
+  "notifications": {
+   "port": 8108,
+   "jobs": [],
+   "socketio": false,
+   "owns_docs": false,
+   "description": "Platform notifications, per-user notification settings/inbox and notification templates."
+  },
+  "content": {
+   "port": 8109,
+   "jobs": [],
+   "socketio": false,
+   "owns_docs": false,
+   "description": "CMS blogs and generic file uploads."
+  },
+  "meetings": {
+   "port": 8110,
+   "jobs": [
+    "meeting_jobs"
+   ],
+   "socketio": false,
+   "owns_docs": false,
+   "description": "Virtual meeting provider integration (Zoom, Google Meet, Microsoft Teams)."
+  },
+  "moderation": {
+   "port": 8111,
+   "jobs": [],
+   "socketio": false,
+   "owns_docs": false,
+   "description": "Super-admin approval queues (events, trainings, courses, programs, event categories/audits) and review moderation."
+  }
+ },
+ "mounts": [
+  {
+   "order": 1,
+   "module": "enterprise",
+   "prefix": "/enterprises",
+   "tags": [
+    "Enterprise"
+   ],
+   "attr": "router",
+   "service": "catalog"
+  },
+  {
+   "order": 2,
+   "module": "enterprise_locations",
+   "prefix": "/enterprises",
+   "tags": [
+    "Enterprise Locations"
+   ],
+   "attr": "router",
+   "service": "catalog"
+  },
+  {
+   "order": 3,
+   "module": "location",
+   "prefix": "/locations",
+   "tags": [
+    "Enterprise Locations"
+   ],
+   "attr": "router",
+   "service": "catalog"
+  },
+  {
+   "order": 4,
+   "module": "product",
+   "prefix": "/products",
+   "tags": [
+    "Products"
+   ],
+   "attr": "router",
+   "service": "catalog"
+  },
+  {
+   "order": 5,
+   "module": "service",
+   "prefix": "/services",
+   "tags": [
+    "Services"
+   ],
+   "attr": "router",
+   "service": "catalog"
+  },
+  {
+   "order": 6,
+   "module": "service_booking",
+   "prefix": "/services",
+   "tags": [
+    "Service Bookings"
+   ],
+   "attr": "service_router",
+   "service": "booking"
+  },
+  {
+   "order": 7,
+   "module": "service_booking",
+   "prefix": "/service-bookings",
+   "tags": [
+    "Service Bookings"
+   ],
+   "attr": "router",
+   "service": "booking"
+  },
+  {
+   "order": 8,
+   "module": "service_booking",
+   "prefix": "/users/me/service-bookings",
+   "tags": [
+    "Service Bookings"
+   ],
+   "attr": "me_router",
+   "service": "booking"
+  },
+  {
+   "order": 9,
+   "module": "service_booking",
+   "prefix": "/enterprises",
+   "tags": [
+    "Service Bookings"
+   ],
+   "attr": "enterprise_router",
+   "service": "booking"
+  },
+  {
+   "order": 10,
+   "module": "attribute",
+   "prefix": "/dynamic-attributes",
+   "tags": [
+    "Dynamic Attributes"
+   ],
+   "attr": "router",
+   "service": "catalog"
+  },
+  {
+   "order": 11,
+   "module": "attribute",
+   "prefix": "/attributes",
+   "tags": [
+    "Dynamic Attributes (Legacy)"
+   ],
+   "attr": "router",
+   "service": "catalog"
+  },
+  {
+   "order": 12,
+   "module": "event_media",
+   "prefix": "/events/media",
+   "tags": [
+    "Event Media"
+   ],
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 13,
+   "module": "form_common",
+   "prefix": "",
+   "tags": null,
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 14,
+   "module": "event_discussion",
+   "prefix": "/events/{event_id}/discussion",
+   "tags": [
+    "Event Discussions"
+   ],
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 15,
+   "module": "event_discussion",
+   "prefix": "/event-discussions",
+   "tags": [
+    "Event Discussions"
+   ],
+   "attr": "overview_router",
+   "service": "events"
+  },
+  {
+   "order": 16,
+   "module": "event",
+   "prefix": "/events",
+   "tags": [
+    "Events"
+   ],
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 17,
+   "module": "event_category",
+   "prefix": "/event-categories",
+   "tags": [
+    "Event Categories"
+   ],
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 18,
+   "module": "event_type",
+   "prefix": "/event-types",
+   "tags": [
+    "Event Types"
+   ],
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 19,
+   "module": "training",
+   "prefix": "/trainings",
+   "tags": [
+    "Trainings"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 20,
+   "module": "training_category",
+   "prefix": "/training-categories",
+   "tags": [
+    "Training Categories"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 21,
+   "module": "training",
+   "prefix": "/courses",
+   "tags": [
+    "Courses"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 22,
+   "module": "program",
+   "prefix": "/programs",
+   "tags": [
+    "Programs"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 23,
+   "module": "ebook",
+   "prefix": "/trainings",
+   "tags": [
+    "eBooks"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 24,
+   "module": "ebook",
+   "prefix": "/courses",
+   "tags": [
+    "eBooks"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 25,
+   "module": "ebook",
+   "prefix": "/admin",
+   "tags": [
+    "eBooks (Super Admin review)"
+   ],
+   "attr": "admin_router",
+   "service": "learning"
+  },
+  {
+   "order": 26,
+   "module": "media",
+   "prefix": "/media",
+   "tags": [
+    "Media"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 27,
+   "module": "blog",
+   "prefix": "/cms/blogs",
+   "tags": [
+    "CMS — Blogs"
+   ],
+   "attr": "router",
+   "service": "content"
+  },
+  {
+   "order": 28,
+   "module": "meeting",
+   "prefix": "/meetings",
+   "tags": [
+    "Virtual Meetings"
+   ],
+   "attr": "router",
+   "service": "meetings"
+  },
+  {
+   "order": 29,
+   "module": "currency",
+   "prefix": "/currencies",
+   "tags": [
+    "Currency"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 30,
+   "module": "tax",
+   "prefix": "/tax",
+   "tags": [
+    "Tax"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 31,
+   "module": "payment",
+   "prefix": "/payments",
+   "tags": [
+    "Payments"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 32,
+   "module": "payment_method",
+   "prefix": "/payment-methods",
+   "tags": [
+    "Payments"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 33,
+   "module": "invoice",
+   "prefix": "/invoices",
+   "tags": [
+    "Invoices"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 34,
+   "module": "refund",
+   "prefix": "/refunds",
+   "tags": [
+    "Refunds"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 35,
+   "module": "settlement",
+   "prefix": "/settlements",
+   "tags": [
+    "Settlement"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 36,
+   "module": "payment_report",
+   "prefix": "/payment-reports",
+   "tags": [
+    "Payment Reports"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 37,
+   "module": "finance",
+   "prefix": "/finance",
+   "tags": [
+    "Finance"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 38,
+   "module": "search",
+   "prefix": "/search",
+   "tags": [
+    "Search"
+   ],
+   "attr": "router",
+   "service": "catalog"
+  },
+  {
+   "order": 39,
+   "module": "review_admin",
+   "prefix": "/reviews",
+   "tags": [
+    "Reviews"
+   ],
+   "attr": "router",
+   "service": "moderation"
+  },
+  {
+   "order": 40,
+   "module": "onboarding_form",
+   "prefix": "/onboarding-forms",
+   "tags": [
+    "Onboarding Forms"
+   ],
+   "attr": "router",
+   "service": "catalog"
+  },
+  {
+   "order": 41,
+   "module": "conversation",
+   "prefix": "/conversations",
+   "tags": [
+    "Conversations"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 42,
+   "module": "group_chat",
+   "prefix": "/groups",
+   "tags": [
+    "Group Chat"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 43,
+   "module": "conversation_messages",
+   "prefix": "/conversations",
+   "tags": [
+    "Conversations"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 44,
+   "module": "typing_indicator",
+   "prefix": "/conversations",
+   "tags": [
+    "Typing Indicator"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 45,
+   "module": "message",
+   "prefix": "/messages",
+   "tags": [
+    "Messages"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 46,
+   "module": "attachment",
+   "prefix": "/attachments",
+   "tags": [
+    "Attachments"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 47,
+   "module": "uploads",
+   "prefix": "/uploads",
+   "tags": [
+    "Uploads"
+   ],
+   "attr": "router",
+   "service": "content"
+  },
+  {
+   "order": 48,
+   "module": "chat_notification",
+   "prefix": "/notifications",
+   "tags": [
+    "Chat Notifications"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 49,
+   "module": "platform_notification",
+   "prefix": "/notifications",
+   "tags": [
+    "Platform Notifications"
+   ],
+   "attr": "router",
+   "service": "notifications"
+  },
+  {
+   "order": 50,
+   "module": "user_notification",
+   "prefix": "/users",
+   "tags": [
+    "User Notifications"
+   ],
+   "attr": "router",
+   "service": "notifications"
+  },
+  {
+   "order": 51,
+   "module": "notification_template",
+   "prefix": "/notification-templates",
+   "tags": [
+    "Notification Templates"
+   ],
+   "attr": "router",
+   "service": "notifications"
+  },
+  {
+   "order": 52,
+   "module": "device",
+   "prefix": "/devices",
+   "tags": [
+    "Devices"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 53,
+   "module": "provider_assignment",
+   "prefix": "/providers",
+   "tags": [
+    "Provider Assignment"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 54,
+   "module": "chat_subscription",
+   "prefix": "/subscriptions",
+   "tags": [
+    "Chat Subscriptions"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 55,
+   "module": "presence",
+   "prefix": "/presence",
+   "tags": [
+    "Presence"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 56,
+   "module": "socket_io",
+   "prefix": "/socket-io",
+   "tags": [
+    "Socket.IO"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 57,
+   "module": "chat_admin",
+   "prefix": "/admin/chat",
+   "tags": [
+    "Chat Administration"
+   ],
+   "attr": "router",
+   "service": "communication"
+  },
+  {
+   "order": 58,
+   "module": "admin",
+   "prefix": "/admin",
+   "tags": [
+    "Admin — Approvals"
+   ],
+   "attr": "router",
+   "service": "moderation",
+   "v2_module": "admin_diagnostics"
+  },
+  {
+   "order": 59,
+   "module": "event_form_config_admin",
+   "prefix": "/events/form-configuration/admin",
+   "tags": [
+    "Event Form Configuration (Super Admin)"
+   ],
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 60,
+   "module": "event_form_config_admin",
+   "prefix": "/admin/event-form-configurations",
+   "tags": [
+    "Event Form Configuration (Super Admin)"
+   ],
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 61,
+   "module": "training_form_config_admin",
+   "prefix": "/trainings/form-configuration/admin",
+   "tags": [
+    "Training Form Configuration (Super Admin)"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 62,
+   "module": "training_form_config_admin",
+   "prefix": "/admin/training-form-configurations",
+   "tags": [
+    "Training Form Configuration (Super Admin)"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 63,
+   "module": "program_form_config_admin",
+   "prefix": "/programs/form-configuration/admin",
+   "tags": [
+    "Program Form Configuration (Super Admin)"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 64,
+   "module": "program_form_config_admin",
+   "prefix": "/admin/program-form-configurations",
+   "tags": [
+    "Program Form Configuration (Super Admin)"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 65,
+   "module": "cart",
+   "prefix": "/cart",
+   "tags": [
+    "Cart"
+   ],
+   "attr": "router",
+   "service": "commerce"
+  },
+  {
+   "order": 66,
+   "module": "address",
+   "prefix": "/addresses",
+   "tags": [
+    "Addresses"
+   ],
+   "attr": "router",
+   "service": "identity"
+  },
+  {
+   "order": 67,
+   "module": "auth",
+   "prefix": "/auth",
+   "tags": [
+    "Authentication"
+   ],
+   "attr": "router",
+   "service": "identity"
+  },
+  {
+   "order": 68,
+   "module": "system",
+   "prefix": "",
+   "tags": [
+    "System"
+   ],
+   "attr": "router",
+   "service": "identity"
+  },
+  {
+   "order": 69,
+   "module": "my_trainings",
+   "prefix": "/me",
+   "tags": [
+    "Trainings"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 38,
+   "module": "search_events",
+   "prefix": "/search",
+   "tags": [
+    "Search"
+   ],
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 38,
+   "module": "search_learning",
+   "prefix": "/search",
+   "tags": [
+    "Search"
+   ],
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 13,
+   "module": "form_common_training",
+   "prefix": "",
+   "tags": null,
+   "attr": "router",
+   "service": "learning"
+  },
+  {
+   "order": 58,
+   "module": "admin_events",
+   "prefix": "/admin",
+   "tags": [
+    "Admin — Approvals"
+   ],
+   "attr": "router",
+   "service": "events"
+  },
+  {
+   "order": 58,
+   "module": "admin_learning",
+   "prefix": "/admin",
+   "tags": [
+    "Admin — Approvals"
+   ],
+   "attr": "router",
+   "service": "learning"
+  }
+ ]
+}

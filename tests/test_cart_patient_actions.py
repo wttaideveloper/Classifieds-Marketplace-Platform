@@ -103,3 +103,36 @@ def test_store_approval_restocks_paid_order_once_without_claiming_refund(world, 
     assert client.post(path+"/cancel/decision",json={"action":"approve"}).status_code==409
     db.refresh(product)
     assert product.stock_quantity==3
+
+
+def test_a_cart_holds_one_business_and_checkout_refuses_a_mixed_one(world, monkeypatch):
+    from app.models.cart_model import CartItem
+    from tests.pay_support import TENANT_B
+
+    db = world.db
+    OrderStatusEvent.__table__.create(db.get_bind(), checkfirst=True)
+    world.app.include_router(router, prefix="/cart")
+    user = world.people.priya
+    world.app.dependency_overrides[get_current_user] = lambda: user
+    ent_a = db.query(Enterprise).filter_by(tenant_id=TENANT_A).one()
+    ent_b = db.query(Enterprise).filter_by(tenant_id=TENANT_B).one()
+    mat = Product(tenant_id=TENANT_A, enterprise_id=ent_a.id, product_name="Mat", product_category="Fitness", product_price=10, stock_quantity=5, status="active", currency="INR")
+    strap = Product(tenant_id=None, enterprise_id=ent_a.id, product_name="Strap", product_category="Fitness", product_price=5, stock_quantity=5, status="active", currency="INR")   # tenant via its enterprise
+    other = Product(tenant_id=TENANT_B, enterprise_id=ent_b.id, product_name="Band", product_category="Fitness", product_price=7, stock_quantity=5, status="active", currency="INR")
+    db.add_all([mat, strap, other])
+    db.commit()
+    client = world.as_user(user)
+
+    assert client.post("/cart/", json={"product_id": str(mat.id), "quantity": 1}).status_code == 201
+    assert client.post("/cart/", json={"product_id": str(strap.id), "quantity": 1}).status_code == 201          # same business, found through its enterprise
+    refused = client.post("/cart/", json={"product_id": str(other.id), "quantity": 1})
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "CART_OTHER_BUSINESS"
+
+    from app.models.cart_model import Cart
+
+    mine = db.query(Cart).filter_by(user_id=UUID(str(user["id"]))).first()
+    db.add(CartItem(cart_id=mine.id, product_id=other.id, quantity=1, unit_price=7, currency="INR"))     # a cart that mixed before the rule existed
+    db.commit()
+    address = dict(full_name="Jane Doe", phone="12345678", line1="12 Test Way", city="Pune", state="MH", zip="411001", country="IN")
+    mixed = client.post("/cart/checkout", json={"shipping_address": address})
+    assert mixed.status_code == 409 and mixed.json()["detail"]["code"] == "CART_MIXED_BUSINESSES"

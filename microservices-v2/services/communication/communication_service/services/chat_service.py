@@ -1,0 +1,1045 @@
+from datetime import datetime
+from uuid import UUID
+
+from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
+
+from communication_service.models.chat_model import Conversation, ConversationParticipant
+from communication_service.repository import chat_repo as chat_repo
+from communication_service.services.chat_notification_service import (
+    create_message_notifications,
+    mark_conversation_notifications_read_service,
+    sync_platform_inbox_read_for_conversation,
+)
+from communication_service.repository.query_utils import build_pagination_meta
+from communication_service.services import chat_user_names
+from communication_service.schemas.chat_schema import (
+    ChatEligibilityResponse,
+    ChatExportResponse,
+    ChatDashboardResponse,
+    ConversationArchiveResponse,
+    ConversationCreate,
+    ConversationDeleteResponse,
+    ConversationListItemResponse,
+    ConversationPaginatedResponse,
+    ConversationResponse,
+    ConversationStatusUpdateResponse,
+    ProviderConversationListItemResponse,
+    ProviderConversationPaginatedResponse,
+    CursorPaginatedResponse,
+    CursorPaginationMeta,
+    MessageCreate,
+    MessageDeleteResponse,
+    MessageReadResponse,
+    MessageReadStatusResponse,
+    MessageResponse,
+    MessageUpdate,
+    MonthlyLimitResponse,
+    OnlineUsersResponse,
+    ParticipantResponse,
+    PresenceResponse,
+    ProviderAssignmentResponse,
+    TypingIndicatorResponse,
+)
+
+
+def _parse_user_id(current_user: dict) -> UUID:
+    return UUID(str(current_user["id"]))
+
+
+def _is_patient(current_user: dict) -> bool:
+    """A customer / patient: their group chats are in the Groups tab (GET /groups), not in this inbox."""
+    return str((current_user or {}).get("role") or "").lower() == "customer"
+
+
+GROUP_USE_MESSAGE = "This is a group chat. Use the /api/v1/groups endpoints for its messages."
+
+
+def _refuse_if_group(db: Session, conversation_id: UUID) -> None:
+    """The generic message endpoints know nothing about a group's hidden messages, history cut-off or privacy rules,
+    so a group's messages are only ever read or changed through /groups."""
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if conversation is not None and conversation.conversation_type == "group":
+        raise HTTPException(status_code=409, detail=GROUP_USE_MESSAGE)
+
+
+def _participant_archive_fields(participant: ConversationParticipant | None) -> dict:
+    """Archive state as the caller sees it: their own participant row, never the other person's. Someone with
+    no participant row (e.g. a provider who was assigned but has never archived) has not archived it."""
+    is_archived = bool(participant and participant.is_archived)
+    return {
+        "is_archived": is_archived,
+        "archived_at": participant.archived_at if is_archived else None,
+    }
+
+
+def _customer_names(
+    db: Session, conversations: list[Conversation], current_user: dict | None, access_token: str | None = None,
+    fallback_ids: dict | None = None,
+) -> dict:
+    """{conversation id: customer display name or None} for a page of conversations.
+
+    The customer is the conversation's customer-role participant; where there is none, `fallback_ids` (the other
+    participant, the same id the list returns as other_participant_user_id) is used, so the name always belongs to
+    the person that id points to. Names come from the identity service when it knows them, else from what the person's
+    own sign-in and records gave us (see chat_user_names)."""
+    customer_ids = dict(chat_repo.get_customer_ids_for_conversations(db, conversations))
+    for conversation in conversations:
+        if conversation.id not in customer_ids and conversation.conversation_type != "group":
+            other = (fallback_ids or {}).get(conversation.id)
+            if other is not None:
+                customer_ids[conversation.id] = other
+    if not customer_ids:
+        return {}
+    names = chat_user_names.resolve_display_names(
+        customer_ids.values(),
+        tenant_ids=[c.tenant_id for c in conversations],
+        current_user=current_user,
+        access_token=access_token,
+        db=db,
+    )
+    return {cid: names.get(str(uid)) for cid, uid in customer_ids.items()}
+
+
+def _map_conversation_detail(
+    db: Session, conversation: Conversation, user_id: UUID, current_user: dict | None = None,
+    access_token: str | None = None,
+) -> dict:
+    participant = chat_repo.get_participant(db, conversation.id, user_id)
+    unread = chat_repo.count_unread_messages(
+        db, conversation.id, user_id, participant.last_read_at if participant else None
+    )
+    preview, preview_at = chat_repo.resolve_conversation_preview(db, conversation)
+    return {
+        "id": conversation.id,
+        "tenant_id": conversation.tenant_id,
+        "status": conversation.status,
+        "conversation_type": conversation.conversation_type,
+        "is_read_only": conversation.is_read_only,
+        "subject": conversation.subject,
+        "avatar_url": conversation.avatar_url if conversation.conversation_type == "group" else None,
+        "context_type": conversation.context_type,
+        "context_id": conversation.context_id,
+        "assigned_provider_id": conversation.assigned_provider_id,
+        "expires_at": conversation.expires_at,
+        "last_message_at": preview_at,
+        "last_message_preview": preview,
+        "created_by": conversation.created_by,
+        "customer_name": _customer_names(
+            db, [conversation], current_user, access_token,
+            fallback_ids=chat_repo.get_other_participant_ids_for_conversations(db, [conversation.id], user_id),
+        ).get(conversation.id),
+        "unread_count": unread,
+        **_participant_archive_fields(participant),
+        "participants": [
+            ParticipantResponse.model_validate(p).model_dump()
+            for p in conversation.participants
+            if p.membership_status == "active"
+        ],
+        "created_at": conversation.created_at,
+        "updated_at": conversation.updated_at,
+    }
+
+
+def _map_conversation_list_item(
+    db: Session,
+    conversation: Conversation,
+    user_id: UUID,
+    *,
+    latest_messages: dict | None = None,
+    last_message_read_by: dict | None = None,
+    other_participant_user_id: UUID | None = None,
+    participants: dict | None = None,
+    unread_counts: dict | None = None,
+    customer_names: dict | None = None,
+) -> dict:
+    # participants/unread_counts are batched per-page by the caller (see
+    # list_conversations_service etc.) to avoid a get_participant() +
+    # count_unread_messages() query per conversation. Falling back to the
+    # single-item lookups keeps this safe for any caller that doesn't batch.
+    if participants is not None:
+        participant = participants.get(conversation.id)
+    else:
+        participant = chat_repo.get_participant(db, conversation.id, user_id)
+    if unread_counts is not None:
+        unread = unread_counts.get(conversation.id, 0)
+    else:
+        unread = chat_repo.count_unread_messages(
+            db, conversation.id, user_id, participant.last_read_at if participant else None
+        )
+    latest = (latest_messages or {}).get(conversation.id)
+    if latest is None:
+        latest = chat_repo.get_latest_conversation_message(db, conversation.id)
+
+    if latest is not None:
+        preview = chat_repo.message_list_preview(latest)
+        preview_at = latest.created_at
+        read_by = (last_message_read_by or {}).get(latest.id)
+        if read_by is None:
+            read_by = [r.user_id for r in chat_repo.get_message_read_receipts(db, latest.id)]
+        last_message = {
+            "sender_id": latest.sender_id,
+            "read_by": read_by,
+        }
+    else:
+        preview, preview_at = conversation.last_message_preview, conversation.last_message_at
+        last_message = None
+
+    item = {
+        "id": conversation.id,
+        "status": conversation.status,
+        "conversation_type": conversation.conversation_type,
+        "group_kind": conversation.group_kind if conversation.conversation_type == "group" else None,
+        "subject": conversation.subject,
+        "avatar_url": conversation.avatar_url if conversation.conversation_type == "group" else None,
+        "last_message_at": preview_at,
+        "last_message_preview": preview,
+        "last_message": last_message,
+        "unread_count": unread,
+        "assigned_provider_id": conversation.assigned_provider_id,
+        "customer_name": (customer_names or {}).get(conversation.id),
+        **_participant_archive_fields(participant),
+        "updated_at": conversation.updated_at,
+    }
+    if other_participant_user_id is not None:
+        item["other_participant_user_id"] = other_participant_user_id
+    return item
+
+
+def _validate_chat_rules(conversation: Conversation) -> None:
+    if conversation.expires_at and conversation.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Conversation has expired")
+    # Archiving is a per-person view setting (conversation_participants.is_archived), not a state of the
+    # conversation, so it never blocks messaging. "archived" is still accepted here for chats archived the old
+    # way (status = 'archived') that the archive migration has not converted yet.
+    if conversation.status not in ("open", "archived"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Conversation is {conversation.status}. Cannot send messages.",
+        )
+    if conversation.is_read_only:
+        raise HTTPException(status_code=400, detail="Conversation is read-only")
+
+
+def _check_subscription_eligibility(db: Session, user_id: UUID, conversation: Conversation) -> None:
+    if conversation.conversation_type != "preview":
+        return
+
+    sub = chat_repo.get_or_create_subscription(db, user_id)
+    remaining = sub.monthly_message_limit - sub.messages_used_this_month
+    if remaining <= 0:
+        raise HTTPException(
+            status_code=403,
+            detail="Monthly free message limit reached. Upgrade your subscription to continue.",
+        )
+
+
+def create_conversation_service(
+    db: Session, current_user: dict, data: ConversationCreate, access_token: str | None = None
+):
+    user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
+    participant_ids = [p.user_id for p in data.participant_ids]
+
+    existing = chat_repo.find_existing_conversation(
+        db,
+        user_id,
+        participant_ids,
+        context_type=data.context_type,
+        context_id=data.context_id,
+    )
+    if existing:
+        # Opening a chat again after deleting it brings it back (empty: only newer messages are shown).
+        chat_repo.restore_deleted_participants(db, existing.id, [user_id])
+        return ConversationResponse.model_validate(
+            _map_conversation_detail(db, existing, user_id, current_user, access_token)
+        )
+
+    provider_id = data.provider_id
+    if provider_id is None:
+        provider_id = next(
+            (p.user_id for p in data.participant_ids if p.role == "provider"),
+            None,
+        )
+
+    conversation = Conversation(
+        tenant_id=data.tenant_id,
+        subject=data.subject,
+        conversation_type=data.conversation_type,
+        context_type=data.context_type,
+        context_id=data.context_id,
+        created_by=user_id,
+        assigned_provider_id=provider_id,
+    )
+
+    if data.conversation_type == "preview":
+        from datetime import timedelta
+        conversation.expires_at = datetime.utcnow() + timedelta(days=7)
+
+    participants = [
+        ConversationParticipant(user_id=user_id, role="customer"),
+    ]
+    for p in data.participant_ids:
+        participants.append(ConversationParticipant(user_id=p.user_id, role=p.role))
+
+    conversation.participants = participants
+    conversation = chat_repo.create_conversation(db, conversation)
+
+    if provider_id:
+        chat_repo.assign_provider(db, conversation.id, provider_id, user_id)
+        conversation.assigned_provider_id = provider_id
+        chat_repo.save_conversation(db, conversation)
+        if not chat_repo.get_participant(db, conversation.id, provider_id):
+            db.add(
+                ConversationParticipant(
+                    conversation_id=conversation.id,
+                    user_id=provider_id,
+                    role="provider",
+                )
+            )
+            db.commit()
+
+    conversation = chat_repo.get_conversation_by_id(db, conversation.id, with_participants=True)
+    return ConversationResponse.model_validate(
+        _map_conversation_detail(db, conversation, user_id, current_user, access_token)
+    )
+
+
+def _apply_inbox_fields(db: Session, items: list, rows: list[dict], current_user: dict | None, access_token: str | None, participants: dict) -> None:
+    """Make every row of the one inbox look the same: 1:1 chats and groups. Adds `sender_name` and `preview` to each last message, and for a
+    group replaces the generic fields with the group's own rules: what the caller is allowed to see (messages from before they joined, retracted
+    or removed ones), their unread count, the name they may see for the sender, and `member_count`, `can_post` and `visibility_notice`."""
+    from sqlalchemy import func
+
+    from communication_service.services import group_chat_common as common
+    from communication_service.services import group_chat_service as groups
+
+    group_ids = [c.id for c in items if c.conversation_type == "group"]
+    member_counts = dict(
+        db.query(ConversationParticipant.conversation_id, func.count(ConversationParticipant.id))
+        .filter(ConversationParticipant.conversation_id.in_(group_ids), ConversationParticipant.membership_status == "active")
+        .group_by(ConversationParticipant.conversation_id).all()
+    ) if group_ids else {}
+    senders = {r["last_message"]["sender_id"] for c, r in zip(items, rows) if c.conversation_type != "group" and r.get("last_message") and r["last_message"].get("sender_id")}
+    names = chat_user_names.resolve_display_names(
+        senders, tenant_ids=[c.tenant_id for c in items], current_user=current_user, access_token=access_token, db=db) if senders else {}
+    for conversation, row in zip(items, rows):
+        row["conversation_subtype"] = row["conversation_type"]
+        row["conversation_type"] = "group" if conversation.conversation_type == "group" else "direct"
+        if conversation.conversation_type != "group":
+            last = row.get("last_message")
+            if last is not None:
+                last["sender_name"], last["preview"] = names.get(str(last["sender_id"])), row.get("last_message_preview")
+            continue
+        member = participants.get(conversation.id)
+        if member is None:
+            continue
+        newest = groups._last_visible_message(db, conversation, member)
+        preview = chat_repo.message_list_preview(newest) if newest else None
+        row["last_message_at"], row["last_message_preview"] = (newest.created_at if newest else None), preview
+        if newest is None:
+            row["last_message"] = None
+        elif newest.message_type == "system":
+            row["last_message"] = {"sender_id": None, "sender_name": None, "preview": preview, "read_by": None}
+        else:
+            full = common.resolve_names(db, conversation, [newest.sender_id], current_user)
+            author = common.get_member(db, conversation.id, newest.sender_id)
+            name = common.name_for_viewer(conversation, member, author, full) if author is not None else full.get(str(newest.sender_id))
+            row["last_message"] = {"sender_id": newest.sender_id, "sender_name": name, "preview": preview, "read_by": None}
+        count = member_counts.get(conversation.id, 0)
+        row.update(unread_count=groups._unread_count(db, conversation, member), assigned_provider_id=None, other_participant_user_id=None, customer_name=None,
+                   member_count=count, can_post=bool(groups.permissions_for(conversation, member)["can_post"]), visibility_notice=common.visibility_notice(count))
+
+
+def list_conversations_service(
+    db: Session,
+    current_user: dict,
+    *,
+    status_filter: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    access_token: str | None = None,
+):
+    user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
+    items, total = chat_repo.get_user_conversations(
+        db, user_id, status=status_filter, search=search, page=page, page_size=page_size,
+    )
+    item_ids = [item.id for item in items]
+    latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
+    last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
+        db, [message.id for message in latest_messages.values()]
+    )
+    participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
+    unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
+    customer_names = _customer_names(db, items, current_user, access_token)
+    rows = [
+        _map_conversation_list_item(
+            db,
+            item,
+            user_id,
+            latest_messages=latest_messages,
+            last_message_read_by=last_message_read_by,
+            participants=participants,
+            unread_counts=unread_counts,
+            customer_names=customer_names,
+        )
+        for item in items
+    ]
+    _apply_inbox_fields(db, items, rows, current_user, access_token, participants)
+    return ConversationPaginatedResponse(
+        items=[ConversationListItemResponse.model_validate(row) for row in rows],
+        pagination=build_pagination_meta(total, page, page_size),
+    )
+
+
+def list_provider_conversations_service(
+    db: Session,
+    current_user: dict,
+    *,
+    status_filter: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    access_token: str | None = None,
+):
+    user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
+    items, total = chat_repo.get_provider_conversations(
+        db, user_id, status=status_filter, page=page, page_size=page_size
+    )
+    item_ids = [item.id for item in items]
+    latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
+    last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
+        db, [message.id for message in latest_messages.values()]
+    )
+    other_participants = chat_repo.get_other_participant_ids_for_conversations(
+        db, item_ids, user_id
+    )
+    participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
+    unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
+    customer_names = _customer_names(db, items, current_user, access_token, fallback_ids=other_participants)
+    return ProviderConversationPaginatedResponse(
+        items=[
+            ProviderConversationListItemResponse.model_validate(
+                _map_conversation_list_item(
+                    db,
+                    item,
+                    user_id,
+                    latest_messages=latest_messages,
+                    last_message_read_by=last_message_read_by,
+                    other_participant_user_id=other_participants.get(item.id),
+                    participants=participants,
+                    unread_counts=unread_counts,
+                    customer_names=customer_names,
+                )
+            )
+            for item in items
+        ],
+        pagination=build_pagination_meta(total, page, page_size),
+    )
+
+
+def get_conversation_service(
+    db: Session, current_user: dict, conversation_id: UUID, access_token: str | None = None
+):
+    user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id, with_participants=True)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    participant = chat_repo.get_participant(db, conversation_id, user_id)
+    if participant is None:
+        raise HTTPException(status_code=403, detail="Not authorized to view this conversation")
+    if participant.is_deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")  # the caller deleted it
+    return ConversationResponse.model_validate(
+        _map_conversation_detail(db, conversation, user_id, current_user, access_token)
+    )
+
+
+def _update_conversation_status(
+    db: Session,
+    current_user: dict,
+    conversation_id: UUID,
+    new_status: str,
+) -> ConversationStatusUpdateResponse:
+    user_id = _parse_user_id(current_user)
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not chat_repo.is_participant(db, conversation_id, user_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    conversation.status = new_status
+    conversation = chat_repo.save_conversation(db, conversation)
+    return ConversationStatusUpdateResponse(
+        id=conversation.id,
+        status=conversation.status,
+        updated_at=conversation.updated_at,
+    )
+
+
+def close_conversation_service(db: Session, current_user: dict, conversation_id: UUID):
+    return _update_conversation_status(db, current_user, conversation_id, "closed")
+
+
+def reopen_conversation_service(db: Session, current_user: dict, conversation_id: UUID):
+    return _update_conversation_status(db, current_user, conversation_id, "open")
+
+
+def delete_conversation_service(db: Session, current_user: dict, conversation_id: UUID) -> ConversationDeleteResponse:
+    """Delete a conversation for the caller only.
+
+    The customer and the provider share one conversation, so deleting it cannot remove it for both: it disappears
+    from the caller's inbox and archive, and their history is cleared, while the other participant, the messages
+    and the admin view are untouched. It comes back (empty, from the new message on) if the other person writes or
+    the caller opens the chat again. Idempotent: deleting again is a 200 with the same body."""
+    user_id = _parse_user_id(current_user)
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not (
+        chat_repo.is_participant(db, conversation_id, user_id)
+        or conversation.assigned_provider_id == user_id
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    chat_repo.set_participant_deleted(db, conversation, user_id)
+    return ConversationDeleteResponse(id=conversation.id, deleted=True)
+
+
+def archive_conversation_service(
+    db: Session,
+    current_user: dict,
+    conversation_id: UUID,
+    *,
+    archived: bool,
+) -> ConversationArchiveResponse:
+    user_id = _parse_user_id(current_user)
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    # Only people in the conversation may archive it: a participant, or the provider it is assigned to (the
+    # provider's own inbox lists it, but assignment does not always create a participant row).
+    if not (
+        chat_repo.is_participant(db, conversation_id, user_id)
+        or conversation.assigned_provider_id == user_id
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # Archiving is per person: only the caller's own state changes. The conversation's status and updated_at,
+    # and the other participant's state, are left alone.
+    participant = chat_repo.set_participant_archived(db, conversation, user_id, archived)
+    archive_fields = _participant_archive_fields(participant)
+    return ConversationArchiveResponse(
+        id=conversation.id,
+        status=conversation.status,
+        is_archived=archive_fields["is_archived"],
+        archived_at=archive_fields["archived_at"],
+        updated_at=conversation.updated_at,
+    )
+
+
+def search_conversations_service(
+    db: Session,
+    current_user: dict,
+    *,
+    search: str,
+    provider_id: UUID | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    access_token: str | None = None,
+):
+    user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
+    items, total = chat_repo.search_conversations(
+        db, user_id, search=search, provider_id=provider_id, page=page, page_size=page_size,
+    )
+    item_ids = [item.id for item in items]
+    latest_messages = chat_repo.get_latest_messages_for_conversations(db, item_ids)
+    last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
+        db, [message.id for message in latest_messages.values()]
+    )
+    participants = chat_repo.get_participants_for_conversations(db, item_ids, user_id)
+    unread_counts = chat_repo.get_unread_counts_for_conversations(db, item_ids, user_id)
+    customer_names = _customer_names(db, items, current_user, access_token)
+    rows = [
+        _map_conversation_list_item(
+            db, item, user_id, latest_messages=latest_messages, last_message_read_by=last_message_read_by,
+            participants=participants, unread_counts=unread_counts, customer_names=customer_names,
+        )
+        for item in items
+    ]
+    _apply_inbox_fields(db, items, rows, current_user, access_token, participants)
+    return ConversationPaginatedResponse(
+        items=[ConversationListItemResponse.model_validate(row) for row in rows],
+        pagination=build_pagination_meta(total, page, page_size),
+    )
+
+
+def send_message_service(db: Session, current_user: dict, data: MessageCreate):
+    user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
+    conversation = chat_repo.get_conversation_by_id(db, data.conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not chat_repo.is_participant(db, data.conversation_id, user_id):
+        raise HTTPException(status_code=403, detail="Not authorized to send messages")
+    if conversation.conversation_type == "group":
+        from communication_service.services import group_chat_messages
+
+        return group_chat_messages.send_via_generic_path(db, current_user, data)
+
+    _validate_chat_rules(conversation)
+    _check_subscription_eligibility(db, user_id, conversation)
+
+    if data.conversation_id and data.attachment_id:
+        attachment = chat_repo.get_attachment_by_id(db, data.attachment_id)
+        if not attachment or attachment.conversation_id != data.conversation_id:
+            raise HTTPException(status_code=400, detail="Invalid attachment for this conversation")
+
+    from communication_service.models.chat_model import Message
+
+    message = Message(
+        conversation_id=data.conversation_id,
+        sender_id=user_id,
+        content=data.content,
+        message_type=data.message_type,
+        attachment_id=data.attachment_id,
+    )
+    message = chat_repo.create_message(db, message)
+    # A new message brings the chat back for anyone who deleted it (they see only messages from now on), so an
+    # incoming reply is never lost to a deleted chat. Sending also reopens it for the sender.
+    chat_repo.restore_deleted_participants(db, data.conversation_id)
+
+    if data.attachment_id:
+        attachment = chat_repo.get_attachment_by_id(db, data.attachment_id)
+        if attachment:
+            attachment.message_id = message.id
+            db.commit()
+
+    preview = chat_repo.message_list_preview(message)
+    conversation.last_message_at = message.created_at
+    conversation.last_message_preview = preview
+    chat_repo.save_conversation(db, conversation)
+
+    if conversation.conversation_type == "preview":
+        chat_repo.increment_message_usage(db, user_id)
+
+    from communication_service.services import chat_notification_content as notice
+
+    sender_name = notice.sender_name_for(db, conversation, user_id, current_user)
+    content = notice.build(
+        notice.ONE_TO_ONE, title=sender_name or conversation.subject or notice.GENERIC_TITLE,
+        conversation_id=data.conversation_id, message=message,
+        attachment=chat_repo.get_attachment_by_id(db, message.attachment_id) if message.attachment_id else None,
+        sender_name=sender_name,
+    )
+    create_message_notifications(
+        db,
+        conversation_id=data.conversation_id,
+        sender_id=user_id,
+        message_id=message.id,
+        title=content.title,
+        body=content.body,
+        data=content.data,
+    )
+
+    return _map_message(db, message)
+
+
+def get_messages_service(
+    db: Session,
+    current_user: dict,
+    conversation_id: UUID,
+    *,
+    cursor: str | None = None,
+    limit: int = 50,
+):
+    user_id = _parse_user_id(current_user)
+    chat_user_names.remember_display_name(db, current_user)
+    _refuse_if_group(db, conversation_id)
+    participant = chat_repo.get_participant(db, conversation_id, user_id)
+    if participant is None:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if participant.is_deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")  # the caller deleted it
+
+    items, has_more, next_cursor = chat_repo.get_conversation_messages(
+        db, conversation_id, cursor=cursor, limit=limit,
+        since=participant.deleted_at,  # a chat that came back shows only what was said after the deletion
+    )
+    return CursorPaginatedResponse(
+        items=[MessageResponse.model_validate(_map_message(db, m)) for m in items],
+        pagination=CursorPaginationMeta(
+            has_more=has_more,
+            next_cursor=next_cursor,
+            limit=limit,
+        ),
+    )
+
+
+def _map_message(db: Session, message) -> dict:
+    receipts = chat_repo.get_message_read_receipts(db, message.id)
+    return {
+        "id": message.id,
+        "conversation_id": message.conversation_id,
+        "sender_id": message.sender_id,
+        "content": message.content,
+        "message_type": message.message_type,
+        "attachment_id": message.attachment_id,
+        "is_deleted": message.is_deleted,
+        "is_edited": bool(getattr(message, "is_edited", False)),
+        "edited_at": getattr(message, "edited_at", None),
+        "created_at": message.created_at,
+        "read_by": [r.user_id for r in receipts],
+    }
+
+
+def mark_message_read_service(db: Session, current_user: dict, message_id: UUID):
+    user_id = _parse_user_id(current_user)
+    message = chat_repo.get_message_by_id(db, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    _refuse_if_group(db, message.conversation_id)       # a group's read receipts follow its own privacy rules: POST /groups/{id}/read
+    if not chat_repo.is_participant(db, message.conversation_id, user_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    receipt = chat_repo.mark_message_read(db, message_id, user_id)
+    sync_platform_inbox_read_for_conversation(db, current_user, message.conversation_id)
+    return MessageReadResponse(
+        message_id=receipt.message_id,
+        user_id=receipt.user_id,
+        read_at=receipt.read_at,
+    )
+
+
+def mark_conversation_read_service(db: Session, current_user: dict, conversation_id: UUID):
+    user_id = _parse_user_id(current_user)
+    if not chat_repo.is_participant(db, conversation_id, user_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    chat_repo.mark_conversation_read(db, conversation_id, user_id)
+    mark_conversation_notifications_read_service(db, current_user, conversation_id)
+    sync_platform_inbox_read_for_conversation(db, current_user, conversation_id)
+    return {"conversation_id": conversation_id, "read_at": datetime.utcnow()}
+
+
+def get_read_status_service(db: Session, current_user: dict, message_id: UUID):
+    user_id = _parse_user_id(current_user)
+    message = chat_repo.get_message_by_id(db, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    _refuse_if_group(db, message.conversation_id)
+    if not chat_repo.is_participant(db, message.conversation_id, user_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    receipts = chat_repo.get_message_read_receipts(db, message_id)
+    conversation = chat_repo.get_conversation_by_id(db, message.conversation_id, with_participants=True)
+    total_recipients = len(conversation.participants) - 1 if conversation else 0
+
+    return MessageReadStatusResponse(
+        message_id=message_id,
+        total_recipients=max(total_recipients, 0),
+        read_count=len(receipts),
+        read_by=[
+            MessageReadResponse(message_id=r.message_id, user_id=r.user_id, read_at=r.read_at)
+            for r in receipts
+        ],
+    )
+
+
+def delete_message_service(db: Session, current_user: dict, message_id: UUID):
+    user_id = _parse_user_id(current_user)
+    message = chat_repo.get_message_by_id(db, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    _refuse_if_group(db, message.conversation_id)  # a group message is retracted / hidden, never deleted
+    if message.sender_id != user_id and current_user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this message")
+
+    message = chat_repo.soft_delete_message(db, message)
+    chat_repo.sync_conversation_last_message(db, message.conversation_id)
+    return MessageDeleteResponse(
+        id=message.id,
+        conversation_id=message.conversation_id,
+        is_deleted=message.is_deleted,
+        deleted_at=message.deleted_at,
+    )
+
+
+def edit_message_service(db: Session, current_user: dict, message_id: UUID, content: str):
+    user_id = _parse_user_id(current_user)
+    message = chat_repo.get_message_by_id(db, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    _refuse_if_group(db, message.conversation_id)  # a group message has a 15-minute window and keeps the original
+    if message.sender_id != user_id and current_user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Not authorized to edit this message")
+    if message.is_deleted:
+        raise HTTPException(status_code=400, detail="Deleted messages cannot be edited")
+    if message.message_type != "text":
+        raise HTTPException(status_code=400, detail="Only text messages can be edited")
+
+    message = chat_repo.update_message(db, message, content=content.strip())
+
+    latest = chat_repo.get_latest_conversation_message(db, message.conversation_id)
+    if latest and latest.id == message.id:
+        chat_repo.sync_conversation_last_message(db, message.conversation_id)
+
+    return _map_message(db, message)
+
+
+def search_messages_service(
+    db: Session,
+    current_user: dict,
+    *,
+    search: str,
+    conversation_id: UUID | None = None,
+    provider_id: UUID | None = None,
+    page: int = 1,
+    page_size: int = 20,
+):
+    user_id = _parse_user_id(current_user)
+    items, total = chat_repo.search_messages(
+        db,
+        user_id,
+        search=search,
+        conversation_id=conversation_id,
+        provider_id=provider_id,
+        page=page,
+        page_size=page_size,
+    )
+    from communication_service.schemas.chat_schema import MessageResponse
+    from communication_service.schemas.common_schema import PaginatedResponse
+
+    return PaginatedResponse(
+        items=[MessageResponse.model_validate(_map_message(db, m)) for m in items],
+        pagination=build_pagination_meta(total, page, page_size),
+    )
+
+
+def assign_provider_service(db: Session, current_user: dict, conversation_id: UUID, provider_id: UUID):
+    user_id = _parse_user_id(current_user)
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    assignment = chat_repo.assign_provider(db, conversation_id, provider_id, user_id)
+    conversation.assigned_provider_id = provider_id
+    chat_repo.save_conversation(db, conversation)
+
+    existing_provider = chat_repo.get_participant(db, conversation_id, provider_id)
+    if not existing_provider:
+        db.add(ConversationParticipant(
+            conversation_id=conversation_id,
+            user_id=provider_id,
+            role="provider",
+        ))
+        db.commit()
+
+    return ProviderAssignmentResponse.model_validate(assignment)
+
+
+def get_assigned_provider_service(db: Session, current_user: dict, conversation_id: UUID):
+    user_id = _parse_user_id(current_user)
+    if not chat_repo.is_participant(db, conversation_id, user_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    assignment = chat_repo.get_active_provider_assignment(db, conversation_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="No provider assigned")
+    return ProviderAssignmentResponse.model_validate(assignment)
+
+
+def chat_eligibility_service(db: Session, current_user: dict):
+    user_id = _parse_user_id(current_user)
+    sub = chat_repo.get_or_create_subscription(db, user_id)
+    remaining = sub.monthly_message_limit - sub.messages_used_this_month
+    eligible = sub.is_active and remaining > 0
+
+    return ChatEligibilityResponse(
+        eligible=eligible,
+        plan_type=sub.plan_type,
+        reason=None if eligible else "Monthly message limit reached",
+        remaining_messages=max(remaining, 0),
+        monthly_limit=sub.monthly_message_limit,
+        messages_used=sub.messages_used_this_month,
+        period_end=sub.period_end,
+    )
+
+
+def remaining_messages_service(db: Session, current_user: dict):
+    user_id = _parse_user_id(current_user)
+    sub = chat_repo.get_or_create_subscription(db, user_id)
+    remaining = max(sub.monthly_message_limit - sub.messages_used_this_month, 0)
+    return {
+        "remaining_messages": remaining,
+        "monthly_limit": sub.monthly_message_limit,
+        "messages_used": sub.messages_used_this_month,
+    }
+
+
+def monthly_limit_service(db: Session, current_user: dict):
+    user_id = _parse_user_id(current_user)
+    sub = chat_repo.get_or_create_subscription(db, user_id)
+    remaining = max(sub.monthly_message_limit - sub.messages_used_this_month, 0)
+    return MonthlyLimitResponse(
+        monthly_limit=sub.monthly_message_limit,
+        messages_used=sub.messages_used_this_month,
+        remaining_messages=remaining,
+        period_start=sub.period_start,
+        period_end=sub.period_end,
+    )
+
+
+def update_presence_service(db: Session, current_user: dict, status: str):
+    from communication_service.services import presence_service
+
+    user_id = _parse_user_id(current_user)
+    presence, changed = chat_repo.update_presence(db, user_id, status)
+    if changed:
+        presence_service.schedule_presence_emit(str(user_id), status)
+    return PresenceResponse(
+        user_id=presence.user_id,
+        status=presence.status,
+        last_seen_at=presence.last_seen_at,
+    )
+
+
+def get_online_users_service(db: Session):
+    users = chat_repo.get_online_users(db)
+    return OnlineUsersResponse(
+        users=[
+            PresenceResponse(user_id=u.user_id, status=u.status, last_seen_at=u.last_seen_at)
+            for u in users
+        ],
+        total=len(users),
+    )
+
+
+def get_last_seen_service(db: Session, user_id: UUID):
+    presence = chat_repo.get_user_presence(db, user_id)
+    if not presence:
+        raise HTTPException(status_code=404, detail="User presence not found")
+    return PresenceResponse(
+        user_id=presence.user_id,
+        status=presence.status,
+        last_seen_at=presence.last_seen_at,
+    )
+
+
+def update_typing_service(
+    db: Session,
+    current_user: dict,
+    conversation_id: UUID,
+    is_typing: bool,
+):
+    user_id = _parse_user_id(current_user)
+    if not chat_repo.is_participant(db, conversation_id, user_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if conversation is not None and conversation.conversation_type == "group" and conversation.group_kind != "care":
+        raise HTTPException(status_code=409, detail="Typing indicators are only shown in care groups")
+
+    indicator = chat_repo.update_typing_indicator(db, conversation_id, user_id, is_typing)
+    return TypingIndicatorResponse(
+        conversation_id=indicator.conversation_id,
+        user_id=indicator.user_id,
+        is_typing=indicator.is_typing,
+        updated_at=indicator.updated_at,
+    )
+
+
+def get_typing_service(db: Session, current_user: dict, conversation_id: UUID):
+    user_id = _parse_user_id(current_user)
+    if not chat_repo.is_participant(db, conversation_id, user_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    indicators = chat_repo.get_typing_users(db, conversation_id)
+    return [
+        TypingIndicatorResponse(
+            conversation_id=i.conversation_id,
+            user_id=i.user_id,
+            is_typing=i.is_typing,
+            updated_at=i.updated_at,
+        )
+        for i in indicators
+        if i.user_id != user_id
+    ]
+
+
+def admin_dashboard_service(db: Session):
+    stats = chat_repo.get_admin_dashboard_stats(db)
+    return ChatDashboardResponse(**stats)
+
+
+def admin_list_conversations_service(
+    db: Session,
+    *,
+    status_filter: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+):
+    items, total = chat_repo.get_admin_conversations(
+        db, status=status_filter, page=page, page_size=page_size
+    )
+    latest_messages = chat_repo.get_latest_messages_for_conversations(
+        db, [item.id for item in items]
+    )
+    last_message_read_by = chat_repo.get_read_receipt_user_ids_for_messages(
+        db, [message.id for message in latest_messages.values()]
+    )
+
+    archived_at = chat_repo.get_archived_at_for_conversations(db, [item.id for item in items])
+    mapped_items = []
+    for item in items:
+        latest = latest_messages.get(item.id)
+        if latest is not None:
+            last_message = {
+                "sender_id": latest.sender_id,
+                "read_by": last_message_read_by.get(latest.id, []),
+            }
+            preview = chat_repo.message_list_preview(latest)
+            preview_at = latest.created_at
+        else:
+            last_message = None
+            preview = item.last_message_preview
+            preview_at = item.last_message_at
+
+        mapped_items.append(
+            ConversationListItemResponse.model_validate({
+                "id": item.id,
+                "status": item.status,
+                "conversation_type": item.conversation_type,
+                "subject": item.subject,
+                "last_message_at": preview_at,
+                "last_message_preview": preview,
+                "last_message": last_message,
+                "unread_count": 0,
+                "assigned_provider_id": item.assigned_provider_id,
+                # An admin has no side of the conversation: archived here means archived by someone in it.
+                "is_archived": item.id in archived_at,
+                "archived_at": archived_at.get(item.id),
+                "updated_at": item.updated_at,
+            })
+        )
+
+    return ConversationPaginatedResponse(
+        items=mapped_items,
+        pagination=build_pagination_meta(total, page, page_size),
+    )
+
+
+def export_conversation_service(db: Session, conversation_id: UUID):
+    conversation = chat_repo.get_conversation_by_id(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    messages = chat_repo.export_conversation_messages(db, conversation_id)
+    return ChatExportResponse(
+        conversation_id=conversation_id,
+        exported_at=datetime.utcnow(),
+        message_count=len(messages),
+        messages=[MessageResponse.model_validate(_map_message(db, m)) for m in messages],
+    )

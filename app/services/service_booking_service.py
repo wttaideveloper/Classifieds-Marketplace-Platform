@@ -54,6 +54,7 @@ class Actor:
     tenant_id: UUID | None = None
     name: str | None = None
     email: str | None = None
+    token: str | None = None            # the caller's bearer token (the identity lookup of the enterprise's admins needs one)
 
     @property
     def is_staff(self) -> bool:
@@ -76,7 +77,7 @@ def actor_from(db: Session, user: dict, access_token: str | None = None) -> Acto
         except (ValueError, TypeError):
             raise _err(403, "TENANT_REQUIRED", "Authenticated tenant identity required")
     name = " ".join(str(user.get("name") or "").split())
-    return Actor(id=uid, role=role, tenant_id=tenant, name=None if (not name or "@" in name) else name, email=(user.get("email") or None))
+    return Actor(id=uid, role=role, tenant_id=tenant, name=None if (not name or "@" in name) else name, email=(user.get("email") or None), token=access_token)
 
 
 def _service_tenant(db: Session, service: Service) -> UUID | None:
@@ -255,7 +256,7 @@ def create_booking(db: Session, actor: Actor, body, idempotency_key: str | None 
         raise
     db.refresh(booking)
     booking.service = service
-    notify.booking_created(db, booking, service)
+    notify.booking_created(db, booking, service, actor.token)
     return booking, True
 
 
@@ -283,7 +284,7 @@ def mark_paid(db: Session, actor: Actor, booking_id: UUID, reference: str | None
         _move(db, booking, "confirmed", actor, "confirmed", "Paid")
     db.commit()
     db.refresh(booking)
-    notify.booking_paid(db, booking, service)
+    notify.booking_paid(db, booking, service, actor.token)
     return booking
 
 
@@ -337,7 +338,7 @@ def cancel_booking(db: Session, actor: Actor, booking_id: UUID, reason: str | No
         _move(db, booking, "cancellation_requested", actor, "cancellation_requested", reason)
         db.commit()
         db.refresh(booking)
-        notify.cancellation_requested(db, booking, service)
+        notify.cancellation_requested(db, booking, service, actor.token)
         return booking
     booking.cancel_reason, booking.cancelled_at, booking.cancelled_by, booking.cancelled_by_role = reason, slots.now_utc(), actor.id, "customer"
     booking.hold_expires_at = None
@@ -345,7 +346,7 @@ def cancel_booking(db: Session, actor: Actor, booking_id: UUID, reason: str | No
     _move(db, booking, "cancelled", actor, "cancelled", reason, {"refund_percent": booking.refund_percent})
     db.commit()
     db.refresh(booking)
-    notify.booking_cancelled(db, booking, service, by_customer=True)
+    notify.booking_cancelled(db, booking, service, by_customer=True, access_token=actor.token)
     return booking
 
 

@@ -1,0 +1,385 @@
+from uuid import UUID
+from fastapi import APIRouter, Depends, Path, Query, Request, status
+from sqlalchemy.orm import Session
+from mskit.auth.dependencies import get_current_user, get_web_session_cookie_token, require_event_form_builder_admin, require_roles
+from learning_service.db.database import get_db
+from learning_service.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from learning_service.schemas.program_schema import ActivityCreate, CheckinCreate, EnrolmentCreate, PhaseCreate, PhaseResponse, ProgramAvailabilityResponse, ProgramCreate, ProgramDetailResponse, ProgramGoalsResponse, ProgramPaginatedResponse, ProgramResponse, ProgramStatusUpdate, ProgramUpdate, ReviewCreate, SurveyCreate, SurveyResponse
+from learning_service.services.program_service import create_program_checkin_service, create_program_service, create_review_service, create_survey_service, delete_program_service, duplicate_program_service, enrol_program_service, get_participant_dashboard_service, get_program_admin_notes_service, get_program_availability_service, get_program_goals_service, get_program_progress_service, get_program_reports_service, get_program_service, get_program_summary_service, get_provider_dashboard_service, get_programs_service, list_checkins_service, list_enrolments_service, list_program_phases_service, list_program_surveys_service, normalize_program_phases, restore_program_service, update_program_service, update_program_status_service, create_participant_checkin_service, submit_survey_response_service, list_program_reviews_service, _save_program_phases
+router=APIRouter(tags=["Programs"])
+@router.post("/", response_model=ProgramResponse, status_code=201)
+def create_program(data: ProgramCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return create_program_service(db, data, current_user)
+@router.get("/", response_model=ProgramPaginatedResponse)
+def list_programs(search: str|None=Query(None), category: str|None=Query(None), provider: str|None=Query(None, description="provider_id"), instructor: str|None=Query(None, description="instructor/provider_id alias"), tenant_id: UUID|None=Query(None), enterprise_id: UUID|None=Query(None), location_id: UUID|None=Query(None), status_filter: str|None=Query(None, alias="status"), delivery_mode: str|None=Query(None), min_price: str|None=Query(None), max_price: str|None=Query(None), duration: str|None=Query(None, description="duration_weeks"), eligibility: str|None=Query(None, description="Eligibility filter (text match)"), sort_by: str|None=Query(None, description="title|start_date|price|created_at"), sort_order: str|None=Query("desc", description="asc|desc"), date_from: str|None=Query(None), date_to: str|None=Query(None), page:int=Query(DEFAULT_PAGE,ge=1), page_size:int=Query(DEFAULT_PAGE_SIZE,ge=1,le=MAX_PAGE_SIZE), db:Session=Depends(get_db)):
+    from uuid import UUID as _UUID
+    prov_id = None
+    try: prov_id = _UUID(provider) if provider else None
+    except: prov_id = None
+    instr_id = None
+    try: instr_id = _UUID(instructor) if instructor else None
+    except: instr_id = None
+    return get_programs_service(db, search=search, category=category, provider_id=prov_id or instr_id, instructor_id=instr_id, tenant_id=tenant_id, enterprise_id=enterprise_id, location_id=location_id, status=status_filter, delivery_mode=delivery_mode, min_price=min_price, max_price=max_price, duration_weeks=duration, eligibility=eligibility, sort_by=sort_by, sort_order=sort_order, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
+
+@router.get("/reports/summary", summary="Program portfolio summary")
+def summary(enterprise_id: UUID|None=None, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_program_summary_service(db, enterprise_id)
+
+@router.get("/my/enrolments", summary="Participant dashboard — enrolled/active/completed/cancelled")
+def my_enrolments(status: str | None = Query(None, description="enrolled|completed|cancelled"), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from learning_service.models.program_model import ProgramEnrolment
+    email = current_user.get("email")
+    if not email:
+        from fastapi import HTTPException; raise HTTPException(400, "Email not found in token")
+    q = db.query(ProgramEnrolment).filter(ProgramEnrolment.participant_email==email)
+    if status: q = q.filter(ProgramEnrolment.status==status)
+    rows = q.order_by(ProgramEnrolment.created_at.desc()).all()
+    return [{"program_id": str(r.program_id), "status": r.status, "enrolment_id": str(r.id), "created_at": r.created_at.isoformat()} for r in rows]
+
+@router.get(
+    "/form-configuration/active",
+    summary="Resolved active Program form for authenticated Enterprise Admin",
+    description=(
+        "Authenticate → resolve tenant → active selective assignment → else active global. "
+        "Returns 404 when none (frontend uses static Create Program wizard fallback)."
+    ),
+)
+def get_active_program_form_configuration(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_event_form_builder_admin),
+):
+    from learning_service.schemas.program_form_config_schema import ActiveFormConfigurationResponse
+    from learning_service.services.program_form_config_service import get_active_form_configuration_service
+
+    access_token = None
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        access_token = auth_header.split(" ", 1)[1].strip()
+    if not access_token:
+        access_token = get_web_session_cookie_token(request)
+
+    return ActiveFormConfigurationResponse.model_validate(
+        get_active_form_configuration_service(db, current_user, access_token=access_token)
+    )
+
+
+@router.get(
+    "/{program_id}/form-configuration",
+    summary="Historical Program form version used by this Program",
+)
+def get_program_form_configuration(
+    program_id: UUID = Path(..., description="Program ID"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider"])),
+):
+    from learning_service.schemas.program_form_config_schema import ActiveFormConfigurationResponse
+    from learning_service.services.program_form_config_service import get_program_form_configuration_service
+    return ActiveFormConfigurationResponse.model_validate(get_program_form_configuration_service(db, program_id, current_user))
+
+
+@router.get("/{program_id}", response_model=ProgramDetailResponse, summary="Get program detail")
+def get_program(program_id: UUID=Path(...), db: Session=Depends(get_db)):
+    return get_program_service(db, program_id)
+@router.put("/{program_id}", response_model=ProgramResponse)
+def update_program(data: ProgramUpdate, program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return update_program_service(db, program_id, data, current_user)
+@router.delete("/{program_id}")
+def delete_program(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): delete_program_service(db, program_id, current_user); return {"message":"Program deleted"}
+@router.post("/{program_id}/duplicate", response_model=ProgramResponse, status_code=201)
+def duplicate(program_id: UUID=Path(...), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))): return duplicate_program_service(db, program_id, current_user)
+@router.patch("/{program_id}/status", response_model=ProgramResponse, summary="Update program status (generic transition)")
+def update_status(program_id: UUID, payload: ProgramStatusUpdate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"]))):
+    if payload.status in ("approved", "rejected", "needs_revision") and current_user.get("role") not in ("admin", "super_admin"):
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Only Super Admin can approve/reject/request-changes")
+    return update_program_status_service(db, program_id, payload.status, current_user)
+
+@router.post("/{program_id}/publish", response_model=ProgramResponse, summary="Publish program")
+def publish_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "published", current_user)
+
+@router.post("/{program_id}/unpublish", response_model=ProgramResponse, summary="Unpublish program")
+def unpublish_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "unpublished", current_user)
+
+@router.post("/{program_id}/suspend", response_model=ProgramResponse, summary="Suspend program")
+def suspend_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "suspended", current_user)
+
+@router.post("/{program_id}/cancel", response_model=ProgramResponse, summary="Cancel program")
+def cancel_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "cancelled", current_user)
+
+@router.post(
+    "/{program_id}/archive",
+    response_model=ProgramResponse,
+    summary="Archive program",
+)
+def archive_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return update_program_status_service(db, program_id, "archived", current_user)
+
+@router.post(
+    "/{program_id}/restore",
+    response_model=ProgramResponse,
+    summary="Restore archived program to draft",
+    description="Transitions archived → draft and clears is_deleted. Equivalent to PATCH status with {\"status\":\"draft\"}.",
+)
+def restore_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return restore_program_service(db, program_id, current_user)
+
+# Phases / Activities (P6)
+@router.get("/{program_id}/phases", response_model=list[PhaseResponse], summary="List phases with nested activities/instructors")
+def list_phases(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return list_program_phases_service(db, program_id)
+@router.post("/{program_id}/phases", status_code=201)
+def add_phase(program_id: UUID, payload: PhaseCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.repository.program_repo import get_program_by_id; import uuid
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    phases=list(obj.phases or []); new={"id":str(uuid.uuid4()), **payload.model_dump()}; new.setdefault("activities", []); new.setdefault("instructors", []); phases.append(new); _save_program_phases(db, obj, phases); return new
+@router.put("/{program_id}/phases/{phase_id}")
+def update_phase(program_id: UUID, phase_id: str, payload: PhaseCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    for ph in obj.phases or []:
+        if ph.get("id")==phase_id: ph.update({k:v for k,v in payload.model_dump(exclude_unset=True).items() if k!="id"}); _save_program_phases(db, obj, list(obj.phases or [])); return ph
+    from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
+@router.post("/{program_id}/phases/{phase_id}/activities", status_code=201)
+def add_activity(program_id: UUID, phase_id: str, payload: ActivityCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.repository.program_repo import get_program_by_id; import uuid
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    for ph in obj.phases or []:
+        if ph.get("id")==phase_id:
+            acts=ph.get("activities",[]); new={"id":str(uuid.uuid4()), **payload.model_dump()}; acts.append(new); ph["activities"]=acts
+            _save_program_phases(db, obj, list(obj.phases or [])); return new
+    from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
+@router.put("/{program_id}/phases/{phase_id}/activities/{activity_id}")
+def update_activity(program_id: UUID, phase_id: str, activity_id: str, payload: ActivityCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    for ph in obj.phases or []:
+        if ph.get("id")==phase_id:
+            for ac in ph.get("activities",[]):
+                if ac.get("id")==activity_id: ac.update({k:v for k,v in payload.model_dump(exclude_unset=True).items() if k!="id"}); _save_program_phases(db, obj, list(obj.phases or [])); return ac
+    from fastapi import HTTPException; raise HTTPException(404,"Activity not found")
+# Phases - missing delete/reorder
+@router.delete("/{program_id}/phases/{phase_id}")
+def delete_phase(program_id: UUID, phase_id: str, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    orig=len(obj.phases or [])
+    new=[p for p in (obj.phases or []) if p.get("id")!=phase_id]
+    if len(new)==orig: from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
+    obj.phases=new; _save_program_phases(db, obj, new); return {"message":"Phase deleted"}
+
+@router.delete("/{program_id}/phases/{phase_id}/activities/{activity_id}")
+def delete_activity(program_id: UUID, phase_id: str, activity_id: str, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    for ph in obj.phases or []:
+        if ph.get("id")==phase_id:
+            acts=[a for a in ph.get("activities",[]) if a.get("id")!=activity_id]
+            if len(acts)==len(ph.get("activities",[])): from fastapi import HTTPException; raise HTTPException(404,"Activity not found")
+            ph["activities"]=acts; _save_program_phases(db, obj, list(obj.phases or [])); return {"message":"Activity deleted"}
+    from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
+
+@router.put("/{program_id}/phases/{phase_id}/instructors", summary="Assign instructors/coaches/mentors/service providers")
+def assign_instructors(program_id: UUID, phase_id: str, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    for ph in obj.phases or []:
+        if ph.get("id")==phase_id:
+            ph["instructors"]=payload.get("instructors") or payload.get("instructor_ids") or []
+            ph["coaches"]=payload.get("coaches") or []
+            ph["mentors"]=payload.get("mentors") or []
+            ph["service_providers"]=payload.get("service_providers") or []
+            _save_program_phases(db, obj, list(obj.phases or [])); return ph
+    from fastapi import HTTPException; raise HTTPException(404,"Phase not found")
+
+@router.post("/{program_id}/check-ins/{checkin_id}/feedback", summary="Provider feedback & progress notes")
+def provider_feedback(program_id: UUID, checkin_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.models.program_model import ProgramCheckin
+    row=db.query(ProgramCheckin).filter(ProgramCheckin.id==checkin_id, ProgramCheckin.program_id==program_id).first()
+    if not row: from fastapi import HTTPException; raise HTTPException(404,"Check-in not found")
+    # store provider feedback in notes append
+    feedback=payload.get("feedback") or payload.get("notes") or ""
+    row.notes=(row.notes or "") + f"\n[Provider:{current_user.get('email','')}] {feedback}"
+    db.commit(); db.refresh(row)
+    return {"id": str(row.id), "feedback": feedback, "notes": row.notes}
+
+@router.post("/{program_id}/phases/reorder")
+def reorder_phases(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.repository.program_repo import get_program_by_id
+    from sqlalchemy.orm.attributes import flag_modified
+    obj=get_program_by_id(db, program_id)
+    if not obj: from fastapi import HTTPException; raise HTTPException(404,"Program not found")
+    order=payload.get("ordered_ids",[])
+    mapping={p["id"]: p for p in (obj.phases or []) if p.get("id")}
+    ordered=[mapping[i] for i in order if i in mapping]
+    remaining=[p for p in (obj.phases or []) if p.get("id") not in order]
+    obj.phases=ordered+remaining
+    _save_program_phases(db, obj, obj.phases); return normalize_program_phases(obj.phases)
+
+# Enrol, check-ins, progress, dashboards, surveys, reports
+@router.post("/{program_id}/enrol", status_code=201, summary="Enrol — fixed-date & enrol-anytime, free/paid, capacity/waitlist")
+def enrol(program_id: UUID, payload: EnrolmentCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return enrol_program_service(db, program_id, payload)
+@router.get("/{program_id}/enrolments")
+def list_enrolments(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return list_enrolments_service(db, program_id)
+@router.post("/{program_id}/waitlist", status_code=201, summary="Join waitlist when capacity reached")
+def join_waitlist(program_id: UUID, payload: EnrolmentCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from learning_service.models.program_model import ProgramEnrolment
+    from learning_service.repository.program_repo import get_program_by_id
+    from fastapi import HTTPException
+    prog=get_program_by_id(db, program_id)
+    if not prog: raise HTTPException(404, "Program not found")
+    exists=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.participant_email==payload.participant_email).first()
+    if exists: raise HTTPException(400, "Already enrolled/waitlisted")
+    e=ProgramEnrolment(program_id=program_id, participant_name=payload.participant_name, participant_email=payload.participant_email, status="waitlisted")
+    db.add(e); db.commit(); db.refresh(e)
+    return {"id": str(e.id), "program_id": str(e.program_id), "status": e.status, "available_seats": 0}
+@router.get("/{program_id}/waitlist", summary="List waitlist")
+def list_waitlist(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.models.program_model import ProgramEnrolment
+    rows=db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.status=="waitlisted").all()
+    return [{"id": str(r.id), "participant_name": r.participant_name, "participant_email": r.participant_email, "created_at": r.created_at.isoformat()} for r in rows]
+@router.get("/{program_id}/availability", response_model=ProgramAvailabilityResponse, summary="Available seats & waitlist")
+def availability(program_id: UUID, db: Session=Depends(get_db)):
+    return get_program_availability_service(db, program_id)
+
+@router.get("/{program_id}/content", summary="Secure enrolled content — phases/files gated")
+def secure_content(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from learning_service.models.program_model import ProgramEnrolment
+    from learning_service.repository.program_repo import get_program_by_id
+    from fastapi import HTTPException
+    email = current_user.get("email")
+    enrol = db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.participant_email==email).first()
+    if (not enrol or enrol.status not in ["enrolled","active","completed"]) and current_user.get("role") not in ["admin","provider"]:
+        raise HTTPException(403, "Enrolled participants only (waitlisted/cancelled not allowed)")
+    # block content for draft/pending_approval/cancelled programs
+    prog = get_program_by_id(db, program_id)
+    if not prog: raise HTTPException(404, "Program not found")
+    if prog.status in ["draft","pending_approval","cancelled","archived"]:
+        raise HTTPException(403, f"Content not available — program is {prog.status}")
+    return {"program_id": str(program_id), "phases": prog.phases or [], "goals": prog.goals}
+
+@router.get("/{program_id}/meeting-link", summary="Secure meeting link — enrolled only")
+def meeting_link(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from learning_service.models.program_model import ProgramEnrolment
+    from learning_service.repository.program_repo import get_program_by_id
+    from fastapi import HTTPException
+    email = current_user.get("email")
+    enrol = db.query(ProgramEnrolment).filter(ProgramEnrolment.program_id==program_id, ProgramEnrolment.participant_email==email).first()
+    if (not enrol or enrol.status not in ["enrolled","active","completed"]) and current_user.get("role") not in ["admin","provider"]:
+        raise HTTPException(403, "Enrolled participants only (waitlisted/cancelled not allowed)")
+    prog = get_program_by_id(db, program_id)
+    if not prog: raise HTTPException(404, "Program not found")
+    # aggregate meeting links from phases activities if present
+    links = []
+    for ph in prog.phases or []:
+        for ac in ph.get("activities",[]):
+            if ac.get("meeting_link"): links.append(ac.get("meeting_link"))
+    return {"program_id": str(program_id), "meeting_links": links}
+@router.post("/{program_id}/check-ins/self", status_code=201, summary="Participant self check-in / activity update")
+def self_checkin(program_id: UUID, payload: CheckinCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_participant_checkin_service(db, program_id, payload, current_user)
+
+@router.post("/{program_id}/check-ins", status_code=201, summary="Admin/provider check-in")
+def checkin(program_id: UUID, payload: CheckinCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_program_checkin_service(db, program_id, payload)
+@router.get("/{program_id}/check-ins")
+def list_checkins(program_id: UUID, participant_email: str | None = Query(None), phase_id: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return list_checkins_service(db, program_id, participant_email=participant_email, phase_id=phase_id)
+@router.get("/{program_id}/progress")
+def progress(program_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    email = participant_email or (current_user.get("email") if current_user else None)
+    if participant_email and current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Not authorized to view this participant's progress")
+    return get_program_progress_service(db, program_id, participant_email=email)
+@router.get("/{program_id}/dashboards/participant")
+def dash_participant(program_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    email = participant_email or (current_user.get("email") if current_user else None)
+    return get_participant_dashboard_service(db, program_id, participant_email=email)
+@router.get("/{program_id}/dashboards/provider")
+def dash_provider(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_provider_dashboard_service(db, program_id)
+@router.get("/{program_id}/goals", response_model=ProgramGoalsResponse, summary="Get program goals & outcomes")
+def get_goals(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_program_goals_service(db, program_id)
+
+@router.put("/{program_id}/goals", summary="Goal & outcome — configurable fields")
+def update_goals(program_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.services.program_service import update_program_goals_service
+    return update_program_goals_service(db, program_id, payload.get("goals") or payload)
+@router.get("/{program_id}/certificate", summary="Completion certificate / provider acknowledgement")
+def get_certificate(program_id: UUID, participant_email: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    participant_email = participant_email or (current_user.get("email") if current_user else None)
+    if not participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=400, detail="participant_email required")
+    if current_user and current_user.get("role") not in ("admin", "provider") and current_user.get("email") != participant_email:
+        from fastapi import HTTPException; raise HTTPException(status_code=403, detail="Not authorized to view this certificate")
+    from learning_service.services.program_service import get_program_certificate_service
+    return get_program_certificate_service(db, program_id, participant_email)
+@router.patch("/{program_id}/enrolments/{enrol_id}/status", summary="Completion/withdrawal/cancellation/extension with new_end_date & withdrawal_reason")
+def update_enrol_status(program_id: UUID, enrol_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.services.program_service import update_enrolment_status_service
+    return update_enrolment_status_service(db, program_id, enrol_id, payload)
+@router.get("/{program_id}/surveys", response_model=list[SurveyResponse], summary="List program surveys")
+def list_surveys(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return list_program_surveys_service(db, program_id)
+
+@router.post("/{program_id}/surveys", status_code=201)
+def create_survey(program_id: UUID, payload: SurveyCreate, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return create_survey_service(db, program_id, payload)
+@router.post("/{program_id}/surveys/{survey_id}/submit", status_code=201, summary="Submit survey response")
+def submit_survey(program_id: UUID, survey_id: UUID, payload: dict, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return submit_survey_response_service(db, program_id, survey_id, payload, current_user)
+
+@router.get("/{program_id}/reviews", summary="List reviews with average rating")
+def list_reviews(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return list_program_reviews_service(db, program_id)
+
+@router.post("/{program_id}/reviews", status_code=201)
+def create_review(program_id: UUID, payload: ReviewCreate, db: Session=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return create_review_service(db, program_id, payload)
+@router.get("/{program_id}/reports", summary="Program reports with optional date range")
+def reports(program_id: UUID, type: str=Query("enrolment", description="enrolment|attendance|engagement|assessment|progress|completion|revenue"), date_from: str | None = Query(None), date_to: str | None = Query(None), db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_program_reports_service(db, program_id, type, date_from=date_from, date_to=date_to)
+
+@router.get("/{program_id}/enrolments/export", summary="Export participant & performance data CSV")
+def export_enrolments(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from fastapi.responses import StreamingResponse
+    import csv, io
+    rows = list_enrolments_service(db, program_id)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["id","participant_name","participant_email","status","created_at"])
+    for r in rows: writer.writerow([r["id"], r["participant_name"], r["participant_email"], r["status"], r["created_at"]])
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=program_{program_id}_enrolments.csv"})
+
+@router.get("/{program_id}/admin-notes", summary="Latest super-admin reject/request-changes message")
+def get_program_admin_notes(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    return get_program_admin_notes_service(db, program_id)
+
+@router.post("/{program_id}/resubmit", response_model=ProgramResponse, summary="Resubmit program after requested changes")
+def resubmit_program(program_id: UUID, db: Session=Depends(get_db), current_user: dict = Depends(require_roles(["admin", "provider"]))):
+    from learning_service.repository.program_repo import get_program_by_id
+    from fastapi import HTTPException
+    prog = get_program_by_id(db, program_id)
+    if not prog:
+        raise HTTPException(404, "Program not found")
+    if prog.status not in ("needs_revision", "draft", "rejected"):
+        raise HTTPException(400, detail=f"Cannot resubmit program in '{prog.status}' status")
+    return update_program_status_service(db, program_id, "pending_approval", current_user)
+

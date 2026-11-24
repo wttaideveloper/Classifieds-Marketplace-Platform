@@ -1,0 +1,1402 @@
+from datetime import datetime
+from enum import Enum
+from typing import Literal
+from uuid import UUID
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+
+from learning_service.schemas.common_schema import PaginatedResponse, PaginationMeta
+
+
+TrainingStatus = str  # draft|published|unpublished|archived|cancelled
+
+
+class TrainingNextSessionInfo(BaseModel):
+    """Nearest upcoming live session, when the training has one scheduled."""
+    model_config = ConfigDict(from_attributes=True)
+
+    schedule: datetime = Field(..., description="Scheduled start time of the next live session")
+    meeting_link: str | None = Field(None, description="Join link for the next live session")
+
+
+class TrainingEnrolmentResponse(BaseModel):
+    """Persisted enrolment returned by both enrol/enroll aliases."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    training_id: UUID
+    participant_name: str
+    participant_email: str
+    group_enrol: bool | None = None
+    status: str
+    coupon_code: str | None = None
+    access_expires_at: datetime | None = None
+    qr_code: str | None = None
+    checked_in_at: datetime | None = None
+    checked_out_at: datetime | None = None
+    checked_in_by: UUID | None = None
+    created_at: datetime
+    training_title: str | None = Field(None, description="Training title, for confirmation screens")
+    primary_image: str | None = Field(None, description="Training's cover image URL")
+    delivery_mode: str | None = Field(None, description="online|physical|hybrid|self_paced")
+    enterprise_name: str | None = Field(None, description="Hosting enterprise's display name")
+    amount_paid: str | None = Field(None, description="Amount paid for this enrolment — from the matching order if one exists, else the training's list price")
+    currency: str | None = None
+    payment_status: str | None = Field(None, description="From the matching order if one exists, else free|pending")
+    message: str = Field("Enrolled successfully", description="Human-readable confirmation message")
+    next_session: TrainingNextSessionInfo | None = Field(None, description="Nearest upcoming live session, if any is scheduled")
+
+
+class TrainingEnrolWaitlistResponse(BaseModel):
+    """Returned when auto_waitlist is requested and the training is full."""
+    waitlisted: Literal[True]
+    position: int
+    id: UUID
+    training_id: UUID
+    message: str
+    training_title: str | None = None
+    primary_image: str | None = None
+    delivery_mode: str | None = None
+    enterprise_name: str | None = None
+    amount_paid: str | None = None
+    currency: str | None = None
+    payment_status: str | None = None
+    next_session: TrainingNextSessionInfo | None = None
+
+
+class TrainingNoteDocument(BaseModel):
+    """An instructor-uploaded notes file — the file itself is uploaded to
+    storage by the client; this just records where it lives."""
+    model_config = ConfigDict(extra="allow")
+    title: str | None = Field(None, description="Display name, e.g. 'Week 1 Handout'")
+    url: str = Field(..., description="URL of the already-uploaded notes file (e.g. PDF)")
+
+
+class TrainingRecurrence(BaseModel):
+    frequency: str = Field(..., description="daily|weekly|monthly")
+    interval: int = Field(1, description="Repeat every N frequency units, e.g. 2 = every 2 weeks")
+    days_of_week: list[str] | None = Field(None, description="For weekly: ['mon','wed','fri']")
+    end_date: datetime | None = Field(None, description="Recurrence ends on/after this date")
+
+
+class TrainingInstructor(BaseModel):
+    """Nested view of instructor_id/instructor_name/instructor_bio/instructor_role.
+    Accepted on create/update as an alternative to the flat fields (flattened
+    into them); always returned on GET, populated from those same columns."""
+    id: UUID | None = None
+    name: str | None = None
+    bio: str | None = None
+    role: str | None = None
+
+
+class TrainingFaq(BaseModel):
+    question: str
+    answer: str
+
+
+class TrainingCheckInRequest(BaseModel):
+    participant_email: str = Field(..., description="Enrolled participant's email")
+    pass_code: str = Field(..., description="Pass code shown/scanned at the training (matches Training.pass_code)")
+
+
+# --- Per-enrolment QR check-in (admin/scanner-driven; mirrors the Event registration QR system) ---
+
+
+class TrainingValidateQrRequest(BaseModel):
+    qr_code: str = Field(..., description="QR code scanned from the enrolment")
+
+
+class TrainingValidateQrResponse(BaseModel):
+    valid: bool
+    enrolment_id: UUID | None = None
+    participant_name: str | None = None
+    participant_email: str | None = None
+    training_id: UUID | None = None
+    training_title: str | None = None
+    status: str | None = None
+    message: str
+
+
+class TrainingEnrolCheckInRequest(BaseModel):
+    enrolment_id: UUID | None = Field(None, description="Enrolment ID to check in")
+    qr_code: str | None = Field(None, description="QR code scanned from the enrolment — alternative to enrolment_id")
+
+
+class TrainingEnrolCheckInResponse(BaseModel):
+    message: str
+    enrolment_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    checked_in_at: str | None = None
+
+
+class TrainingEnrolUncheckInRequest(BaseModel):
+    enrolment_id: UUID | None = Field(None, description="Enrolment ID to undo check-in for")
+    qr_code: str | None = Field(None, description="QR code of the enrolment — alternative to enrolment_id")
+
+
+class TrainingEnrolUncheckInResponse(BaseModel):
+    message: str
+    enrolment_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    restored_to: str
+
+
+class TrainingCheckInPreviewItem(BaseModel):
+    enrolment_id: UUID
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    qr_code: str | None = None
+    checked_in_at: str | None = None
+    checked_out_at: str | None = None
+    can_check_in: bool
+    eligibility_reason: str
+
+
+class TrainingBatchCheckInItem(BaseModel):
+    enrolment_id: UUID | None = None
+    qr_code: str | None = None
+
+
+class TrainingBatchCheckInRequest(BaseModel):
+    participants: list[TrainingBatchCheckInItem] = Field(..., min_length=1)
+
+
+class TrainingBatchCheckInResultItem(BaseModel):
+    enrolment_id: UUID | str
+    participant_name: str | None = None
+    participant_email: str | None = None
+    status: str
+    checked_in_at: str | None = None
+    message: str
+
+
+class TrainingBatchCheckInResponse(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    results: list[TrainingBatchCheckInResultItem]
+
+
+class TrainingCreate(BaseModel):
+    sections: list[dict] | None = Field(None, description="Curriculum sections with items or lessons, inline assessments and assignments")
+    assessments: list[dict] | None = None
+    assignments: list[dict] | None = None
+    notes_pdf_url: str | None = None
+    tenant_id: UUID | None = None
+    enterprise_id: UUID = Field(..., description="Enterprise ID")
+    location_id: UUID | None = None
+    title: str
+    description: str | None = None
+    category: str = Field(..., min_length=1, max_length=100, description="Category — any non-empty string up to 100 chars; no taxonomy allowlist is enforced here. Submit a custom ('Other') value as a plain string, same as a predefined one.")
+    subcategory: str | None = Field(None, max_length=100, description="Subcategory — any string up to 100 chars, or null/omitted. No taxonomy allowlist is enforced. Submit a custom ('Other') value as a plain string.")
+    tags: list[str] | None = None
+    instructor_id: UUID | None = None
+    instructor_name: str | None = Field(None, description="Instructor display name")
+    instructor_bio: str | None = Field(None, description="Instructor biography")
+    instructor: TrainingInstructor | None = Field(
+        None,
+        description="Alternative to the flat instructor_id/instructor_name/instructor_bio fields — "
+        "flattened into them. The flat fields win if both are sent.",
+    )
+    instructor_photo: str | None = Field(None, description="Instructor photo URL")
+    instructor_credentials: str | None = Field(None, description="Instructor credentials/qualifications")
+    requirements: str | None = None
+    prerequisites: list[str] | None = Field(None, description="Course-level prerequisites, e.g. ['Basic Excel']")
+    learning_objectives: list[str] | None = Field(None, description="What participants will learn")
+    target_audience: str | None = Field(None, description="Who this training is for")
+    level: str | None = Field(None, description="beginner|intermediate|advanced|all_levels")
+    difficulty_level: str | None = Field(None, description="Contract alias for level — maps onto the level column on create/update")
+    language: str | None = Field("English", description="Course language")
+    subtitle: str | None = Field(None, description="Short tagline, separate from description")
+    primary_image: str | None = None
+    gallery_images: list | None = None
+    promotional_video: str | None = None
+    documents: list | None = None
+    notes_documents: list[TrainingNoteDocument] | None = Field(
+        None, description="Instructor-uploaded notes files, e.g. [{title: 'Week 1 Handout', url: 'https://...'}]"
+    )
+    delivery_mode: Literal["online", "physical", "hybrid", "self_paced"] | None = Field("self_paced", description="online|physical|hybrid|self_paced — online requires meeting_link; physical/hybrid require venue; hybrid requires both")
+    course_type: str | None = Field(None, description="one_day|workshop|virtual|certification")
+    duration: str | None = Field(None, description="Duration e.g. 1 day, half_day, custom, 2 weeks")
+    duration_hours: str | None = Field(None, description="Numeric duration in hours, e.g. '20'")
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    start_time: str | None = Field(None, description="Daily start time, e.g. 09:00")
+    end_time: str | None = Field(None, description="Daily end time, e.g. 17:00")
+    venue: str | None = Field(None, description="In-person venue name — required when delivery_mode is physical or hybrid")
+    address: str | None = Field(None, description="Venue address")
+    meeting_link: str | None = Field(None, description="Online meeting URL — required when delivery_mode is online or hybrid")
+    meeting_provider: str | None = Field(None, description="zoom|google_meet|teams|other")
+    meeting_id: str | None = Field(None, description="Meeting ID, for platforms that separate it from the join link")
+    meeting_passcode: str | None = Field(None, description="Meeting passcode, for platforms that separate it from the join link")
+    access_information: str | None = Field(None, description="Login/access details for joining (separate from delivery_instructions)")
+    delivery_instructions: str | None = Field(None, description="Instructions for joining/attending")
+    offline_access_enabled: bool = Field(False, description="Allow enrolled learners to download lessons for offline viewing")
+    recurring: TrainingRecurrence | None = Field(None, description="Recurrence rule, e.g. {frequency: weekly, interval: 1, days_of_week: ['mon','wed']}")
+    schedule_exceptions: list[str] | None = Field(None, description="ISO dates skipped from the recurrence")
+    instructor_notes: str | None = Field(None, description="Instructor-facing notes, separate from participant-facing instructor_bio")
+    session_mode: str | None = Field(None, description="e.g. live|recorded|hybrid")
+    check_in: bool = Field(False, description="Enable pass_code/qr_payload self-check-in for this training (server-generated on create)")
+    release_rule: dict | None = Field(None, description="Course-wide content release policy: {mode: 'date'|'enrolment_day'|'immediate', date, days}")
+    scheduled_publication: datetime | None = Field(None, description="Future timestamp to auto-publish this training")
+    randomise: bool = Field(False, description="Randomise assessment question order")
+    is_mandatory: bool = Field(False, description="Whole-course mandatory flag (compliance tracking)")
+    faqs: list[TrainingFaq] | None = Field(None, description="Frequently asked questions")
+    badges: list | None = Field(None, description="Completion badges, e.g. [{name, icon_url}]")
+    enrolment_start: datetime | None = None
+    enrolment_end: datetime | None = None
+    time_zone: str | None = Field("Asia/Kolkata", description="Time zone")
+    capacity: str | None = Field(None, description="Participant capacity")
+    price: str | None = None
+    currency: str | None = "INR"
+    promo_price: str | None = None
+    coupon_code: str | None = None
+    requires_approval: bool = Field(False, description="Provider must approve enrolment")
+    access_duration_days: str | None = Field(None, description="Access expiry days, e.g. 30")
+    status: TrainingStatus = Field("draft")
+    form_configuration_version_id: UUID | None = Field(
+        None,
+        description="Published Training form configuration version. If omitted, server resolves active form for tenant.",
+    )
+    custom_values: list | dict | None = Field(
+        None,
+        description="Custom field values as Record<key,value> or [{field_id,value}]. Core fields still use TrainingCreate scalars.",
+    )
+
+    def to_model_data(self) -> dict:
+        return {
+            "sections": self.sections,
+            "assessments": self.assessments,
+            "assignments": self.assignments,
+            "notes_pdf_url": self.notes_pdf_url,
+            "tenant_id": self.tenant_id,
+            "enterprise_id": self.enterprise_id,
+            "location_id": self.location_id,
+            "title": self.title,
+            "description": self.description,
+            "category": self.category,
+            "subcategory": self.subcategory,
+            "tags": self.tags or [],
+            "instructor_id": self.instructor_id or (self.instructor.id if self.instructor else None),
+            "instructor_name": self.instructor_name or (self.instructor.name if self.instructor else None),
+            "instructor_bio": self.instructor_bio or (self.instructor.bio if self.instructor else None),
+            "instructor_role": self.instructor.role if self.instructor else None,
+            "instructor_photo": self.instructor_photo,
+            "instructor_credentials": self.instructor_credentials,
+            "requirements": self.requirements,
+            "prerequisites": self.prerequisites or [],
+            "learning_objectives": self.learning_objectives or [],
+            "target_audience": self.target_audience,
+            "level": self.level or self.difficulty_level,
+            "language": self.language,
+            "subtitle": self.subtitle,
+            "primary_image": self.primary_image,
+            "gallery_images": self.gallery_images or [],
+            "promotional_video": self.promotional_video,
+            "documents": self.documents or [],
+            "notes_documents": [n.model_dump() for n in self.notes_documents] if self.notes_documents else [],
+            "delivery_mode": self.delivery_mode,
+            "course_type": self.course_type,
+            "duration": self.duration,
+            "duration_hours": self.duration_hours,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "venue": self.venue,
+            "address": self.address,
+            "meeting_link": self.meeting_link,
+            "meeting_provider": self.meeting_provider,
+            "meeting_id": self.meeting_id,
+            "meeting_passcode": self.meeting_passcode,
+            "access_information": self.access_information,
+            "delivery_instructions": self.delivery_instructions,
+            "offline_access_enabled": self.offline_access_enabled,
+            "recurring": self.recurring.model_dump() if self.recurring else None,
+            "schedule_exceptions": self.schedule_exceptions or [],
+            "instructor_notes": self.instructor_notes,
+            "session_mode": self.session_mode,
+            "check_in": self.check_in,
+            "release_rule": self.release_rule,
+            "scheduled_publication": self.scheduled_publication,
+            "randomise": self.randomise,
+            "is_mandatory": self.is_mandatory,
+            "faqs": [f.model_dump() for f in self.faqs] if self.faqs else [],
+            "badges": self.badges or [],
+            "enrolment_start": self.enrolment_start,
+            "enrolment_end": self.enrolment_end,
+            "time_zone": self.time_zone,
+            "capacity": self.capacity,
+            "price": self.price,
+            "currency": self.currency,
+            "promo_price": self.promo_price,
+            "coupon_code": self.coupon_code,
+            "requires_approval": self.requires_approval,
+            "access_duration_days": self.access_duration_days,
+            "status": self.status,
+        }
+
+
+class TrainingUpdate(BaseModel):
+    sections: list[dict] | None = None
+    assessments: list[dict] | None = None
+    assignments: list[dict] | None = None
+    notes_pdf_url: str | None = None
+    duration: str | None = None
+    title: str | None = None
+    description: str | None = None
+    category: str | None = Field(None, min_length=1, max_length=100, description="Omit to leave unchanged. Any non-empty string up to 100 chars; no taxonomy allowlist. Custom ('Other') values are plain strings.")
+    subcategory: str | None = Field(None, max_length=100, description="Omit to leave unchanged. Any string up to 100 chars, or null to clear. No taxonomy allowlist.")
+    tags: list | None = None
+    instructor_id: UUID | None = None
+    instructor_name: str | None = None
+    instructor_bio: str | None = None
+    instructor: TrainingInstructor | None = None
+    instructor_photo: str | None = None
+    instructor_credentials: str | None = None
+    requirements: str | None = None
+    prerequisites: list[str] | None = None
+    learning_objectives: list | None = None
+    target_audience: str | None = None
+    level: str | None = None
+    difficulty_level: str | None = None
+    language: str | None = None
+    subtitle: str | None = None
+    primary_image: str | None = None
+    gallery_images: list | None = None
+    promotional_video: str | None = None
+    documents: list | None = None
+    notes_documents: list[TrainingNoteDocument] | None = None
+    delivery_mode: Literal["online", "physical", "hybrid", "self_paced"] | None = None
+    course_type: str | None = None
+    duration_hours: str | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    venue: str | None = None
+    address: str | None = None
+    meeting_link: str | None = None
+    meeting_provider: str | None = None
+    meeting_id: str | None = None
+    meeting_passcode: str | None = None
+    access_information: str | None = None
+    delivery_instructions: str | None = None
+    offline_access_enabled: bool | None = None
+    recurring: TrainingRecurrence | None = None
+    schedule_exceptions: list[str] | None = None
+    instructor_notes: str | None = None
+    session_mode: str | None = None
+    check_in: bool | None = None
+    release_rule: dict | None = None
+    scheduled_publication: datetime | None = None
+    randomise: bool | None = None
+    is_mandatory: bool | None = None
+    faqs: list[TrainingFaq] | None = None
+    badges: list | None = None
+    enrolment_start: datetime | None = None
+    enrolment_end: datetime | None = None
+    time_zone: str | None = None
+    capacity: str | None = None
+    price: str | None = None
+    currency: str | None = None
+    promo_price: str | None = None
+    coupon_code: str | None = None
+    requires_approval: bool | None = None
+    access_duration_days: str | None = None
+    status: TrainingStatus | None = None
+    form_configuration_version_id: UUID | None = None
+    custom_values: list | dict | None = None
+
+    def to_model_data(self) -> dict:
+        data = self.model_dump(exclude_unset=True)
+        data.pop("custom_values", None)
+        data.pop("form_configuration_version_id", None)
+        difficulty_level = data.pop("difficulty_level", None)
+        if difficulty_level is not None and data.get("level") is None:
+            data["level"] = difficulty_level
+        instructor = data.pop("instructor", None)
+        if instructor:
+            if data.get("instructor_id") is None and instructor.get("id") is not None:
+                data["instructor_id"] = instructor["id"]
+            if data.get("instructor_name") is None and instructor.get("name") is not None:
+                data["instructor_name"] = instructor["name"]
+            if data.get("instructor_bio") is None and instructor.get("bio") is not None:
+                data["instructor_bio"] = instructor["bio"]
+            if instructor.get("role") is not None:
+                data["instructor_role"] = instructor["role"]
+        return data
+
+
+class TrainingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    tenant_id: UUID | None = None
+    enterprise_id: UUID
+    location_id: UUID | None = None
+    title: str
+    description: str | None = None
+    category: str
+    subcategory: str | None = None
+    tags: list | None = None
+    instructor_id: UUID | None = None
+    instructor_name: str | None = None
+    instructor_bio: str | None = None
+    instructor_photo: str | None = None
+    instructor_credentials: str | None = None
+    delivery_mode: str | None = None
+    course_type: str | None = None
+    capacity: str | None = None
+    price: str | None = None
+    currency: str | None = None
+    status: str
+    is_deleted: bool | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    sections: list | None = None
+    assessments: list | None = None
+    assignments: list | None = None
+    requires_approval: bool | None = None
+    access_duration_days: str | None = None
+    promo_price: str | None = None
+    coupon_code: str | None = None
+    requirements: str | None = None
+    prerequisites: list | None = None
+    learning_objectives: list | None = None
+    target_audience: str | None = None
+    level: str | None = None
+    language: str | None = None
+    subtitle: str | None = None
+    primary_image: str | None = None
+    gallery_images: list | None = None
+    promotional_video: str | None = None
+    documents: list | None = None
+    notes_documents: list | None = None
+    duration: str | None = None
+    duration_hours: str | None = None
+    time_zone: str | None = None
+    enrolment_start: datetime | None = None
+    enrolment_end: datetime | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    venue: str | None = None
+    address: str | None = None
+    meeting_link: str | None = None
+    meeting_provider: str | None = None
+    meeting_platform: str | None = None  # alias of meeting_provider (contract naming)
+    meeting_id: str | None = None
+    meeting_passcode: str | None = None
+    access_information: str | None = None
+    delivery_instructions: str | None = None
+    offline_access_enabled: bool | None = None
+    recurring: dict | None = None
+    schedule_exceptions: list | None = None
+    instructor_notes: str | None = None
+    session_mode: str | None = None
+    check_in: bool | None = None
+    pass_code: str | None = None
+    qr_payload: str | None = None
+    qr_image_base64: str | None = Field(None, description="PNG render of qr_payload as a data: URI — present when qr_payload is set")
+    access_type: str | None = Field(None, description="Derived from delivery_mode: online|venue|both|on_demand")
+    difficulty_level: str | None = None  # alias of level (contract naming)
+    promotional_video_url: str | None = None  # alias of promotional_video (contract naming)
+    notes: list | None = None  # alias of notes_documents (contract naming)
+    access_expiry_days: str | None = None  # alias of access_duration_days (contract naming)
+    current_participants: int | None = None  # alias of enrolled_count (contract naming) — Detail only, requires a query
+    moderation_status: str | None = None
+    rejection_reason: str | None = Field(None, description="Admin/provider callers: the training listing's own moderation rejection reason. Learner callers on GET /{training_id}: the caller's own enrolment rejection reason instead (null unless enrolment_status='rejected').")
+    published_at: datetime | None = None
+    approved_at: datetime | None = None
+    archived_at: datetime | None = None
+    suspended_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    release_rule: dict | None = None
+    scheduled_publication: datetime | None = None
+    randomise: bool | None = None
+    is_mandatory: bool | None = None
+    faqs: list | None = None
+    badges: list | None = None
+    notes_pdf_url: str | None = None
+    instructor: TrainingInstructor | None = None
+    last_admin_notes: str | None = None
+    custom_values: list | None = None
+    form_configuration_id: UUID | None = None
+    form_configuration_version_id: UUID | None = None
+
+
+class TrainingListItemResponse(TrainingResponse):
+    average_rating: float | None = Field(None, description="Mean of the approved review ratings, rounded to 2 decimals; null when there are none (show \"No ratings yet\").")
+    reviews_count: int = Field(0, description="Number of approved reviews.")
+
+
+class TrainingDetailResponse(TrainingResponse):
+    enterprise_name: str | None = None
+    is_enrolled: bool = Field(False, description="True while the caller has a live enrolment (pending_approval or enrolled) — false when never enrolled, cancelled, rejected, or waitlisted.")
+    enrolment_status: str | None = Field(None, description="The caller's own enrolment status: pending_approval|enrolled|cancelled|rejected|waitlisted|attended|null (never enrolled). Admin/provider callers never see this — always null for them.")
+    enrolled_count: int = Field(0, description="Active enrolments (enrolled/active/completed/approved).")
+    available_slots: int | None = Field(
+        None, description="capacity minus enrolled_count; null when capacity is not set/numeric."
+    )
+    average_rating: float | None = Field(None, description="Mean of the approved review ratings, rounded to 2 decimals; null when there are none (show \"No ratings yet\").")
+    reviews_count: int = Field(0, description="Number of approved reviews.")
+    waitlist_count: int = Field(0, description="Participants currently on the waitlist.")
+    reviews: list[dict] = Field(default_factory=list, description="Most recent approved reviews (up to 50), newest first. No email addresses.")
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TrainingPaginatedResponse(PaginatedResponse[TrainingListItemResponse]):
+    pass
+
+
+class TrainingSummaryResponse(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {
+        "total_trainings": 17,
+        "upcoming_trainings": 5,
+        "past_trainings": 12,
+        "total_registrations": 20,
+        "total_attended": 3,
+        "average_rating": None,
+        "by_status": {"published": 10, "draft": 7},
+        "by_category": {"wellness": 8, "fitness": 9},
+        "by_delivery_mode": {"self_paced": 7, "hybrid": 4, "physical": 2, "online": 2},
+    }})
+
+    total_trainings: int = Field(..., description="Total non-deleted trainings owned by the caller's tenant")
+    upcoming_trainings: int = Field(..., description="Trainings with start_date >= now")
+    past_trainings: int = Field(..., description="Trainings with status=completed, or end_date < now")
+    total_registrations: int = Field(..., description="Enrolments in enrolled|pending_approval|active|attended status, across these trainings")
+    total_enrolments: int = Field(..., description="Alias of total_registrations, kept for existing consumers")
+    total_attended: int = Field(..., description="Enrolments with status=attended")
+    average_rating: float | None = Field(None, description="Average TrainingReview.rating across these trainings; null when there are no reviews")
+    by_status: dict[str, int]
+    by_category: dict[str, int]
+    by_delivery_mode: dict[str, int]
+
+
+class TrainingAdminActionRequest(BaseModel):
+    reason: str = Field(..., min_length=1, description="Admin reason/message for reject or request-changes")
+
+
+class TrainingStatusUpdate(BaseModel):
+    status: str
+    reason: str | None = None
+
+
+class SectionCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    title: str = Field(..., description="Section/Module title")
+    type: str = Field("section", description="section|module")
+    order: int | None = 0
+    instructor_id: UUID | None = Field(None, description="Section instructor allocation")
+    schedule: str | dict | None = Field(None, description="ISO timestamp or schedule/agenda object")
+
+
+class TopicCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    title: str = Field(..., description="Topic title")
+    content_url: str | None = Field(None, description="Topic content URL (e.g. PDF, page)")
+    videos: list[str] | None = Field(None, description="Topic media video URLs, e.g. uploaded via /trainings/upload")
+    documents: list[dict] | None = Field(None, description="Topic attachments: [{url, name, visibility, downloadable}]")
+    notes: list[str] | None = Field(None, description="Topic notes URLs (e.g. generated notes PDFs / uploads)")
+    duration: str | int | None = Field(None, description="Display duration for the topic")
+
+
+class LessonCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str = Field("text", description="text|video|youtube|audio|webpage|pdf|live|presentation|worksheet|document|venue|exam|ebook (an eBook lesson keeps its pages in /ebook, not here)")
+    title: str
+    content_url: str | None = None
+    topics: list[TopicCreate] | None = Field(None, description="Topics within lesson: [{title, content_url, videos, documents, notes}]")
+    duration: int | str | None = Field(None, description="Minutes (int) for content lessons, or a display string (e.g. 'Tue 7:00–7:40 AM') for live/venue lessons")
+    scheduled_at: datetime | None = Field(
+        None,
+        description="When this live/venue lesson takes place (ISO 8601). Include a UTC "
+        "offset to be unambiguous — a value with no offset is interpreted as wall-clock "
+        "time in the training's time_zone, same convention as Training.enrolment_start/"
+        "enrolment_end. Returned by GET /content with an explicit offset.",
+    )
+    schedule: str | dict | None = Field(
+        None,
+        description="Human-readable or structured schedule for this lesson, e.g. "
+        "'Tue 7:00–7:40 AM' or {start, end}. Falls back to the section's schedule when omitted.",
+    )
+    is_preview: bool | None = Field(False, description="Preview allowed without enrolment")
+    is_draft: bool | None = Field(False, description="Draft mode — hidden until published")
+    is_mandatory: bool | None = Field(False, description="Mandatory lesson")
+    is_downloadable: bool | None = Field(False, description="Allow offline download/caching of this lesson's content_url")
+    meeting_link: str | None = Field(None, description="Live-session join link for this lesson (video call URL)")
+    join_meta: str | None = Field(None, description="Join instructions for a live lesson, e.g. 'Opens 10 min before · muted on join'")
+    thumbnail_url: str | None = Field(None, description="Thumbnail image URL shown on the lesson card")
+    venue: str | None = Field(None, description="In-person venue name for this specific lesson (e.g. 'Restwell Studio · Room B')")
+    address: str | None = Field(None, description="Address for this lesson's venue")
+    pass_code: str | None = Field(None, description="Check-in pass code for this lesson's venue")
+    check_in_window: str | None = Field(None, description="Display string for the check-in/join window, e.g. 'Opens 8:40 AM · closes 9:20 AM'. Applies to both venue and live lessons.")
+    assessment_id: str | None = Field(None, description="Linked assessment id, for type='exam' lessons — matched against Training.assessments[].id")
+    assignment_id: str | None = Field(None, description="Linked assignment id, for type='assignment' lessons — matched against Training.assignments[].id")
+    file_size: str | None = Field(None, description="Content file size, e.g. '24 MB' — informational, client-supplied")
+    completion_rule: str | None = Field(None, description="Completion rule, e.g. mandatory")
+    prerequisites: list | None = Field(None, description="Lesson IDs that must be completed first — sequential learning")
+    release_rule: dict | None = Field(None, description="Release: {mode: 'date'|'enrolment_day'|'previous_lesson', date: '2026-01-01', days: 2, lesson_id: '...'}")
+    instructor_id: UUID | None = Field(None, description="Lesson instructor allocation")
+    videos: list[str] | None = Field(None, description="Lesson media video URLs, e.g. uploaded via /trainings/upload")
+    documents: list[dict] | None = Field(None, description="Lesson attachments: [{url, name, visibility, downloadable}]")
+    notes: list[str] | None = Field(None, description="Lesson notes URLs (e.g. generated notes PDFs / uploads)")
+
+
+class SectionOrderItem(BaseModel):
+    id: str = Field(..., description="Section id — must belong to this training")
+    order: int = Field(..., description="Zero- or one-based position; lower sorts first")
+
+
+class SectionReorderRequest(BaseModel):
+    """POST /{training_id}/sections/reorder body. Every id must match an existing
+    section on this training; sections omitted from the list keep their relative
+    order and are placed after the ones listed here."""
+    section_orders: list[SectionOrderItem] = Field(..., min_length=1)
+
+
+class LessonOrderItem(BaseModel):
+    id: str = Field(..., description="Lesson id — must belong to this section")
+    order: int = Field(..., description="Zero- or one-based position; lower sorts first")
+
+
+class LessonReorderRequest(BaseModel):
+    """POST /{training_id}/sections/{section_id}/lessons/reorder body. Accepts
+    either lesson_orders ([{id, order}], matching section_orders) or order
+    (a plain list of lesson ids in the desired sequence) — exactly one is required."""
+    lesson_orders: list[LessonOrderItem] | None = None
+    order: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _require_one_format(self):
+        if not self.lesson_orders and not self.order:
+            raise ValueError("Provide either 'lesson_orders' or 'order'")
+        return self
+
+
+LessonAttendanceStatus = Literal["attended", "absent", "not_marked"]
+
+
+class LessonAttendanceMarkedBy(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    email: str | None = None
+
+
+class LessonAttendanceProgress(BaseModel):
+    """The learner's overall course progress, recomputed whenever attendance completes or un-completes a lesson."""
+    overall_percent: float = Field(..., description="Completed lessons / total lessons, 0-100, two decimals")
+    lessons_done: int
+    total_lessons: int
+    mandatory_done: int
+    mandatory_total: int
+    completed_at: datetime | None = Field(None, description="When the learner finished the course; null while they have not")
+
+
+class LessonAttendanceParticipant(BaseModel):
+    enrolment_id: str = Field(..., description="TrainingEnrolment id — the identifier used to mark attendance")
+    participant_name: str
+    participant_email: str
+    enrolment_status: str = Field(..., description="Enrolment's own status (enrolled/active/completed/...), for context")
+    status: LessonAttendanceStatus = Field(..., description="Current attendance status for this lesson")
+    marked_by: LessonAttendanceMarkedBy | None = Field(None, description="Who last marked this status — null if never marked")
+    marked_at: datetime | None = Field(None, description="When it was last marked — null if never marked")
+    is_completed: bool = Field(
+        False,
+        description="Whether this learner has completed this lesson. Marking them 'attended' completes it; 'absent' and "
+        "'not_marked' never do. It is the same value as is_completed on this lesson in GET /content.",
+    )
+    completed_by_attendance: bool = Field(
+        False,
+        description="true when the completion was created by attendance, so un-marking them undoes it. false when the "
+        "learner completed the lesson themselves (that is never undone by attendance) or it is not complete.",
+    )
+    progress: LessonAttendanceProgress | None = Field(None, description="The learner's course progress totals after this change")
+
+
+class LessonAttendanceRosterResponse(BaseModel):
+    training_id: str
+    lesson_id: str
+    lesson_title: str | None = None
+    lesson_type: str | None = None
+    participants: list[LessonAttendanceParticipant]
+
+
+class LessonAttendanceMarkItem(BaseModel):
+    enrolment_id: UUID = Field(..., description="TrainingEnrolment id to mark — not participant email")
+    status: LessonAttendanceStatus = Field(..., description="attended|absent|not_marked — not_marked clears any existing status")
+
+
+class LessonAttendanceBatchRequest(BaseModel):
+    records: list[LessonAttendanceMarkItem] = Field(..., min_length=1)
+
+
+class LessonQrCheckInRequest(BaseModel):
+    qr_code: str = Field(..., description="Scanned lesson QR from /content: <enrolment_qr>:<lesson_id>. The lesson must match the URL. Legacy enrolment-only QR codes are also accepted.")
+
+
+class LessonQrCheckInResponse(LessonAttendanceParticipant):
+    result: Literal["marked", "already_attended"] = Field(..., description="'already_attended' on an idempotent repeat scan — no duplicate record was created")
+
+
+# --- TrainingCategory CRUD schemas — mirrors EventCategoryCreate/Update/Response
+# (event_schema.py) shape-for-shape for a consistent Super Admin Categories page
+# UI pattern. Own table (training_categories), never shared with EventCategory.
+
+
+class TrainingCategoryCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, description="Category name")
+    parent_id: UUID | None = Field(None, description="Parent category ID (for subcategories)")
+    description: str | None = Field(None, description="Category description")
+
+
+class TrainingCategoryUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100, description="Category name")
+    description: str | None = Field(None, description="Category description")
+
+
+class TrainingCategoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    parent_id: UUID | None = None
+    description: str | None = None
+    created_at: datetime | None = None
+
+
+class AssessmentQuestionCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    question_text: str = Field(..., description="The question text")
+    question_type: str = Field("mcq", description="mcq|multiple_select|true_false|short_answer|essay")
+    options: list[str | dict] | None = Field(None, description="Choice strings or {id, label} objects")
+    correct_answer: str | None = Field(None, description="Correct answer (for mcq/true_false) or comma-separated for multiple_select")
+    points: int = Field(1, description="Points for correct answer")
+    explanation: str | None = Field(None, description="Answer explanation")
+    reusable: bool | None = Field(False, description="Store in question bank for reuse")
+
+
+class AssessmentCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    title: str = Field(..., description="Assessment title")
+    type: str = Field("quiz", description="quiz|exam|test|survey")
+    instructions: str | None = Field(None, description="Instructions shown before starting the assessment")
+    level: str | None = Field(None, description="pre_course|module|final|feedback — where the assessment sits in the course")
+    module_id: str | None = Field(None, description="Section/module id this assessment targets (for level='module')")
+    lesson_id: str | None = Field(None, description="Lesson id this assessment is attached to")
+    time_limit_minutes: int | None = Field(None, description="Time limit — enforced on submit")
+    pass_percent: int | None = Field(None, description="Pass threshold as a percentage of total points")
+    passing_score: int | None = Field(None, description="Alternative absolute pass score")
+    attempts_allowed: int | None = Field(None, description="Number of attempts permitted")
+    publish_at: datetime | None = Field(None, description="Scheduled result publication timestamp")
+    publication: str | None = Field(None, description="immediate|scheduled — result release mode")
+    randomise: bool | None = Field(None, description="Randomise question order")
+    is_published: bool | None = Field(True, description="Whether learners can see/attempt the assessment")
+    questions: list[AssessmentQuestionCreate] | None = Field(None, description="Inline questions")
+
+
+class AssessmentSubmitCreate(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "started_at": "2026-09-16T09:00:00Z",
+                "answers": [
+                    {"question_id": "q1", "answer": "Mars"},
+                    {"question_id": "q2", "answer": "2,3"},
+                    {"question_id": "q3", "answer": "True"},
+                    {"question_id": "q4", "answer": "Paris"},
+                    {"question_id": "q5", "answer": "Water evaporates, forms clouds, then falls as rain."},
+                ],
+            }
+        }
+    )
+    answers: list[dict] = Field(
+        ...,
+        description=(
+            "One entry per answered question. Every entry has exactly two keys, "
+            "regardless of question_type: `question_id` (the question's `id` from "
+            "GET .../assessments/{aid}) and `answer` (always a plain string). "
+            "Payload shape per question_type:\n"
+            "- **mcq (Radio)**: `answer` = the exact option text, e.g. `\"Mars\"`. Case-insensitive match.\n"
+            "- **multiple_select (Checkbox)**: `answer` = comma-separated option texts, e.g. `\"2,3\"` "
+            "(order doesn't matter — compared as a set).\n"
+            "- **true_false (Boolean)**: `answer` = `\"True\"` or `\"False\"` (case-insensitive).\n"
+            "- **short_answer (Blank Text)**: `answer` = free text. Not auto-scored — held for manual grading.\n"
+            "- **essay (Essay)**: `answer` = free text. Not auto-scored — held for manual grading.\n\n"
+            "Send one array covering all questions in the assessment in a single request."
+        ),
+        examples=[
+            [
+                {"question_id": "q1", "answer": "Mars"},
+                {"question_id": "q2", "answer": "2,3"},
+                {"question_id": "q3", "answer": "True"},
+                {"question_id": "q4", "answer": "Paris"},
+                {"question_id": "q5", "answer": "Water evaporates, forms clouds, then falls as rain."},
+            ]
+        ],
+    )
+    started_at: str | None = Field(None, description="ISO 8601 time the learner opened the quiz, for example 2026-10-26T07:22:00Z (milliseconds, Z, +00:00 or any offset are all fine; no offset is read as UTC). Required when time_limit_minutes is set. A submit up to ASSESSMENT_SUBMIT_GRACE_SECONDS (default 60) after the limit is still accepted, so an auto-submit at the end of the countdown works")
+
+
+class AssessmentSubmitResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "score": 4,
+                "passed": False,
+                "total_points": 10,
+                "feedback": "Pending manual evaluation",
+                "assessment_id": "8f14e45f-ceea-4c19-b0a9-3fb6dbe1e6a1",
+                "submission_id": "3c7c3e2a-9b1a-4c2e-8e2a-1a2b3c4d5e6f",
+                "publication": "immediate",
+                "needs_manual": True,
+                "attempts_made": 1,
+                "attempts_allowed": 3,
+            }
+        }
+    )
+    score: int
+    passed: bool
+    total_points: int
+    feedback: str | None = None
+    assessment_id: str = Field(..., description="The assessment's id, echoed back")
+    submission_id: str = Field(..., description="Id of the stored submission — pass to the manual-grade/review endpoints")
+    publication: str = Field(..., description="When results become visible: immediate|manual|scheduled")
+    needs_manual: bool = Field(..., description="True if any short_answer/essay questions were answered and still need manual grading")
+    attempts_made: int = Field(..., description="Total number of times this participant has submitted this assessment, including this submission")
+    attempts_allowed: int | None = Field(None, description="Max attempts permitted (from the assessment's attempt_limit/attempts_allowed). null = unlimited")
+
+
+class AssessmentReviewAnswer(BaseModel):
+    question_id: str
+    question_text: str | None = None
+    given: str | None = Field(None, description="The participant's submitted answer for this question")
+    correct: str | None = Field(None, description="The correct answer — null for short_answer/essay (manually graded)")
+    explanation: str | None = None
+    points: int = 1
+
+
+class AssessmentReviewResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "submission_id": "3c7c3e2a-9b1a-4c2e-8e2a-1a2b3c4d5e6f",
+                "assessment_id": "8f14e45f-ceea-4c19-b0a9-3fb6dbe1e6a1",
+                "score": "4",
+                "passed": False,
+                "review": [
+                    {
+                        "question_id": "q1",
+                        "question_text": "Which planet is known as the Red Planet?",
+                        "given": "Mars",
+                        "correct": "Mars",
+                        "explanation": "Mars appears red due to iron oxide on its surface.",
+                        "points": 1,
+                    },
+                    {
+                        "question_id": "q4",
+                        "question_text": "What is the capital of France?",
+                        "given": "Paris",
+                        "correct": None,
+                        "explanation": "Manually graded — free text answer.",
+                        "points": 1,
+                    },
+                ],
+                "level": "module",
+            }
+        }
+    )
+    submission_id: str
+    assessment_id: str
+    score: str = Field(..., description="Auto-scored points earned, as a string (short_answer/essay points are not included until manually graded)")
+    passed: bool
+    review: list[AssessmentReviewAnswer] = Field(..., description="One entry per answered question, with the participant's answer alongside the correct answer/explanation")
+    level: str | None = Field(None, description="pre_course|module|final|feedback — where the assessment sits in the course")
+
+
+class AssignmentCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    title: str = Field(..., description="Assignment title")
+    type: str = Field("assignment", description="assignment|task|practical")
+    instructions: str | None = Field(None, description="Assignment instructions")
+    due_date: datetime | None = None
+    max_score: int | None = Field(None, description="Maximum possible score")
+    accepted_file_types: list[str] | None = Field(
+        None, description="Allowed file extensions, e.g. ['.pdf', '.docx']"
+    )
+    allow_late_submissions: bool = Field(
+        False, description="Allow submissions after due date"
+    )
+
+
+class TrainingAssignmentResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "example": {
+                "id": "a1b2c3d4-0000-0000-0000-000000000001",
+                "title": "Week 1 Practical",
+                "type": "assignment",
+                "instructions": "Submit a short video of the exercise.",
+                "due_date": "2026-10-01T00:00:00Z",
+                "max_score": 10,
+                "accepted_file_types": [".mp4", ".pdf"],
+                "allow_late_submissions": False,
+            }
+        },
+    )
+    id: str = Field(..., description="Assignment id")
+    title: str
+    type: str = Field("assignment", description="assignment|task|practical")
+    instructions: str | None = None
+    due_date: datetime | None = None
+    max_score: int | None = None
+    accepted_file_types: list[str] | None = None
+    allow_late_submissions: bool = False
+    attempts_allowed: int | None = None
+    attempts_made: int = 0
+    latest_attempt_id: str | None = None
+    latest_score: int | None = None
+    latest_total_points: int | None = None
+    latest_score_percent: int | None = None
+    latest_passed: bool | None = None
+    can_review: bool = False
+
+
+class AssessmentAttemptSummary(BaseModel):
+    id: str
+    attempt_number: int | None = None
+    submitted_at: datetime
+    score: int | None = None
+    total_points: int | None = None
+    score_percent: int | None = None
+    passed: bool | None = None
+    status: Literal["pending", "evaluated"]
+    can_review: bool
+
+
+class AssessmentSubmissionItem(BaseModel):
+    submission_id: str = Field(..., description="The id of the attempt. The same id is `{sid}` of the staff review / grade endpoints and `attempt_id` of the learner's own attempt endpoint.")
+    attempt_id: str = Field(..., description="Same value as submission_id.")
+    learner_name: str | None = Field(None, description="The name on the learner's enrolment. null when no enrolment record is found.")
+    learner_email: str
+    attempt_number: int | None = Field(None, description="1 for the learner's first attempt of this assessment.")
+    status: Literal["pending", "evaluated"] = Field(..., description="pending = waiting for manual grading (or an old attempt whose result is unknown).")
+    needs_manual_grading: bool = Field(..., description="true while status is pending.")
+    score: int | None = Field(None, description="Points scored. While pending it is only the part that was marked automatically. null for old attempts.")
+    total_points: int | None = None
+    score_percent: int | None = Field(None, description="Whole number, rounded down. null when score or total is missing, or total is 0.")
+    passed: bool | None = Field(None, description="null while pending (the result is not final) and for old attempts.")
+    submitted_at: datetime = Field(..., description="UTC, no offset in the text (e.g. 2026-10-26T07:22:00).")
+    is_legacy: bool = Field(False, description="An attempt saved before result snapshots existed. Its grading status, total and score cannot be recovered.")
+
+
+class AssessmentSubmissionStatusCounts(BaseModel):
+    all: int
+    pending: int
+    evaluated: int
+
+
+class AssessmentSubmissionListResponse(BaseModel):
+    assessment_id: str
+    assessment_title: str | None = None
+    items: list[AssessmentSubmissionItem]
+    pagination: PaginationMeta
+    status_counts: AssessmentSubmissionStatusCounts = Field(..., description="Counts for the same search and dates, ignoring the status filter, for tab badges.")
+
+
+class AssessmentAttemptOption(BaseModel):
+    id: str | None = None
+    label: str
+
+
+class AssessmentAttemptQuestion(BaseModel):
+    id: str
+    question_text: str | None = None
+    question_type: str
+    points: int
+    options: list[AssessmentAttemptOption] = Field(default_factory=list)
+    user_answer: str | None = None
+    correct_answer: str | None = None
+    explanation: str | None = None
+    is_correct: bool | None = None
+    points_awarded: int | None = None
+
+
+class AssessmentAttemptReview(AssessmentAttemptSummary):
+    assignment_id: str
+    assignment_title: str | None = None
+    attempts_allowed: int | None = None
+    passing_score: int | None = None
+    pass_percent: int | None = None
+    feedback: str | None = None
+    questions: list[AssessmentAttemptQuestion] = Field(default_factory=list)
+
+
+class AssignmentSubmitFile(BaseModel):
+    url: str = Field(..., description="URL to the submitted file/asset")
+    name: str = Field("", description="Display name of the submitted file")
+    type: str = Field("document", description="image|video|document|link")
+
+
+class AssignmentSubmitCreate(BaseModel):
+    file_url: str | None = Field(None, description="URL to uploaded file (single-file shorthand)")
+    files: list[AssignmentSubmitFile] | None = Field(None, description="Multi-media submission — images/videos/documents/links")
+    submission_text: str | None = Field(None, description="Text submission content")
+
+
+class AssignmentSubmitResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "3c7c3e2a-9b1a-4c2e-8e2a-1a2b3c4d5e6f",
+                "submitted_at": "2026-09-16T09:00:00",
+                "grade": None,
+                "feedback": None,
+                "assignment_id": "a1b2c3d4-0000-0000-0000-000000000001",
+                "files": [],
+                "attempts_made": 1,
+            }
+        }
+    )
+    id: str
+    submitted_at: str
+    grade: int | None = None
+    feedback: str | None = None
+    assignment_id: str = Field(..., description="The assignment's id, echoed back")
+    files: list[dict] = Field(default_factory=list)
+    attempts_made: int = Field(..., description="Total number of times this participant has submitted this assignment, including this submission. Assignments have no attempt cap — resubmission is always allowed.")
+
+
+class TrainingProgressSection(BaseModel):
+    section_id: str
+    section_title: str
+    lessons_done: int
+    total_lessons: int
+
+
+class TrainingProgressLesson(BaseModel):
+    lesson_id: str
+    lesson_title: str
+    is_completed: bool
+
+
+class TrainingProgressLessonPosition(BaseModel):
+    """Playback/resume position for one lesson — present only for lessons the
+    participant has actually started (called POST .../progress at least once)."""
+    lesson_id: str
+    section_id: str | None = None
+    position_seconds: int
+    duration_seconds: int | None = None
+    is_completed: bool
+    last_accessed_at: str | None = None
+
+
+class TrainingProgressResponse(BaseModel):
+    training_id: UUID | None = Field(None, description="Present alongside the legacy fields below for resume-tracking consumers")
+    overall_percent: float
+    progress_percent: float | None = Field(None, description="Alias of overall_percent")
+    sections_done: int
+    total_sections: int
+    lessons_done: int
+    completed_lessons: int | None = Field(None, description="Alias of lessons_done")
+    total_lessons: int
+    certificate_url: str | None = None
+    sections_detail: list[TrainingProgressSection]
+    lessons_detail: list[TrainingProgressLesson]
+    resume_section_id: str | None = Field(None, description="section_id of the most recently accessed, not-yet-completed lesson")
+    resume_lesson_id: str | None = Field(None, description="lesson_id of the most recently accessed, not-yet-completed lesson — null if nothing has been started yet")
+    lessons: list[TrainingProgressLessonPosition] = Field(default_factory=list, description="Per-lesson playback position — only lessons with at least one saved position appear here")
+    expired: bool = False
+    status: str = Field("active", description="active|expired")
+    access_expires_at: str | None = None
+
+
+class LessonProgressSaveRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {
+        "position_seconds": 1800,
+        "duration_seconds": 3600,
+        "section_id": "86e1ad8d-54b9-4187-8469-315d3f7091d1",
+    }})
+    position_seconds: int = Field(..., ge=0, description="Current playback position, in seconds")
+    duration_seconds: int | None = Field(None, ge=0, description="Total length of the video/lesson, in seconds — used to compute progress_percent")
+    section_id: str | None = Field(None, description="Optional — the backend locates the lesson across every section automatically if omitted")
+
+
+class LessonProgressData(BaseModel):
+    training_id: UUID
+    section_id: str | None = None
+    lesson_id: str
+    position_seconds: int
+    duration_seconds: int | None = None
+    progress_percent: float
+    is_completed: bool
+    last_accessed_at: str
+
+
+class LessonProgressSaveResponse(BaseModel):
+    message: str = "Progress saved"
+    data: LessonProgressData
+
+
+class TrainingCompleteLessonRequest(BaseModel):
+    lesson_id: str = Field(
+        ...,
+        validation_alias=AliasChoices("lesson_id", "id"),
+        description="ID of the lesson to mark complete. section_id is not required — the backend "
+        "locates the lesson by searching every section. 'id' is accepted as a legacy alias for this same field.",
+    )
+    participant_email: str | None = Field(
+        None,
+        description="Defaults to the authenticated caller's email if omitted.",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"lesson_id": "c4af5aaa-bf67-425e-8393-fb0c3e5bf547"}}
+    )
+
+
+class TrainingCompleteLessonResponse(BaseModel):
+    lesson_id: str
+    overall_percent: float = Field(..., description="Overall training completion percent, 0-100")
+    lessons_done: int
+    total_lessons: int
+    mandatory_done: int
+    mandatory_total: int
+    completed_at: str | None = Field(None, description="ISO timestamp — set once the training is fully/mandatorily complete")
+    certificate_url: str | None = Field(None, description="Set once completed_at is set")
+    resume_lesson: str = Field(..., description="Echoes lesson_id — the lesson to resume from")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "lesson_id": "c4af5aaa-bf67-425e-8393-fb0c3e5bf547",
+                "overall_percent": 65.0,
+                "lessons_done": 13,
+                "total_lessons": 20,
+                "mandatory_done": 10,
+                "mandatory_total": 12,
+                "completed_at": None,
+                "certificate_url": None,
+                "resume_lesson": "c4af5aaa-bf67-425e-8393-fb0c3e5bf547",
+            }
+        }
+    )
+
+
+class TrainingLiveSessionCreate(BaseModel):
+    title: str = Field(..., description="Session title")
+    description: str | None = None
+    scheduled_at: datetime = Field(..., description="Scheduled date/time")
+    duration_minutes: int = Field(..., description="Duration in minutes")
+    meeting_link: str | None = Field(None, description="Meeting link (Zoom/Teams URL). Optional: leave it out to have the platform create the meeting (see docs/meetings-api.md), or paste a link later.")
+    meeting_provider: str = Field("zoom", description="zoom|teams|meet|other")
+
+
+class TrainingLiveSessionResponse(BaseModel):
+    id: str
+    title: str
+    scheduled_at: str
+    duration_minutes: int
+    meeting_link: str | None = None
+    meeting_provider: str | None = None
+    status: str = "scheduled"
+    recording_url: str | None = None
+
+
+class AnnouncementCreate(BaseModel):
+    title: str | None = None
+    message: str = Field(..., description="Announcement message")
+    channel: str = Field("in_app", description="in_app|email|sms|both")
+
+
+class AnnouncementResponse(BaseModel):
+    id: str
+    training_id: UUID
+    title: str | None = None
+    message: str
+    sent_at: str
+    channel: str
+
+
+class TrainingCheckoutRequest(BaseModel):
+    participant_name: str
+    participant_email: str
+    quantity: int = Field(1, ge=1)
+    coupon_code: str | None = None
+    payment_provider: str | None = Field("marketplace", description="marketplace|merchant")
+
+
+class TrainingOrderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    training_id: UUID
+    participant_name: str
+    participant_email: str
+    quantity: str
+    amount: str | None = None
+    currency: str | None = None
+    payment_status: str
+    status: str
+    created_at: datetime | None = None
+
+
+class EnrolApprovalRequest(BaseModel):
+    action: str = Field(..., description="approve|reject")
+    reason: str | None = None
+
+
+# ---- Training Order Status & Refund ----
+
+class TrainingOrderStatusUpdate(BaseModel):
+    status: str = Field(..., description="New status: confirmed|cancelled|completed")
+    reason: str | None = Field(None, description="Reason for status change")
+
+class TrainingRefundRequest(BaseModel):
+    reason: str | None = Field(None, description="Reason for refund")
+    amount: str | None = Field(None, description="Partial amount if partial refund")
+
+class TrainingRefundApproveRequest(BaseModel):
+    action: str = Field(..., description="approve|reject")
+    reason: str | None = Field(None, description="Reason for approval/rejection")
+
+
+# ---- Reviews ----
+
+class TrainingReviewCreate(BaseModel):
+    rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5")
+    comment: str | None = Field(None, max_length=2000, description="Optional, at most 2000 characters")
+    participant_email: str | None = Field(None, description="Deprecated: identity comes from the authenticated user")
+
+
+class TrainingReviewResponse(BaseModel):
+    id: str
+    training_id: str
+    rating: int
+    comment: str | None = None
+    participant_email: str | None = Field(None, description="Only returned to the review's author and to the training's staff; null in the public list")
+    participant_name: str | None = Field(None, description="Display name from the participant's enrolment on this training — null if no matching enrolment is found")
+    verified: bool = True
+    moderation_status: str = Field("pending", description="pending|approved|rejected. A new review is approved at once; only approved reviews are in the public list")
+    status: str | None = Field(None, description="The same as moderation_status: approved | pending | rejected | deleted")
+    reason: str | None = Field(None, description="Why a Super Admin rejected, held back (pending) or deleted this review; shown to its author. null otherwise")
+    status_label: str | None = Field(None, description="What the customer sees: Approved | Waiting for Approval | Not Approved | Deleted")
+    is_public: bool = Field(False, description="True only for an approved review")
+    edit_label: str | None = Field(None, description="The edit form's button: Resubmit Review for a rejected review, else Save Changes")
+    created_at: str
+    updated_at: str | None = None
+
+
+class TrainingReviewListResponse(BaseModel):
+    reviews: list[TrainingReviewResponse] = Field(default_factory=list)
+    average_rating: float | None = Field(None, description="Mean of the approved reviews' ratings; null when there are none")
+    count: int = Field(0, description="Number of approved reviews")
+    rating_distribution: dict[str, int] = Field(default_factory=dict, description="Approved reviews per star: {\"5\": n, \"4\": n, ...}")
+    pagination: PaginationMeta | None = Field(None, description="total = reviews after the filters; page/page_size when paging, else everything on one page")
+    my_review: TrainingReviewResponse | None = Field(None, description="The signed-in caller's own review in any status (check moderation_status: pending|approved|rejected); null when anonymous or they have not reviewed. Not counted in `reviews`, `count` or the aggregates")
+
+
+class TrainingReviewModerateRequest(BaseModel):
+    action: str = Field(..., description="approved | rejected | pending")
+    reason: str | None = Field(None, description="Required when action is rejected or pending (3 to 500 characters, else 422)")
+
+
+# ---- Wishlist ----
+
+class TrainingWishlistItemResponse(BaseModel):
+    id: str
+    training_id: str
+    title: str | None = None
+    primary_image: str | None = None
+    price: str | None = None
+    currency: str | None = None
+    average_rating: float | None = None
+    reviews_count: int = 0
+    added_at: str
+
+
+# ---- Training media upload ----
+
+class TrainingUploadPurpose(str, Enum):
+    lesson_video = "lesson_video"
+    lesson_pdf = "lesson_pdf"
+    lesson_document = "lesson_document"
+    audio = "audio"
+    image = "image"
+
+
+class TrainingUploadResponse(BaseModel):
+    url: str
+    name: str
+    size: int
+    type: str | None = None
+    purpose: str | None = None
+    # Pictures only: the asset the eBook editor refers to by id (see /media/{asset_id}), and what was found in the file.
+    asset_id: str | None = Field(None, description="Use this in an eBook image block (asset_id) or as cover_asset_id")
+    asset_url: str | None = Field(None, description="The address that serves the picture to people allowed to see it (needs sign-in)")
+    width: int | None = None
+    height: int | None = None
+    sha256: str | None = None
+    scan_status: str | None = Field(None, description="clean | skipped (no virus scanner set up) | unscanned (scanner was down)")
+
+
+# ---- Discussions ----
+
+class TrainingDiscussionCreate(BaseModel):
+    question: str | None = Field(None, description="The question or discussion text")
+    text: str | None = Field(None, description="Alternative field for the question text")
+
+class TrainingDiscussionReply(BaseModel):
+    answer: str = Field(..., description="The reply or answer text")
+
+class TrainingDiscussionResponse(BaseModel):
+    id: str
+    author: str
+    question: str
+    answer: str | None = None
+    created_at: str
+
+
+class TrainingModerationHistoryItem(BaseModel):
+    """One action in a Training's moderation / lifecycle history, oldest first."""
+
+    model_config = ConfigDict(extra="allow", json_schema_extra={"example": {
+        "action": "approved",
+        "previous_status": "pending_approval",
+        "new_status": "approved",
+        "actor_id": "9d1f7a52-3c4e-4b86-a0d5-2e8c6f1b7a90",
+        "actor_email": "root@platform.example",
+        "actor_role": "super_admin",
+        "reason": None,
+        "created_at": "2026-10-06T10:30:00.123456Z",
+        "at": "2026-10-06T10:30:00.123456",
+    }})
+
+    action: str | None = Field(
+        None,
+        description="What happened: the status the Training moved to (approved, rejected, needs_revision = changes "
+        "requested, published, unpublished, pending_approval, suspended, cancelled, archived, ...) or an enrolment "
+        "decision (enrolment_approved, enrolment_rejected).",
+    )
+    previous_status: str | None = Field(None, description="Status before the action (status changes only).")
+    new_status: str | None = Field(None, description="Status after the action (status changes only).")
+    actor_id: str | None = Field(None, description="Application user id of who did it.")
+    actor_email: str | None = None
+    actor_role: str | None = None
+    reason: str | None = Field(None, description="Reviewer's reason / notes, when given.")
+    created_at: str | None = Field(
+        None,
+        description="When this action happened, ISO 8601 in UTC with a trailing Z (e.g. 2026-10-06T10:30:00.123456Z). "
+        "Every entry has its own. null only for an entry that carries no timestamp at all (none are known to exist).",
+    )
+    at: str | None = Field(
+        None,
+        description="Legacy field: the same instant as created_at, UTC but without the Z. Kept for existing clients; prefer created_at.",
+    )

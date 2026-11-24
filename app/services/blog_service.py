@@ -28,6 +28,7 @@ from app.schemas.blog_schema import (
     BlogManageDetail, BlogManageItem, BlogManagePaginatedResponse, BlogPaginatedResponse, BlogPreviewResponse, BlogRevisionDetail,
     BlogRevisionList,
 )
+from app.services import blog_engagement_service as engagement
 from app.services import blog_form_rules as rules
 from app.services import blog_form_service as forms
 from app.services import blog_governance_service as governance
@@ -540,23 +541,22 @@ def list_blogs_service(
     db: Session, *, search: str | None = None, status_filter: str | None = None, category: str | None = None,
     category_id: UUID | None = None, kind: str | None = None, tag: str | None = None, tenant_id: UUID | None = None,
     enterprise_id: UUID | None = None, source: str | None = None, page: int = 1, page_size: int = 20, public_only: bool = True,
-    module: str | None = None,
+    module: str | None = None, viewer_id=None,
 ) -> BlogPaginatedResponse:
-    """Live posts, pinned first and then newest first."""
+    """Live posts, pinned first and then newest first. A Blog carries its `engagement` counts (and the viewer's own like and save when `viewer_id` is given)."""
     query = blog_repo.filter_posts(
         blog_repo.public_posts(db), search=search, kind=kind, category=category, category_id=category_id, tag=tag,
         tenant_id=tenant_id, enterprise_id=enterprise_id, source=source, module=module,
     ).order_by(BlogPost.is_pinned.desc(), BlogPost.published_at.desc().nullslast(), BlogPost.created_at.desc())
     total = query.count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
-    return BlogPaginatedResponse(
-        items=[BlogListItemResponse.model_validate(_public_dict(p)) for p in rows],
-        pagination=build_pagination_meta(total, page, page_size),
-    )
+    items = [BlogListItemResponse.model_validate(_public_dict(p)) for p in rows]
+    engagement.attach_engagement(db, items, viewer_id)
+    return BlogPaginatedResponse(items=items, pagination=build_pagination_meta(total, page, page_size))
 
 
 def get_blog_service(
-    db: Session, *, blog_id: UUID | None = None, slug: str | None = None, public_only: bool = True, increment_views: bool = False,
+    db: Session, *, blog_id: UUID | None = None, slug: str | None = None, public_only: bool = True, increment_views: bool = False, viewer_id=None,
 ) -> BlogDetailResponse:
     """A live post, by slug (or by id). A post that is not live is a 404 for the public. Never moderation notes or a waiting edit."""
     post = blog_repo.get_post(db, blog_id) if blog_id else blog_repo.get_post_by_slug(db, slug or "")
@@ -572,8 +572,10 @@ def get_blog_service(
         db.commit()
         db.refresh(post)
     form = forms.resolve_pinned(db, post.form_id, post.form_version)
-    return BlogDetailResponse.model_validate({**_public_dict(post), "content": post.content, "author_id": None, "created_by": None, "updated_by": None,
-                                              **_public_extras(form, _main_content(post))})
+    detail = BlogDetailResponse.model_validate({**_public_dict(post), "content": post.content, "author_id": None, "created_by": None, "updated_by": None,
+                                                **_public_extras(form, _main_content(post))})
+    engagement.attach_engagement(db, [detail], viewer_id)
+    return detail
 
 
 # ---------------------------------------------------------------- merchant

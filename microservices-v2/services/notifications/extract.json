@@ -1,0 +1,26 @@
+{
+ "service": "notifications",
+ "tables": [
+  "notification_event_log",
+  "notification_logs",
+  "notification_templates",
+  "notifications",
+  "user_notifications"
+ ],
+ "files": [
+  "api/v1/endpoints/notification_template.py",
+  "api/v1/endpoints/platform_notification.py",
+  "api/v1/endpoints/user_notification.py",
+  "celery_app.py",
+  "models/notification_model.py",
+  "repository/notification_repo.py",
+  "repository/query_utils.py",
+  "schemas/common_schema.py",
+  "schemas/notification_schema.py",
+  "services/firebase_push_service.py",
+  "services/notification_delivery_service.py",
+  "services/notification_idempotency.py",
+  "services/notification_service.py",
+  "tasks/notification_tasks.py"
+ ]
+}

@@ -1,0 +1,112 @@
+# v2 commerce: read-only replica of catalog's products table (kept current by mskit.replication). Reviews stay in catalog.
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+
+from commerce_service.db.database import Base
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
+    enterprise_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("enterprises.id"),
+        nullable=False,
+        index=True,
+    )
+
+    location_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("enterprise_locations.id"),
+        nullable=True,
+        index=True,
+    )
+
+    provider_user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    provider_name = Column(String(255), nullable=True)
+
+    product_name = Column(String(255), nullable=False, index=True)
+
+    product_description = Column(Text)
+
+    product_category = Column(String(100), nullable=False, index=True)
+
+    product_price = Column(Float, nullable=False)
+
+    product_images = Column(Text)
+
+    product_status = Column(Boolean, default=True)
+
+    status = Column(String(20), default="draft", nullable=False, index=True)
+
+    is_deleted = Column(Boolean, default=False, nullable=False)
+
+    sku = Column(String(100))
+
+    barcode_upc = Column(String(100))
+
+    weight = Column(Float)
+
+    dimensions = Column(String(255))
+
+    sale_price = Column(Float)
+
+    cost_price = Column(Float)
+
+    tax_class = Column(String(50))
+
+    currency = Column(String(3), default="USD")
+
+    stock_quantity = Column(Integer, default=0)
+
+    low_stock_alert_threshold = Column(Integer)
+
+    stock_management = Column(String(50))
+
+    publish_status = Column(String(50), default="draft")
+
+    length = Column(Float)
+
+    width = Column(Float)
+
+    thick = Column(Float)
+
+    listing_type = Column(String(50), default="one_time", nullable=False)
+
+    delivery_interval = Column(String(100))
+
+    delivery_fee = Column(String(100))
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    enterprise = relationship("Enterprise", backref="products")
+    location = relationship("EnterpriseLocation", backref="products")
+
+    __table_args__ = (
+        Index("ix_products_tenant_enterprise", "tenant_id", "enterprise_id"),
+        Index("ix_products_enterprise_location", "enterprise_id", "location_id"),
+    )
+
+

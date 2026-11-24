@@ -52,7 +52,7 @@ class Order(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
-    status = Column(String(20), default="pending", nullable=False, index=True)
+    status = Column(String(32), default="pending", nullable=False, index=True)       # "cancellation_requested" is 22 characters
     total = Column(Float, nullable=False, default=0)
     currency = Column(String(3), default="USD", nullable=False)
     # Shipping address snapshot (structured object)
@@ -76,7 +76,7 @@ class Order(Base):
     cancelled_by = Column(UUID(as_uuid=True), nullable=True)
     cancelled_by_role = Column(String(20), nullable=True)
     cancellation_requested_at = Column(DateTime, nullable=True)
-    status_before_request = Column(String(20), nullable=True)      # restored when a cancellation request is rejected
+    status_before_request = Column(String(32), nullable=True)     # restored when a cancellation request is rejected
     decision_reason = Column(Text, nullable=True)
     stock_reduced = Column(Boolean, default=False, nullable=False, server_default="false")     # checkout took the items out of stock (orders before this existed did not)
     stock_restocked = Column(Boolean, default=False, nullable=False, server_default="false")   # ... and gave them back (only ever once)
@@ -116,8 +116,8 @@ class OrderStatusEvent(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
     action = Column(String(40), nullable=False)
-    from_status = Column(String(20), nullable=True)
-    to_status = Column(String(20), nullable=True)
+    from_status = Column(String(32), nullable=True)
+    to_status = Column(String(32), nullable=True)
     actor_id = Column(UUID(as_uuid=True), nullable=True)
     actor_role = Column(String(20), nullable=True)             # customer | admin | super_admin | system
     reason = Column(Text, nullable=True)

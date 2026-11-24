@@ -58,3 +58,26 @@ def test_every_order_model_column_has_a_migration():
         f"op.create_table/op.add_column('orders', ...) in any alembic migration — "
         f"this is exactly the bug that caused checkout to 500. Add a migration."
     )
+
+
+def test_every_order_status_fits_the_status_columns():
+    """Regression for the cancel 500 on PostgreSQL: "cancellation_requested" (22 characters) did not fit VARCHAR(20), and SQLite (the tests) does not enforce
+    a length, so only a check against the declared column sizes can catch it."""
+    from app.models.cart_model import OrderStatusEvent
+    from app.services.order_service import ADMIN_TRANSITIONS, TERMINAL
+
+    statuses = {"pending", "cancellation_requested", *TERMINAL, *ADMIN_TRANSITIONS, *(s for targets in ADMIN_TRANSITIONS.values() for s in targets)}
+    limits = {"orders.status": Order.__table__.c.status, "orders.status_before_request": Order.__table__.c.status_before_request,
+              "order_status_events.from_status": OrderStatusEvent.__table__.c.from_status, "order_status_events.to_status": OrderStatusEvent.__table__.c.to_status}
+    for name, column in limits.items():
+        too_long = sorted(s for s in statuses if len(s) > column.type.length)
+        assert not too_long, f"{name} is VARCHAR({column.type.length}) but these statuses are longer: {too_long}"
+    for column in (Order.__table__.c.cancelled_by_role, OrderStatusEvent.__table__.c.actor_role):
+        assert column.type.length >= len("super_admin")
+
+
+def test_a_migration_widens_the_status_columns_to_match_the_model():
+    text = (_VERSIONS_DIR / "s8d1f4b7c0e5_widen_order_status_columns.py").read_text(encoding="utf-8")
+    assert "sa.String(32)" in text
+    for table, column in (("orders", "status"), ("orders", "status_before_request"), ("order_status_events", "from_status"), ("order_status_events", "to_status")):
+        assert f'("{table}", "{column}"' in text

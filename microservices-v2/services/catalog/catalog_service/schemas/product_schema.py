@@ -1,0 +1,392 @@
+from datetime import datetime
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+
+from catalog_service.services.review_common import edit_label, is_public, public_name, shown_reason, status_label
+
+from catalog_service.schemas.common_schema import EntityStatus, PaginatedResponse, CatalogReviewItem, PaginationMeta
+
+
+class ProductCreate(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "tenant_id": "550e8400-e29b-41d4-a716-446655440000",
+                "enterprise_id": "550e8400-e29b-41d4-a716-446655440001",
+                "location_id": "550e8400-e29b-41d4-a716-446655440002",
+                "product_name": "Yoga Mat Pro",
+                "provider_user_id": "550e8400-e29b-41d4-a716-446655440020",
+                "provider_name": "Assigned Provider",
+                "description": "Non-slip premium yoga mat",
+                "category": "Fitness",
+                "price": 49.99,
+                "currency": "USD",
+                "image_urls": "https://example.com/images/yoga-mat.png",
+                "status": "draft",
+            }
+        }
+    )
+
+    tenant_id: UUID | None = Field(None, description="Tenant identifier.")
+    enterprise_id: UUID = Field(..., description="Enterprise ID")
+    location_id: UUID | None = Field(None, description="Enterprise location ID")
+    provider_user_id: UUID | None = Field(None, description="Tenant internal user assigned as provider; use this user UUID for Chat provider_id and participant user_id.")
+    provider_name: str | None = Field(None, max_length=255, description="Assigned provider display name.")
+    product_name: str = Field(..., description="Product name")
+    description: str | None = Field(None, description="Product description")
+    category: str = Field(..., description="Product category")
+    price: float = Field(..., description="Base product price")
+    currency: str | None = Field("USD", description="ISO currency code")
+    image_urls: str | None = Field(None, description="Product image URLs")
+    status: EntityStatus = Field("draft", description="Product lifecycle status.")
+    product_description: str | None = None
+    product_category: str | None = None
+    product_price: float | None = None
+    product_images: str | None = None
+    product_status: bool | None = None
+    sku: str | None = Field(None, description="Stock keeping unit")
+    barcode_upc: str | None = Field(None, description="Barcode or UPC")
+    weight: float | None = Field(None, description="Product weight")
+    dimensions: str | None = Field(
+        None,
+        description="Product dimensions (free-form, e.g. 72x24x0.2 in)",
+    )
+    length: float | None = Field(None, description="Product length")
+    width: float | None = Field(None, description="Product width")
+    thick: float | None = Field(None, description="Product thickness")
+    sale_price: float | None = Field(None, description="Promotional sale price")
+    cost_price: float | None = Field(None, description="Cost price")
+    tax_class: str | None = Field(None, description="Tax classification")
+    stock_quantity: int | None = Field(0, description="Available stock quantity")
+    low_stock_alert_threshold: int | None = Field(
+        None,
+        description="Threshold for low-stock alerts",
+    )
+    stock_management: str | None = Field(
+        None,
+        description="Stock management mode (e.g. enabled, disabled, manual)",
+    )
+    publish_status: str | None = Field(
+        "draft",
+        description="Publication status (e.g. draft, published)",
+    )
+    listing_type: str | None = Field(
+        "one_time",
+        description="Product listing type: one_time or subscription.",
+    )
+    delivery_interval: str | None = Field(
+        None,
+        description="Delivery cadence label, e.g. per week.",
+    )
+    delivery_fee: str | None = Field(
+        None,
+        description="Delivery fee label, e.g. free delivery.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        if normalized.get("product_description") and not normalized.get("description"):
+            normalized["description"] = normalized["product_description"]
+        if normalized.get("product_category") and not normalized.get("category"):
+            normalized["category"] = normalized["product_category"]
+        if normalized.get("product_price") is not None and normalized.get("price") is None:
+            normalized["price"] = normalized["product_price"]
+        if normalized.get("product_images") and not normalized.get("image_urls"):
+            normalized["image_urls"] = normalized["product_images"]
+        if "product_status" in normalized and "status" not in normalized:
+            normalized["status"] = (
+                "active" if normalized["product_status"] else "inactive"
+            )
+        return normalized
+
+    def to_model_data(self) -> dict:
+        return {
+            "tenant_id": self.tenant_id,
+            "enterprise_id": self.enterprise_id,
+            "location_id": self.location_id,
+            "provider_user_id": self.provider_user_id,
+            "provider_name": self.provider_name,
+            "product_name": self.product_name,
+            "product_description": self.description or self.product_description,
+            "product_category": self.category or self.product_category,
+            "product_price": self.price if self.price is not None else self.product_price,
+            "product_images": self.image_urls or self.product_images,
+            "currency": self.currency,
+            "status": self.status,
+            "product_status": self.status == "active",
+            "sku": self.sku,
+            "barcode_upc": self.barcode_upc,
+            "weight": self.weight,
+            "dimensions": self.dimensions,
+            "length": self.length,
+            "width": self.width,
+            "thick": self.thick,
+            "sale_price": self.sale_price,
+            "cost_price": self.cost_price,
+            "tax_class": self.tax_class,
+            "stock_quantity": self.stock_quantity,
+            "low_stock_alert_threshold": self.low_stock_alert_threshold,
+            "stock_management": self.stock_management,
+            "publish_status": self.publish_status,
+            "listing_type": self.listing_type or "one_time",
+            "delivery_interval": self.delivery_interval,
+            "delivery_fee": self.delivery_fee,
+        }
+
+
+class ProductUpdate(BaseModel):
+    provider_user_id: UUID | None = Field(None, description="Tenant internal user assigned as provider; use this user UUID for Chat provider_id and participant user_id.")
+    provider_name: str | None = Field(None, max_length=255, description="Assigned provider display name.")
+
+    tenant_id: UUID | None = None
+    location_id: UUID | None = None
+    product_name: str | None = None
+    description: str | None = None
+    category: str | None = None
+    price: float | None = None
+    currency: str | None = None
+    image_urls: str | None = None
+    status: EntityStatus | None = None
+    product_description: str | None = None
+    product_category: str | None = None
+    product_price: float | None = None
+    product_images: str | None = None
+    product_status: bool | None = None
+    sku: str | None = None
+    barcode_upc: str | None = None
+    weight: float | None = None
+    dimensions: str | None = None
+    length: float | None = None
+    width: float | None = None
+    thick: float | None = None
+    sale_price: float | None = None
+    cost_price: float | None = None
+    tax_class: str | None = None
+    stock_quantity: int | None = None
+    low_stock_alert_threshold: int | None = None
+    stock_management: str | None = None
+    publish_status: str | None = None
+    listing_type: str | None = None
+    delivery_interval: str | None = None
+    delivery_fee: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        if normalized.get("product_description") and not normalized.get("description"):
+            normalized["description"] = normalized["product_description"]
+        if normalized.get("product_category") and not normalized.get("category"):
+            normalized["category"] = normalized["product_category"]
+        if normalized.get("product_price") is not None and normalized.get("price") is None:
+            normalized["price"] = normalized["product_price"]
+        if normalized.get("product_images") and not normalized.get("image_urls"):
+            normalized["image_urls"] = normalized["product_images"]
+        if "product_status" in normalized and "status" not in normalized:
+            normalized["status"] = (
+                "active" if normalized["product_status"] else "inactive"
+            )
+        return normalized
+
+    def to_model_data(self) -> dict:
+        data = self.model_dump(exclude_unset=True)
+        mapped: dict = {}
+        field_map = {
+            "description": "product_description",
+            "category": "product_category",
+            "price": "product_price",
+            "image_urls": "product_images",
+        }
+        for key, value in data.items():
+            if key in field_map:
+                mapped[field_map[key]] = value
+            elif key not in {"product_description", "product_category", "product_price", "product_images"}:
+                mapped[key] = value
+        if "status" in mapped:
+            mapped["product_status"] = mapped["status"] == "active"
+        return mapped
+
+
+class ProductResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    provider_user_id: UUID | None = Field(None, description="Tenant internal user assigned as provider; use this user UUID for Chat provider_id and participant user_id.")
+    provider_name: str | None = Field(None, max_length=255, description="Assigned provider display name.")
+
+    id: UUID
+    tenant_id: UUID | None = None
+    enterprise_id: UUID
+    location_id: UUID | None = None
+    product_name: str
+    description: str | None = None
+    category: str
+    price: float
+    currency: str | None
+    image_urls: str | None = None
+    status: EntityStatus
+    product_description: str | None = None
+    product_category: str | None = None
+    product_price: float | None = None
+    product_images: str | None = None
+    product_status: bool | None = None
+    sku: str | None = None
+    barcode_upc: str | None = None
+    weight: float | None = None
+    dimensions: str | None = None
+    length: float | None = None
+    width: float | None = None
+    thick: float | None = None
+    sale_price: float | None = None
+    cost_price: float | None = None
+    tax_class: str | None = None
+    stock_quantity: int | None = None
+    low_stock_alert_threshold: int | None = None
+    stock_management: str | None = None
+    publish_status: str | None = None
+    listing_type: str | None = None
+    delivery_interval: str | None = None
+    delivery_fee: str | None = None
+    created_at: datetime | None = None
+
+
+class ProductListItemResponse(ProductResponse):
+    enterprise_name: str | None = Field(
+        None,
+        description="Short name of the owning enterprise.",
+    )
+    rating: float = Field(
+        0,
+        description="Mean of the approved review ratings, 0 when there are none (check reviews_count; GET /products/{id}/reviews returns null in that case).",
+    )
+    reviews_count: int = Field(0, description="Number of approved reviews.")
+    listing_type: str = Field(
+        "One-time",
+        description="Display listing type, e.g. Subscription or One-time.",
+    )
+
+
+class ProductDetailResponse(ProductResponse):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "550e8400-e29b-41d4-a716-446655440002",
+                "enterprise_id": "550e8400-e29b-41d4-a716-446655440000",
+                "enterprise_name": "Spin Health",
+                "product_name": "Yoga Mat Pro",
+                "provider_user_id": "550e8400-e29b-41d4-a716-446655440020",
+                "provider_name": "Assigned Provider",
+                "length": 72.0,
+                "width": 24.0,
+                "thick": 0.2,
+                "stock_count": 100,
+            }
+        }
+    )
+
+    enterprise_name: str | None = Field(
+        None,
+        description="Short name of the owning enterprise.",
+    )
+    rating: float = Field(
+        0,
+        description="Mean of the approved review ratings, 0 when there are none (check reviews_count).",
+    )
+    stock_count: int | None = Field(
+        None,
+        description="Available stock (alias of stock_quantity).",
+    )
+    listing_type: str = Field(
+        "One-time",
+        description="Display listing type, e.g. Subscription or One-time.",
+    )
+    delivery_text: str | None = Field(
+        None,
+        description="Human-readable delivery summary, e.g. per week · free delivery.",
+    )
+    reviews: list[CatalogReviewItem] = Field(
+        default_factory=list,
+        description="Latest approved reviews of this product (up to 20), newest first.",
+    )
+    reviews_count: int = Field(0, description="Number of approved reviews of this product.")
+
+
+class ProductPaginatedResponse(PaginatedResponse[ProductListItemResponse]):
+    pass
+
+
+class ProductReviewCreate(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"rating": 5, "comment": "Great quality, fast delivery."}})
+    rating: int = Field(..., ge=1, le=5, description="1-5 stars")
+    comment: str | None = Field(None, max_length=2000)
+
+
+class ProductReviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    product_id: UUID
+    user_id: UUID
+    reviewer_name: str | None = None
+    rating: int
+    comment: str | None = None
+    is_verified_purchase: bool = Field(..., description="True if this reviewer has a confirmed order containing this product")
+    moderation_status: str = Field(..., description="pending|approved|rejected — only approved reviews are shown in the public list. A new review is approved at once")
+    created_at: datetime
+    updated_at: datetime
+
+    moderation_reason: str | None = Field(None, exclude=True)
+
+    @computed_field(description="The same as moderation_status: approved | pending | rejected | deleted")
+    @property
+    def status(self) -> str:
+        return self.moderation_status or "pending"
+
+    @computed_field(description="Why a Super Admin rejected, held back (pending) or deleted this review. null otherwise")
+    @property
+    def reason(self) -> str | None:
+        return shown_reason(self.moderation_status, self.moderation_reason)
+
+    @computed_field(description="What the customer sees: Approved | Waiting for Approval | Not Approved")
+    @property
+    def status_label(self) -> str:
+        return status_label(self.moderation_status)
+
+    @computed_field(description="True only for an approved review (it is the only kind in the public list)")
+    @property
+    def is_public(self) -> bool:
+        return is_public(self.moderation_status)
+
+    @computed_field(description="The edit form's button: Resubmit Review for a rejected review, else Save Changes")
+    @property
+    def edit_label(self) -> str:
+        return edit_label(self.moderation_status)
+
+    @field_validator("rating", mode="before")
+    @classmethod
+    def _rating_to_int(cls, value):
+        return int(value)
+
+    @field_validator("reviewer_name", mode="after")
+    @classmethod
+    def _hide_email_as_name(cls, value):
+        return public_name(value)
+
+
+class ProductReviewListResponse(BaseModel):
+    my_review: ProductReviewResponse | None = Field(None, description="The signed-in caller's own review in any status (approved | pending | rejected | deleted); null when they have none or are not signed in. Not repeated in `reviews`; still counted in `total` and the average")
+    reviews: list[ProductReviewResponse]
+    average_rating: float | None = Field(None, description="Average of approved reviews' ratings; null when there are none")
+    total: int = Field(..., description="Count of approved reviews")
+    rating_distribution: dict[str, int] = Field(default_factory=dict, description="Approved reviews per star: {\"5\": n, \"4\": n, ...}")
+    pagination: PaginationMeta | None = Field(None, description="total = reviews after the filters; page/page_size when paging, else everything on one page")
+
+
+class ProductReviewModerateRequest(BaseModel):
+    action: str = Field(..., description="approved|rejected|pending")
+    reason: str | None = Field(None, description="Required when action is rejected or pending (3 to 500 characters, else 422). Not needed for approved.")

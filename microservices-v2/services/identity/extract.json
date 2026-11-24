@@ -1,0 +1,17 @@
+{
+ "service": "identity",
+ "tables": ["user_addresses"],
+ "files": [
+  "api/v1/endpoints/auth.py",
+  "api/v1/endpoints/address.py",
+  "api/v1/endpoints/system.py",
+  "services/address_service.py",
+  "services/auth_integration_service.py",
+  "services/system_service.py",
+  "repository/address_repo.py",
+  "schemas/address_schema.py",
+  "schemas/auth_schema.py",
+  "schemas/system_schema.py",
+  "models/address_model.py"
+ ]
+}

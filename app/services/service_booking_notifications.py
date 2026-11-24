@@ -85,15 +85,19 @@ def to_customer(db: Session, booking, service, category: str, title: str, body: 
                     key=f"service_booking:{booking.id}:{category}:{_stamp(booking)}")
 
 
-def to_staff(db: Session, booking, service, category: str, title: str, body: str, *, reason: str | None = None) -> bool:
+def to_staff(db: Session, booking, service, category: str, title: str, body: str, *, reason: str | None = None, access_token: str | None = None) -> bool:
+    """The service's provider and the enterprise's admins. Finding the admins is an identity-service lookup that needs the caller's bearer token (the customer
+    who booked or cancelled): without it the lookup fails and only the provider is told, so every caller passes the token it has."""
     users = [booking.provider_user_id] if booking.provider_user_id else []
     try:
         from app.services.event_notification_service import resolve_enterprise_admin_user_ids
 
-        found, _tenant = resolve_enterprise_admin_user_ids(db, service)
+        found, _tenant = resolve_enterprise_admin_user_ids(db, service, access_token=access_token)
+        if not found:
+            logger.warning("service booking %s: no Enterprise Admin found to notify (token supplied: %s)", booking.id, bool(access_token))
         users += [str(u) for u in found]
     except Exception:
-        logger.debug("could not list the admins of service %s", booking.service_id, exc_info=True)
+        logger.warning("could not list the admins of service %s (token supplied: %s)", booking.service_id, bool(access_token), exc_info=True)
     data = payload(booking, service, category, **({"reason": reason} if reason else {}))
     return _deliver(db, users=users, category=category, title=title, body=body, data=data, tenant_id=booking.tenant_id,
                     key=f"service_booking_staff:{booking.id}:{category}:{_stamp(booking)}")
@@ -101,37 +105,40 @@ def to_staff(db: Session, booking, service, category: str, title: str, body: str
 
 # ---- what each change tells people --------------------------------------------------------------------------------------------------
 
-def booking_created(db: Session, booking, service) -> None:
+def booking_created(db: Session, booking, service, access_token: str | None = None) -> None:
     name = service.service_name
     if booking.status == "confirmed":
         to_customer(db, booking, service, "service_booking_confirmed", "Booking confirmed", f"Your booking for {name} is confirmed for {_when(booking, service)}.")
     elif booking.status == "pending" and booking.payment_status != "unpaid":
         to_customer(db, booking, service, "service_booking_pending_approval", "Booking received", f"Your booking for {name} on {_when(booking, service)} is waiting for approval.")
-        to_staff(db, booking, service, "service_booking_new", "New service booking", f"A booking for {name} on {_when(booking, service)} needs your approval.")
+        to_staff(db, booking, service, "service_booking_new", "New service booking", f"A booking for {name} on {_when(booking, service)} needs your approval.",
+                 access_token=access_token)
 
 
-def booking_paid(db: Session, booking, service) -> None:
+def booking_paid(db: Session, booking, service, access_token: str | None = None) -> None:
     if booking.status == "confirmed":
-        booking_created(db, booking, service)
+        booking_created(db, booking, service, access_token)
     else:
         to_customer(db, booking, service, "service_booking_pending_approval", "Booking received", f"Your booking for {service.service_name} is paid and waiting for approval.")
-        to_staff(db, booking, service, "service_booking_new", "New service booking", f"A paid booking for {service.service_name} on {_when(booking, service)} needs your approval.")
+        to_staff(db, booking, service, "service_booking_new", "New service booking", f"A paid booking for {service.service_name} on {_when(booking, service)} needs your approval.",
+                 access_token=access_token)
 
 
 def booking_confirmed(db: Session, booking, service) -> None:
     to_customer(db, booking, service, "service_booking_confirmed", "Booking confirmed", f"Your booking for {service.service_name} is confirmed for {_when(booking, service)}.")
 
 
-def booking_cancelled(db: Session, booking, service, *, by_customer: bool) -> None:
+def booking_cancelled(db: Session, booking, service, *, by_customer: bool, access_token: str | None = None) -> None:
     to_customer(db, booking, service, "service_booking_cancelled", "Booking cancelled", f"Your booking for {service.service_name} on {_when(booking, service)} was cancelled.",
                 reason=booking.cancel_reason)
     if by_customer:
-        to_staff(db, booking, service, "service_booking_cancelled", "Booking cancelled", f"A customer cancelled the booking for {service.service_name} on {_when(booking, service)}.")
+        to_staff(db, booking, service, "service_booking_cancelled", "Booking cancelled", f"A customer cancelled the booking for {service.service_name} on {_when(booking, service)}.",
+                 access_token=access_token)
 
 
-def cancellation_requested(db: Session, booking, service) -> None:
+def cancellation_requested(db: Session, booking, service, access_token: str | None = None) -> None:
     to_staff(db, booking, service, "service_booking_cancellation_requested", "Cancellation requested",
-             f"A customer asked to cancel the booking for {service.service_name} on {_when(booking, service)}.", reason=booking.cancel_reason)
+             f"A customer asked to cancel the booking for {service.service_name} on {_when(booking, service)}.", reason=booking.cancel_reason, access_token=access_token)
 
 
 def cancellation_rejected(db: Session, booking, service) -> None:

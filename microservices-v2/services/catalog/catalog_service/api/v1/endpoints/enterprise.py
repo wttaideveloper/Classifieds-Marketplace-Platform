@@ -1,0 +1,122 @@
+from uuid import UUID
+
+from fastapi import APIRouter, Body, Depends, Path, Query, status
+from sqlalchemy.orm import Session
+
+from mskit.auth.dependencies import get_current_user, require_roles
+from catalog_service.db.database import get_db
+from catalog_service.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from catalog_service.schemas.enterprise_schema import (
+    EnterpriseCreate,
+    EnterpriseDetailResponse,
+    EnterprisePaginatedResponse,
+    EnterpriseResponse,
+    EnterpriseUpdate,
+)
+from catalog_service.services.enterprise_service import (
+    create_enterprise_service,
+    delete_enterprise_service,
+    get_all_enterprises_service,
+    get_enterprise_service,
+    update_enterprise_service,
+)
+
+router = APIRouter(tags=["Enterprise"])
+
+
+@router.post(
+    "/",
+    response_model=EnterpriseResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Enterprise",
+)
+def create_enterprise(
+    enterprise: EnterpriseCreate = Body(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"])),
+):
+    return create_enterprise_service(db, enterprise)
+
+
+@router.get(
+    "/",
+    response_model=EnterprisePaginatedResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get All Enterprises",
+)
+def get_enterprises(
+    search: str | None = Query(None, description="Search across enterprise fields."),
+    status_filter: str | None = Query(None, alias="status", description="Filter by status."),
+    tenant_id: UUID | None = Query(None, description="Filter by tenant ID."),
+    page: int = Query(DEFAULT_PAGE, ge=1, description="Page number."),
+    page_size: int = Query(
+        DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=MAX_PAGE_SIZE,
+        description="Items per page.",
+    ),
+    latitude: float | None = Query(None, description="User latitude for distance_miles calculation."),
+    longitude: float | None = Query(None, description="User longitude for distance_miles calculation."),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return get_all_enterprises_service(
+        db,
+        search=search,
+        status_filter=status_filter,
+        tenant_id=tenant_id,
+        page=page,
+        page_size=page_size,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+@router.get(
+    "/{enterprise_id}",
+    response_model=EnterpriseDetailResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get Enterprise By ID",
+)
+def get_enterprise(
+    enterprise_id: UUID = Path(..., description="Unique identifier of the enterprise"),
+    latitude: float | None = Query(None, description="User latitude for distance_miles calculation."),
+    longitude: float | None = Query(None, description="User longitude for distance_miles calculation."),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return get_enterprise_service(
+        db,
+        enterprise_id,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+@router.put(
+    "/{enterprise_id}",
+    response_model=EnterpriseResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update Enterprise",
+)
+def update_enterprise(
+    enterprise: EnterpriseUpdate,
+    enterprise_id: UUID = Path(..., description="Unique identifier of the enterprise"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"])),
+):
+    return update_enterprise_service(db, enterprise_id, enterprise)
+
+
+@router.delete(
+    "/{enterprise_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Deactivate Enterprise",
+)
+def delete_enterprise(
+    enterprise_id: UUID = Path(..., description="Unique identifier of the enterprise"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin", "provider", "super_admin"])),
+):
+    delete_enterprise_service(db, enterprise_id)
+    return {"message": "Enterprise marked inactive successfully"}

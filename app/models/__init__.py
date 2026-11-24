@@ -6,6 +6,7 @@ Import all model modules so metadata is registered on ``Base``.
 from . import (  # noqa: F401
     address_model,
     attribute_model,
+    blog_engagement_model,
     blog_model,
     cart_model,
     chat_model,
@@ -35,6 +36,7 @@ from . import (  # noqa: F401
 __all__ = [
     "address_model",
     "attribute_model",
+    "blog_engagement_model",
     "blog_model",
     "chat_model",
     "ebook_model",

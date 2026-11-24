@@ -1,0 +1,2532 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "Service bookings API",
+  "version": "1.0.0",
+  "description": "Generated from the application. Contract and rules: docs/service-bookings.md"
+ },
+ "paths": {
+  "/api/v1/services/{service_id}/available-slots": {
+   "get": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "The bookable times of a service",
+    "description": "Public. Give `date` (one day) or `from` and `to` (up to 31 days), as calendar dates in the service's own time zone (`time_zone` in the answer). Each slot has `starts_at` / `ends_at` as ISO-8601 with the service's UTC offset: send `starts_at` back unchanged to book it. A slot says how many seats are left and, when it cannot be booked, why (`full`, `provider_busy`, `too_soon`, `too_far`). Slots already count the bookings that hold a place (pending, confirmed, in progress, cancellation requested; an unpaid booking only until its hold ends) and the provider's other bookings. `timezone` (optional, IANA) adds `starts_at_display` in that zone. `provider_id` and `delivery_mode` only check that the service offers them.",
+    "operationId": "available_slots_api_v1_services__service_id__available_slots_get",
+    "parameters": [
+     {
+      "name": "service_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Service Id"
+      }
+     },
+     {
+      "name": "date",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "date"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Date"
+      }
+     },
+     {
+      "name": "from",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "date"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "From"
+      }
+     },
+     {
+      "name": "to",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "date"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "To"
+      }
+     },
+     {
+      "name": "provider_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "uuid"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Provider Id"
+      }
+     },
+     {
+      "name": "delivery_mode",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "pattern": "^(in_person|virtual|hybrid)$"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Delivery Mode"
+      }
+     },
+     {
+      "name": "timezone",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "IANA zone for starts_at_display",
+       "title": "Timezone"
+      },
+      "description": "IANA zone for starts_at_display"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SlotsResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/api/v1/services/{service_id}/booking-settings": {
+   "get": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "A service's booking settings, with the meeting link (staff)",
+    "description": "Enterprise Admin of the owning tenant, the service's Provider, or a Super Admin. Everything the service form sets for booking, including the meeting link and passcode that the public catalog never shows.",
+    "operationId": "booking_settings_api_v1_services__service_id__booking_settings_get",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "service_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Service Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingSettings"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/service-bookings": {
+   "post": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "Book a service",
+    "description": "A customer books for themselves; the Enterprise Admin can book for a customer (send `customer_name` or `customer_user_id`; `paid: true` confirms a paid booking at once). Free service: confirmed straight away, or `pending` when the service requires approval. Paid service: `pending` with `payment_status: unpaid` and the slot held for the hold time (`hold_expires_at`); it is confirmed once paid (and approved, if required). Send an `Idempotency-Key` header: repeating the request with the same key returns the first booking (200) instead of booking twice. Errors (`detail.code`): SLOT_FULL, PROVIDER_UNAVAILABLE, SLOT_NOT_OFFERED, SLOT_NOT_BOOKABLE, DUPLICATE_BOOKING, SERVICE_NOT_BOOKABLE, DELIVERY_MODE_REQUIRED, INVALID_STARTS_AT.",
+    "operationId": "create_booking_api_v1_service_bookings_post",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "Idempotency-Key",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Idempotency-Key"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BookingCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingDetail"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/service-bookings/{booking_id}": {
+   "get": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "One booking",
+    "description": "The customer's own booking, or any booking of the Enterprise Admin's enterprise (a Provider: their own). Anyone else gets 404. Times are ISO-8601 with the service's UTC offset; `timezone` is the IANA name. `meeting.url` appears for a customer from `meeting.joins_at` until shortly after the end; staff always see it.",
+    "operationId": "get_booking_api_v1_service_bookings__booking_id__get",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "booking_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Booking Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingDetail"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/service-bookings/{booking_id}/cancel": {
+   "post": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "Cancel a booking, or ask to",
+    "description": "Customer: inside the free window (or while the booking is still pending) the booking is cancelled at once and capacity is released; later it becomes `cancellation_requested` (a `reason` of at least 3 characters is needed) for the Enterprise Admin to decide, or 409 `CANCEL_NOT_ALLOWED` with the policy when the service does not allow requests. The booking detail's `can_cancel`, `cancel_mode` and `cancel_blocked_reason` say which applies. A paid booking records the refund (`refund_percent`, `refund_amount`, `payment_status`): no money moves yet. The Enterprise Admin cancelling uses the same call (reason required, default refund 100%).",
+    "operationId": "cancel_booking_api_v1_service_bookings__booking_id__cancel_post",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "booking_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Booking Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/CancelBody"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Payload"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingDetail"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/service-bookings/{booking_id}/status": {
+   "patch": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "Change a booking's status (staff)",
+    "description": "pending -> confirmed | cancelled; confirmed -> in_progress | completed | no_show | cancelled; in_progress -> completed. A paid service cannot be confirmed before the payment is recorded (409 PAYMENT_REQUIRED); in_progress opens 15 minutes before the start; completed and no_show only once it has started; cancelled needs a reason. A Provider can only start, complete or mark no-show their own bookings. A booking with a cancellation request is decided with approve / reject. 409 INVALID_TRANSITION lists the `allowed` statuses.",
+    "operationId": "change_status_api_v1_service_bookings__booking_id__status_patch",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "booking_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Booking Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StatusBody"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingDetail"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/service-bookings/{booking_id}/cancellation/approve": {
+   "post": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "Approve a cancellation request (Enterprise Admin)",
+    "description": "Cancels the booking, releases the slot and records the refund: the service's `refund_percent_after` unless `refund_percent` is sent.",
+    "operationId": "approve_cancellation_api_v1_service_bookings__booking_id__cancellation_approve_post",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "booking_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Booking Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/DecisionBody"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Payload"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingDetail"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/service-bookings/{booking_id}/cancellation/reject": {
+   "post": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "Reject a cancellation request (Enterprise Admin)",
+    "description": "The booking goes back to the status it had; a `reason` (at least 3 characters) is required and the customer is told.",
+    "operationId": "reject_cancellation_api_v1_service_bookings__booking_id__cancellation_reject_post",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "booking_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Booking Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DecisionBody"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingDetail"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/service-bookings/{booking_id}/payment": {
+   "post": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "Record that a booking was paid (Enterprise Admin)",
+    "description": "Sets `payment_status` to `paid` (status only: no payment gateway is involved). A pending booking is confirmed unless the service requires approval. 409 HOLD_EXPIRED if the unpaid hold already ran out.",
+    "operationId": "record_payment_api_v1_service_bookings__booking_id__payment_post",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "booking_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Booking Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/PaymentBody"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Payload"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingDetail"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/service-bookings/{booking_id}/pay": {
+   "post": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "Pay for my booking (demo payment)",
+    "description": "A stand-in until a payment gateway is connected: marks the customer's own unpaid booking paid. Available only where SERVICE_BOOKING_DEMO_PAYMENT is on (off in production by default: 403 PAYMENT_NOT_AVAILABLE).",
+    "operationId": "pay_booking_api_v1_service_bookings__booking_id__pay_post",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "booking_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Booking Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingDetail"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/service-bookings/{booking_id}/history": {
+   "get": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "The booking's history",
+    "description": "Every change in order: who (role; staff also see the name), what, from which status to which, why, and when.",
+    "operationId": "booking_history_api_v1_service_bookings__booking_id__history_get",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "booking_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Booking Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/app__schemas__service_booking_schema__HistoryItem"
+         },
+         "title": "Response Booking History Api V1 Service Bookings  Booking Id  History Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/users/me/service-bookings": {
+   "get": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "My bookings",
+    "description": "The caller's own bookings only. `when=upcoming` (soonest first, still active), `past` (newest first, started or finished) or all (newest first); `status` is one or several comma separated statuses.",
+    "operationId": "my_bookings_api_v1_users_me_service_bookings_get",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "name": "when",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "pattern": "^(upcoming|past|all)$"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "When"
+      }
+     },
+     {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "default": 1,
+       "title": "Page"
+      }
+     },
+     {
+      "name": "page_size",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 100,
+       "minimum": 1,
+       "default": 20,
+       "title": "Page Size"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingListResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/enterprises/{enterprise_id}/service-bookings/cancellation-requests": {
+   "get": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "Cancellation requests waiting for a decision",
+    "description": "Oldest request first. Enterprise Admin of the enterprise (a Provider: their own bookings; Super Admin: any).",
+    "operationId": "cancellation_requests_api_v1_enterprises__enterprise_id__service_bookings_cancellation_requests_get",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "enterprise_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Enterprise Id"
+      }
+     },
+     {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "default": 1,
+       "title": "Page"
+      }
+     },
+     {
+      "name": "page_size",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 100,
+       "minimum": 1,
+       "default": 20,
+       "title": "Page Size"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingListResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/enterprises/{enterprise_id}/service-bookings": {
+   "get": {
+    "tags": [
+     "Service Bookings",
+     "Service Bookings"
+    ],
+    "summary": "The enterprise's bookings",
+    "description": "Enterprise Admin of the enterprise (a Provider sees only their own; Super Admin any). Filters: `status` (comma separated), `service_id`, `provider_id`, `payment_status`, `q` (customer name or e-mail, service, provider), `date_from` / `date_to` (the start, calendar dates in UTC), `when` = upcoming | past | all (history). Another enterprise's id is a 404.",
+    "operationId": "enterprise_bookings_api_v1_enterprises__enterprise_id__service_bookings_get",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "enterprise_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Enterprise Id"
+      }
+     },
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "name": "service_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "uuid"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Service Id"
+      }
+     },
+     {
+      "name": "provider_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "uuid"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Provider Id"
+      }
+     },
+     {
+      "name": "payment_status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "pattern": "^(not_required|unpaid|paid|refunded|partially_refunded)$"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Payment Status"
+      }
+     },
+     {
+      "name": "q",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "maxLength": 200
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Q"
+      }
+     },
+     {
+      "name": "date_from",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "date"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Date From"
+      }
+     },
+     {
+      "name": "date_to",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "date"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Date To"
+      }
+     },
+     {
+      "name": "when",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "pattern": "^(upcoming|past|all)$"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "When"
+      }
+     },
+     {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "default": 1,
+       "title": "Page"
+      }
+     },
+     {
+      "name": "page_size",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 100,
+       "minimum": 1,
+       "default": 20,
+       "title": "Page Size"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookingListResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "BookingCreate": {
+    "properties": {
+     "service_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Service Id"
+     },
+     "starts_at": {
+      "type": "string",
+      "title": "Starts At",
+      "description": "ISO-8601 with a UTC offset (or Z), exactly the `starts_at` of a slot from available-slots. A time without an offset is a 422."
+     },
+     "delivery_mode": {
+      "anyOf": [
+       {
+        "type": "string",
+        "enum": [
+         "in_person",
+         "virtual",
+         "hybrid"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Delivery Mode",
+      "description": "Required when the service offers more than one way to attend."
+     },
+     "provider_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider Id",
+      "description": "Optional. Must be the service's provider."
+     },
+     "participants": {
+      "type": "integer",
+      "maximum": 100.0,
+      "minimum": 1.0,
+      "title": "Participants",
+      "description": "Seats taken in the slot (default 1).",
+      "default": 1
+     },
+     "notes": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 1000
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Notes"
+     },
+     "customer_user_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Customer User Id"
+     },
+     "customer_name": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 255
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Customer Name"
+     },
+     "customer_email": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 255
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Customer Email"
+     },
+     "customer_phone": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 40
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Customer Phone"
+     },
+     "paid": {
+      "type": "boolean",
+      "title": "Paid",
+      "description": "Staff only: the customer already paid, so the booking is confirmed straight away.",
+      "default": false
+     }
+    },
+    "type": "object",
+    "required": [
+     "service_id",
+     "starts_at"
+    ],
+    "title": "BookingCreate",
+    "example": {
+     "delivery_mode": "in_person",
+     "participants": 1,
+     "service_id": "550e8400-e29b-41d4-a716-446655440001",
+     "starts_at": "2026-11-20T09:00:00+05:30"
+    }
+   },
+   "BookingDetail": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "pending",
+       "confirmed",
+       "in_progress",
+       "completed",
+       "cancellation_requested",
+       "cancelled",
+       "no_show",
+       "expired"
+      ],
+      "title": "Status"
+     },
+     "payment_status": {
+      "type": "string",
+      "enum": [
+       "not_required",
+       "unpaid",
+       "paid",
+       "refunded",
+       "partially_refunded"
+      ],
+      "title": "Payment Status"
+     },
+     "service_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Service Id"
+     },
+     "service_name": {
+      "type": "string",
+      "title": "Service Name"
+     },
+     "provider_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider Id"
+     },
+     "provider_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider Name"
+     },
+     "enterprise_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Enterprise Id"
+     },
+     "enterprise_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Enterprise Name"
+     },
+     "delivery_mode": {
+      "type": "string",
+      "enum": [
+       "in_person",
+       "virtual",
+       "hybrid"
+      ],
+      "title": "Delivery Mode"
+     },
+     "starts_at": {
+      "type": "string",
+      "title": "Starts At",
+      "description": "ISO-8601 with the service's UTC offset."
+     },
+     "ends_at": {
+      "type": "string",
+      "title": "Ends At"
+     },
+     "timezone": {
+      "type": "string",
+      "title": "Timezone"
+     },
+     "participants": {
+      "type": "integer",
+      "title": "Participants"
+     },
+     "amount": {
+      "type": "number",
+      "title": "Amount"
+     },
+     "currency": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Currency"
+     },
+     "can_cancel": {
+      "type": "boolean",
+      "title": "Can Cancel"
+     },
+     "cancel_mode": {
+      "anyOf": [
+       {
+        "type": "string",
+        "enum": [
+         "instant",
+         "request"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cancel Mode",
+      "description": "What cancelling does now: cancel at once, or send a request the clinic decides."
+     },
+     "can_reschedule": {
+      "type": "boolean",
+      "title": "Can Reschedule",
+      "description": "Always false in this release (rescheduling is a later phase).",
+      "default": false
+     },
+     "can_join": {
+      "type": "boolean",
+      "title": "Can Join"
+     },
+     "can_check_in": {
+      "type": "boolean",
+      "title": "Can Check In",
+      "description": "Always false in this release: the clinic marks attendance.",
+      "default": false
+     },
+     "customer": {
+      "$ref": "#/components/schemas/CustomerInfo"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "duration_minutes": {
+      "type": "integer",
+      "title": "Duration Minutes"
+     },
+     "venue": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Venue",
+      "description": "in_person and hybrid: name, line1, line2, city, state, postal_code, country, lat, lng, phone, instructions."
+     },
+     "meeting": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Meeting",
+      "description": "virtual and hybrid: provider, joins_at, available, and url / passcode / instructions once the link opens (staff always)."
+     },
+     "cancel_blocked_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cancel Blocked Reason"
+     },
+     "join_blocked_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Join Blocked Reason"
+     },
+     "cancellation_policy_summary": {
+      "type": "string",
+      "title": "Cancellation Policy Summary"
+     },
+     "cancellation_policy": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cancellation Policy"
+     },
+     "hold_expires_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Hold Expires At",
+      "description": "An unpaid booking holds its slot until then."
+     },
+     "cancellation": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Cancellation"
+     },
+     "payment_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Payment Id",
+      "description": "Always null: payment is a status on the booking for now."
+     },
+     "qr_payload": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Qr Payload"
+     },
+     "notes": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Notes"
+     },
+     "history": {
+      "items": {
+       "$ref": "#/components/schemas/app__schemas__service_booking_schema__HistoryItem"
+      },
+      "type": "array",
+      "title": "History"
+     },
+     "allowed_statuses": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Allowed Statuses",
+      "description": "Staff only: the statuses this booking can be moved to."
+     },
+     "created_by_role": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created By Role"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "status",
+     "payment_status",
+     "service_id",
+     "service_name",
+     "enterprise_id",
+     "delivery_mode",
+     "starts_at",
+     "ends_at",
+     "timezone",
+     "participants",
+     "amount",
+     "can_cancel",
+     "can_join",
+     "customer",
+     "duration_minutes",
+     "cancellation_policy_summary",
+     "cancellation"
+    ],
+    "title": "BookingDetail"
+   },
+   "BookingListItem": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "pending",
+       "confirmed",
+       "in_progress",
+       "completed",
+       "cancellation_requested",
+       "cancelled",
+       "no_show",
+       "expired"
+      ],
+      "title": "Status"
+     },
+     "payment_status": {
+      "type": "string",
+      "enum": [
+       "not_required",
+       "unpaid",
+       "paid",
+       "refunded",
+       "partially_refunded"
+      ],
+      "title": "Payment Status"
+     },
+     "service_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Service Id"
+     },
+     "service_name": {
+      "type": "string",
+      "title": "Service Name"
+     },
+     "provider_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider Id"
+     },
+     "provider_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider Name"
+     },
+     "enterprise_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Enterprise Id"
+     },
+     "enterprise_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Enterprise Name"
+     },
+     "delivery_mode": {
+      "type": "string",
+      "enum": [
+       "in_person",
+       "virtual",
+       "hybrid"
+      ],
+      "title": "Delivery Mode"
+     },
+     "starts_at": {
+      "type": "string",
+      "title": "Starts At",
+      "description": "ISO-8601 with the service's UTC offset."
+     },
+     "ends_at": {
+      "type": "string",
+      "title": "Ends At"
+     },
+     "timezone": {
+      "type": "string",
+      "title": "Timezone"
+     },
+     "participants": {
+      "type": "integer",
+      "title": "Participants"
+     },
+     "amount": {
+      "type": "number",
+      "title": "Amount"
+     },
+     "currency": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Currency"
+     },
+     "can_cancel": {
+      "type": "boolean",
+      "title": "Can Cancel"
+     },
+     "cancel_mode": {
+      "anyOf": [
+       {
+        "type": "string",
+        "enum": [
+         "instant",
+         "request"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cancel Mode",
+      "description": "What cancelling does now: cancel at once, or send a request the clinic decides."
+     },
+     "can_reschedule": {
+      "type": "boolean",
+      "title": "Can Reschedule",
+      "description": "Always false in this release (rescheduling is a later phase).",
+      "default": false
+     },
+     "can_join": {
+      "type": "boolean",
+      "title": "Can Join"
+     },
+     "can_check_in": {
+      "type": "boolean",
+      "title": "Can Check In",
+      "description": "Always false in this release: the clinic marks attendance.",
+      "default": false
+     },
+     "customer": {
+      "$ref": "#/components/schemas/CustomerInfo"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "status",
+     "payment_status",
+     "service_id",
+     "service_name",
+     "enterprise_id",
+     "delivery_mode",
+     "starts_at",
+     "ends_at",
+     "timezone",
+     "participants",
+     "amount",
+     "can_cancel",
+     "can_join",
+     "customer"
+    ],
+    "title": "BookingListItem"
+   },
+   "BookingListResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/BookingListItem"
+      },
+      "type": "array",
+      "title": "Items"
+     },
+     "total": {
+      "type": "integer",
+      "title": "Total"
+     },
+     "page": {
+      "type": "integer",
+      "title": "Page"
+     },
+     "page_size": {
+      "type": "integer",
+      "title": "Page Size"
+     }
+    },
+    "type": "object",
+    "required": [
+     "items",
+     "total",
+     "page",
+     "page_size"
+    ],
+    "title": "BookingListResponse"
+   },
+   "BookingSettings": {
+    "properties": {
+     "service_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Service Id"
+     },
+     "booking_enabled": {
+      "type": "boolean",
+      "title": "Booking Enabled"
+     },
+     "requires_approval": {
+      "type": "boolean",
+      "title": "Requires Approval"
+     },
+     "time_zone": {
+      "type": "string",
+      "title": "Time Zone"
+     },
+     "delivery_modes": {
+      "items": {
+       "type": "string",
+       "enum": [
+        "in_person",
+        "virtual",
+        "hybrid"
+       ]
+      },
+      "type": "array",
+      "title": "Delivery Modes"
+     },
+     "cancellation_rules": {
+      "$ref": "#/components/schemas/CancellationRules"
+     },
+     "cancellation_policy": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cancellation Policy"
+     },
+     "venue_instructions": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Venue Instructions"
+     },
+     "meeting_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Meeting Url"
+     },
+     "meeting_provider": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Meeting Provider"
+     },
+     "meeting_passcode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Meeting Passcode"
+     },
+     "meeting_instructions": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Meeting Instructions"
+     },
+     "max_participants": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Max Participants"
+     },
+     "duration_minutes": {
+      "type": "integer",
+      "title": "Duration Minutes"
+     },
+     "provider_user_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider User Id"
+     },
+     "provider_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider Name"
+     }
+    },
+    "type": "object",
+    "required": [
+     "service_id",
+     "booking_enabled",
+     "requires_approval",
+     "time_zone",
+     "delivery_modes",
+     "cancellation_rules",
+     "duration_minutes"
+    ],
+    "title": "BookingSettings",
+    "description": "Staff only: everything the booking needs from the service, including the meeting link."
+   },
+   "CancelBody": {
+    "properties": {
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 500
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason",
+      "description": "Optional for an instant cancellation; at least 3 characters when the cancellation is a request."
+     },
+     "refund_percent": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "maximum": 100.0,
+        "minimum": 0.0
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Refund Percent",
+      "description": "Staff only: how much of a paid booking is refunded (default 100)."
+     }
+    },
+    "type": "object",
+    "title": "CancelBody"
+   },
+   "CancellationRules": {
+    "properties": {
+     "free_cancellation_hours": {
+      "type": "integer",
+      "maximum": 2160.0,
+      "minimum": 0.0,
+      "title": "Free Cancellation Hours",
+      "description": "A customer can cancel on their own up to this many hours before the start.",
+      "default": 24
+     },
+     "refund_percent_before": {
+      "type": "integer",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "title": "Refund Percent Before",
+      "description": "Share refunded when cancelled inside the free window.",
+      "default": 100
+     },
+     "refund_percent_after": {
+      "type": "integer",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "title": "Refund Percent After",
+      "description": "Share refunded when an admin approves a cancellation requested after the window.",
+      "default": 0
+     },
+     "allow_request_after_window": {
+      "type": "boolean",
+      "title": "Allow Request After Window",
+      "description": "After the window a customer can still ask (an admin decides); false = not allowed.",
+      "default": true
+     }
+    },
+    "type": "object",
+    "title": "CancellationRules",
+    "description": "The structured cancellation policy a booking follows (the free-text `cancellation_policy` stays as the wording shown to people)."
+   },
+   "CustomerInfo": {
+    "properties": {
+     "user_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "User Id"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "email": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Email"
+     },
+     "phone": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Phone"
+     }
+    },
+    "type": "object",
+    "title": "CustomerInfo"
+   },
+   "DecisionBody": {
+    "properties": {
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 500
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason",
+      "description": "Required to reject; optional note when approving."
+     },
+     "refund_percent": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "maximum": 100.0,
+        "minimum": 0.0
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Refund Percent",
+      "description": "When approving: overrides the service's refund_percent_after."
+     }
+    },
+    "type": "object",
+    "title": "DecisionBody"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "type": "array",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "title": "HTTPValidationError"
+   },
+   "PaymentBody": {
+    "properties": {
+     "reference": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 120
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reference",
+      "description": "A receipt or transaction note, kept in the history."
+     }
+    },
+    "type": "object",
+    "title": "PaymentBody"
+   },
+   "SlotDay": {
+    "properties": {
+     "date": {
+      "type": "string",
+      "title": "Date"
+     },
+     "slots": {
+      "items": {
+       "$ref": "#/components/schemas/SlotItem"
+      },
+      "type": "array",
+      "title": "Slots"
+     }
+    },
+    "type": "object",
+    "required": [
+     "date",
+     "slots"
+    ],
+    "title": "SlotDay"
+   },
+   "SlotItem": {
+    "properties": {
+     "starts_at": {
+      "type": "string",
+      "title": "Starts At",
+      "description": "Send this exact value as `starts_at` when booking."
+     },
+     "ends_at": {
+      "type": "string",
+      "title": "Ends At"
+     },
+     "starts_at_display": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Starts At Display",
+      "description": "The same instant in the `timezone` you asked for."
+     },
+     "available": {
+      "type": "boolean",
+      "title": "Available"
+     },
+     "available_seats": {
+      "type": "integer",
+      "title": "Available Seats"
+     },
+     "capacity": {
+      "type": "integer",
+      "title": "Capacity"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string",
+        "enum": [
+         "full",
+         "provider_busy",
+         "too_soon",
+         "too_far"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "type": "object",
+    "required": [
+     "starts_at",
+     "ends_at",
+     "available",
+     "available_seats",
+     "capacity"
+    ],
+    "title": "SlotItem"
+   },
+   "SlotsResponse": {
+    "properties": {
+     "service_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Service Id"
+     },
+     "service_name": {
+      "type": "string",
+      "title": "Service Name"
+     },
+     "time_zone": {
+      "type": "string",
+      "title": "Time Zone"
+     },
+     "duration_minutes": {
+      "type": "integer",
+      "title": "Duration Minutes"
+     },
+     "capacity": {
+      "type": "integer",
+      "title": "Capacity"
+     },
+     "delivery_modes": {
+      "items": {
+       "type": "string",
+       "enum": [
+        "in_person",
+        "virtual",
+        "hybrid"
+       ]
+      },
+      "type": "array",
+      "title": "Delivery Modes"
+     },
+     "provider_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider Id"
+     },
+     "provider_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider Name"
+     },
+     "bookable": {
+      "type": "boolean",
+      "title": "Bookable"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason",
+      "description": "Why the service cannot be booked at all, when `bookable` is false."
+     },
+     "hold_minutes": {
+      "type": "integer",
+      "title": "Hold Minutes"
+     },
+     "days": {
+      "items": {
+       "$ref": "#/components/schemas/SlotDay"
+      },
+      "type": "array",
+      "title": "Days"
+     }
+    },
+    "type": "object",
+    "required": [
+     "service_id",
+     "service_name",
+     "time_zone",
+     "duration_minutes",
+     "capacity",
+     "delivery_modes",
+     "bookable",
+     "hold_minutes",
+     "days"
+    ],
+    "title": "SlotsResponse"
+   },
+   "StatusBody": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "enum": [
+       "confirmed",
+       "in_progress",
+       "completed",
+       "no_show",
+       "cancelled"
+      ],
+      "title": "Status"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 500
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason",
+      "description": "Required for `cancelled`."
+     },
+     "refund_percent": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "maximum": 100.0,
+        "minimum": 0.0
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Refund Percent",
+      "description": "With `cancelled`: how much of a paid booking is refunded (default 100)."
+     }
+    },
+    "type": "object",
+    "required": [
+     "status"
+    ],
+    "title": "StatusBody"
+   },
+   "ValidationError": {
+    "properties": {
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "type": "array",
+      "title": "Location"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Message"
+     },
+     "type": {
+      "type": "string",
+      "title": "Error Type"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "ctx": {
+      "type": "object",
+      "title": "Context"
+     }
+    },
+    "type": "object",
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError"
+   },
+   "app__schemas__service_booking_schema__HistoryItem": {
+    "properties": {
+     "action": {
+      "type": "string",
+      "title": "Action"
+     },
+     "from_status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "From Status"
+     },
+     "to_status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "To Status"
+     },
+     "actor_role": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Actor Role"
+     },
+     "actor_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Actor Name",
+      "description": "Staff only."
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     },
+     "at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "action"
+    ],
+    "title": "HistoryItem"
+   }
+  },
+  "securitySchemes": {
+   "BearerAuth": {
+    "type": "http",
+    "scheme": "bearer",
+    "bearerFormat": "JWT",
+    "description": "JWT **access token** for authenticated API requests.\n\n## Primary \u2014 Invigorate Auth (Production)\n\n1. Login: `POST https://admin.apis.invigor8.app/api/v1/auth/login`\n2. Copy: `tokens.access_token` from the response\n3. Click **Authorize** above and paste the token (Swagger adds `Bearer ` automatically)\n4. Call any protected endpoint on this marketplace API\n\n| Setting | Value |\n|---------|-------|\n| Algorithm | RS256 |\n| Issuer (`iss`) | `https://auth.invigor8.app/realms/invigorate-healthcare` |\n| Audience (`aud`) | `invigorate-api` **or** `azp=invigorate-api` |\n| JWKS | `https://auth.invigor8.app/realms/invigorate-healthcare/protocol/openid-connect/certs` |\n| User ID claim | `sub` (Keycloak user ID) |\n| App User UUID | `GET /api/v1/auth/me` on auth API (different from `sub`) |\n\n**Role claims:** `isSuperAdmin` (Platform Super Admin login \u2192 `super_admin`), `tenant_role`, `user_role`, `tenant_rbac_roles`, `tenant_permissions`\n\nSee **Authentication** \u2192 `GET /api/v1/auth/integration` for full reference.\n\n**Dual auth (same routes, no duplicate APIs):**\n- **Enterprise Admin portal** \u2014 HttpOnly cookie `access_token` (`credentials: include`)\n- **Platform Super Admin portal** \u2014 `Authorization: Bearer <access_token>` from dedicated Super Admin login\n\nBoth use the same JWT validation path (`get_current_user`). Public catalog GETs (products, services) remain unauthenticated.\n\n## Fallback \u2014 Local dev token (Testing only)\n\n`GET /api/v1/auth/dev-token` when `ENABLE_DEV_TOKEN=true` \u2014 local HS256 token, not Invigorate auth."
+   }
+  }
+ }
+}

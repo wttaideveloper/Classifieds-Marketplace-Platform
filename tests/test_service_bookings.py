@@ -744,3 +744,41 @@ def test_expired_holds_are_swept(w):
 
     assert svc.expire_stale_holds(w.db) == 1 and booking_row(w, b["id"]).status == "expired"
     assert [e.action for e in booking_row(w, b["id"]).history][-1] == "expired" and booking_row(w, b["id"]).history[-1].actor_role == "system"
+
+
+# =============================================================================================================
+# 9. telling the staff: the identity lookup of the admins gets the caller's bearer token
+# =============================================================================================================
+
+def test_the_staff_lookup_gets_the_callers_token_when_a_booking_needs_approval_or_is_cancelled(w, monkeypatch):
+    lookups = []
+
+    def admins(_db, item, access_token=None):
+        lookups.append(access_token)
+        return ([__import__("uuid").UUID(w.people.admin["id"])] if access_token else []), item.tenant_id        # the identity service answers only with a bearer token
+
+    monkeypatch.setattr("app.services.event_notification_service.resolve_enterprise_admin_user_ids", admins)
+    service = w.make_service(requires_approval=True)
+    headers = {"Authorization": "Bearer customer-token"}
+
+    made = w.as_user(w.people.priya).post(API, json={"service_id": str(service.id), "starts_at": slot_start(w, service)}, headers=headers)
+    assert made.status_code == 201 and lookups == ["customer-token"]
+    [note] = [n for n in w.sent if n["category"] == "service_booking_new"]
+    assert {str(u) for u in note["user_ids"]} == {w.people.coach["id"], w.people.admin["id"]}                  # the provider and the admin
+
+    w.sent.clear()
+    cancelled = w.as_user(w.people.priya).post(f"{API}/{made.json()['id']}/cancel", json={}, headers=headers)
+    assert cancelled.status_code == 200 and lookups == ["customer-token", "customer-token"]
+    assert {str(u) for n in w.sent if n["category"] == "service_booking_cancelled" for u in n["user_ids"]} == {w.people.priya["id"], w.people.coach["id"], w.people.admin["id"]}
+
+
+def test_without_a_token_the_admins_are_not_found_and_that_is_logged(w, monkeypatch, caplog):
+    monkeypatch.setattr("app.services.event_notification_service.resolve_enterprise_admin_user_ids", lambda _db, item, access_token=None: ([], item.tenant_id))
+    service = w.make_service(requires_approval=True)
+
+    with caplog.at_level("WARNING"):
+        made = book(w, w.people.priya, service)
+
+    assert made.status_code == 201                                                       # the customer's booking is never failed by this
+    assert any("no Enterprise Admin found to notify" in r.getMessage() for r in caplog.records)
+    assert [str(u) for n in w.sent if n["category"] == "service_booking_new" for u in n["user_ids"]] == [w.people.coach["id"]]

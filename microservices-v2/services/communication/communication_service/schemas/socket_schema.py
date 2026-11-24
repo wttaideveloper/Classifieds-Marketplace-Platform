@@ -1,0 +1,304 @@
+from uuid import UUID
+
+from typing import Any
+from pydantic import BaseModel, ConfigDict, Field
+
+from communication_service.schemas.chat_schema import MessageType
+
+
+class SocketConversationRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"conversation_id": "550e8400-e29b-41d4-a716-446655440000"}
+        }
+    )
+
+    conversation_id: UUID = Field(..., description="Conversation to join or leave.")
+
+
+class SocketJoinRoomResponse(BaseModel):
+    socket_event: str = "join_room"
+    conversation_id: str
+    room: str = Field(..., description="Socket.IO room name used by join_room.")
+    authorized: bool = True
+    note: str = (
+        "Authorization verified. Connect via Socket.IO using the path from "
+        "GET /api/v1/socket-io/events (`connection_path`) and emit `join_room`."
+    )
+
+
+class SocketLeaveRoomResponse(BaseModel):
+    socket_event: str = "leave_room"
+    conversation_id: str
+    room: str
+    note: str = (
+        "Connect via Socket.IO and emit `leave_room` with the same payload "
+        "to leave the live room."
+    )
+
+
+class SocketSendMessageRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
+                "content": "Hello via Socket.IO",
+                "message_type": "text",
+            }
+        }
+    )
+
+    conversation_id: UUID
+    content: str | None = None
+    message_type: MessageType = "text"
+    attachment_id: UUID | None = None
+
+
+class SocketTypingRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"conversation_id": "550e8400-e29b-41d4-a716-446655440000"}
+        }
+    )
+
+    conversation_id: UUID
+
+
+class SocketMarkReadRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"message_id": "550e8400-e29b-41d4-a716-446655440002"}
+        }
+    )
+
+    message_id: UUID | None = Field(None, description="Mark a single message as read.")
+    conversation_id: UUID | None = Field(None, description="Mark entire conversation as read.")
+
+
+class SocketEventResult(BaseModel):
+    socket_event: str = Field(..., description="Client event that was executed.")
+    data: dict = Field(default_factory=dict, description="Event result payload.")
+    server_events_emitted: list[str] = Field(
+        default_factory=list,
+        description="Server events broadcast to connected Socket.IO clients.",
+    )
+
+
+class SocketAuthInfo(BaseModel):
+    type: str = Field("JWT Bearer", description="Authentication method.")
+    connect: str = Field(
+        ...,
+        description="Example socket.io-client connect call.",
+        examples=[
+            'io("https://chat.wisdomtooth.tech", { path: "/api/socket.io", auth: { token: "<JWT>" } })'
+        ],
+    )
+
+
+class ServerEventSchema(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "event": "join_room",
+                    "description": "Join a conversation room for real-time updates.",
+                    "payload": {"conversation_id": "uuid"},
+                },
+                {
+                    "event": "new_message",
+                    "description": "Broadcast when a new message is sent.",
+                    "payload": {"conversation_id": "uuid", "message": "{...}"},
+                },
+            ]
+        }
+    )
+
+    event: str = Field(..., description="Socket.IO event name.", examples=["join_room", "new_message"])
+    description: str = Field(..., description="What the event does.")
+    payload: dict[str, Any] = Field(
+        ...,
+        description="Payload field names with value types or examples.",
+        json_schema_extra={
+            "example": {
+                "conversation_id": "uuid",
+                "content": "string",
+                "message_type": "text|image|document|audio|video",
+            }
+        },
+    )
+
+
+CLIENT_EVENTS_CATALOG = [
+    ServerEventSchema(
+        event="join_room",
+        description="Join a conversation room for real-time updates.",
+        payload={"conversation_id": "uuid"},
+    ),
+    ServerEventSchema(
+        event="leave_room",
+        description="Leave a conversation room.",
+        payload={"conversation_id": "uuid"},
+    ),
+    ServerEventSchema(
+        event="send_message",
+        description="Send a message and broadcast to room participants.",
+        payload={
+            "conversation_id": "uuid",
+            "content": "string",
+            "message_type": "text|image|document|audio|video",
+            "attachment_id": "uuid (optional)",
+        },
+    ),
+    ServerEventSchema(
+        event="typing_start",
+        description="Signal that the user started typing.",
+        payload={"conversation_id": "uuid"},
+    ),
+    ServerEventSchema(
+        event="typing_stop",
+        description="Signal that the user stopped typing.",
+        payload={"conversation_id": "uuid"},
+    ),
+    ServerEventSchema(
+        event="mark_read",
+        description="Mark a message or entire conversation as read.",
+        payload={"message_id": "uuid (optional)", "conversation_id": "uuid (optional)"},
+    ),
+]
+
+SERVER_EVENTS_CATALOG = [
+    ServerEventSchema(
+        event="new_message",
+        description="Broadcast when a new message is sent.",
+        payload={"conversation_id": "uuid", "message": "{...}"},
+    ),
+    ServerEventSchema(
+        event="message_read",
+        description="Broadcast when messages are marked read.",
+        payload={"conversation_id": "uuid", "message_id": "uuid", "user_id": "uuid", "read_at": "ISO datetime"},
+    ),
+    ServerEventSchema(
+        event="message_updated",
+        description="Broadcast when a message is edited (PATCH /messages/{id}).",
+        payload={"conversation_id": "uuid", "message": "{...}"},
+    ),
+    ServerEventSchema(
+        event="message_deleted",
+        description="Broadcast when a message is deleted (DELETE /messages/{id}).",
+        payload={"conversation_id": "uuid", "message_id": "uuid"},
+    ),
+    ServerEventSchema(
+        event="typing",
+        description="Broadcast typing indicator changes.",
+        payload={"conversation_id": "uuid", "user_id": "uuid", "is_typing": True},
+    ),
+    ServerEventSchema(
+        event="conversation_updated",
+        description="Broadcast when conversation metadata changes.",
+        payload={"conversation_id": "uuid", "conversation": "{...}"},
+    ),
+    ServerEventSchema(
+        event="user_online",
+        description="Broadcast when a user connects.",
+        payload={"user_id": "uuid", "status": "online"},
+    ),
+    ServerEventSchema(
+        event="user_offline",
+        description="Broadcast when a user disconnects.",
+        payload={"user_id": "uuid", "status": "offline"},
+    ),
+    ServerEventSchema(
+        event="notification",
+        description=(
+            "Generic notification event, sent to the recipient's own room (`user:<user_id>`) — one event "
+            "for every platform notification, delivered at the same time the record is added to "
+            "GET /users/me/notifications. Route on `metadata.category` (there is no top-level category). "
+            "Categories include training_submitted, training_approved, training_rejected, "
+            "training_changes_requested, training_enrolled, training_enrollment_accepted, "
+            "training_enrollment_rejected, training_enrollment_requested (see docs/training-workflow-notifications.md), and review_submitted, "
+            "review_approved, review_rejected, review_pending (metadata: entity_type, entity_id, review_id, status; reason on rejected and pending), "
+            "training_question_posted (metadata: training_id, discussion_id, training_name, learner_name), and "
+            "review_moderated, review_deleted (metadata: entity_type, entity_id, review_id, previous_status, "
+            "new_status, action, actor_name). Workflow "
+            "metadata: training_id, entity_type, entity_id, status, enrollment_id (enrollment events), "
+            "reason (when given). The legacy new-message alert uses the same event name with the "
+            "different shape shown in `legacy_new_message_payload`."
+        ),
+        payload={
+            "notification_id": "uuid",
+            "title": "string",
+            "message": "string",
+            "metadata": {
+                "category": "training_enrollment_rejected", "training_id": "uuid", "entity_type": "training",
+                "entity_id": "uuid", "enrollment_id": "uuid", "status": "rejected", "reason": "string (optional)",
+            },
+            "created_at": "ISO datetime",
+            "legacy_new_message_payload": {
+                "type": "new_message", "conversation_id": "uuid", "title": "string", "body": "string", "message": "{...}",
+            },
+        },
+    ),
+    ServerEventSchema(
+        event="error",
+        description="Sent to the requesting client on validation or auth errors.",
+        payload={"event": "event_name", "detail": "error message"},
+    ),
+]
+
+
+def _catalog_to_dict(items: list[ServerEventSchema]) -> list[dict[str, Any]]:
+    return [item.model_dump() for item in items]
+
+
+def build_events_catalog_swagger_example() -> dict[str, Any]:
+    return {
+        "connection_url": "https://chat.wisdomtooth.tech",
+        "connection_path": "/api/socket.io",
+        "polling_test_url": "https://chat.wisdomtooth.tech/api/socket.io?EIO=4&transport=polling",
+        "auth": {
+            "type": "JWT Bearer",
+            "connect": 'io("https://chat.wisdomtooth.tech", { path: "/api/socket.io", auth: { token: "<JWT>" } })',
+        },
+        "deployment_notes": [
+            "Socket.IO is mounted on app.main:socket_app.",
+            "Configured SOCKETIO_PATH=/api/socket.io",
+            "Frontend: io(baseUrl, { path: '/api/socket.io', auth: { token } })",
+        ],
+        "client_events": _catalog_to_dict(CLIENT_EVENTS_CATALOG),
+        "server_events": _catalog_to_dict(SERVER_EVENTS_CATALOG),
+    }
+
+
+class ServerEventsCatalogResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"example": build_events_catalog_swagger_example()}
+    )
+
+    connection_url: str = Field(
+        ...,
+        description="Public base URL for Socket.IO (no trailing slash).",
+        examples=["https://chat.wisdomtooth.tech"],
+    )
+    connection_path: str = Field(
+        ...,
+        description="Socket.IO path passed to the client `path` option.",
+        examples=["/api/socket.io"],
+    )
+    polling_test_url: str = Field(
+        ...,
+        description="Engine.IO polling probe URL for deployment verification.",
+        examples=["https://chat.wisdomtooth.tech/api/socket.io?EIO=4&transport=polling"],
+    )
+    auth: SocketAuthInfo = Field(
+        ...,
+        description="How to authenticate the Socket.IO connection.",
+    )
+    deployment_notes: list[str] = Field(default_factory=list)
+    client_events: list[ServerEventSchema] = Field(
+        ...,
+        description="Events the browser/client emits to the server.",
+    )
+    server_events: list[ServerEventSchema] = Field(
+        ...,
+        description="Events the server emits to connected clients.",
+    )

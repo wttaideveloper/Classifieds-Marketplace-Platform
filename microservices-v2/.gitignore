@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+*.db
+tests/behaviour_report.json
+services/*/tests/behaviour_report.json
