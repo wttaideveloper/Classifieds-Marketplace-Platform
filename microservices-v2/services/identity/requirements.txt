@@ -1,2 +1,0 @@
-# identity service (v2). The kit (microservices-v2/kit) is pip-installed separately.
--r ../../requirements-base.txt

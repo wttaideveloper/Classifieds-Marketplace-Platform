@@ -1,6 +1,0 @@
-# Gateway dependencies (no legacy domain code, no database access).
-# microservices-v2/kit (mskit) is pip-installed separately.
-starlette==1.10.0
-httpx==0.28.1
-uvicorn[standard]==0.54.0
-websockets==17.4
