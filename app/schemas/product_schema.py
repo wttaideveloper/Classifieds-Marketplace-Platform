@@ -229,7 +229,8 @@ class ProductResponse(BaseModel):
     category: str
     price: float
     currency: str | None
-    image_urls: str | None = None
+    image_urls: str | None = Field(None, description="Legacy: the stored images as one comma-separated string. Prefer `images`.")
+    images: list[str] = Field(default_factory=list, description="The product's images as a list of hosted http(s) URLs, in order. Never base64.")
     status: EntityStatus
     product_description: str | None = None
     product_category: str | None = None

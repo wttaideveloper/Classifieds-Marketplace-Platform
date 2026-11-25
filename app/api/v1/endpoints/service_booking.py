@@ -18,7 +18,7 @@ from app.core.dependencies import extract_access_token, get_current_user
 from app.db.database import get_db
 from app.models.service_model import Service
 from app.schemas.service_booking_schema import (
-    BookingCreate, BookingDetail, BookingListResponse, BookingSettings, CancelBody, DecisionBody, HistoryItem, PaymentBody, SlotsResponse, StatusBody,
+    AssignedBookingList, AvailabilityChange, AvailabilityImpact, BookingCreate, BookingDetail, BookingListResponse, BookingSettings, BookingSummary, CancelBody, PlatformSummary, ServiceCountList, DecisionBody, HistoryItem, PaymentBody, SlotsResponse, StatusBody,
 )
 from app.services import service_booking_service as svc
 from app.services import service_booking_slots as slots
@@ -90,6 +90,28 @@ def available_slots(
     }
 
 
+@service_router.post(
+    "/{service_id}/availability-impact", response_model=AvailabilityImpact, summary="Which existing bookings a planned availability change touches (Enterprise Admin)",
+    description=(
+        "Send the planned `availability`, `blocked_periods`, `max_participants` and/or `duration_minutes` (only what changes). The answer lists the upcoming bookings "
+        "(confirmed, in progress, with a cancellation request, or holding a slot for payment) that would fall in a blocked period (`blocked`), outside the new schedule "
+        "(`outside_schedule`) or above the new capacity (`over_capacity`). Nothing is saved: show it as the warning, then save with PATCH /services/{id}. Saving never cancels "
+        "or moves these bookings (lowering capacity below them is refused with 409 CAPACITY_BELOW_BOOKINGS)."
+    ),
+)
+def availability_impact(request: Request, service_id: UUID, payload: AvailabilityChange, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    changes = {}
+    if payload.availability is not None:
+        changes["availability_schedule"] = [e.model_dump() for e in payload.availability]
+    if payload.blocked_periods is not None:
+        changes["blocked_periods"] = [p.model_dump(mode="json") for p in payload.blocked_periods]
+    if payload.max_participants is not None:
+        changes["max_participants"] = payload.max_participants
+    if payload.duration_minutes is not None:
+        changes["duration_minutes"] = payload.duration_minutes
+    return svc.availability_impact(db, _actor(request, db, user), service_id, changes)
+
+
 @service_router.get(
     "/{service_id}/booking-settings", response_model=BookingSettings, summary="A service's booking settings, with the meeting link (staff)",
     description="Enterprise Admin of the owning tenant, the service's Provider, or a Super Admin. Everything the service form sets for booking, including the meeting link and passcode that the public catalog never shows.",
@@ -108,6 +130,7 @@ def booking_settings(service_id: UUID = Path(...), db: Session = Depends(get_db)
         "cancellation_policy": service.cancellation_policy, "venue_instructions": service.venue_instructions, "meeting_url": service.meeting_url,
         "meeting_provider": service.meeting_provider, "meeting_passcode": service.meeting_passcode, "meeting_instructions": service.meeting_instructions,
         "max_participants": service.max_participants, "duration_minutes": slots.duration_of(service), "provider_user_id": service.provider_user_id,
+        "min_notice_minutes": service.min_notice_minutes, "max_advance_days": service.max_advance_days, "blocked_periods": service.blocked_periods,
         "provider_name": service.provider_name or service.instructor_name,
     }
 
@@ -133,6 +156,68 @@ def create_booking(
     if not created:
         response.status_code = status.HTTP_200_OK
     return svc.booking_view(db, booking, actor)
+
+
+STAGES = "^(pending_payment|legacy_pending_approval|confirmed|in_progress|completed|cancellation_requested|cancelled|no_show|expired)$"
+
+
+@router.get(
+    "/assigned", response_model=AssignedBookingList, summary="My assigned appointments (Provider)",
+    description=(
+        "Only the bookings assigned to the signed-in Provider in their own tenant, across its enterprises. Each item has the list fields plus `duration_minutes`, "
+        "`venue` or `meeting` (the assigned Provider always sees the link) and `allowed_statuses`. Filters: `status` (comma separated), `stage`, `service_id`, `q` "
+        "(customer, phone, reference, service), `date_from` / `date_to` (start date, UTC), `when` = upcoming | past | all, `delivery_mode`. Anyone who is not a Provider: 403 PROVIDER_ONLY."
+    ),
+)
+def assigned_bookings(
+    request: Request, status_filter: str | None = Query(None, alias="status"), stage: str | None = Query(None, pattern=STAGES), service_id: UUID | None = None,
+    q: str | None = Query(None, max_length=200), date_from: date | None = None, date_to: date | None = None, when: str | None = Query(None, pattern="^(upcoming|past|all)$"),
+    delivery_mode: str | None = Query(None, pattern="^(in_person|virtual|hybrid)$"), page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db), user: dict = Depends(get_current_user),
+):
+    return svc.list_assigned(db, _actor(request, db, user), page=page, page_size=page_size, when=when, status=status_filter, stage=stage, service_id=service_id, q=q,
+                             date_from=date_from, date_to=date_to, delivery_mode=delivery_mode)
+
+
+@router.get(
+    "/admin", response_model=BookingListResponse, summary="Service bookings across all enterprises (Super Admin, read only)",
+    description=(
+        "Every enterprise's service bookings, server-side paged with a reliable `total`. Filters: `enterprise_id`, `service_id`, `provider_id`, `status` (comma separated), "
+        "`stage`, `payment_status`, `refund_status`, `source` = customer | manual, `delivery_mode`, `q` (customer, phone, reference, service, provider, enterprise), "
+        "`date_from` / `date_to` (start date, UTC), `when` = upcoming | past | all. Anyone else: 403 SUPER_ADMIN_ONLY."
+    ),
+)
+def platform_bookings(
+    request: Request, enterprise_id: UUID | None = None, service_id: UUID | None = None, provider_id: UUID | None = None,
+    status_filter: str | None = Query(None, alias="status"), stage: str | None = Query(None, pattern=STAGES),
+    payment_status: str | None = Query(None, pattern="^(not_required|unpaid|paid|refunded|partially_refunded)$"),
+    refund_status: str | None = Query(None, pattern="^(pending|processing|completed|failed)$"), source: str | None = Query(None, pattern="^(customer|manual)$"),
+    delivery_mode: str | None = Query(None, pattern="^(in_person|virtual|hybrid)$"), q: str | None = Query(None, max_length=200),
+    date_from: date | None = None, date_to: date | None = None, when: str | None = Query(None, pattern="^(upcoming|past|all)$"),
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db), user: dict = Depends(get_current_user),
+):
+    return svc.list_platform(db, _actor(request, db, user), page=page, page_size=page_size, when=when, enterprise_id=enterprise_id, service_id=service_id,
+                             provider_id=provider_id, status=status_filter, stage=stage, payment_status=payment_status, refund_status=refund_status, source=source,
+                             delivery_mode=delivery_mode, q=q, date_from=date_from, date_to=date_to)
+
+
+@router.get("/admin/summary", response_model=PlatformSummary, summary="Booking totals across all enterprises (Super Admin)",
+            description="Counted in the database across every enterprise (optionally one `enterprise_id`, and a start-date range): the total, per stage, per refund status, and exceptions.")
+def platform_summary(request: Request, enterprise_id: UUID | None = None, date_from: date | None = None, date_to: date | None = None,
+                     db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return svc.platform_summary(db, _actor(request, db, user), enterprise_id=enterprise_id, date_from=date_from, date_to=date_to)
+
+
+@router.get("/admin/service-counts", response_model=ServiceCountList, summary="Booking counts per service (Super Admin)",
+            description="For the Bookings column: send the ids of the services on the page (`service_ids`, comma separated, at most 200). Each gets its total and counts per stage; a service with no bookings gets 0.")
+def platform_service_counts(request: Request, service_ids: str = Query(..., max_length=8000), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        ids = list(dict.fromkeys(UUID(x.strip()) for x in service_ids.split(",") if x.strip()))
+    except ValueError:
+        raise svc._err(422, "INVALID_SERVICE_IDS", "service_ids must be comma separated UUIDs")
+    if len(ids) > 200:
+        raise svc._err(422, "TOO_MANY_SERVICE_IDS", "At most 200 service ids")
+    return svc.service_counts(db, _actor(request, db, user), ids)
 
 
 @router.get("/{booking_id}", response_model=BookingDetail, summary="One booking",
@@ -239,17 +324,29 @@ def cancellation_requests(
     "/{enterprise_id}/service-bookings", response_model=BookingListResponse, summary="The enterprise's bookings",
     description=(
         "Enterprise Admin of the enterprise (a Provider sees only their own; Super Admin any). Filters: `status` (comma separated), `service_id`, `provider_id`, `payment_status`, "
-        "`q` (customer name or e-mail, service, provider), `date_from` / `date_to` (the start, calendar dates in UTC), `when` = upcoming | past | all (history). Another "
-        "enterprise's id is a 404."
+        "`q` (customer name, e-mail or phone, booking reference, service, provider), `date_from` / `date_to` (the start, calendar dates in UTC), `when` = upcoming | past | all (history), "
+        "`source` = customer | manual, `delivery_mode`, `stage` (pending_payment, legacy_pending_approval or any status). Another enterprise's id is a 404."
     ),
 )
 def enterprise_bookings(
     request: Request, enterprise_id: UUID, status_filter: str | None = Query(None, alias="status"), service_id: UUID | None = None, provider_id: UUID | None = None,
     payment_status: str | None = Query(None, pattern="^(not_required|unpaid|paid|refunded|partially_refunded)$"), q: str | None = Query(None, max_length=200),
     date_from: date | None = None, date_to: date | None = None, when: str | None = Query(None, pattern="^(upcoming|past|all)$"),
+    source: str | None = Query(None, pattern="^(customer|manual)$"), delivery_mode: str | None = Query(None, pattern="^(in_person|virtual|hybrid)$"),
+    refund_status: str | None = Query(None, pattern="^(pending|processing|completed|failed)$"),
+    stage: str | None = Query(None, pattern="^(pending_payment|legacy_pending_approval|confirmed|in_progress|completed|cancellation_requested|cancelled|no_show|expired)$"),
     page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db), user: dict = Depends(get_current_user),
 ):
     return svc.list_for_enterprise(
         db, _actor(request, db, user), enterprise_id, status=status_filter, service_id=service_id, provider_id=provider_id, payment_status=payment_status, q=q,
-        date_from=date_from, date_to=date_to, when=when, page=page, page_size=page_size,
+        date_from=date_from, date_to=date_to, when=when, page=page, page_size=page_size, source=source, delivery_mode=delivery_mode, stage=stage,
+        refund_status=refund_status,
     )
+
+
+@enterprise_router.get(
+    "/{enterprise_id}/service-bookings/summary", response_model=BookingSummary, summary="Booking dashboard counts",
+    description="Upcoming, pending payment, cancellation requests, approval bookings left from before approval was retired, and a count per status. Same access as the list.",
+)
+def enterprise_booking_summary(request: Request, enterprise_id: UUID, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return svc.summary_for_enterprise(db, _actor(request, db, user), enterprise_id)

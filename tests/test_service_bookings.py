@@ -216,7 +216,7 @@ def test_a_free_service_is_confirmed_at_once_with_the_full_detail(w):
     [note] = [n for n in w.sent if n["category"] == "service_booking_confirmed"]
     assert note["user_ids"] == [__import__("uuid").UUID(w.people.priya["id"])] and note["channels"] == ["in_app", "push"]
     assert note["metadata"] == {"category": "service_booking_confirmed", "booking_id": b["id"], "service_id": str(service.id), "service_name": "Kids Fitness Program",
-                                "entity_type": "service_booking", "entity_id": b["id"], "starts_at": b["starts_at"], "delivery_mode": "in_person", "status": "confirmed"}
+                                "entity_type": "service_booking", "entity_id": b["id"], "booking_reference": b["reference"], "starts_at": b["starts_at"], "delivery_mode": "in_person", "status": "confirmed"}
 
 
 def test_bad_requests_are_refused_with_a_code(w):
@@ -318,7 +318,7 @@ def test_a_paid_booking_holds_the_slot_until_it_is_paid(w):
     paid = w.as_user(w.people.priya).post(f"{API}/{b['id']}/pay")
     assert paid.status_code == 200 and paid.json()["status"] == "confirmed" and paid.json()["payment_status"] == "paid" and paid.json()["hold_expires_at"] is None
     assert [h["action"] for h in paid.json()["history"]] == ["created", "paid", "confirmed"]
-    assert categories(w) == ["service_booking_confirmed"]
+    assert categories(w) == ["service_booking_confirmed", "service_booking_new"]              # the customer, then the clinic
     assert w.as_user(w.people.priya).post(f"{API}/{b['id']}/pay").json()["detail"]["code"] == "NOTHING_TO_PAY"
 
 
@@ -352,26 +352,56 @@ def test_paying_in_the_app_is_a_demo_switch_and_the_admin_can_always_record_it(w
     assert w.as_user(w.people.other_admin).post(f"{API}/{b['id']}/payment").status_code == 404
 
 
-def test_a_service_that_requires_approval_waits_for_the_admin(w):
-    service = w.make_service(requires_approval=True)
+def test_requires_approval_no_longer_holds_a_new_booking_back(w):
+    service = w.make_service(requires_approval=True)            # the old setting is still accepted and stored
 
     b = book(w, w.people.priya, service).json()
 
-    assert b["status"] == "pending" and b["payment_status"] == "not_required"
-    assert categories(w) == ["service_booking_pending_approval", "service_booking_new"]
+    assert b["status"] == "confirmed" and b["stage"] == "confirmed" and b["payment_status"] == "not_required" and b["source"] == "customer"
+    assert categories(w) == ["service_booking_confirmed", "service_booking_new"]
     staff_note = [n for n in w.sent if n["category"] == "service_booking_new"][0]
-    assert {str(u) for u in staff_note["user_ids"]} == {w.people.coach["id"], w.people.admin["id"]}
-    confirmed = w.as_user(w.people.admin).patch(f"{API}/{b['id']}/status", json={"status": "confirmed"})
-    assert confirmed.status_code == 200 and confirmed.json()["status"] == "confirmed" and categories(w)[-1] == "service_booking_confirmed"
+    assert {str(u) for u in staff_note["user_ids"]} == {w.people.coach["id"], w.people.admin["id"]}       # the provider and the admins
 
 
-def test_a_paid_booking_that_needs_approval_stays_pending_after_payment(w):
+def test_a_paid_booking_is_confirmed_by_its_payment_even_with_the_old_approval_setting(w):
     service = w.make_service(price=200, requires_approval=True)
     b = book(w, w.people.priya, service).json()
+    assert b["stage"] == "pending_payment"
 
     paid = w.as_user(w.people.priya).post(f"{API}/{b['id']}/pay").json()
 
-    assert paid["status"] == "pending" and paid["payment_status"] == "paid" and categories(w) == ["service_booking_pending_approval", "service_booking_new"]
+    assert paid["status"] == "confirmed" and paid["payment_status"] == "paid" and categories(w) == ["service_booking_confirmed", "service_booking_new"]
+
+
+def test_approval_bookings_from_before_are_listed_and_never_changed_automatically(w):
+    service = w.make_service(max_participants=3)
+    b = book(w, w.people.priya, service).json()
+    row = booking_row(w, b["id"])
+    row.status = "pending"                                       # what an approval booking made before the change looks like
+    w.db.commit()
+    admin = w.as_user(w.people.admin)
+
+    listed = admin.get(f"/api/v1/enterprises/{w.ent.id}/service-bookings", params={"stage": "legacy_pending_approval"}).json()
+    summary = admin.get(f"/api/v1/enterprises/{w.ent.id}/service-bookings/summary").json()
+    from app.services import service_booking_service as svc
+    svc.expire_stale_holds(w.db)
+
+    assert [i["id"] for i in listed["items"]] == [b["id"]] and listed["items"][0]["stage"] == "legacy_pending_approval"
+    assert summary["legacy_pending_approval"] == 1 and summary["pending_payment"] == 0
+    assert booking_row(w, b["id"]).status == "pending"                                     # nothing touched it
+    assert admin.patch(f"{API}/{b['id']}/status", json={"status": "confirmed"}).json()["status"] == "confirmed"     # a person decides it
+
+
+def test_a_provider_cannot_mark_a_booking_paid_when_creating_it(w):
+    service = w.make_service(price=300, max_participants=3)
+
+    resp = w.as_user(w.people.coach).post(API, json={"service_id": str(service.id), "starts_at": slot_start(w, service), "customer_name": "Walk In", "paid": True})
+
+    assert resp.status_code == 403 and resp.json()["detail"]["code"] == "PROVIDER_CANNOT_RECORD_PAYMENT"
+    assert w.db.query(ServiceBooking).count() == 0                                                   # nothing was created
+    ok = w.as_user(w.people.coach).post(API, json={"service_id": str(service.id), "starts_at": slot_start(w, service), "customer_name": "Walk In"})
+    assert ok.status_code == 201 and ok.json()["payment_status"] == "unpaid" and ok.json()["status"] == "pending"      # still unpaid, held, for the Enterprise Admin to record
+    assert w.as_user(w.people.coach).post(f"{API}/{ok.json()['id']}/payment").status_code == 403
 
 
 def test_an_admin_can_book_for_a_customer_and_a_paid_one_is_confirmed(w):
@@ -471,7 +501,7 @@ def test_a_customer_cancels_at_once_inside_the_free_window_and_a_paid_booking_re
     resp = w.as_user(w.people.priya).post(f"{API}/{b['id']}/cancel", json={"reason": "Changed my mind"})
 
     d = resp.json()
-    assert resp.status_code == 200 and d["status"] == "cancelled" and d["payment_status"] == "refunded" and d["can_cancel"] is False
+    assert resp.status_code == 200 and d["status"] == "cancelled" and d["payment_status"] == "paid" and d["refund_status"] == "pending" and d["can_cancel"] is False
     assert d["cancellation"]["refund_percent"] == 100 and d["cancellation"]["refund_amount"] == 500 and d["cancellation"]["cancelled_by_role"] == "customer"
     assert d["cancellation"]["reason"] == "Changed my mind" and d["cancel_blocked_reason"] == "This booking is cancelled"
     assert [h["action"] for h in d["history"]][-1] == "cancelled"
@@ -512,7 +542,7 @@ def test_inside_the_window_a_cancellation_is_a_request_the_admin_decides(w):
 
     approved = w.as_user(w.people.admin).post(f"{API}/{b['id']}/cancellation/approve", json={})
     d = approved.json()
-    assert approved.status_code == 200 and d["status"] == "cancelled" and d["payment_status"] == "partially_refunded"
+    assert approved.status_code == 200 and d["status"] == "cancelled" and d["payment_status"] == "paid" and d["refund_status"] == "pending"
     assert d["cancellation"]["refund_percent"] == 50 and d["cancellation"]["refund_amount"] == 200 and d["cancellation"]["cancelled_by_role"] == "admin"
     assert categories(w)[-1] == "service_booking_cancelled"
     assert w.as_user(w.people.admin).get(f"/api/v1/enterprises/{w.ent.id}/service-bookings/cancellation-requests").json()["items"] == []
@@ -609,14 +639,13 @@ def test_no_show_and_the_cancel_reason_rules(w):
 
 
 def test_a_paid_booking_cannot_be_confirmed_before_it_is_paid(w):
-    service = w.make_service(price=300, requires_approval=True)
+    service = w.make_service(price=300)
     b = book(w, w.people.priya, service).json()
 
     refused = w.as_user(w.people.admin).patch(f"{API}/{b['id']}/status", json={"status": "confirmed"})
-    w.as_user(w.people.admin).post(f"{API}/{b['id']}/payment", json={})
-    confirmed = w.as_user(w.people.admin).patch(f"{API}/{b['id']}/status", json={"status": "confirmed"})
+    paid = w.as_user(w.people.admin).post(f"{API}/{b['id']}/payment", json={})
 
-    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "PAYMENT_REQUIRED" and confirmed.json()["status"] == "confirmed"
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "PAYMENT_REQUIRED" and paid.json()["status"] == "confirmed"
 
 
 def test_a_provider_can_only_run_their_own_bookings(w):
@@ -714,7 +743,7 @@ def test_the_reminder_steps():
 def test_a_reminder_goes_out_once_per_step_and_only_for_confirmed_bookings(w):
     service = w.make_service(max_participants=5)
     b = book(w, w.people.priya, service, hour=9).json()
-    pending = book(w, w.people.ravi, w.make_service("Approval", requires_approval=True, provider=False), hour=9).json()
+    pending = book(w, w.people.ravi, w.make_service("Paid", price=100, provider=False), hour=9).json()
     row = booking_row(w, b["id"])
     row.starts_at, row.ends_at = datetime.utcnow() + timedelta(hours=20), datetime.utcnow() + timedelta(hours=21)
     w.db.commit()

@@ -131,10 +131,32 @@ def update_service_service(db: Session, service_id: UUID, update_data, *, access
     validate_catalog_write(db, service.enterprise_id, update_data.tenant_id, access)
     location_id = update_data.location_id if update_data.location_id is not None else service.location_id
     _validate_references(db, service.enterprise_id, location_id)
+    _check_capacity_not_below_bookings(db, service, update_data)
 
     return ServiceResponse.model_validate(
         map_service_write(update_service(db, service, update_data))
     )
+
+
+def _check_capacity_not_below_bookings(db: Session, service, update_data) -> None:
+    """A slot's capacity cannot drop below the seats already taken in an upcoming slot (confirmed bookings and live payment holds). Schedule, blocked dates
+    and provider changes never cancel or move existing bookings; only this one change is refused, because it would overbook."""
+    fields = update_data.model_fields_set if hasattr(update_data, "model_fields_set") else set()
+    if "max_participants" not in fields:
+        return
+    from sqlalchemy import func as sa_func
+
+    from app.models.service_booking_model import ServiceBooking
+    from app.services import service_booking_slots as slots
+
+    now = slots.now_utc()
+    new_capacity = max(int(update_data.max_participants or 1), 1)
+    taken = (db.query(sa_func.sum(ServiceBooking.participants)).filter(ServiceBooking.service_id == service.id, ServiceBooking.starts_at >= now, slots.holding_clause(now))
+             .group_by(ServiceBooking.starts_at).order_by(sa_func.sum(ServiceBooking.participants).desc()).first())
+    most = int(taken[0] or 0) if taken else 0
+    if new_capacity < most:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+            "message": f"An upcoming slot already has {most} seats booked: the capacity cannot be lower than that", "code": "CAPACITY_BELOW_BOOKINGS", "booked": most})
 
 
 def delete_service_service(db: Session, service_id: UUID, *, access=None):

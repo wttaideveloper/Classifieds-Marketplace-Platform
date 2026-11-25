@@ -147,7 +147,8 @@ class Settings(BaseSettings):
     # Orders (docs/order-cancellation-and-refunds.md)
     ORDER_REFUND_WINDOW_DAYS: int = 7                       # a customer can ask for a refund this long after delivery
     # Service bookings (docs/service-bookings.md)
-    SERVICE_BOOKING_HOLD_MINUTES: int = 15                  # an unpaid booking holds its slot this long
+    SERVICE_BOOKING_HOLD_MINUTES: int = 15                  # an unpaid booking holds its slot this long (policy value pending client confirmation)
+    SERVICE_BOOKING_MERCHANT_REFUND_PERCENT: int = 100     # refund when the clinic cancels a paid booking and sends no refund_percent (policy value pending client confirmation)
     SERVICE_BOOKING_MIN_NOTICE_MINUTES: int = 60            # the earliest a slot can be booked, from now
     SERVICE_BOOKING_MAX_ADVANCE_DAYS: int = 60              # the furthest ahead a slot can be booked
     SERVICE_BOOKING_JOIN_MINUTES_BEFORE: int = 10           # a virtual booking shows its meeting link this long before the start

@@ -4,10 +4,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.service_schema import CancellationRules, DeliveryMode
+from app.schemas.common_schema import AvailabilityScheduleEntry
+from app.schemas.service_schema import BlockedPeriod, CancellationRules, DeliveryMode
 
 BookingStatus = Literal["pending", "confirmed", "in_progress", "completed", "cancellation_requested", "cancelled", "no_show", "expired"]
-PaymentStatus = Literal["not_required", "unpaid", "paid", "refunded", "partially_refunded"]
+PaymentStatus = Literal["not_required", "unpaid", "paid", "refunded", "partially_refunded"]     # refunded / partially_refunded: only rows from before refund_status existed
+RefundStatus = Literal["pending", "processing", "completed", "failed"]
+BookingStage = Literal["pending_payment", "legacy_pending_approval", "confirmed", "in_progress", "completed", "cancellation_requested", "cancelled", "no_show", "expired"]
 
 
 # ---------------------------------------------------------------- requests
@@ -61,8 +64,13 @@ class CustomerInfo(BaseModel):
 
 class BookingListItem(BaseModel):
     id: UUID
+    reference: str | None = Field(None, description='The booking reference people see and can search, e.g. "SB-1A2B3C4D5E".')
     status: BookingStatus
+    stage: BookingStage = Field(..., description="What the booking is waiting for: `pending` is split into pending_payment and legacy_pending_approval (made before approval was retired); otherwise the status.")
+    source: Literal["customer", "manual"] = Field(..., description="customer: booked in the app; manual: booked by the clinic for the customer.")
     payment_status: PaymentStatus
+    refund_status: RefundStatus | None = Field(None, description="Independent of the booking and payment status. null: no refund owed. pending: owed, not yet processed by the payment "
+                                                               "gateway. completed only after the gateway confirms it. A cancelled booking stays cancelled whatever the refund does.")
     service_id: UUID
     service_name: str
     provider_id: UUID | None = None
@@ -78,7 +86,7 @@ class BookingListItem(BaseModel):
     currency: str | None = None
     can_cancel: bool
     cancel_mode: Literal["instant", "request"] | None = Field(None, description="What cancelling does now: cancel at once, or send a request the clinic decides.")
-    can_reschedule: bool = Field(False, description="Always false in this release (rescheduling is a later phase).")
+    can_reschedule: bool = Field(False, description="Always false until rescheduling is released.")
     can_join: bool
     can_check_in: bool = Field(False, description="Always false in this release: the clinic marks attendance.")
     customer: CustomerInfo
@@ -127,7 +135,7 @@ class SlotItem(BaseModel):
     available: bool
     available_seats: int
     capacity: int
-    reason: Literal["full", "provider_busy", "too_soon", "too_far"] | None = None
+    reason: Literal["blocked", "full", "provider_busy", "too_soon", "too_far"] | None = None
 
 
 class SlotDay(BaseModel):
@@ -155,7 +163,7 @@ class BookingSettings(BaseModel):
 
     service_id: UUID
     booking_enabled: bool
-    requires_approval: bool
+    requires_approval: bool = Field(..., description="Retired: has no effect on new bookings.")
     time_zone: str
     delivery_modes: list[DeliveryMode]
     cancellation_rules: CancellationRules
@@ -166,6 +174,79 @@ class BookingSettings(BaseModel):
     meeting_passcode: str | None = None
     meeting_instructions: str | None = None
     max_participants: int | None = None
+    min_notice_minutes: int | None = Field(None, description="Null: the platform default.")
+    max_advance_days: int | None = Field(None, description="Null: the platform default.")
+    blocked_periods: list[dict] | None = None
     duration_minutes: int
     provider_user_id: UUID | None = None
     provider_name: str | None = None
+
+
+class BookingSummary(BaseModel):
+    upcoming: int = Field(..., description="Confirmed (or in progress, or with a cancellation request) and not started yet.")
+    pending_payment: int
+    change_requests: int = Field(..., description="Cancellation requests waiting for a decision.")
+    legacy_pending_approval: int = Field(..., description="Bookings made before approval was retired that still wait for an admin. Confirm (PATCH status confirmed) or cancel each; nothing changes them automatically.")
+    by_status: dict[str, int]
+
+
+class AvailabilityChange(BaseModel):
+    """A planned change, to see which existing bookings it touches before saving it. Send only what changes."""
+
+    availability: list[AvailabilityScheduleEntry] | None = Field(None, description="The new weekly schedule.")
+    blocked_periods: list[BlockedPeriod] | None = Field(None, description="The full new list of blocked dates / time ranges.")
+    max_participants: int | None = Field(None, ge=1)
+    duration_minutes: int | None = Field(None, ge=1)
+
+
+class AffectedBooking(BaseModel):
+    id: UUID
+    reference: str
+    status: str
+    stage: str
+    starts_at: str
+    customer_name: str | None = None
+    participants: int
+    payment_status: str
+    reasons: list[Literal["blocked", "outside_schedule", "over_capacity"]]
+
+
+class AvailabilityImpact(BaseModel):
+    affected_count: int
+    bookings: list[AffectedBooking]
+    note: str
+
+
+
+class AssignedBooking(BookingListItem):
+    """A Provider's appointment: the list fields plus what the session needs (venue or meeting, duration, the actions the Provider may take)."""
+
+    duration_minutes: int
+    venue: dict | None = None
+    meeting: dict | None = Field(None, description="virtual and hybrid: the meeting link, passcode and instructions (the assigned Provider always sees them).")
+    allowed_statuses: list[str] | None = Field(None, description="What the Provider may move it to now: in_progress, completed, no_show.")
+    notes: str | None = None
+
+
+class AssignedBookingList(BaseModel):
+    items: list[AssignedBooking]
+    total: int
+    page: int
+    page_size: int
+
+
+class PlatformSummary(BaseModel):
+    total: int
+    by_stage: dict[str, int] = Field(..., description="pending_payment, legacy_pending_approval, confirmed, in_progress, completed, cancellation_requested, cancelled, no_show, expired.")
+    refunds: dict[str, int] = Field(..., description="Bookings per refund_status (pending, processing, completed, failed).")
+    exceptions: dict[str, int] = Field(..., description="refund_pending, refund_failed, legacy_pending_approval.")
+
+
+class ServiceCount(BaseModel):
+    service_id: UUID
+    total: int
+    by_stage: dict[str, int]
+
+
+class ServiceCountList(BaseModel):
+    items: list[ServiceCount]

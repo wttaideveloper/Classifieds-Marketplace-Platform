@@ -1,7 +1,7 @@
 """Service bookings: create, cancel, decide, change status, payment status, history and the answers (docs/service-bookings.md).
 
 Payment is a status only (`payment_status` on the booking): nothing here talks to the payments module. A refund is the same: the booking records
-the refund percent and amount and moves `payment_status` to refunded / partially_refunded.
+the refund percent and amount and sets `refund_status: pending` (owed). `payment_status` stays `paid`: only a gateway refund may change it.
 
 Who may do what:
   customer      books for themselves, sees their own bookings, cancels (instantly inside the free window, otherwise a request an admin decides)
@@ -13,9 +13,10 @@ Everyone else gets 404 for a booking that is not theirs.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import func, or_
@@ -145,7 +146,34 @@ def expire_stale_holds(db: Session, now: datetime | None = None) -> int:
         booking.hold_expires_at = None
     if rows:
         db.commit()
+        for booking in rows:
+            notify.payment_expired(db, booking, booking.service)
     return len(rows)
+
+
+def make_reference(booking_id: UUID) -> str:
+    """The booking reference people see and search: "SB-" + the first 10 hex digits of the id (the migration fills old rows the same way)."""
+    return "SB-" + booking_id.hex[:10].upper()
+
+
+def source_of(booking: ServiceBooking) -> str:
+    return "manual" if booking.created_by_role in ("admin", "provider", "super_admin") else "customer"
+
+
+def stage_of(booking: ServiceBooking) -> str:
+    """One word for what the booking is waiting for. `pending` alone used to mean two things:
+    pending_payment   a paid booking holding its slot until it is paid
+    legacy_pending_approval   a booking made before approval was retired that still waits for an admin (never created any more)"""
+    if booking.status == "pending":
+        return "pending_payment" if booking.payment_status == "unpaid" else "legacy_pending_approval"
+    return booking.status
+
+
+def cancelled_by_of(booking: ServiceBooking) -> str | None:
+    if booking.status != "cancelled" and booking.cancelled_at is None:
+        return None
+    role = booking.cancelled_by_role
+    return "customer" if role == "customer" else "system" if role in (None, "system") else "merchant"
 
 
 def _apply_refund(booking: ServiceBooking, percent: int) -> None:
@@ -154,12 +182,10 @@ def _apply_refund(booking: ServiceBooking, percent: int) -> None:
     booking.refund_percent = percent
     if booking.payment_status == "paid":
         booking.refund_amount = round((booking.amount or 0) * percent / 100, 2)
-        if percent >= 100:
-            booking.payment_status = "refunded"
-        elif percent > 0:
-            booking.payment_status = "partially_refunded"
+        booking.refund_status = "pending" if booking.refund_amount > 0 else None      # owed; the booking stays cancelled whatever happens to the refund
     else:
         booking.refund_amount = 0.0
+        booking.refund_status = None
 
 
 # ---------------------------------------------------------------- create
@@ -171,6 +197,7 @@ def create_booking(db: Session, actor: Actor, body, idempotency_key: str | None 
         existing = db.query(ServiceBooking).filter(ServiceBooking.created_by == actor.id, ServiceBooking.idempotency_key == key).first()
         if existing is not None:
             return existing, False
+    expire_stale_holds(db)            # before the lock: it commits, and a commit would release the lock taken next
     service = db.query(Service).filter(Service.id == body.service_id, Service.is_deleted.is_(False)).with_for_update().first()   # one booking at a time per service
     if service is None:
         raise _err(404, "SERVICE_NOT_FOUND", "Service not found")
@@ -200,12 +227,13 @@ def create_booking(db: Session, actor: Actor, body, idempotency_key: str | None 
         raise _err(422, "CUSTOMER_REQUIRED", "customer_name (or customer_user_id) is required when booking for a customer")
 
     now = slots.now_utc()
-    expire_stale_holds(db, now)
     slot = slots.find_slot(db, service, starts, now)
     if slot is None:
         raise _err(422, "SLOT_NOT_OFFERED", "That time is not one of the service's bookable slots")
     if starts <= now:
         raise _err(409, "SLOT_IN_THE_PAST", "That time has passed")
+    if slot.reason == "blocked":
+        raise _err(409, "SLOT_BLOCKED", "The clinic is not available at that time")
     if slot.reason in ("too_soon", "too_far") and not manual:
         raise _err(409, "SLOT_NOT_BOOKABLE", "That time is too soon or too far ahead to book", slot_reason=slot.reason)
     if slot.reason == "provider_busy":
@@ -225,16 +253,19 @@ def create_booking(db: Session, actor: Actor, body, idempotency_key: str | None 
         raise _err(409, "DUPLICATE_BOOKING", "There is already a booking for this person at that time", booking_id=str(dup[0]))
 
     amount = round(float(service.service_price or 0) * participants, 2)
+    if body.paid and actor.role == "provider":      # a Provider cannot modify payments (docs: Provider permissions), so they cannot mark a booking paid either
+        raise _err(403, "PROVIDER_CANNOT_RECORD_PAYMENT", "Only the Enterprise Admin can record a payment")
     paid_up = bool(manual and body.paid and amount > 0)
     if amount > 0 and not paid_up:
         status, payment, hold = "pending", "unpaid", now + timedelta(minutes=settings.SERVICE_BOOKING_HOLD_MINUTES)
     elif amount > 0:
         status, payment, hold = "confirmed", "paid", None
     else:
-        status, payment, hold = ("pending" if (service.requires_approval and not manual) else "confirmed"), "not_required", None
+        status, payment, hold = "confirmed", "not_required", None          # no approval step: `requires_approval` is retired for new bookings
     enterprise = service.enterprise or db.get(Enterprise, service.enterprise_id)
+    booking_id = uuid4()
     booking = ServiceBooking(
-        tenant_id=_service_tenant(db, service), enterprise_id=service.enterprise_id, service_id=service.id, customer_user_id=customer_id,
+        id=booking_id, reference=make_reference(booking_id), tenant_id=_service_tenant(db, service), enterprise_id=service.enterprise_id, service_id=service.id, customer_user_id=customer_id,
         customer_name=name, customer_email=email, customer_phone=body.customer_phone if manual else None, created_by=actor.id, created_by_role=actor.role,
         provider_user_id=service.provider_user_id, provider_name=service.provider_name or service.instructor_name, delivery_mode=mode, starts_at=starts,
         ends_at=starts + timedelta(minutes=slots.duration_of(service)), time_zone=service.time_zone or slots.DEFAULT_TIME_ZONE, participants=participants,
@@ -280,8 +311,8 @@ def mark_paid(db: Session, actor: Actor, booking_id: UUID, reference: str | None
         raise _err(409, "BOOKING_CLOSED", f"This booking is {booking.status}")
     booking.payment_status, booking.paid_at, booking.hold_expires_at = "paid", slots.now_utc(), None
     _log(db, booking, "paid", actor, detail={"amount": booking.amount, "reference": reference})
-    if booking.status == "pending" and not service.requires_approval:
-        _move(db, booking, "confirmed", actor, "confirmed", "Paid")
+    if booking.status == "pending":
+        _move(db, booking, "confirmed", actor, "confirmed", "Paid")          # a verified payment confirms: there is no approval step any more
     db.commit()
     db.refresh(booking)
     notify.booking_paid(db, booking, service, actor.token)
@@ -412,7 +443,7 @@ def change_status(db: Session, actor: Actor, booking_id: UUID, new_status: str, 
             raise _err(422, "REASON_REQUIRED", "A reason is required to cancel a booking (at least 3 characters)")
         booking.cancel_reason, booking.cancelled_at, booking.cancelled_by, booking.cancelled_by_role = reason, now, actor.id, actor.role
         booking.hold_expires_at = None
-        _apply_refund(booking, refund_percent if refund_percent is not None else 100)     # the clinic cancelled: a full refund unless it says otherwise
+        _apply_refund(booking, refund_percent if refund_percent is not None else settings.SERVICE_BOOKING_MERCHANT_REFUND_PERCENT)     # the clinic cancelled
     if new_status == "in_progress":
         booking.checked_in_at = now
     if new_status == "completed":
@@ -472,7 +503,8 @@ def booking_view(db: Session, booking: ServiceBooking, actor: Actor, *, detail: 
     decision = cancel_decision(booking, service, now)
     can_join, join_reason = _join_state(booking, service, now)
     row = {
-        "id": booking.id, "status": booking.status, "payment_status": booking.payment_status, "service_id": booking.service_id, "service_name": service.service_name,
+        "id": booking.id, "reference": booking.reference or make_reference(booking.id), "status": booking.status, "stage": stage_of(booking), "source": source_of(booking),
+        "payment_status": booking.payment_status, "refund_status": booking.refund_status, "service_id": booking.service_id, "service_name": service.service_name,
         "provider_id": booking.provider_user_id, "provider_name": booking.provider_name, "enterprise_id": booking.enterprise_id,
         "enterprise_name": getattr(enterprise, "business_short_name", None), "delivery_mode": booking.delivery_mode,
         "starts_at": slots.to_local_iso(booking.starts_at, tz), "ends_at": slots.to_local_iso(booking.ends_at, tz), "timezone": booking.time_zone,
@@ -492,8 +524,9 @@ def booking_view(db: Session, booking: ServiceBooking, actor: Actor, *, detail: 
         "cancellation_policy": service.cancellation_policy, "hold_expires_at": slots.to_local_iso(booking.hold_expires_at, tz),
         "cancellation": {
             "requested_at": slots.to_local_iso(booking.cancellation_requested_at, tz), "reason": booking.cancel_reason, "decision_reason": booking.decision_reason,
-            "cancelled_at": slots.to_local_iso(booking.cancelled_at, tz), "cancelled_by_role": booking.cancelled_by_role,
+            "cancelled_at": slots.to_local_iso(booking.cancelled_at, tz), "cancelled_by_role": booking.cancelled_by_role, "cancelled_by": cancelled_by_of(booking),
             "refund_percent": booking.refund_percent, "refund_amount": booking.refund_amount,
+            "refund_status": booking.refund_status,
         },
         "payment_id": None, "qr_payload": None, "notes": booking.notes if staff or booking.created_by == actor.id else None,
         "history": [
@@ -535,7 +568,8 @@ def list_mine(db: Session, actor: Actor, *, status: str | None, when: str | None
 def list_for_enterprise(
     db: Session, actor: Actor, enterprise_id: UUID, *, status: str | None = None, service_id: UUID | None = None, provider_id: UUID | None = None,
     payment_status: str | None = None, q: str | None = None, date_from: date | None = None, date_to: date | None = None, when: str | None = None,
-    only_requests: bool = False, page: int = 1, page_size: int = 20,
+    only_requests: bool = False, page: int = 1, page_size: int = 20, source: str | None = None, delivery_mode: str | None = None, stage: str | None = None,
+    refund_status: str | None = None,
 ) -> dict:
     enterprise = db.query(Enterprise).filter(Enterprise.id == enterprise_id, Enterprise.is_deleted.is_(False)).first() if hasattr(Enterprise, "is_deleted") else db.get(Enterprise, enterprise_id)
     if enterprise is None or not actor.is_staff or (actor.role != "super_admin" and enterprise.tenant_id != actor.tenant_id):
@@ -546,23 +580,204 @@ def list_for_enterprise(
         query = query.filter(ServiceBooking.provider_user_id == actor.id)
     if only_requests:
         query = query.filter(ServiceBooking.status == "cancellation_requested")
-    elif status:
+        status = None
+    query = _apply_filters(query, status=status, service_id=service_id, provider_id=provider_id, payment_status=payment_status, refund_status=refund_status,
+                           source=source, delivery_mode=delivery_mode, stage=stage, q=q, date_from=date_from, date_to=date_to)
+    now = slots.now_utc()
+    query = query.order_by(ServiceBooking.cancellation_requested_at.asc()) if only_requests else _apply_when(query, when, now)
+    rows, total = _paged(query, page, page_size)
+    return {"items": [booking_view(db, b, actor, detail=False) for b in rows], "total": total, "page": page, "page_size": page_size}
+
+
+def _stage_clause(stage: str):
+    if stage == "pending_payment":
+        return (ServiceBooking.status == "pending") & (ServiceBooking.payment_status == "unpaid")
+    if stage == "legacy_pending_approval":
+        return (ServiceBooking.status == "pending") & (ServiceBooking.payment_status != "unpaid")
+    return ServiceBooking.status == stage
+
+
+def summary_for_enterprise(db: Session, actor: Actor, enterprise_id: UUID) -> dict:
+    """The dashboard counts: upcoming, pending payment, change requests, the approval bookings left from before, and every status."""
+    enterprise = db.get(Enterprise, enterprise_id)
+    if enterprise is None or not actor.is_staff or (actor.role != "super_admin" and enterprise.tenant_id != actor.tenant_id):
+        raise _err(404, "ENTERPRISE_NOT_FOUND", "Enterprise not found")
+    expire_stale_holds(db)
+    base = db.query(ServiceBooking).filter(ServiceBooking.enterprise_id == enterprise_id)
+    if actor.role == "provider":
+        base = base.filter(ServiceBooking.provider_user_id == actor.id)
+    now = slots.now_utc()
+    by_status = dict(base.with_entities(ServiceBooking.status, func.count(ServiceBooking.id)).group_by(ServiceBooking.status).all())
+    return {
+        "upcoming": base.filter(ServiceBooking.status.in_(("confirmed", "in_progress", "cancellation_requested")), ServiceBooking.starts_at >= now).count(),
+        "pending_payment": base.filter(_stage_clause("pending_payment")).count(),
+        "change_requests": by_status.get("cancellation_requested", 0),
+        "legacy_pending_approval": base.filter(_stage_clause("legacy_pending_approval")).count(),
+        "by_status": by_status,
+    }
+
+
+# ---------------------------------------------------------------- availability changes: which existing bookings they touch
+
+def availability_impact(db: Session, actor: Actor, service_id: UUID, changes: dict) -> dict:
+    """The upcoming bookings (confirmed, in progress, with a cancellation request, or holding a slot for payment) that a planned change would affect.
+    Nothing is saved, cancelled or moved: this is only for the warning before the admin saves. `changes` may hold availability_schedule, blocked_periods,
+    max_participants and duration_minutes; what is not sent keeps its current value."""
+    from types import SimpleNamespace
+
+    service = db.query(Service).filter(Service.id == service_id, Service.is_deleted.is_(False)).first()
+    if service is None:
+        raise _err(404, "SERVICE_NOT_FOUND", "Service not found")
+    if actor.role not in ("admin", "super_admin") or not _may_manage(db, actor, service):
+        raise _err(403, "NOT_ALLOWED", "Only the Enterprise Admin can change a service's availability")
+    proposed = SimpleNamespace(
+        availability_schedule=changes.get("availability_schedule", service.availability_schedule), blocked_periods=changes.get("blocked_periods", service.blocked_periods),
+        max_participants=changes.get("max_participants", service.max_participants), duration=changes.get("duration_minutes") or service.duration, time_zone=service.time_zone,
+    )
+    tz = slots.tz_of(service)
+    now = slots.now_utc()
+    rows = (db.query(ServiceBooking).filter(ServiceBooking.service_id == service.id, ServiceBooking.starts_at >= now, slots.holding_clause(now))
+            .order_by(ServiceBooking.starts_at, ServiceBooking.created_at).all())
+    capacity = slots.capacity_of(proposed)
+    seats: dict = defaultdict(int)
+    for b in rows:
+        seats[b.starts_at] += b.participants or 1
+    out = []
+    for b in rows:
+        start = b.starts_at.replace(tzinfo=timezone.utc).astimezone(tz)
+        end = b.ends_at.replace(tzinfo=timezone.utc).astimezone(tz)
+        reasons = []
+        if slots.is_blocked(proposed, start, end):
+            reasons.append("blocked")
+        if all(s != start for s, _e in slots.day_slots(proposed, start.date())):
+            reasons.append("outside_schedule")
+        if seats[b.starts_at] > capacity:
+            reasons.append("over_capacity")
+        if reasons:
+            out.append({"id": b.id, "reference": b.reference or make_reference(b.id), "status": b.status, "stage": stage_of(b), "starts_at": slots.to_local_iso(b.starts_at, tz),
+                        "customer_name": b.customer_name, "participants": b.participants, "payment_status": b.payment_status, "reasons": reasons})
+    return {"affected_count": len(out), "bookings": out,
+            "note": "Saving the change does not cancel or move these bookings. Cancel or reschedule them yourself if needed."}
+
+
+
+MANUAL_ROLES = ("admin", "provider", "super_admin")
+
+
+def _apply_filters(query, *, status=None, service_id=None, provider_id=None, enterprise_id=None, payment_status=None, refund_status=None, source=None,
+                   delivery_mode=None, stage=None, q=None, date_from=None, date_to=None, search_enterprise=False):
+    """The list filters every booking list shares. The query must already join Service (and Enterprise when search_enterprise)."""
+    if status:
         query = query.filter(ServiceBooking.status.in_([s.strip() for s in status.split(",") if s.strip()]))
     if service_id:
         query = query.filter(ServiceBooking.service_id == service_id)
     if provider_id:
         query = query.filter(ServiceBooking.provider_user_id == provider_id)
+    if enterprise_id:
+        query = query.filter(ServiceBooking.enterprise_id == enterprise_id)
     if payment_status:
         query = query.filter(ServiceBooking.payment_status == payment_status)
+    if refund_status:
+        query = query.filter(ServiceBooking.refund_status == refund_status)
+    if source == "manual":
+        query = query.filter(ServiceBooking.created_by_role.in_(MANUAL_ROLES))
+    elif source == "customer":
+        query = query.filter(or_(ServiceBooking.created_by_role.is_(None), ServiceBooking.created_by_role.notin_(MANUAL_ROLES)))
+    if delivery_mode:
+        query = query.filter(ServiceBooking.delivery_mode == delivery_mode)
+    if stage:
+        query = query.filter(_stage_clause(stage))
     if q and q.strip():
         like = f"%{q.strip().lower()}%"
-        query = query.filter(or_(func.lower(ServiceBooking.customer_name).like(like), func.lower(ServiceBooking.customer_email).like(like),
-                                 func.lower(Service.service_name).like(like), func.lower(ServiceBooking.provider_name).like(like)))
+        fields = [ServiceBooking.customer_name, ServiceBooking.customer_email, ServiceBooking.customer_phone, ServiceBooking.reference, Service.service_name,
+                  ServiceBooking.provider_name]
+        if search_enterprise:
+            fields.append(Enterprise.business_short_name)
+        query = query.filter(or_(*[func.lower(f).like(like) for f in fields]))
     if date_from:
         query = query.filter(ServiceBooking.starts_at >= datetime.combine(date_from, datetime.min.time()))
     if date_to:
         query = query.filter(ServiceBooking.starts_at < datetime.combine(date_to + timedelta(days=1), datetime.min.time()))
-    now = slots.now_utc()
-    query = query.order_by(ServiceBooking.cancellation_requested_at.asc()) if only_requests else _apply_when(query, when, now)
+    return query
+
+
+# ---------------------------------------------------------------- Provider: the bookings assigned to me, across my tenant's enterprises
+
+def list_assigned(db: Session, actor: Actor, *, page: int = 1, page_size: int = 20, when: str | None = None, **filters) -> dict:
+    """Only the caller's own appointments: provider_user_id is the caller AND the booking is in the caller's tenant. Never anyone else's."""
+    if actor.role != "provider" or actor.tenant_id is None:
+        raise _err(403, "PROVIDER_ONLY", "Only a Provider has assigned appointments")
+    expire_stale_holds(db)
+    query = (db.query(ServiceBooking).join(Service, Service.id == ServiceBooking.service_id)
+             .filter(ServiceBooking.provider_user_id == actor.id, ServiceBooking.tenant_id == actor.tenant_id))
+    query = _apply_when(_apply_filters(query, **filters), when, slots.now_utc())
+    rows, total = _paged(query, page, page_size)
+    return {"items": [booking_view(db, b, actor, detail=True) for b in rows], "total": total, "page": page, "page_size": page_size}
+
+
+# ---------------------------------------------------------------- Super Admin: every enterprise, read only
+
+def _require_super_admin(actor: Actor) -> None:
+    if actor.role != "super_admin":
+        raise _err(403, "SUPER_ADMIN_ONLY", "Only a Super Admin can see bookings across enterprises")
+
+
+def list_platform(db: Session, actor: Actor, *, page: int = 1, page_size: int = 20, when: str | None = None, **filters) -> dict:
+    _require_super_admin(actor)
+    expire_stale_holds(db)
+    query = (db.query(ServiceBooking).join(Service, Service.id == ServiceBooking.service_id)
+             .outerjoin(Enterprise, Enterprise.id == ServiceBooking.enterprise_id))
+    query = _apply_when(_apply_filters(query, search_enterprise=True, **filters), when, slots.now_utc())
     rows, total = _paged(query, page, page_size)
     return {"items": [booking_view(db, b, actor, detail=False) for b in rows], "total": total, "page": page, "page_size": page_size}
+
+
+def _stage_counts(query) -> dict:
+    """Counts per stage (pending is split into pending_payment and legacy_pending_approval), computed in the database."""
+    out = {}
+    for status, payment, n in (query.with_entities(ServiceBooking.status, ServiceBooking.payment_status, func.count(ServiceBooking.id))
+                               .group_by(ServiceBooking.status, ServiceBooking.payment_status).all()):
+        key = ("pending_payment" if payment == "unpaid" else "legacy_pending_approval") if status == "pending" else status
+        out[key] = out.get(key, 0) + n
+    return out
+
+
+def platform_summary(db: Session, actor: Actor, *, enterprise_id: UUID | None = None, date_from: date | None = None, date_to: date | None = None) -> dict:
+    _require_super_admin(actor)
+    expire_stale_holds(db)
+    query = db.query(ServiceBooking)
+    if enterprise_id:
+        query = query.filter(ServiceBooking.enterprise_id == enterprise_id)
+    if date_from:
+        query = query.filter(ServiceBooking.starts_at >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        query = query.filter(ServiceBooking.starts_at < datetime.combine(date_to + timedelta(days=1), datetime.min.time()))
+    by_stage = _stage_counts(query)
+    refunds = dict(query.filter(ServiceBooking.refund_status.isnot(None)).with_entities(ServiceBooking.refund_status, func.count(ServiceBooking.id))
+                   .group_by(ServiceBooking.refund_status).all())
+    return {
+        "total": sum(by_stage.values()),
+        "by_stage": by_stage,
+        "refunds": refunds,
+        "exceptions": {
+            "refund_pending": refunds.get("pending", 0),
+            "refund_failed": refunds.get("failed", 0),
+            "legacy_pending_approval": by_stage.get("legacy_pending_approval", 0),
+        },
+    }
+
+
+def service_counts(db: Session, actor: Actor, service_ids: list[UUID]) -> dict:
+    """Booking counts per service for the given services (the page of the Services table), each with its counts per stage."""
+    _require_super_admin(actor)
+    expire_stale_holds(db)
+    out = {sid: {"service_id": sid, "total": 0, "by_stage": {}} for sid in service_ids}
+    if service_ids:
+        rows = (db.query(ServiceBooking.service_id, ServiceBooking.status, ServiceBooking.payment_status, func.count(ServiceBooking.id))
+                .filter(ServiceBooking.service_id.in_(service_ids)).group_by(ServiceBooking.service_id, ServiceBooking.status, ServiceBooking.payment_status).all())
+        for sid, status, payment, n in rows:
+            key = ("pending_payment" if payment == "unpaid" else "legacy_pending_approval") if status == "pending" else status
+            entry = out[sid]
+            entry["by_stage"][key] = entry["by_stage"].get(key, 0) + n
+            entry["total"] += n
+    return {"items": list(out.values())}

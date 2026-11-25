@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from typing import Literal
@@ -17,6 +17,27 @@ class CancellationRules(BaseModel):
     refund_percent_before: int = Field(100, ge=0, le=100, description="Share refunded when cancelled inside the free window.")
     refund_percent_after: int = Field(0, ge=0, le=100, description="Share refunded when an admin approves a cancellation requested after the window.")
     allow_request_after_window: bool = Field(True, description="After the window a customer can still ask (an admin decides); false = not allowed.")
+
+
+
+class BlockedPeriod(BaseModel):
+    """Dates (and optionally a time range on each of them) when the service cannot be booked: a holiday, a closure, a training day."""
+
+    start_date: date
+    end_date: date | None = Field(None, description="Last blocked day (inclusive). Default: start_date.")
+    start_time: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$", description="HH:MM in the service's time zone. Both times empty = the whole day.")
+    end_time: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    reason: str | None = Field(None, max_length=200)
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.end_date is not None and self.end_date < self.start_date:
+            raise ValueError("end_date must not be before start_date")
+        if (self.start_time is None) != (self.end_time is None):
+            raise ValueError("send both start_time and end_time, or neither for whole days")
+        if self.start_time is not None and self.end_time <= self.start_time:
+            raise ValueError("end_time must be after start_time")
+        return self
 
 
 def _check_time_zone(value):
@@ -107,7 +128,7 @@ class ServiceCreate(BaseModel):
     # booking settings (docs/service-bookings.md)
     delivery_modes: list[DeliveryMode] | None = Field(None, description="in_person, virtual, hybrid (both venue and meeting). Several can be offered.")
     booking_enabled: bool | None = Field(None, description="Customers can book this service (default true).")
-    requires_approval: bool | None = Field(None, description="A new booking waits for an admin to confirm it (default false: auto-confirm).")
+    requires_approval: bool | None = Field(None, description="Retired: accepted and stored for compatibility, but new bookings never wait for approval.")
     time_zone: str | None = Field(None, description="IANA zone the weekly schedule is written in (default Asia/Kolkata).")
     cancellation_rules: CancellationRules | None = None
     venue_instructions: str | None = Field(None, max_length=1000, description="Arrival / check-in instructions for an in-person booking.")
@@ -115,6 +136,9 @@ class ServiceCreate(BaseModel):
     meeting_provider: str | None = Field(None, max_length=30)
     meeting_passcode: str | None = Field(None, max_length=100)
     meeting_instructions: str | None = Field(None, max_length=1000)
+    min_notice_minutes: int | None = Field(None, ge=0, le=60 * 24 * 90, description="Earliest a slot can be booked, in minutes from now. Null = platform default (60).")
+    max_advance_days: int | None = Field(None, ge=1, le=730, description="Furthest ahead a slot can be booked, in days. Null = platform default (60).")
+    blocked_periods: list[BlockedPeriod] | None = Field(None, max_length=200, description="Holidays and blocked dates / time ranges. Existing bookings in them are kept.")
 
     _tz = field_validator("time_zone")(_check_time_zone)
 
@@ -181,6 +205,9 @@ class ServiceCreate(BaseModel):
             "meeting_provider": self.meeting_provider,
             "meeting_passcode": self.meeting_passcode,
             "meeting_instructions": self.meeting_instructions,
+            "min_notice_minutes": self.min_notice_minutes,
+            "max_advance_days": self.max_advance_days,
+            "blocked_periods": [p.model_dump(mode="json") for p in self.blocked_periods] if self.blocked_periods is not None else None,
         }
 
 
@@ -224,6 +251,9 @@ class ServiceUpdate(BaseModel):
     meeting_provider: str | None = Field(None, max_length=30)
     meeting_passcode: str | None = Field(None, max_length=100)
     meeting_instructions: str | None = Field(None, max_length=1000)
+    min_notice_minutes: int | None = Field(None, ge=0, le=60 * 24 * 90, description="Earliest a slot can be booked, in minutes from now. Null = platform default (60).")
+    max_advance_days: int | None = Field(None, ge=1, le=730, description="Furthest ahead a slot can be booked, in days. Null = platform default (60).")
+    blocked_periods: list[BlockedPeriod] | None = Field(None, max_length=200, description="Holidays and blocked dates / time ranges. Existing bookings in them are kept.")
 
     _tz = field_validator("time_zone")(_check_time_zone)
 
@@ -276,6 +306,8 @@ class ServiceUpdate(BaseModel):
                 "availability_schedule",
             }:
                 mapped[key] = value
+        if mapped.get("blocked_periods") is not None:
+            mapped["blocked_periods"] = [p.model_dump(mode="json") for p in self.blocked_periods]
         if "status" in mapped:
             mapped["service_status"] = mapped["status"] == "active"
         return mapped
@@ -302,6 +334,10 @@ class ServiceResponse(BaseModel):
     duration: int | None = None
     service_type: str | None = None
     banner_image: str | None = None
+    images: list[str] = Field(default_factory=list, description="The banner as a list of hosted http(s) URLs (empty when there is none). Never base64.")
+    min_notice_minutes: int | None = None
+    max_advance_days: int | None = None
+    blocked_periods: list[BlockedPeriod] | None = None
     availability_status: bool
     service_status: bool | None = None
     max_participants: int | None = None
@@ -314,7 +350,7 @@ class ServiceResponse(BaseModel):
     availability_schedule: list[AvailabilityScheduleEntry] | None = None
     delivery_modes: list[DeliveryMode] | None = None
     booking_enabled: bool | None = None
-    requires_approval: bool | None = None
+    requires_approval: bool | None = Field(None, description="Retired: has no effect on new bookings (they are confirmed automatically, or after payment).")
     time_zone: str | None = None
     cancellation_rules: CancellationRules | None = None
     venue_instructions: str | None = None
