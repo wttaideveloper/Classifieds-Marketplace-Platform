@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.exceptions.problem import problem
-from app.models.blog_engagement_model import BlogComment, BlogCommentEvent, BlogCommentReport, BlogLike, BlogWishlist
+from app.models.blog_engagement_model import BlogComment, BlogCommentEvent, BlogCommentLike, BlogCommentReport, BlogLike, BlogWishlist
 from app.models.blog_model import BlogPost
 from app.services import notification_idempotency
 from app.services.event_discussion_moderation import ModerationUnavailable, classify
@@ -47,8 +47,12 @@ def _uuid(value) -> UUID:
 
 # ---------------------------------------------------------------- the post
 
-def _post(db: Session, post_id: UUID, *, live: bool = True) -> BlogPost:
-    post = db.query(BlogPost).filter(BlogPost.id == post_id, BlogPost.is_deleted.is_(False)).first()
+def _post(db: Session, post_ref, *, live: bool = True) -> BlogPost:
+    """The blog by its id or its slug (the public URLs accept either)."""
+    try:
+        post = db.query(BlogPost).filter(BlogPost.id == _uuid(post_ref), BlogPost.is_deleted.is_(False)).first()
+    except (ValueError, TypeError):
+        post = db.query(BlogPost).filter(BlogPost.slug == str(post_ref), BlogPost.is_deleted.is_(False)).first()
     if post is None or (live and not post.is_live):
         raise problem(404, "That blog is not available", "POST_NOT_FOUND")
     if post.kind != "blog":
@@ -91,7 +95,9 @@ def attach_engagement(db: Session, items, viewer_id) -> None:
         return
     for item in blogs:
         item.engagement = EngagementBlock(**counts[item.id], is_liked_by_me=(item.id in liked) if viewer_id is not None else None,
-                                          is_wishlisted_by_me=(item.id in saved) if viewer_id is not None else None)
+                                          is_wishlisted_by_me=(item.id in saved) if viewer_id is not None else None,
+                                          like_count=counts[item.id]["likes_count"], comment_count=counts[item.id]["comments_count"],
+                                          liked_by_me=(item.id in liked) if viewer_id is not None else None)
 
 
 # ---------------------------------------------------------------- likes and saved blogs (idempotent)
@@ -209,10 +215,13 @@ def create_comment(db: Session, user: dict, post_id: UUID, body: str, parent_id:
     parent = None
     if parent_id is not None:
         parent = db.query(BlogComment).filter(BlogComment.id == parent_id, BlogComment.post_id == post.id).first()
-        if parent is not None and parent.parent_id is not None:
-            parent = db.get(BlogComment, parent.parent_id)            # a reply to a reply goes under the top-level comment
         if parent is None or parent.status != "published":
             raise problem(404, "The comment you are replying to is not available", "PARENT_NOT_AVAILABLE")
+        depth = _depth(db, parent)                                     # a top-level comment is depth 1
+        while depth >= max(settings.BLOG_COMMENT_MAX_DEPTH, 1) and parent.parent_id is not None:
+            parent, depth = db.get(BlogComment, parent.parent_id), depth - 1      # too deep: it joins the deepest level allowed
+        if settings.BLOG_COMMENT_MAX_DEPTH <= 1:
+            raise problem(409, "Replies are switched off", "REPLIES_DISABLED")
     _rate_limit(db, uid)
     verdict = judge(text)
     comment = BlogComment(post_id=post.id, tenant_id=post.tenant_id, parent_id=parent.id if parent else None, author_id=uid, author_name=public_name(user), body=text,
@@ -276,42 +285,124 @@ def _visible(viewer_id):
     return or_(clause, (BlogComment.author_id == viewer_id) & BlogComment.status.in_(PENDING)) if viewer_id is not None else clause
 
 
-def _comment_out(c: BlogComment, viewer_id, reported: set, replies=None, placeholder=False) -> dict:
+def _depth(db: Session, comment: BlogComment) -> int:
+    depth, seen = 1, {comment.id}
+    while comment.parent_id is not None and comment.parent_id not in seen and depth < 50:
+        seen.add(comment.parent_id)
+        comment = db.get(BlogComment, comment.parent_id)
+        if comment is None:
+            break
+        depth += 1
+    return depth
+
+
+def _comment_out(c: BlogComment, viewer_id, reported: set, replies=None, placeholder=False, likes: dict | None = None, liked: set | None = None) -> dict:
     mine = viewer_id is not None and c.author_id == viewer_id
     status = "unavailable" if placeholder else ("published" if c.status == "published" else "pending_review")
+    name = None if placeholder else c.author_name
     return {
-        "id": c.id, "post_id": c.post_id, "parent_id": c.parent_id, "author": {"name": None if placeholder else c.author_name, "is_me": mine and not placeholder},
+        "id": c.id, "post_id": c.post_id, "parent_id": c.parent_id, "author": {"name": name, "is_me": mine and not placeholder}, "author_name": name,
         "body": None if placeholder else c.body, "status": status, "created_at": c.created_at, "is_edited": bool(c.is_edited) and not placeholder,
         "edited_at": None if placeholder else c.edited_at, "can_edit": mine and not placeholder, "can_delete": mine and not placeholder,
-        "reported_by_me": c.id in reported, "reply_count": len(replies or []), "replies": replies or [],
+        "reported_by_me": c.id in reported, "like_count": (likes or {}).get(c.id, 0),
+        "liked_by_me": (c.id in (liked or set())) if viewer_id is not None else None,
+        "reply_count": len(replies or []), "replies": replies or [],
     }
 
 
-def list_comments(db: Session, post_id: UUID, viewer: dict | None, page: int, page_size: int) -> dict:
+def _tree(db: Session, post: BlogPost, viewer_id) -> tuple[list[dict], dict]:
+    """Every thread of the post, newest top-level comment first, replies oldest first at every level. A comment the viewer may not see is left out, unless it
+    has replies the viewer may see: then it stays as a placeholder (status unavailable, no text, no author). Returns (top-level nodes, node by comment id)."""
+    rows = db.query(BlogComment).filter(BlogComment.post_id == post.id).all()
+    children: dict = defaultdict(list)
+    for c in rows:
+        children[c.parent_id].append(c)
+    ids = [c.id for c in rows]
+    likes = dict(db.query(BlogCommentLike.comment_id, func.count(BlogCommentLike.id)).filter(BlogCommentLike.comment_id.in_(ids))
+                 .group_by(BlogCommentLike.comment_id).all()) if ids else {}
+    liked = {r[0] for r in db.query(BlogCommentLike.comment_id).filter(BlogCommentLike.comment_id.in_(ids), BlogCommentLike.user_id == viewer_id).all()} if viewer_id and ids else set()
+    reported = {r[0] for r in db.query(BlogCommentReport.comment_id).filter(BlogCommentReport.comment_id.in_(ids), BlogCommentReport.reporter_id == viewer_id).all()} if viewer_id and ids else set()
+    nodes: dict = {}
+
+    def sees(c: BlogComment) -> bool:
+        return c.status == "published" or (viewer_id is not None and c.author_id == viewer_id and c.status in PENDING)
+
+    def build(c: BlogComment, depth: int):
+        kids = [n for n in (build(k, depth + 1) for k in sorted(children[c.id], key=lambda k: (k.created_at, str(k.id)))) if n is not None] if depth < 50 else []
+        if not sees(c) and not kids:
+            return None
+        node = _comment_out(c, viewer_id, reported, kids, placeholder=not sees(c), likes=likes, liked=liked)
+        nodes[c.id] = node
+        return node
+
+    tops = sorted(children[None], key=lambda k: (k.created_at, str(k.id)), reverse=True)
+    return [n for n in (build(c, 1) for c in tops) if n is not None], nodes
+
+
+def list_comments(db: Session, post_ref, viewer: dict | None, page: int, page_size: int) -> dict:
     from app.repository.query_utils import build_pagination_meta
 
-    post = _post(db, post_id)
+    post = _post(db, post_ref)
     viewer_id = _uuid(viewer["id"]) if viewer and viewer.get("id") else None
-    visible = _visible(viewer_id)
-    with_replies = db.query(BlogComment.parent_id).filter(BlogComment.post_id == post.id, BlogComment.parent_id.isnot(None), visible)
-    top = db.query(BlogComment).filter(BlogComment.post_id == post.id, BlogComment.parent_id.is_(None),
-                                       or_(visible, BlogComment.id.in_(with_replies))).order_by(BlogComment.created_at.desc(), BlogComment.id)
-    total = top.count()
-    rows = top.offset((page - 1) * page_size).limit(page_size).all()
-    replies = defaultdict(list)
-    ids = [r.id for r in rows]
-    if ids:
-        for r in db.query(BlogComment).filter(BlogComment.parent_id.in_(ids), visible).order_by(BlogComment.created_at.asc(), BlogComment.id).all():
-            replies[r.parent_id].append(r)
-    shown = [r.id for r in rows] + [x.id for lst in replies.values() for x in lst]
-    reported = {r[0] for r in db.query(BlogCommentReport.comment_id).filter(BlogCommentReport.comment_id.in_(shown), BlogCommentReport.reporter_id == viewer_id).all()} if viewer_id and shown else set()
-    items = [_comment_out(c, viewer_id, reported, [_comment_out(r, viewer_id, reported) for r in replies[c.id]],
-                          placeholder=not (c.status == "published" or (viewer_id is not None and c.author_id == viewer_id and c.status in PENDING))) for c in rows]
-    return {"items": items, "pagination": build_pagination_meta(total, page, page_size), "comments_count": counts_for(db, [post.id])[post.id]["comments_count"]}
+    threads, _nodes = _tree(db, post, viewer_id)
+    start = (page - 1) * page_size
+    return {"items": threads[start:start + page_size], "pagination": build_pagination_meta(len(threads), page, page_size),
+            "comments_count": counts_for(db, [post.id])[post.id]["comments_count"]}
+
+
+def list_replies(db: Session, post_ref, comment_id: UUID, viewer: dict | None, page: int, page_size: int) -> dict:
+    """The direct replies of one comment (each with its own nested replies), oldest first: for loading a long thread a page at a time."""
+    from app.repository.query_utils import build_pagination_meta
+
+    post = _post(db, post_ref)
+    viewer_id = _uuid(viewer["id"]) if viewer and viewer.get("id") else None
+    _threads, nodes = _tree(db, post, viewer_id)
+    node = nodes.get(comment_id)
+    if node is None:
+        raise problem(404, "Comment not found", "COMMENT_NOT_FOUND")
+    replies = node["replies"]
+    start = (page - 1) * page_size
+    return {"items": replies[start:start + page_size], "pagination": build_pagination_meta(len(replies), page, page_size)}
 
 
 def comment_out(db: Session, comment: BlogComment, viewer: dict) -> dict:
-    return _comment_out(comment, _uuid(viewer["id"]), set())
+    viewer_id = _uuid(viewer["id"])
+    count = db.query(func.count(BlogCommentLike.id)).filter(BlogCommentLike.comment_id == comment.id).scalar() or 0
+    mine = db.query(BlogCommentLike.id).filter_by(comment_id=comment.id, user_id=viewer_id).first() is not None
+    return _comment_out(comment, viewer_id, set(), likes={comment.id: count}, liked={comment.id} if mine else set())
+
+
+# ---------------------------------------------------------------- the mobile contract: likes summary, comment likes
+
+def like_summary(db: Session, viewer: dict | None, post_ref) -> dict:
+    post = _post(db, post_ref)
+    count = counts_for(db, [post.id])[post.id]["likes_count"]
+    if not viewer or not viewer.get("id"):
+        return {"like_count": count, "liked_by_me": None}
+    mine = db.query(BlogLike.id).filter_by(post_id=post.id, user_id=_uuid(viewer["id"])).first() is not None
+    return {"like_count": count, "liked_by_me": mine}
+
+
+def set_like_summary(db: Session, user: dict, post_ref, on: bool) -> dict:
+    state = set_like(db, user, post_ref, on)
+    return {"like_count": state["likes_count"], "liked_by_me": state["liked"]}
+
+
+def set_comment_like(db: Session, user: dict, post_ref, comment_id: UUID, on: bool) -> dict:
+    uid = _uuid(user["id"])
+    post = _post(db, post_ref, live=on)
+    comment = db.query(BlogComment).filter(BlogComment.id == comment_id, BlogComment.post_id == post.id).first()
+    if comment is None or (on and comment.status != "published"):
+        raise problem(404, "Comment not found", "COMMENT_NOT_FOUND")
+    existing = db.query(BlogCommentLike).filter_by(comment_id=comment.id, user_id=uid).first()
+    if on and existing is None:
+        db.add(BlogCommentLike(comment_id=comment.id, user_id=uid))
+        _commit_unique(db)
+    elif not on and existing is not None:
+        db.delete(existing)
+        db.commit()
+    count = db.query(func.count(BlogCommentLike.id)).filter(BlogCommentLike.comment_id == comment.id).scalar() or 0
+    return {"id": comment.id, "like_count": count, "liked_by_me": on}
 
 
 # ---------------------------------------------------------------- notifications

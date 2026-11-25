@@ -140,6 +140,17 @@ Other errors: 422 `COMMENT_EMPTY` / `COMMENT_TOO_LONG` (`max_chars`), 429 `RATE_
 
 `blog_comment_removed` and `blog_comment_restored` to the author; `blog_comment_review_requested` to the Super Admins.
 
+## Mobile contract additions
+
+* Every customer URL takes the blog's **id or slug**: `/{post_id}/like`, `/{post_id}/likes`, `/{post_id}/wishlist`, `/{post_id}/comments`.
+* `GET | POST | DELETE /{post_id}/likes` -> `{"like_count": 129, "liked_by_me": true}` (`liked_by_me` null when signed out; GET is public, POST/DELETE need a customer token).
+* `POST | DELETE /{post_id}/comments/{comment_id}/likes` -> `{"id": "...", "like_count": 13, "liked_by_me": true}` (customer token; a comment that is not published: 404).
+* Replies nest to `BLOG_COMMENT_MAX_DEPTH` levels (3 by default: comment, reply, reply to a reply); a deeper reply joins the deepest level. `replies` is always nested in the list.
+* `GET /{post_id}/comments/{comment_id}/replies?page=&page_size=` -> `{"items": [...], "pagination": {...}}`: one comment's direct replies, oldest first, each with its own replies.
+* Each comment also has `author_name` (same as `author.name`), `like_count` and `liked_by_me`.
+* The blog list and detail `engagement` also carry `like_count`, `liked_by_me` and `comment_count` (same values as `likes_count`, `is_liked_by_me`, `comments_count`).
+* Migration `v2c5e8f1b3d7` (table `cms_blog_comment_likes`).
+
 ## Not built
 
-Comment likes, deeper reply nesting, a separate replies endpoint, slug in engagement URLs, public author ids. See the reply to the mobile team for why and what it would take.
+Public author ids and full names (deliberately: readers are not identifiable).

@@ -78,7 +78,8 @@ def test_like_and_unlike_are_idempotent_and_show_on_the_blog(eng):
     assert w.act(w.crowd[0]).post(f"{API}/{pid}/like").json()["likes_count"] == 2
 
     detail = w.act(priya).get(f"{API}/{eng.post['slug']}").json()
-    assert detail["engagement"] == {"likes_count": 2, "comments_count": 0, "wishlist_count": 0, "is_liked_by_me": True, "is_wishlisted_by_me": False}
+    assert detail["engagement"] == {"likes_count": 2, "comments_count": 0, "wishlist_count": 0, "is_liked_by_me": True, "is_wishlisted_by_me": False,
+                                    "like_count": 2, "comment_count": 0, "liked_by_me": True}
     anonymous = w.act(None).get(f"{API}/{eng.post['slug']}").json()["engagement"]
     assert anonymous["likes_count"] == 2 and anonymous["is_liked_by_me"] is None and anonymous["is_wishlisted_by_me"] is None
     listed = w.act(priya).get(API).json()["items"][0]
@@ -190,17 +191,20 @@ def test_length_empty_and_rate_limit(eng, monkeypatch):
 
 # ---------------------------------------------------------------- replies, edits, deletes
 
-def test_replies_are_nested_one_level_deep(eng):
+def test_replies_nest_to_the_configured_depth(eng):
     w = eng
     top = comment(w, w.people.priya, "Top comment").json()["comment"]
     reply = comment(w, w.crowd[0], "A reply", parent=top["id"])
     assert reply.status_code == 201 and reply.json()["comment"]["parent_id"] == top["id"]
-    deeper = comment(w, w.crowd[1], "Reply to the reply", parent=reply.json()["comment"]["id"])
-    assert deeper.json()["comment"]["parent_id"] == top["id"]                       # attached to the top-level comment
+    deeper = comment(w, w.crowd[1], "Reply to the reply", parent=reply.json()["comment"]["id"]).json()["comment"]
+    assert deeper["parent_id"] == reply.json()["comment"]["id"]                    # nested under the reply (level 3)
+    deepest = comment(w, w.crowd[5], "Level four?", parent=deeper["id"]).json()["comment"]
+    assert deepest["parent_id"] == reply.json()["comment"]["id"]                   # BLOG_COMMENT_MAX_DEPTH = 3: joins the deepest allowed level
     listing = public_comments(w)
-    assert listing["comments_count"] == 3 and len(listing["items"]) == 1
+    assert listing["comments_count"] == 4 and len(listing["items"]) == 1
     node = listing["items"][0]
-    assert node["reply_count"] == 2 and [r["body"] for r in node["replies"]] == ["A reply", "Reply to the reply"]
+    assert node["reply_count"] == 1 and node["replies"][0]["body"] == "A reply"
+    assert [r["body"] for r in node["replies"][0]["replies"]] == ["Reply to the reply", "Level four?"] and node["replies"][0]["reply_count"] == 2
     assert comment(w, w.crowd[2], "x", parent="00000000-0000-0000-0000-000000000000").status_code == 404
     held = comment(w, w.crowd[3], "XXBORDER held").json()["comment"]
     assert comment(w, w.crowd[4], "reply to a held one", parent=held["id"]).status_code == 404
@@ -434,3 +438,53 @@ def test_a_blog_that_is_taken_down_closes_its_comments(eng):
     assert w.act(None).get(f"{API}/{w.post['id']}/comments").status_code == 404
     assert comment(w, w.people.priya, "After").status_code == 404
     assert w.act(w.people.priya).post(f"{API}/{w.post['id']}/like").status_code == 404
+
+
+
+# ---------------------------------------------------------------- the mobile contract: slugs, /likes, comment likes, lazy replies
+
+def test_the_slug_works_wherever_the_id_does_and_likes_have_the_mobile_shape(eng):
+    w, slug = eng, eng.post["slug"]
+    anonymous = w.act(None).get(f"{API}/{slug}/likes")
+    assert anonymous.status_code == 200 and anonymous.json() == {"like_count": 0, "liked_by_me": None}
+    assert w.act(w.people.priya).post(f"{API}/{slug}/likes").json() == {"like_count": 1, "liked_by_me": True}
+    assert w.act(w.people.priya).post(f"{API}/{slug}/likes").json() == {"like_count": 1, "liked_by_me": True}       # idempotent
+    assert w.act(w.people.priya).get(f"{API}/{slug}/likes").json() == {"like_count": 1, "liked_by_me": True}
+    assert w.act(w.people.priya).delete(f"{API}/{slug}/likes").json() == {"like_count": 0, "liked_by_me": False}
+    made = w.act(w.people.priya).post(f"{API}/{slug}/comments", json={"body": "By slug"})
+    assert made.status_code == 201
+    assert [c["body"] for c in w.act(None).get(f"{API}/{slug}/comments").json()["items"]] == ["By slug"]
+    assert w.act(w.people.priya).post(f"{API}/{slug}/wishlist").json()["wishlisted"] is True
+    assert w.act(None).get(f"{API}/no-such-slug/likes").json()["code"] == "POST_NOT_FOUND"
+    assert w.act(None).post(f"{API}/{slug}/likes").status_code == 401
+
+
+def test_comments_can_be_liked_once_per_person(eng):
+    w, slug = eng, eng.post["slug"]
+    cid = comment(w, w.people.priya, "Like me").json()["comment"]["id"]
+
+    first = w.act(w.crowd[0]).post(f"{API}/{slug}/comments/{cid}/likes")
+    assert first.status_code == 200 and first.json() == {"id": cid, "like_count": 1, "liked_by_me": True}
+    assert w.act(w.crowd[0]).post(f"{API}/{slug}/comments/{cid}/likes").json()["like_count"] == 1
+    assert w.act(w.crowd[1]).post(f"{API}/{slug}/comments/{cid}/likes").json()["like_count"] == 2
+    seen = public_comments(w, user=w.crowd[0])["items"][0]
+    assert seen["like_count"] == 2 and seen["liked_by_me"] is True and seen["author_name"] == "Priya C."
+    assert public_comments(w)["items"][0]["liked_by_me"] is None                                       # nobody signed in
+    assert w.act(w.crowd[0]).delete(f"{API}/{slug}/comments/{cid}/likes").json() == {"id": cid, "like_count": 1, "liked_by_me": False}
+    held = comment(w, w.people.priya, "XXBORDER held").json()["comment"]["id"]
+    assert w.act(w.crowd[0]).post(f"{API}/{slug}/comments/{held}/likes").json()["code"] == "COMMENT_NOT_FOUND"
+    assert w.act(None).post(f"{API}/{slug}/comments/{cid}/likes").status_code == 401
+
+
+def test_the_replies_of_one_comment_can_be_loaded_a_page_at_a_time(eng):
+    w, slug = eng, eng.post["slug"]
+    top = comment(w, w.people.priya, "Top").json()["comment"]["id"]
+    for n in range(3):
+        comment(w, w.crowd[n], f"Reply {n}", parent=top)
+
+    first = w.act(None).get(f"{API}/{slug}/comments/{top}/replies", params={"page": 1, "page_size": 2}).json()
+    second = w.act(None).get(f"{API}/{slug}/comments/{top}/replies", params={"page": 2, "page_size": 2}).json()
+
+    assert [r["body"] for r in first["items"]] == ["Reply 0", "Reply 1"] and first["pagination"]["total"] == 3
+    assert [r["body"] for r in second["items"]] == ["Reply 2"]
+    assert w.act(None).get(f"{API}/{slug}/comments/00000000-0000-0000-0000-000000000000/replies").json()["code"] == "COMMENT_NOT_FOUND"
