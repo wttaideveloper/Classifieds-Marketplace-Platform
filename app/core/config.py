@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     # on a lock screen. GROUP_NOTIFICATION_PREVIEW_ENABLED=false brings the earlier "New message" everywhere back for groups.
     # Blog engagement (docs/blog-engagement.md). Comments are judged by the same AI moderation as Event Discussions (the EVENT_DISCUSSION_MODERATION* settings).
     BLOG_COMMENT_MAX_CHARS: int = 500
+    BLOG_COMMENT_MAX_DEPTH: int = 3                         # levels of a thread (1 = no replies); a deeper reply joins the deepest allowed level
     BLOG_COMMENT_RATE_LIMIT: int = 10                       # comments, replies and edits one person can send ...
     BLOG_COMMENT_RATE_WINDOW_SECONDS: int = 60              # ... in this many seconds (Event Discussions has no limit of its own to copy)
     BLOG_REPORT_THRESHOLD_SEVERE: int = 1                   # unsafe_medical or harassment: one report is enough to re-check the comment

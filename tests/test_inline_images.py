@@ -76,7 +76,7 @@ def test_a_product_saved_with_base64_keeps_hosted_urls_instead(env):
     assert (env.root / urls[0].rsplit("/", 1)[1]).read_bytes() == JPEG
 
     mapped = map_product_list_item(product)
-    assert mapped["images"] == urls and mapped["image_urls"] == product.product_images
+    assert mapped["images"] == urls and mapped["image_urls"] == urls and mapped["product_images"] == product.product_images      # array for clients, legacy string kept
 
 
 def test_an_update_converts_too_and_plain_urls_are_untouched(env):
@@ -118,3 +118,16 @@ def test_images_never_contain_base64_even_for_a_row_not_converted_yet(env):
     env.db.add(row)
     env.db.commit()
     assert map_product_list_item(row)["images"] == ["https://cdn.example.test/ok.jpg"]
+
+
+def test_image_urls_can_be_sent_as_a_list_and_always_come_back_as_https_urls(env):
+    from app.schemas.product_schema import ProductCreate, ProductUpdate
+
+    created = ProductCreate.model_validate({"enterprise_id": str(env.ent.id), "product_name": "Mat", "category": "Yoga", "price": 10.0,
+                                            "image_urls": ["https://cdn.example.test/a.jpg", "https://cdn.example.test/b.jpg"]})
+    assert created.to_model_data()["product_images"] == "https://cdn.example.test/a.jpg, https://cdn.example.test/b.jpg"
+    assert ProductUpdate.model_validate({"image_urls": ["https://cdn.example.test/c.jpg"]}).to_model_data()["product_images"] == "https://cdn.example.test/c.jpg"
+    product = new_product(env, "https://cdn.example.test/a.jpg, https://cdn.example.test/b.jpg")
+    assert map_product_list_item(product)["image_urls"] == ["https://cdn.example.test/a.jpg", "https://cdn.example.test/b.jpg"]
+    service = service_repo.create_service(env.db, payload(enterprise_id=env.ent.id, service_name="Yoga", service_category="Fitness", service_price=0.0, duration=60))
+    assert map_service_list_item(service)["image_urls"] == []

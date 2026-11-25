@@ -242,6 +242,9 @@ class EngagementBlock(BaseModel):
     wishlist_count: int = 0
     is_liked_by_me: bool | None = None
     is_wishlisted_by_me: bool | None = None
+    like_count: int = Field(0, description="Same as likes_count (the name the mobile app uses).")
+    liked_by_me: bool | None = Field(None, description="Same as is_liked_by_me.")
+    comment_count: int = Field(0, description="Same as comments_count.")
 
 
 class BlogListItemResponse(BaseModel):

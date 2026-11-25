@@ -335,6 +335,7 @@ class ServiceResponse(BaseModel):
     service_type: str | None = None
     banner_image: str | None = None
     images: list[str] = Field(default_factory=list, description="The banner as a list of hosted http(s) URLs (empty when there is none). Never base64.")
+    image_urls: list[str] = Field(default_factory=list, description="Same as `images`, named like the product field.")
     min_notice_minutes: int | None = None
     max_advance_days: int | None = None
     blocked_periods: list[BlockedPeriod] | None = None

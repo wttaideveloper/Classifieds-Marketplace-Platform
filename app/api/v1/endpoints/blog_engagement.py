@@ -15,7 +15,7 @@ from app.core.blog_access import BlogActor, require_blog_merchant, require_blog_
 from app.core.dependencies import get_current_user, get_optional_current_user
 from app.db.database import get_db
 from app.schemas.blog_engagement_schema import (
-    CommentCreate, CommentEdit, CommentList, CommentResult, EngagementState, MandatoryReason, Queue, ReasonBody, ReportCreate, ReviewRequestBody,
+    CommentCreate, CommentEdit, CommentLikeState, CommentList, CommentResult, EngagementState, LikeSummary, ReplyPage, MandatoryReason, Queue, ReasonBody, ReportCreate, ReviewRequestBody,
 )
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.services import blog_engagement_service as svc
@@ -60,22 +60,22 @@ def my_wishlist(page: int = PAGE, page_size: int = PAGE_SIZE, db: Session = Depe
 
 @router.post("/{post_id}/like", response_model=EngagementState, summary="Like a blog (customer)",
              description="Idempotent: liking again changes nothing. Answers the new state and counts. 404 `POST_NOT_FOUND` for a post that is not live, 409 `ENGAGEMENT_NOT_AVAILABLE` for News.")
-def like(post_id: UUID = Path(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def like(post_id: str = Path(..., description="The blog's id or its slug"), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return svc.set_like(db, user, post_id, True)
 
 
 @router.delete("/{post_id}/like", response_model=EngagementState, summary="Remove my like (customer)", description="Idempotent.")
-def unlike(post_id: UUID = Path(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def unlike(post_id: str = Path(..., description="The blog's id or its slug"), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return svc.set_like(db, user, post_id, False)
 
 
 @router.post("/{post_id}/wishlist", response_model=EngagementState, summary="Save a blog (customer)", description="Idempotent. The save time orders `GET /wishlist/my`.")
-def wishlist(post_id: UUID = Path(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def wishlist(post_id: str = Path(..., description="The blog's id or its slug"), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return svc.set_wishlist(db, user, post_id, True)
 
 
 @router.delete("/{post_id}/wishlist", response_model=EngagementState, summary="Remove a saved blog (customer)", description="Idempotent. Also works after the blog is taken down.")
-def unwishlist(post_id: UUID = Path(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def unwishlist(post_id: str = Path(..., description="The blog's id or its slug"), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return svc.set_wishlist(db, user, post_id, False)
 
 
@@ -85,16 +85,53 @@ def unwishlist(post_id: UUID = Path(...), db: Session = Depends(get_db), user: d
             description="Top-level comments newest first, each with its `replies` oldest first (one level deep). Only published comments are shown, with a display name such as \"Priya S.\"; a signed-in author "
                         "also sees their own comments that wait for a check (`status: pending_review`). A removed or deleted comment that has replies is a placeholder (`status: unavailable`, `body: null`). "
                         "`can_edit` / `can_delete` / `reported_by_me` are for the signed-in user.")
-def list_comments(post_id: UUID = Path(...), page: int = PAGE, page_size: int = PAGE_SIZE, db: Session = Depends(get_db), viewer: dict | None = Depends(get_optional_current_user)):
+def list_comments(post_id: str = Path(..., description="The blog's id or its slug"), page: int = PAGE, page_size: int = PAGE_SIZE, db: Session = Depends(get_db), viewer: dict | None = Depends(get_optional_current_user)):
     return svc.list_comments(db, post_id, viewer, page, page_size)
 
 
 @router.post("/{post_id}/comments", response_model=CommentResult, status_code=201, summary="Comment or reply (customer)",
              description="`parent_id` makes it a reply (a reply to a reply goes under the top-level comment). Checked by the AI before it can be seen." + OUTCOME_DOC,
              responses={202: {"model": CommentResult}, 422: {"model": CommentResult}})
-def create_comment(post_id: UUID = Path(...), payload: CommentCreate = Body(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def create_comment(post_id: str = Path(..., description="The blog's id or its slug"), payload: CommentCreate = Body(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     comment, code = svc.create_comment(db, user, post_id, payload.body, payload.parent_id)
     return _reply(db, user, comment, code, edit=False)
+
+
+@router.get("/{post_id}/likes", response_model=LikeSummary, summary="Likes of a blog (public)",
+            description="`{like_count, liked_by_me}`; liked_by_me is null when nobody is signed in. `post_id` is the id or the slug.")
+def like_summary(post_id: str = Path(..., description="The blog's id or its slug"), db: Session = Depends(get_db), viewer: dict | None = Depends(get_optional_current_user)):
+    return svc.like_summary(db, viewer, post_id)
+
+
+@router.post("/{post_id}/likes", response_model=LikeSummary, summary="Like a blog (customer)", description="Idempotent. Same as POST /{post_id}/like, in the mobile shape.")
+def like_v2(post_id: str = Path(..., description="The blog's id or its slug"), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return svc.set_like_summary(db, user, post_id, True)
+
+
+@router.delete("/{post_id}/likes", response_model=LikeSummary, summary="Remove my like (customer)", description="Idempotent.")
+def unlike_v2(post_id: str = Path(..., description="The blog's id or its slug"), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return svc.set_like_summary(db, user, post_id, False)
+
+
+@router.get("/{post_id}/comments/{comment_id}/replies", response_model=ReplyPage, summary="Replies of one comment (public)",
+            description="The direct replies of the comment, oldest first, each with its own nested replies. For loading a long thread a page at a time; "
+                        "the comment list already nests every reply.")
+def list_replies(post_id: str = Path(..., description="The blog's id or its slug"), comment_id: UUID = Path(...), page: int = PAGE, page_size: int = PAGE_SIZE,
+                 db: Session = Depends(get_db), viewer: dict | None = Depends(get_optional_current_user)):
+    return svc.list_replies(db, post_id, comment_id, viewer, page, page_size)
+
+
+@router.post("/{post_id}/comments/{comment_id}/likes", response_model=CommentLikeState, summary="Like a comment (customer)",
+             description="Idempotent. A comment that is not published: 404 COMMENT_NOT_FOUND.")
+def like_comment(post_id: str = Path(..., description="The blog's id or its slug"), comment_id: UUID = Path(...), db: Session = Depends(get_db),
+                 user: dict = Depends(get_current_user)):
+    return svc.set_comment_like(db, user, post_id, comment_id, True)
+
+
+@router.delete("/{post_id}/comments/{comment_id}/likes", response_model=CommentLikeState, summary="Remove my like from a comment (customer)", description="Idempotent.")
+def unlike_comment(post_id: str = Path(..., description="The blog's id or its slug"), comment_id: UUID = Path(...), db: Session = Depends(get_db),
+                   user: dict = Depends(get_current_user)):
+    return svc.set_comment_like(db, user, post_id, comment_id, False)
 
 
 @router.patch("/comments/{comment_id}", response_model=CommentResult, summary="Edit my comment or reply (customer)",

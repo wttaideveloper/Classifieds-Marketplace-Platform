@@ -38,7 +38,7 @@ class ProductCreate(BaseModel):
     category: str = Field(..., description="Product category")
     price: float = Field(..., description="Base product price")
     currency: str | None = Field("USD", description="ISO currency code")
-    image_urls: str | None = Field(None, description="Product image URLs")
+    image_urls: str | list[str] | None = Field(None, description="Product images: a list of URLs (preferred) or one comma-separated string. Upload files with POST /products/upload.")
     status: EntityStatus = Field("draft", description="Product lifecycle status.")
     product_description: str | None = None
     product_category: str | None = None
@@ -98,6 +98,9 @@ class ProductCreate(BaseModel):
             normalized["price"] = normalized["product_price"]
         if normalized.get("product_images") and not normalized.get("image_urls"):
             normalized["image_urls"] = normalized["product_images"]
+        for key in ("image_urls", "product_images"):
+            if isinstance(normalized.get(key), list):            # a list of URLs is stored as the comma-separated text every reader understands
+                normalized[key] = ", ".join(str(u).strip() for u in normalized[key] if str(u).strip()) or None
         if "product_status" in normalized and "status" not in normalized:
             normalized["status"] = (
                 "active" if normalized["product_status"] else "inactive"
@@ -150,7 +153,7 @@ class ProductUpdate(BaseModel):
     category: str | None = None
     price: float | None = None
     currency: str | None = None
-    image_urls: str | None = None
+    image_urls: str | list[str] | None = Field(None, description="A list of URLs (preferred) or one comma-separated string.")
     status: EntityStatus | None = None
     product_description: str | None = None
     product_category: str | None = None
@@ -189,6 +192,9 @@ class ProductUpdate(BaseModel):
             normalized["price"] = normalized["product_price"]
         if normalized.get("product_images") and not normalized.get("image_urls"):
             normalized["image_urls"] = normalized["product_images"]
+        for key in ("image_urls", "product_images"):
+            if isinstance(normalized.get(key), list):            # a list of URLs is stored as the comma-separated text every reader understands
+                normalized[key] = ", ".join(str(u).strip() for u in normalized[key] if str(u).strip()) or None
         if "product_status" in normalized and "status" not in normalized:
             normalized["status"] = (
                 "active" if normalized["product_status"] else "inactive"
@@ -229,7 +235,7 @@ class ProductResponse(BaseModel):
     category: str
     price: float
     currency: str | None
-    image_urls: str | None = Field(None, description="Legacy: the stored images as one comma-separated string. Prefer `images`.")
+    image_urls: list[str] = Field(default_factory=list, description="The product's images as hosted https URLs, in order (list and detail alike). Never base64.")
     images: list[str] = Field(default_factory=list, description="The product's images as a list of hosted http(s) URLs, in order. Never base64.")
     status: EntityStatus
     product_description: str | None = None

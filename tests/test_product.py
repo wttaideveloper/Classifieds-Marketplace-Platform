@@ -29,7 +29,7 @@ def _product_response(**overrides):
         "category": "Electronics",
         "price": 50000,
         "currency": "USD",
-        "image_urls": "image.jpg",
+        "image_urls": ["https://cdn.example.test/image.jpg"],
         "status": "active",
         "product_description": "Gaming Laptop",
         "product_category": "Electronics",

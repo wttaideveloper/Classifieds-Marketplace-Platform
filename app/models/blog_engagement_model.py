@@ -98,3 +98,14 @@ class BlogCommentEvent(Base):
     body_snapshot = Column(Text)
     detail = Column(JSONB)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class BlogCommentLike(Base):
+    __tablename__ = "cms_blog_comment_likes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    comment_id = Column(UUID(as_uuid=True), ForeignKey("cms_blog_comments.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (UniqueConstraint("comment_id", "user_id", name="uq_cms_blog_comment_likes_comment_user"),)

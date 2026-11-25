@@ -66,8 +66,11 @@ class CommentOut(BaseModel):
     can_edit: bool = False
     can_delete: bool = False
     reported_by_me: bool = False
+    author_name: str | None = Field(None, description="Same as author.name: a display name such as \"Priya S.\".")
+    like_count: int = 0
+    liked_by_me: bool | None = Field(None, description="null when nobody is signed in.")
     reply_count: int = 0
-    replies: list["CommentOut"] = Field(default_factory=list)
+    replies: list["CommentOut"] = Field(default_factory=list, description="Nested to BLOG_COMMENT_MAX_DEPTH levels (3 by default).")
 
 
 class CommentList(BaseModel):
@@ -114,3 +117,19 @@ class ModerationComment(BaseModel):
     review_request_note: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
+
+
+class LikeSummary(BaseModel):
+    like_count: int
+    liked_by_me: bool | None = Field(None, description="null when nobody is signed in.")
+
+
+class CommentLikeState(BaseModel):
+    id: UUID
+    like_count: int
+    liked_by_me: bool
+
+
+class ReplyPage(BaseModel):
+    items: list[CommentOut]
+    pagination: dict
