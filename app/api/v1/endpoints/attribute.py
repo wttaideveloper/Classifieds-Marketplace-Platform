@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
+from app.core.catalog_access import get_catalog_access
 from app.db.database import get_db
 from app.schemas.attribute_schema import (
     AttributeCreate,
@@ -27,12 +28,15 @@ router = APIRouter(tags=["Dynamic Attributes"])
     response_model=AttributeResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create Dynamic Attribute",
+    description="Enterprise Admin of the business that owns the enterprise / product / service, or a Super Admin (401 signed out, 403 anyone else). "
+                "`media`: photos and videos uploaded with POST /api/v1/products/upload.",
 )
 def create_attribute(
     attribute: AttributeCreate,
     db: Session = Depends(get_db),
+    access=Depends(get_catalog_access),
 ):
-    return create_attribute_service(db, attribute)
+    return create_attribute_service(db, attribute, access)
 
 
 @router.get(
@@ -79,23 +83,27 @@ def get_attribute(
     response_model=AttributeResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Dynamic Attribute",
+    description="Same access as create. `media` replaces the whole list ([] removes all; leave it out to keep it).",
 )
 def update_attribute(
     attribute: AttributeUpdate,
     attribute_id: UUID = Path(..., description="Unique identifier of the attribute"),
     db: Session = Depends(get_db),
+    access=Depends(get_catalog_access),
 ):
-    return update_attribute_service(db, attribute_id, attribute)
+    return update_attribute_service(db, attribute_id, attribute, access)
 
 
 @router.delete(
     "/{attribute_id}",
     status_code=status.HTTP_200_OK,
     summary="Delete Dynamic Attribute",
+    description="Same access as create.",
 )
 def delete_attribute(
     attribute_id: UUID = Path(..., description="Unique identifier of the attribute"),
     db: Session = Depends(get_db),
+    access=Depends(get_catalog_access),
 ):
-    delete_attribute_service(db, attribute_id)
+    delete_attribute_service(db, attribute_id, access)
     return {"message": "Attribute marked inactive successfully"}

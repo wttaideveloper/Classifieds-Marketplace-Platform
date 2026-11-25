@@ -112,8 +112,18 @@ def path_for(stored_name: str) -> tuple[Path, str]:
 
 
 def purge_unreferenced(db, now: float | None = None, limit: int = 50) -> int:
-    """Delete uploads older than PRODUCT_MEDIA_ORPHAN_DAYS that no Product refers to. Best effort, bounded per call."""
+    """Delete uploads older than PRODUCT_MEDIA_ORPHAN_DAYS that nothing refers to: a product's images, a service's banner (inline images are stored here too)
+    or an attribute's photos and videos. Best effort, bounded per call."""
+    from sqlalchemy import String, cast
+
+    from app.models.attribute_model import DynamicAttribute
     from app.models.product_model import Product
+    from app.models.service_model import Service
+
+    def in_use(name: str) -> bool:
+        return (db.query(Product.id).filter(Product.product_images.contains(name)).first() is not None
+                or db.query(Service.id).filter(Service.banner_image.contains(name)).first() is not None
+                or db.query(DynamicAttribute.id).filter(cast(DynamicAttribute.media, String).contains(name)).first() is not None)
 
     cutoff = (now or time.time()) - settings.PRODUCT_MEDIA_ORPHAN_DAYS * 86400
     removed = checked = 0
@@ -126,7 +136,7 @@ def purge_unreferenced(db, now: float | None = None, limit: int = 50) -> int:
         except OSError:
             continue
         checked += 1
-        if db.query(Product.id).filter(Product.product_images.contains(path.name)).first() is None:
+        if not in_use(path.name):
             path.unlink(missing_ok=True)
             removed += 1
     return removed
