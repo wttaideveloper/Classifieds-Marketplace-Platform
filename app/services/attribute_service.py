@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.catalog_access import validate_catalog_write
 from app.models.enterprise_model import Enterprise
 from app.models.product_model import Product
 from app.models.service_model import Service
@@ -59,12 +60,20 @@ def validate_entity(db: Session, entity_type: str, entity_id: UUID):
     return entity
 
 
-def create_attribute_service(db: Session, attribute_data):
-    validate_entity(
-        db,
-        attribute_data.entity_type,
-        attribute_data.entity_id,
-    )
+def _owning_enterprise_id(entity_type: str, entity) -> UUID:
+    return entity.id if entity_type.lower() == "enterprise" else entity.enterprise_id
+
+
+def _check_writer(db: Session, entity_type: str, entity_id: UUID, access, supplied_tenant_id=None):
+    """Only the Enterprise Admin of the business that owns the enterprise / product / service, or a Super Admin. 401 signed out, 403 anyone else.
+    access=None is an internal caller and is not checked."""
+    entity = validate_entity(db, entity_type, entity_id)
+    validate_catalog_write(db, _owning_enterprise_id(entity_type, entity), supplied_tenant_id, access)
+    return entity
+
+
+def create_attribute_service(db: Session, attribute_data, access=None):
+    _check_writer(db, attribute_data.entity_type, attribute_data.entity_id, access, attribute_data.tenant_id)
 
     attribute = create_attribute(db, attribute_data)
     return AttributeResponse.model_validate(attribute)
@@ -108,24 +117,26 @@ def get_attribute_service(db: Session, attribute_id: UUID) -> AttributeResponse:
     return AttributeResponse.model_validate(attribute)
 
 
-def update_attribute_service(db: Session, attribute_id: UUID, update_data):
+def update_attribute_service(db: Session, attribute_id: UUID, update_data, access=None):
     attribute = get_attribute_by_id(db, attribute_id, include_deleted=True)
     if not attribute or attribute.is_deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Attribute not found",
         )
+    _check_writer(db, attribute.entity_type, attribute.entity_id, access)
 
     attribute = update_attribute(db, attribute, update_data)
     return AttributeResponse.model_validate(attribute)
 
 
-def delete_attribute_service(db: Session, attribute_id: UUID):
+def delete_attribute_service(db: Session, attribute_id: UUID, access=None):
     attribute = get_attribute_by_id(db, attribute_id)
     if not attribute:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Attribute not found",
         )
+    _check_writer(db, attribute.entity_type, attribute.entity_id, access)
 
     delete_attribute(db, attribute)

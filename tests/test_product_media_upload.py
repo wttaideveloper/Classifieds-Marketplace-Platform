@@ -36,7 +36,10 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "PUBLIC_API_BASE_URL", "https://api.example.test")
     monkeypatch.setattr(settings, "PUBLIC_MEDIA_BASE_URL", "")
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Product.__table__])
+    from app.models.attribute_model import DynamicAttribute
+    from app.models.service_model import Service
+
+    Base.metadata.create_all(engine, tables=[Enterprise.__table__, Product.__table__, Service.__table__, DynamicAttribute.__table__])
     db = sessionmaker(bind=engine)()
     state = {"role": "admin"}
     app = FastAPI()
@@ -179,3 +182,24 @@ def test_old_uploads_no_product_uses_are_deleted_and_the_ones_in_use_are_kept(en
     removed = media.purge_unreferenced(env.db)
 
     assert removed == 1 and not (env.root / unused).exists() and (env.root / used).exists() and (env.root / fresh).exists()
+
+
+def test_files_used_by_a_service_banner_or_an_attribute_are_kept(env):
+    from app.models.attribute_model import DynamicAttribute
+    from app.models.service_model import Service
+
+    banner = env.upload(JPEG).json()["stored_name"]
+    clip = env.upload(MP4, "demo.mp4", "video/mp4").json()["stored_name"]
+    ent = Enterprise(tenant_id=uuid4(), business_short_name="S", business_legal_name="S Ltd", business_email="s@example.test", status="approved")
+    env.db.add(ent)
+    env.db.commit()
+    env.db.add(Service(enterprise_id=ent.id, service_name="Yoga", service_category="Fitness", service_price=0.0, duration=60,
+                       banner_image=f"https://api.example.test/api/v1/products/upload/{banner}"))
+    env.db.add(DynamicAttribute(entity_type="product", entity_id=uuid4(), attribute_name="Demo", attribute_value="x", attribute_type="text",
+                                media=[{"url": f"/api/v1/products/upload/{clip}", "type": "video"}]))
+    env.db.commit()
+    old = time.time() - 8 * 86400
+    for name in (banner, clip):
+        os.utime(env.root / name, (old, old))
+
+    assert media.purge_unreferenced(env.db) == 0 and (env.root / banner).exists() and (env.root / clip).exists()

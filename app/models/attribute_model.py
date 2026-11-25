@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Index, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from app.db.database import Base
 
@@ -46,6 +46,9 @@ class DynamicAttribute(Base):
     )
 
     is_required = Column(Boolean, default=False, nullable=False)
+
+    # photos and videos for this attribute: [{"url", "type": "image" | "video", "name", "size", "mime"}] (uploaded with POST /products/upload)
+    media = Column(JSONB)
 
     status = Column(String(20), default="active", nullable=False, index=True)
 
