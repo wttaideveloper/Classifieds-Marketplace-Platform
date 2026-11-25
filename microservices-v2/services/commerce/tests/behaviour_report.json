@@ -1,0 +1,39 @@
+{
+ "operations": 95,
+ "requests": 475,
+ "status_classes": {
+  "2xx": 102,
+  "4xx": 373
+ },
+ "differences": [],
+ "db_differences": [],
+ "rows_monolith": {
+  "cart_items": 0,
+  "carts": 0,
+  "order_items": 0,
+  "order_status_events": 0,
+  "orders": 0,
+  "pay_audit_log": 7,
+  "pay_currencies": 0,
+  "pay_currency_preferences": 0,
+  "pay_exchange_rates": 0,
+  "pay_invoice_sequences": 0,
+  "pay_invoice_templates": 2,
+  "pay_invoices": 0,
+  "pay_merchant_tax_profiles": 1,
+  "pay_payment_transactions": 0,
+  "pay_payments": 0,
+  "pay_reconciliation_items": 1,
+  "pay_reconciliation_runs": 1,
+  "pay_refunds": 0,
+  "pay_saved_methods": 0,
+  "pay_settlement_configs": 1,
+  "pay_settlement_items": 0,
+  "pay_settlements": 0,
+  "pay_tax_exemptions": 0,
+  "pay_tax_rules": 1,
+  "pay_tax_transactions": 0,
+  "pay_webhook_events": 0
+ },
+ "slow_requests": []
+}
