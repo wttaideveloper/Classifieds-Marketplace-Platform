@@ -4,6 +4,7 @@ from app.core.catalog_access import scope_catalog_query
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.product_model import Product
+from app.services import inline_media
 from app.repository.query_utils import (
     apply_ilike_search,
     apply_soft_delete_filter,
@@ -13,6 +14,7 @@ from app.repository.query_utils import (
 
 def create_product(db: Session, product_data):
     payload = product_data.to_model_data() if hasattr(product_data, "to_model_data") else product_data.model_dump()
+    payload = inline_media.externalize_payload(payload, inline_media.PRODUCT_IMAGE_KEYS)      # base64 pictures become hosted files (app/services/inline_media.py)
     product = Product(**payload)
     db.add(product)
     db.commit()
@@ -81,6 +83,7 @@ def get_product_by_id(db: Session, product_id: UUID, include_deleted: bool = Fal
 
 def update_product(db: Session, product, update_data):
     payload = update_data.to_model_data() if hasattr(update_data, "to_model_data") else update_data.model_dump(exclude_unset=True)
+    payload = inline_media.externalize_payload(payload, inline_media.PRODUCT_IMAGE_KEYS)      # base64 pictures become hosted files (app/services/inline_media.py)
     for key, value in payload.items():
         setattr(product, key, value)
     db.commit()

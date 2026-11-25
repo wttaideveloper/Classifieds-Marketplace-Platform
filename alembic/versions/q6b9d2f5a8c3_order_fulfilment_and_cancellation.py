@@ -24,8 +24,19 @@ COLUMNS = (
 
 
 def upgrade():
-    for name, type_ in COLUMNS:
-        op.add_column("orders", sa.Column(name, type_, nullable=True))
+    # one literal statement per column: tests/test_orders_schema_matches_migrations.py reads this file statically
+    op.add_column("orders", sa.Column("carrier", sa.String(80), nullable=True))
+    op.add_column("orders", sa.Column("tracking_number", sa.String(120), nullable=True))
+    op.add_column("orders", sa.Column("tracking_url", sa.Text(), nullable=True))
+    op.add_column("orders", sa.Column("shipped_at", sa.DateTime(), nullable=True))
+    op.add_column("orders", sa.Column("delivered_at", sa.DateTime(), nullable=True))
+    op.add_column("orders", sa.Column("cancel_reason", sa.Text(), nullable=True))
+    op.add_column("orders", sa.Column("cancelled_at", sa.DateTime(), nullable=True))
+    op.add_column("orders", sa.Column("cancelled_by", postgresql.UUID(as_uuid=True), nullable=True))
+    op.add_column("orders", sa.Column("cancelled_by_role", sa.String(20), nullable=True))
+    op.add_column("orders", sa.Column("cancellation_requested_at", sa.DateTime(), nullable=True))
+    op.add_column("orders", sa.Column("status_before_request", sa.String(20), nullable=True))
+    op.add_column("orders", sa.Column("decision_reason", sa.Text(), nullable=True))
     op.add_column("orders", sa.Column("stock_reduced", sa.Boolean(), nullable=False, server_default=sa.false()))
     op.add_column("orders", sa.Column("stock_restocked", sa.Boolean(), nullable=False, server_default=sa.false()))
     op.create_index("ix_orders_tenant_status", "orders", ["tenant_id", "status"])

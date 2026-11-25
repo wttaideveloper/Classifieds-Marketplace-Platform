@@ -1,0 +1,34 @@
+{
+ "operations": 132,
+ "requests": 660,
+ "status_classes": {
+  "4xx": 480,
+  "2xx": 179,
+  "5xx": 1
+ },
+ "differences": [],
+ "db_differences": [],
+ "rows_monolith": {
+  "chat_attachments": 1,
+  "chat_notifications": 1,
+  "chat_subscriptions": 4,
+  "conversation_participants": 5,
+  "conversations": 4,
+  "device_tokens": 1,
+  "group_audit_log": 0,
+  "group_clinical_record_entries": 0,
+  "group_consents": 0,
+  "group_data_requests": 4,
+  "group_message_reactions": 0,
+  "group_reports": 0,
+  "message_read_receipts": 1,
+  "messages": 2,
+  "notification_preferences": 5,
+  "provider_assignments": 8,
+  "typing_indicators": 1,
+  "user_display_names": 4,
+  "user_presence": 4,
+  "verified_providers": 0
+ },
+ "slow_requests": []
+}

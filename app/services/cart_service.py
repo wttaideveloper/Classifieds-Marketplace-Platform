@@ -107,6 +107,14 @@ def get_cart_service(db: Session, user_id: UUID) -> CartResponse:
     return _map_cart(cart)
 
 
+def _product_tenant(product: Product):
+    """The business that sells a product: its own tenant, else its enterprise's."""
+    if product.tenant_id:
+        return product.tenant_id
+    enterprise = getattr(product, "enterprise", None)
+    return getattr(enterprise, "tenant_id", None)
+
+
 def add_to_cart_service(db: Session, user_id: UUID, payload: CartAddRequest) -> CartResponse:
     product = db.query(Product).filter(Product.id == payload.product_id).first()
     if not product or product.is_deleted:
@@ -114,9 +122,13 @@ def add_to_cart_service(db: Session, user_id: UUID, payload: CartAddRequest) -> 
     _check_stock(product, payload.quantity)
 
     unit_price, currency = _effective_price(product)
-    tenant_id = product.tenant_id
+    tenant_id = _product_tenant(product)
 
     cart = get_or_create_cart(db, user_id, tenant_id=tenant_id)
+    if cart.tenant_id and tenant_id and cart.tenant_id != tenant_id:
+        # one cart, one business: its admin sees the whole order, so it must not hold another business's items
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+            "message": "Your cart has items from another business. Check out or clear the cart first, then add this item.", "code": "CART_OTHER_BUSINESS"})
     if cart.tenant_id is None and tenant_id:
         cart.tenant_id = tenant_id
 
@@ -237,8 +249,12 @@ def checkout_service(db: Session, user_id: UUID, payload: CheckoutRequest) -> Or
         total += unit_price * it.quantity
 
     total = round(total, 2)
+    tenants = {t for t in (_product_tenant(p) for p in products.values()) if t}
+    if len(tenants) > 1:   # a cart that already mixes businesses (from before add-to-cart refused it): one order cannot belong to two of them
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+            "message": "Your cart has items from different businesses. Check out one business at a time: remove the items of the other.", "code": "CART_MIXED_BUSINESSES"})
     shipping_dict = payload.shipping_address.model_dump() if payload and payload.shipping_address else None
-    order = create_order(db, user_id, cart.tenant_id, total, currency, shipping_address=shipping_dict)
+    order = create_order(db, user_id, cart.tenant_id or (next(iter(tenants)) if tenants else None), total, currency, shipping_address=shipping_dict)
     db.flush()
 
     for it in cart.items:

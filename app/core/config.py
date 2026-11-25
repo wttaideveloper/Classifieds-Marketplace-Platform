@@ -134,10 +134,21 @@ class Settings(BaseSettings):
     # training and event groups) show the group name, the sender's display name and a preview; a CARE group shows only "New message" with
     # no text unless GROUP_CARE_NOTIFICATION_PREVIEW_ENABLED is turned on: a care team's messages are clinical, and a preview puts them
     # on a lock screen. GROUP_NOTIFICATION_PREVIEW_ENABLED=false brings the earlier "New message" everywhere back for groups.
+    # Blog engagement (docs/blog-engagement.md). Comments are judged by the same AI moderation as Event Discussions (the EVENT_DISCUSSION_MODERATION* settings).
+    BLOG_COMMENT_MAX_CHARS: int = 500
+    BLOG_COMMENT_RATE_LIMIT: int = 10                       # comments, replies and edits one person can send ...
+    BLOG_COMMENT_RATE_WINDOW_SECONDS: int = 60              # ... in this many seconds (Event Discussions has no limit of its own to copy)
+    BLOG_REPORT_THRESHOLD_SEVERE: int = 1                   # unsafe_medical or harassment: one report is enough to re-check the comment
+    BLOG_REPORT_THRESHOLD_OTHER: int = 3                    # offensive, spam or other: this many different people
+    # Product media upload (docs/product-media-upload.md)
+    PRODUCT_MAX_IMAGE_MB: int = 10
+    PRODUCT_MAX_VIDEO_MB: int = 50
+    PRODUCT_MEDIA_ORPHAN_DAYS: int = 7                      # an upload no Product refers to is deleted after this
     # Orders (docs/order-cancellation-and-refunds.md)
     ORDER_REFUND_WINDOW_DAYS: int = 7                       # a customer can ask for a refund this long after delivery
     # Service bookings (docs/service-bookings.md)
-    SERVICE_BOOKING_HOLD_MINUTES: int = 15                  # an unpaid booking holds its slot this long
+    SERVICE_BOOKING_HOLD_MINUTES: int = 15                  # an unpaid booking holds its slot this long (policy value pending client confirmation)
+    SERVICE_BOOKING_MERCHANT_REFUND_PERCENT: int = 100     # refund when the clinic cancels a paid booking and sends no refund_percent (policy value pending client confirmation)
     SERVICE_BOOKING_MIN_NOTICE_MINUTES: int = 60            # the earliest a slot can be booked, from now
     SERVICE_BOOKING_MAX_ADVANCE_DAYS: int = 60              # the furthest ahead a slot can be booked
     SERVICE_BOOKING_JOIN_MINUTES_BEFORE: int = 10           # a virtual booking shows its meeting link this long before the start

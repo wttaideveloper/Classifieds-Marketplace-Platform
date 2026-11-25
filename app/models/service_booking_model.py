@@ -20,6 +20,7 @@ class ServiceBooking(Base):
     tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     enterprise_id = Column(UUID(as_uuid=True), ForeignKey("enterprises.id"), nullable=False, index=True)
     service_id = Column(UUID(as_uuid=True), ForeignKey("services.id"), nullable=False, index=True)
+    reference = Column(String(20), unique=True, index=True)        # "SB-1A2B3C4D5E": shown to people, searchable (null only for rows the migration has not reached)
 
     # who booked. customer_user_id is null for a booking an admin made for someone with no account.
     customer_user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
@@ -57,6 +58,9 @@ class ServiceBooking(Base):
     decision_reason = Column(Text)                                   # why a cancellation request was rejected (or a note on approval)
     refund_percent = Column(Integer)
     refund_amount = Column(Float)
+    # independent of payment_status: null = no refund owed; pending (owed, not yet sent to the gateway) | processing | completed | failed.
+    # Only a gateway confirmation may set completed: until the payment-module integration exists nothing does.
+    refund_status = Column(String(20), index=True)
     checked_in_at = Column(DateTime)
     completed_at = Column(DateTime)
     idempotency_key = Column(String(100))

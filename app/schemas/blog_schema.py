@@ -234,6 +234,16 @@ class BlogCategoryListResponse(BaseModel):
     total: int
 
 
+class EngagementBlock(BaseModel):
+    """Likes, saves and comments of a Blog. `*_by_me` are null when nobody is signed in."""
+
+    likes_count: int = 0
+    comments_count: int = Field(0, description="Published comments and replies")
+    wishlist_count: int = 0
+    is_liked_by_me: bool | None = None
+    is_wishlisted_by_me: bool | None = None
+
+
 class BlogListItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -259,6 +269,7 @@ class BlogListItemResponse(BaseModel):
     view_count: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    engagement: EngagementBlock | None = Field(None, description="Blogs only; null for News")
 
 
 class PublicCustomField(BaseModel):

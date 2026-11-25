@@ -1,0 +1,14 @@
+{
+ "operations": 13,
+ "requests": 65,
+ "status_classes": {
+  "4xx": 5,
+  "2xx": 60
+ },
+ "differences": [],
+ "db_differences": [],
+ "rows_monolith": {
+  "user_addresses": 7
+ },
+ "slow_requests": []
+}

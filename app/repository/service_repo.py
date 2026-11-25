@@ -13,11 +13,14 @@ from app.repository.query_utils import (
     paginate_query,
 )
 
+from app.services import inline_media
+
 logger = logging.getLogger(__name__)
 
 
 def create_service(db: Session, service_data):
     payload = service_data.to_model_data() if hasattr(service_data, "to_model_data") else service_data.model_dump()
+    payload = inline_media.externalize_payload(payload, inline_media.SERVICE_IMAGE_KEYS)      # base64 pictures become hosted files (app/services/inline_media.py)
     service = Service(**payload)
     db.add(service)
     db.commit()
@@ -130,6 +133,7 @@ def get_service_by_id(db: Session, service_id: UUID, include_deleted: bool = Fal
 
 def update_service(db: Session, service, update_data):
     payload = update_data.to_model_data() if hasattr(update_data, "to_model_data") else update_data.model_dump(exclude_unset=True)
+    payload = inline_media.externalize_payload(payload, inline_media.SERVICE_IMAGE_KEYS)      # base64 pictures become hosted files (app/services/inline_media.py)
     for key, value in payload.items():
         setattr(service, key, value)
     db.commit()

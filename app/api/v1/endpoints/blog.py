@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.form_builder.concurrency import ETagRoute
 from app.core.blog_access import BlogActor, optional_blog_actor, require_blog_author, require_blog_merchant, require_blog_super_admin
+from app.core.dependencies import get_optional_current_user
 from app.db.database import get_db
 from app.exceptions.problem import problem
 from app.repository.query_utils import build_pagination_meta
@@ -78,11 +79,12 @@ def list_public_blogs(
     tag: str | None = Query(None), source: BlogSource | None = Query(None, description="platform | merchant"),
     tenant_id: UUID | None = Query(None), enterprise_id: UUID | None = Query(None),
     module: BlogModule | None = Query(None, description="events | trainings | products | services | general"),
-    page: int = PAGE, page_size: int = PAGE_SIZE, db: Session = Depends(get_db),
+    page: int = PAGE, page_size: int = PAGE_SIZE, db: Session = Depends(get_db), viewer: dict | None = Depends(get_optional_current_user),
 ):
     return list_blogs_service(
         db, search=search, category=category, category_id=category_id, kind=kind, tag=tag, tenant_id=tenant_id,
         enterprise_id=enterprise_id, source=source, page=page, page_size=page_size, public_only=True, module=module,
+        viewer_id=viewer.get("id") if viewer else None,
     )
 
 
@@ -679,5 +681,5 @@ def delete_admin_category(category_id: UUID, db: Session = Depends(get_db), _act
 @router.get("/{slug}", response_model=BlogDetailResponse, summary="Get a live post by slug (public)",
             description="Counts one view. A post that is not live is a 404. The id also works in place of the slug. Never returns reviewer notes, a waiting edit or "
                         "internal fields; custom fields are only the ones the form marks public.")
-def get_public_blog_by_slug(slug: str = Path(..., description="Post slug"), db: Session = Depends(get_db)):
-    return get_blog_service(db, slug=slug, public_only=True, increment_views=True)
+def get_public_blog_by_slug(slug: str = Path(..., description="Post slug"), db: Session = Depends(get_db), viewer: dict | None = Depends(get_optional_current_user)):
+    return get_blog_service(db, slug=slug, public_only=True, increment_views=True, viewer_id=viewer.get("id") if viewer else None)

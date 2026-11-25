@@ -2,8 +2,14 @@ from uuid import UUID
 from app.core.catalog_access import get_catalog_access, require_catalog_writer, require_review_moderator
 from app.core.dependencies import extract_access_token, get_current_user, get_optional_current_user
 
-from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
+from typing import Literal
+
+from fastapi import APIRouter, Body, Depends, File, Path, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+
+from app.services import product_media_service as product_media
 
 from app.db.database import get_db
 from app.schemas.common_schema import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
@@ -47,6 +53,51 @@ def create_product(
     access=Depends(require_catalog_writer),
 ):
     return create_product_service(db, product, access=access)
+
+
+class ProductMediaUploadResponse(BaseModel):
+    url: str = Field(..., description="The absolute https address of the file. Save it in the product's image field and use it for the preview / <video src>.")
+    name: str = Field(..., description="The original file name.")
+    size: int = Field(..., description="Bytes.")
+    type: str = Field(..., description="The media type: image/jpeg, image/png, image/webp, image/gif, video/mp4, video/webm or video/quicktime.")
+    kind: Literal["image", "video"]
+    stored_name: str = Field(..., description="The name the file is stored and served under (the end of `url`).")
+
+
+@router.post(
+    "/upload", response_model=ProductMediaUploadResponse, status_code=status.HTTP_201_CREATED, summary="Upload a product photo or video",
+    description=(
+        "Enterprise Admin or Super Admin (a Provider gets 403). `multipart/form-data` with one file in the field `file`. "
+        "Photos: JPEG, PNG, WebP, GIF up to 10 MB. Videos: MP4, WebM, MOV up to 50 MB. The file type, extension and real contents must agree "
+        "(415 otherwise); too big is 413; empty is 400. The answer's `url` is public and can be used directly in an <img> or <video> tag (videos support seeking). "
+        "Save the URL in the product's image field when you create or save the product: an upload no product refers to is deleted after 7 days. "
+        "Limits: GET /products/upload/policy."
+    ),
+)
+def upload_product_media(request: Request, file: UploadFile = File(..., description="The photo or video."), db: Session = Depends(get_db), access=Depends(require_catalog_writer)):
+    result = product_media.store(file, request)
+    try:   # housekeeping: never fails an upload
+        product_media.purge_unreferenced(db)
+    except Exception:
+        db.rollback()
+    return result
+
+
+@router.get("/upload/policy", summary="Product media limits",
+            description="Allowed types, extensions and the maximum size in bytes for photos and for videos. Public; use it to configure the uploader.")
+def product_media_policy():
+    return product_media.limits()
+
+
+@router.get(
+    "/upload/{stored_name}", summary="A product photo or video",
+    description="Public (product pages are public). Served inline with the right media type, long-lived caching, and HTTP Range support so a video can start playing and seek. 404 for any name an upload did not produce.",
+)
+def get_product_media(stored_name: str):
+    path, media_type = product_media.path_for(stored_name)
+    return FileResponse(path, media_type=media_type, headers={
+        "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline",
+    })
 
 
 @router.get(

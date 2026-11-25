@@ -86,7 +86,8 @@ class Service(Base):
     # --- booking (docs/service-bookings.md) ---
     delivery_modes = Column(JSONB)                          # ["in_person"] | ["virtual"] | ["hybrid"] | ["in_person", "virtual"]; null = worked out from delivery_format
     booking_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
-    requires_approval = Column(Boolean, default=False, nullable=False, server_default="false")   # a new booking waits for an admin to confirm it
+    # Retired: new bookings never wait for approval (revised Booking & Scheduling document). Kept so old rows and clients that still send it keep working.
+    requires_approval = Column(Boolean, default=False, nullable=False, server_default="false")
     time_zone = Column(String(64), default="Asia/Kolkata")  # IANA zone the weekly schedule is written in
     # {"free_cancellation_hours": 24, "refund_percent_before": 100, "refund_percent_after": 0, "allow_request_after_window": true}
     cancellation_rules = Column(JSONB)
@@ -95,6 +96,11 @@ class Service(Base):
     meeting_provider = Column(String(30))
     meeting_passcode = Column(String(100))
     meeting_instructions = Column(Text)
+    # availability beyond the weekly schedule; null = the platform defaults (SERVICE_BOOKING_MIN_NOTICE_MINUTES / SERVICE_BOOKING_MAX_ADVANCE_DAYS)
+    min_notice_minutes = Column(Integer)
+    max_advance_days = Column(Integer)
+    # [{"start_date": "2026-12-25", "end_date": "2026-12-25", "start_time": null, "end_time": null, "reason": "Holiday"}]: whole days, or a time range on those days
+    blocked_periods = Column(JSONB)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

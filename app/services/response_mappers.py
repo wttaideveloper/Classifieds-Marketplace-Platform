@@ -6,7 +6,7 @@ from app.models.location_model import EnterpriseLocation
 from app.models.product_model import Product
 from app.models.service_model import Service
 from app.schemas.common_schema import EnterpriseStatusLabel
-from app.services import catalog_reviews
+from app.services import catalog_reviews, inline_media
 from app.services.catalog_enrichment import (
     build_delivery_text,
     enrich_enterprise_detail_fields,
@@ -338,6 +338,7 @@ def _product_base_fields(product: Product) -> dict:
         "price": product.product_price,
         "currency": product.currency,
         "image_urls": product.product_images,
+        "images": inline_media.url_list(product.product_images),
         "status": product.status,
         "product_description": product.product_description,
         "product_category": product.product_category,
@@ -711,6 +712,10 @@ def _service_base_fields(service: Service) -> dict:
         "duration": service.duration,
         "service_type": service.service_type,
         "banner_image": service.banner_image,
+        "images": inline_media.url_list(service.banner_image),
+        "min_notice_minutes": getattr(service, "min_notice_minutes", None),
+        "max_advance_days": getattr(service, "max_advance_days", None),
+        "blocked_periods": getattr(service, "blocked_periods", None),
         "availability_status": service.availability_status,
         "service_status": service.service_status,
         "max_participants": service.max_participants,

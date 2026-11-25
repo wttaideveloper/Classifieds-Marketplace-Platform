@@ -1,0 +1,15 @@
+{
+ "operations": 14,
+ "requests": 70,
+ "status_classes": {
+  "4xx": 66,
+  "2xx": 4
+ },
+ "differences": [],
+ "db_differences": [],
+ "rows_monolith": {
+  "service_booking_events": 0,
+  "service_bookings": 0
+ },
+ "slow_requests": []
+}

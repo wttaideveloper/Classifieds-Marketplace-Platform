@@ -128,6 +128,34 @@ def day_slots(service, day: date) -> list[tuple[datetime, datetime]]:
     return out
 
 
+def booking_window(service, now: datetime) -> tuple[datetime, datetime]:
+    """(earliest, latest) bookable start, naive UTC: the service's own notice settings, else the platform defaults."""
+    notice = getattr(service, "min_notice_minutes", None)
+    ahead = getattr(service, "max_advance_days", None)
+    return (now + timedelta(minutes=settings.SERVICE_BOOKING_MIN_NOTICE_MINUTES if notice is None else notice),
+            now + timedelta(days=settings.SERVICE_BOOKING_MAX_ADVANCE_DAYS if ahead is None else ahead))
+
+
+def is_blocked(service, start: datetime, end: datetime) -> bool:
+    """Does the slot (aware, service zone) fall in one of the service's blocked periods? Whole days, or a time range on each of those days."""
+    for period in getattr(service, "blocked_periods", None) or []:
+        if not isinstance(period, dict):
+            continue
+        try:
+            first = date.fromisoformat(str(period.get("start_date")))
+            last = date.fromisoformat(str(period.get("end_date") or period.get("start_date")))
+        except ValueError:
+            continue
+        if not first <= start.date() <= last:
+            continue
+        begin, finish = _hhmm(period.get("start_time")), _hhmm(period.get("end_time"))
+        if begin is None or finish is None:
+            return True
+        if start.time() < finish and end.time() > begin:
+            return True
+    return False
+
+
 def holding_clause(now: datetime):
     """SQL: the bookings that hold a place right now."""
     return and_(
@@ -142,7 +170,7 @@ class Slot:
     end: datetime
     capacity: int
     available_seats: int
-    reason: str | None       # None | full | provider_busy | too_soon | too_far
+    reason: str | None       # None | blocked | full | provider_busy | too_soon | too_far
 
     @property
     def available(self) -> bool:
@@ -154,8 +182,7 @@ def slots_between(db: Session, service, first: date, last: date, now: datetime |
     now = now or now_utc()
     tz = tz_of(service)
     capacity = capacity_of(service)
-    earliest = now + timedelta(minutes=settings.SERVICE_BOOKING_MIN_NOTICE_MINUTES)
-    latest = now + timedelta(days=settings.SERVICE_BOOKING_MAX_ADVANCE_DAYS)
+    earliest, latest = booking_window(service, now)
     slots = [(s, e) for n in range((last - first).days + 1) for s, e in day_slots(service, first + timedelta(days=n))]
     if not slots:
         return []
@@ -174,7 +201,8 @@ def slots_between(db: Session, service, first: date, last: date, now: datetime |
             b.provider_user_id == service.provider_user_id and b.starts_at < e_utc and b.ends_at > s_utc and not (b.service_id == service.id and b.starts_at == s_utc)
             for b in held
         )
-        reason = "too_soon" if s_utc < earliest else "too_far" if s_utc > latest else "provider_busy" if busy else "full" if seats >= capacity else None
+        reason = ("blocked" if is_blocked(service, start, end) else "too_soon" if s_utc < earliest else "too_far" if s_utc > latest
+                  else "provider_busy" if busy else "full" if seats >= capacity else None)
         out.append(Slot(start=start, end=end, capacity=capacity, available_seats=max(capacity - seats, 0), reason=reason))
     return out
 
